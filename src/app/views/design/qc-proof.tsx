@@ -236,7 +236,7 @@ const FIXTURES: Array<{
     everSynced: true,
   },
   {
-    // A scientific name is set by rank, not by eye: Homo sapiens and Andrena
+    // A scientific name is set by rank, not by eye: Apis mellifera and Andrena
     // take italics, Insecta and Life do not, and `stateofmatter` is a rank
     // the store has never heard of and so renders upright — which is right.
     // All four came out of the same <code> before beeline-dys.
@@ -245,9 +245,10 @@ const FIXTURES: Array<{
       row({
         sample_id: 20,
         sample_number: "20",
-        host_name: "Homo sapiens",
+        // Not Homo sapiens, which on iNaturalist is a user's flag and names no host (beeline-rfkj.11).
+        host_name: "Apis mellifera",
         host_rank: "species",
-        findings: [finding("non_tracheophyte_host", null, "blocking", { name: "Homo sapiens", rank: "species" })],
+        findings: [finding("non_tracheophyte_host", null, "blocking", { name: "Apis mellifera", rank: "species" })],
       }),
       row({
         sample_id: 21,

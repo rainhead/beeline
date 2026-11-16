@@ -170,3 +170,20 @@ describe("migration 0091, on a store promoted before the rule", () => {
   });
 
 });
+
+describe("a host that means no host (beeline-rfkj.11)", () => {
+  test("old Beeline's Homo sapiens, a user's flag copied from iNaturalist, is promoted as no host", async () => {
+    // The plant columns of production's legacy row 7c0bff7d…, one of 1,360 that name Homo sapiens.
+    const { conn: own } = await createMemoryDb();
+    await loadLegacyStaging(own, FIXTURE);
+    await own.run(`UPDATE legacy_occurrence SET "speciesPlant" = 'Homo sapiens', "genusPlant" = 'Homo',
+                     "familyPlant" = 'Hominidae', "orderPlant" = '', "phylumPlant" = 'Chordata'
+                   WHERE "fieldNumber" = '25000001'`);
+    await promoteLegacy(own, FIXTURE_INPUTS);
+    const hosts = await rows(own, `SELECT s.host_name_as_observed, s.host_rank FROM sample s
+                                   JOIN legacy_specimen_number n ON n.sample_id = s.entity_id
+                                   WHERE n._id IN (SELECT _id FROM legacy_occurrence WHERE "fieldNumber" = '25000001')`);
+    // Every plant named in SHAPES above went through the same promotion and kept its host.
+    expect(hosts).toEqual([[null, null]]);
+  });
+});

@@ -1,5 +1,9 @@
 import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
 import { assertCopied, copyToOldBeeline, describeCopy } from "../../legacy-copy.js";
+import { stat } from "node:fs/promises";
+import { DEFAULT_RULINGS } from "../../compare-legacy-export.js";
+import { changesDir, describeChanges, writeChanges } from "../../legacy-changes.js";
+import { readRulings } from "../../legacy-export-rulings.js";
 import {
   describeVolunteerImport,
   readOldVolunteerRecords,
@@ -846,6 +850,32 @@ export function buildJobs(
       async run(ctx) {
         const manifest = await writeProgramArchives(ctx.db, config.exportsDir ?? deploymentPath("data/exports"), { step: ctx.step });
         return describeManifest(manifest);
+      },
+    },
+    {
+      // What new Beeline did to the old Beeline's records, sorted into lines a
+      // taxonomist can read, for /exports/changes (beeline-eznn). After the
+      // export, whose file it compares with the staged old records, and last,
+      // so a slow night pushes nothing else out of the night window; on one
+      // thread, as the export is, for the memory of the comparison. The page
+      // says when the file it compared was written, so a night whose export
+      // failed shows that it read the night before's.
+      name: "legacy-changes",
+      schedule: { kind: "dailyLA", hour: 4 },
+      window: "night",
+      async run(ctx) {
+        const dir = config.exportsDir ?? deploymentPath("data/exports");
+        const path = legacyExportPath(dir);
+        try {
+          await stat(path);
+        } catch {
+          throw new Error(`no export at ${path} to compare: run legacy-export first`);
+        }
+        const rulings = await readRulings(DEFAULT_RULINGS);
+        const summary = await ctx.step("compare and sort the differences", () =>
+          writeChanges(ctx.conn, path, rulings, changesDir(dir)),
+        );
+        return describeChanges(summary);
       },
     },
   ];

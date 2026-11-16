@@ -62,6 +62,8 @@ import { failedStepsOf, jobTroubles } from "./job-trouble.js";
 import { stepTrend } from "./job-steps.js";
 import { Exports } from "./views/exports.js";
 import { HeldBackPage } from "./views/held-back.js";
+import { LegacyChangesPage } from "./views/legacy-changes.js";
+import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../legacy-changes.js";
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
@@ -2086,6 +2088,45 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
     return c.html(await page(c, m.heldBack.title, <HeldBackPage m={m} heldBack={await heldBackRecords(db)} />));
+  });
+
+  // What new Beeline changed in the old Beeline's records (beeline-eznn),
+  // as the legacy-changes job last worked it out: the comparison takes
+  // a minute and most of a gigabyte, so it is never run on request.
+  app.get("/exports/changes", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    return c.html(await page(c, m.legacyChanges.title, <LegacyChangesPage m={m} summary={await readChangesSummary(exportsDir())} />));
+  });
+
+  // One line's CSV from the night the page named, which the job keeps for a
+  // night after the next is written, so a page loaded before a run still
+  // downloads what it shows: only a night's folder and a line's file, by
+  // name, and by one handle.
+  app.get("/exports/changes/:generation/:file{[a-z_]+\\.csv}", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const generation = c.req.param("generation");
+    const name = c.req.param("file");
+    const line = LINES.find((l) => lineFile(l.id) === name);
+    if (!GENERATION.test(generation) || line === undefined) return errorResponse(c, "notFound");
+    let handle;
+    try {
+      handle = await open(join(changesDir(exportsDir()), generation, name), "r");
+    } catch {
+      return errorResponse(c, "notFound");
+    }
+    let st;
+    try {
+      st = await handle.stat();
+    } catch (err) {
+      await handle.close();
+      throw err;
+    }
+    return c.body(Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream, 200, {
+      "content-type": "text/csv; charset=utf-8",
+      "content-length": String(st.size),
+      "content-disposition": `attachment; filename="beeline-changed-${line.id.replaceAll("_", "-")}-${generation.slice(0, 10)}.csv"`,
+    });
   });
 
   app.get("/exports/held-back.csv", async (c) => {

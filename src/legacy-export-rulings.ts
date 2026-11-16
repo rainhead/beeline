@@ -79,11 +79,13 @@ export const VALUE_KINDS = [
  * A record only one side holds is a difference about the whole record, in
  * the column named `(record)`. Its kind says why: the blocking promotion
  * finding that stopped a legacy record becoming a specimen
- * (`legacy_promotion_finding`: duplicate_specimen, bad_date, …), or, for a
+ * (`legacy_promotion_finding`: duplicate_specimen, bad_date, …), or
+ * `tied_second_record` where the one-time repair tied it to a specimen as a
+ * second print of the same pin (`legacy_duplicate_record`), or, for a
  * record only Beeline holds, whether Beeline minted its number.
  */
 export const RECORD_COLUMN = "(record)";
-export const RECORD_KINDS_FIXED = ["not_promoted", "not_exported", "minted_by_beeline", "not_in_legacy"] as const;
+export const RECORD_KINDS_FIXED = ["not_promoted", "not_exported", "tied_second_record", "minted_by_beeline", "not_in_legacy"] as const;
 
 const HEADER = RULING_COLUMNS.join(",");
 const COLUMNS = new Set<string>([...LEGACY_EXPORT_COLUMNS, RECORD_COLUMN]);

@@ -7,6 +7,8 @@ import { en } from "../src/app/messages/en.js";
 import { createApp } from "../src/app/server.js";
 import type { InatClient } from "../src/app/auth.js";
 import { heldBackRecords, type HeldBack } from "../src/app/held-back.js";
+import { compareLegacyExport, dropComparisonTables } from "../src/compare-legacy-export.js";
+import { writeLegacyExport } from "../src/legacy-export.js";
 import { createKysely } from "../src/db.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
@@ -160,6 +162,32 @@ describe("the old records new Beeline held back", () => {
       expect((await app.request("/exports/held-back.csv")).status).toBe(403);
     } finally {
       signedIn = { personId: staff, login: "staff" };
+    }
+  });
+});
+
+describe("the comparison of the old records with the export (beeline-eznn)", () => {
+  // A second print the repair tied to a specimen is carried over, though
+  // promotion's blocking finding still stands on it: the comparison had been
+  // counting all 235 on the backup of 15 November 2026 as held back.
+  test("calls a record the repair tied to a specimen a second record, and only the rest held back", async () => {
+    const path = join(await mkdtemp(join(tmpdir(), "held-back-compare-")), "occurrences.csv");
+    await writeLegacyExport(conn, path);
+    await compareLegacyExport(conn, path);
+    try {
+      const rows = (await (await conn.run(`
+        SELECT d.field_number, d.kind, EXISTS (SELECT 1 FROM legacy_duplicate_record r JOIN legacy_occurrence o ON o._id = r._id
+                                               WHERE o."fieldNumber" = d.field_number) AS tied
+        FROM cmp_difference d WHERE d."column" = '(record)' AND d.legacy = 'present'`)).getRows()) as [string, string, boolean][];
+      const tied = rows.filter(([, , t]) => t);
+      expect(tied.length).toBeGreaterThan(0);
+      expect(tied.every(([, kind]) => kind === "tied_second_record")).toBe(true);
+      // Every other is one the page lists, or the field number of the bare
+      // records, which the comparison names once for each of the two.
+      const listed = new Set([...held.records.map((r) => r.fieldNumber), "25100000"]);
+      expect([...new Set(rows.filter(([, , t]) => !t).map(([n]) => n))].sort()).toEqual([...listed].sort());
+    } finally {
+      await dropComparisonTables(conn);
     }
   });
 });

@@ -31,6 +31,8 @@ type Reply = { ok: true; result: FetchEcdysisTaxonomyResult } | { ok: false; mes
 
 /** fetchEcdysisTaxonomy, run in a child process. Only `dir` and `signal` are used. */
 export function fetchEcdysisTaxonomyInChild(options: FetchEcdysisTaxonomyOptions = {}): Promise<FetchEcdysisTaxonomyResult> {
+  // A listener added after the abort would never hear it, and the child would fetch the lot.
+  if (options.signal?.aborted) return Promise.reject(new Error("the fetch of Ecdysis's taxonomy was cancelled"));
   return new Promise((resolve, reject) => {
     const child = fork(fileURLToPath(import.meta.url), [CHILD_FLAG, options.dir ?? ""], {
       execArgv: childExecArgv(),

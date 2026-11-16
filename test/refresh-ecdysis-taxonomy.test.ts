@@ -54,7 +54,7 @@ beforeEach(async () => {
 describe("the weekly refresh of Ecdysis's taxonomy", () => {
   test("loads a first fetch and reports nothing as moved", async () => {
     const result = await refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: fetchFixture("2026-10-24") });
-    expect(result).toMatchObject({ previousFetchedOn: null, moved: [], curationStale: 0, draftsNoLongerOffered: 0 });
+    expect(result).toMatchObject({ previousFetchedOn: null, moved: [], curationStale: 0, draftsNoLongerOffered: { active: 0, settled: 0 } });
     // 60 rows, of which 45 are at ranks the store admits.
     expect(result.load.taxa).toBe(45);
     expect(await rows(conn, "SELECT count(*) FROM ecdysis_adoptable WHERE name = 'Chrysis'")).toEqual([[1n]]);
@@ -78,9 +78,10 @@ describe("the weekly refresh of Ecdysis's taxonomy", () => {
     const result = await refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: later });
     expect(result.previousFetchedOn).toBe("2026-10-24");
     expect(result.moved).toEqual([{ rank: "genus", name: "Euodynerus", was: "accepted", now: "synonym of Bombus" }]);
-    expect(result.draftsNoLongerOffered).toBe(1);
+    // The sample insertCleanSample makes is in the current season.
+    expect(result.draftsNoLongerOffered).toEqual({ active: 1, settled: 0 });
     expect(describeRefresh(result)).toContain("Euodynerus (was accepted, now synonym of Bombus)");
-    expect(describeRefresh(result)).toContain("1 volunteer draft(s) name a taxon Ecdysis no longer offers");
+    expect(describeRefresh(result)).toContain("volunteer drafts naming a taxon Ecdysis no longer offers: 1 in the active seasons, 0 in settled ones");
   });
 
   test("refuses a fetch that shrank by more than a twentieth, and leaves the store as it was", async () => {
@@ -88,6 +89,22 @@ describe("the weekly refresh of Ecdysis's taxonomy", () => {
     // Synthetic: an export that lost most of its rows.
     const truncated = fetchFixture("2026-11-21", (csv) => csv.split("\n").slice(0, 20).join("\n") + "\n");
     await expect(refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: truncated })).rejects.toThrow(/fewer than 95%/);
+    expect(await rows(conn, "SELECT DISTINCT CAST(fetched_on AS TEXT) FROM ecdysis_taxon")).toEqual([["2026-10-24"]]);
+  });
+
+  test("counts the names the store keeps, so names gained at ranks it drops cannot hide a loss", async () => {
+    await refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: fetchFixture("2026-10-24") });
+    // Synthetic: three species gone (45 kept become 42, 93%), and ten tribes
+    // added, which the store does not keep: 67 rows against the first 60.
+    const tribes = Array.from({ length: 10 }, (_, i) => `${9100000 + i},Tribus${i},,160,86587,accepted,${9100000 + i}`).join("\n");
+    const lossHidden = fetchFixture("2026-11-21", (csv) =>
+      csv
+        .replace(/^236821,.*\n/m, "")
+        .replace(/^237038,.*\n/m, "")
+        .replace(/^245760,.*\n/m, "")
+        .concat(`${tribes}\n`),
+    );
+    await expect(refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: lossHidden })).rejects.toThrow(/keeps 42 names against the 45/);
     expect(await rows(conn, "SELECT DISTINCT CAST(fetched_on AS TEXT) FROM ecdysis_taxon")).toEqual([["2026-10-24"]]);
   });
 });

@@ -1,5 +1,6 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as wait } from "node:timers/promises";
 
 /**
  * Fetch the insects of Ecdysis's taxonomic thesaurus (beeline-7gob): the
@@ -75,11 +76,11 @@ export interface FetchEcdysisTaxonomyOptions {
   progress?: (message: string) => void;
   /** How long to wait before asking again after a failed export; 15 seconds, and 0 in tests. */
   retryDelayMs?: number;
-  /** How the fetch waits, for a retry or for a 429's Retry-After; replaced in tests. */
-  sleep?: (ms: number) => Promise<void>;
+  /** How the fetch waits, for a retry or for a 429's Retry-After; replaced in tests. Ends early, rejecting, when the signal aborts. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number, signal?: AbortSignal) => wait(ms, undefined, { signal });
 
 const within = (ms: number, signal?: AbortSignal) =>
   signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
@@ -243,7 +244,7 @@ async function exportBranch(
   tid: number,
   retryDelayMs: number,
   signal: AbortSignal | undefined,
-  sleep: (ms: number) => Promise<void>,
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>,
 ): Promise<string | null> {
   // Asked to slow down: wait as long as Ecdysis says and ask again, up to
   // three more times. The weekly job meets this when the fetch has been run
@@ -251,7 +252,7 @@ async function exportBranch(
   const ask = async () => {
     let answer = await askForExport(f, tid, signal);
     for (let tries = 0; typeof answer === "object" && tries < 3; tries++) {
-      await sleep(answer.waitMs);
+      await sleep(answer.waitMs, signal);
       answer = await askForExport(f, tid, signal);
     }
     if (typeof answer === "object") throw new Error(`Ecdysis kept answering 429 (too many requests) to the export of taxon ${tid}`);
@@ -259,7 +260,7 @@ async function exportBranch(
   };
   let answer = await ask();
   if (answer === "too large" || answer === "unavailable") {
-    await sleep(retryDelayMs);
+    await sleep(retryDelayMs, signal);
     answer = await ask();
   }
   if (answer === "unavailable") throw new Error(`Ecdysis was unavailable for the export of taxon ${tid}, twice`);

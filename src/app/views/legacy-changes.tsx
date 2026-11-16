@@ -40,8 +40,8 @@ export function LegacyChangesPage({ m, summary }: { m: Messages; summary: Change
     <>
       <PageHeader title={c.heading} lede={c.intro} />
       <Meta block>
-        {c.written(m.format.dateTime(new Date(summary.writtenAt)))}{" "}
-        {c.matched(summary.matched.active, summary.matched.settled, since)}
+        {c.written(m.format.dateTime(new Date(summary.writtenAt)), m.format.dateTime(new Date(summary.exportWrittenAt)))}{" "}
+        {c.matched(summary.matched.active, summary.matched.settled, since)} {c.duplicated(summary.duplicated)}
       </Meta>
       <h2>{c.contents}</h2>
       <DataTable columns={[c.colLine, c.colActive(since), c.colSettled]}>

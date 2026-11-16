@@ -21,11 +21,13 @@ import { legacyExportPath, writeLegacyExport } from "../src/legacy-export.js";
 import { scratchPaths } from "./helpers.js";
 import { promotedStore } from "./promoted-store.js";
 
-/** The line each (kind, column, outcome) goes to, by LINE_SQL itself. */
-async function linesOf(rows: [kind: string, column: string, outcome?: string][]): Promise<string[]> {
+/** The line each (kind, column, outcome, old Beeline's value) goes to, by LINE_SQL itself; the old value is not blank unless given. */
+async function linesOf(rows: [kind: string, column: string, outcome?: string, legacy?: string][]): Promise<string[]> {
   const conn = await (await openMemoryDuckDb()).connect();
   const reader = await conn.runAndReadAll(
-    `SELECT ${LINE_SQL} FROM (VALUES ${rows.map(([k, c, o], i) => `('${k}', '${c}', '${o ?? "expected"}', ${i})`).join(", ")}) t(kind, "column", outcome, i) ORDER BY i`,
+    `SELECT ${LINE_SQL} FROM (VALUES ${rows
+      .map(([k, c, o, l], i) => `('${k}', '${c}', '${o ?? "expected"}', '${l ?? "old"}', ${i})`)
+      .join(", ")}) t(kind, "column", outcome, legacy, i) ORDER BY i`,
   );
   conn.closeSync();
   return (reader.getRows() as [string][]).map(([l]) => l);
@@ -79,8 +81,13 @@ describe("the line each difference is on", () => {
     ),
   ];
 
-  test("puts every kind found on production on a line that describes it", async () => {
-    const rows = production.flatMap(([kind, columns]) => columns.map((c): [string, string] => [kind, c]));
+  test("puts every kind found on production on a line that describes it, whether old Beeline's value was blank or not", async () => {
+    const rows = production.flatMap(([kind, columns]) =>
+      columns.flatMap((c): [string, string, string, string][] => [
+        [kind, c, "expected", ""],
+        [kind, c, "expected", "old"],
+      ]),
+    );
     const lines = await linesOf(rows);
     const other = rows.filter((_, i) => lines[i] === "other");
     expect(other).toEqual([]);
@@ -99,6 +106,7 @@ describe("the line each difference is on", () => {
       await linesOf([
         ["newer_determination", "sex"],
         ["newer_determination", "genus"],
+        ["newer_determination", "genus", "expected", ""],
         ["changed", "userId"],
         ["changed", "firstName"],
         ["changed", "firstNameInitial"],
@@ -106,7 +114,7 @@ describe("the line each difference is on", () => {
         ["filled", "specificEpithet"],
         ["filled", "phylum"],
       ]),
-    ).toEqual(["newer_expert_sex", "newer_expert", "account", "collector_contradicted", "initials", "contradicted_name", "epithet_column", "classification"]);
+    ).toEqual(["newer_expert_sex", "expert_differs", "expert_added", "account", "collector_contradicted", "initials", "contradicted_name", "epithet_column", "classification"]);
   });
 
   test("puts a difference no ruling explains on a line of its own, whatever its kind", async () => {
@@ -121,7 +129,8 @@ describe("the line each difference is on", () => {
         if (a.line === b.line) continue;
         const kinds = a.kinds.filter((k) => b.kinds.includes(k));
         const columnsMeet = a.columns === undefined || b.columns === undefined || a.columns.some((c) => b.columns!.includes(c));
-        if (kinds.length > 0 && columnsMeet) clashes.push(`${a.line} and ${b.line}: ${kinds.join(", ")}`);
+        const oldMeets = a.old === undefined || b.old === undefined || a.old === b.old;
+        if (kinds.length > 0 && columnsMeet && oldMeets) clashes.push(`${a.line} and ${b.line}: ${kinds.join(", ")}`);
       }
     }
     expect(clashes).toEqual([]);
@@ -192,9 +201,9 @@ describe("writing the changes", () => {
     const bytes = await readFile(join(dir, sex.file));
     expect(bytes.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
     const [header, ...rows] = bytes.subarray(3).toString("utf8").trim().split("\n");
-    expect(header).toBe("field_number,season,column,old_beeline,new_beeline,what_new_beeline_did,outcome,why");
+    expect(header).toBe("field_number,season,column,old_beeline,new_beeline,what_new_beeline_did,outcome");
     expect(rows).toHaveLength(sex.values);
-    expect(rows[0]).toContain("25000005,settled,sex,male,female,Sex or caste from a newer expert identification,Not a fault in either,");
+    expect(rows[0]).toBe("25000005,settled,sex,male,female,Sex or caste from a newer expert identification,Not a fault in either");
     expect(sex.bytes).toBe((await stat(join(dir, sex.file))).size);
     expect(await readChangesSummary(exportsDir)).toEqual(summary);
     // The older night's folder, which no summary named, is gone; the folder it did not write is not.

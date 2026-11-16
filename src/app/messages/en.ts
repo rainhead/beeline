@@ -2136,7 +2136,13 @@ export const en = {
       "Every value in new Beeline's occurrences file that differs from the old Beeline's record of the same field number, as the old Beeline held it at cutover, sorted by what new Beeline did. Each line says what was done, how many records it touched, whether the old value was wrong or only written another way, and a few records to look at. Each line's download lists every value it changed.",
     linkFromExports: "What new Beeline changed in the old Beeline's records",
     missing: "Not worked out yet. It appears after the next nightly run, or after running the legacy-changes job on Jobs.",
-    written: (when: string) => `Worked out ${when}, from the occurrences file of that night.`,
+    written: (when: string, file: string) => `Worked out ${when}, from the occurrences file written ${file}.`,
+    duplicated: (count: number) =>
+      count === 0
+        ? ""
+        : count === 1
+          ? "One field number that old or new Beeline holds more than once is left out, since it names more than one record."
+          : `${n(count)} field numbers that old or new Beeline holds more than once are left out, since each names more than one record.`,
     matched: (active: number, settled: number, since: string) =>
       `${n(active + settled)} records matched by field number: ${n(active)} from the active seasons (${since} on) and ${n(settled)} from the settled ones.`,
     contents: "Contents",

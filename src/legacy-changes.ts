@@ -60,9 +60,14 @@ export const CATEGORIES = [
     intro: "Where the identification of a specimen is not old Beeline's, and why.",
   },
   {
+    id: "staff",
+    title: "Corrected by staff",
+    intro: "Corrections staff made to old Beeline's records by hand, the other list of corrections already in new Beeline.",
+  },
+  {
     id: "gaps",
     title: "What new Beeline cannot hold yet",
-    intro: "What old Beeline said that new Beeline does not say, because it has nowhere to keep it yet or a newer identification left it out. These are the ones for taxonomists to look at.",
+    intro: "What old Beeline said that new Beeline does not say, because it has nowhere to keep it yet or a newer identification left it out.",
   },
   {
     id: "names",
@@ -81,8 +86,8 @@ export const CATEGORIES = [
   },
   {
     id: "places",
-    title: "Places and dates",
-    intro: "Where and when the specimen was collected.",
+    title: "Places, dates and other forms",
+    intro: "Where and when the specimen was collected, and values that are the same written another way.",
   },
   {
     id: "unsorted",
@@ -99,8 +104,12 @@ export interface ChangeLine {
   title: string;
   /** What it did and why, in a sentence or three. */
   did: string;
-  /** What the line takes: each a set of the comparison's kinds, in these columns only, or every column where none are named. */
-  match: readonly { kinds: readonly string[]; columns?: readonly string[] }[];
+  /**
+   * What the line takes: each a set of the comparison's kinds, in these
+   * columns only, or every column where none are named; and only where old
+   * Beeline's value was blank, or only where it was not, where `old` says so.
+   */
+  match: readonly { kinds: readonly string[]; columns?: readonly string[]; old?: "blank" | "given" }[];
 }
 
 /**
@@ -109,11 +118,18 @@ export interface ChangeLine {
  */
 export const LINES: readonly ChangeLine[] = [
   {
-    id: "newer_expert",
+    id: "expert_differs",
     category: "identifications",
-    title: "An expert identification old Beeline never received",
-    did: "The specimen's newest expert identification was made after old Beeline stopped receiving them, in Ecdysis or in new Beeline, where old Beeline had none or an earlier one. The name, its rank and family, and who determined it are that identification's.",
-    match: [{ kinds: ["newer_determination"], columns: IDENTIFICATION }],
+    title: "An expert identification that differs from old Beeline's",
+    did: "Old Beeline named the bee, and new Beeline names it otherwise, from an expert identification in Ecdysis or made in new Beeline. New Beeline shows the identification it received last, which is not always the one made last: where a taxonomist corrected a name in old Beeline after the earlier name reached Ecdysis, the earlier name is the one new Beeline shows. These are the records to check against a list of corrections.",
+    match: [{ kinds: ["newer_determination"], columns: IDENTIFICATION, old: "given" }],
+  },
+  {
+    id: "expert_added",
+    category: "identifications",
+    title: "An expert identification where old Beeline had none",
+    did: "Old Beeline left the name blank, and new Beeline gives one from an expert identification in Ecdysis or made in new Beeline: the name, its rank and family, and who determined it.",
+    match: [{ kinds: ["newer_determination"], columns: IDENTIFICATION, old: "blank" }],
   },
   {
     id: "newer_expert_sex",
@@ -126,7 +142,7 @@ export const LINES: readonly ChangeLine[] = [
     id: "default_sex",
     category: "identifications",
     title: "Old Beeline's default sex left off unidentified specimens",
-    did: "From 2023 old Beeline wrote male on every new record until somebody identified the specimen: it was the entry form's default, not anybody's reading of the bee. New Beeline gives a sex only where an expert identified the specimen, so these records, which no expert has identified, give none. A few of them said female rather than male; they give none either, for the same reason.",
+    did: "From 2023 old Beeline wrote male on every new record until somebody identified the specimen: it was the entry form's default, not anybody's reading of the bee. New Beeline gives a sex only where an expert identification states one. These records had no identification in old Beeline, and no expert identification since has stated a sex, so they give none. A few of them said female rather than male; they give none either, for the same reason.",
     match: [{ kinds: ["unidentified_sex_dropped"] }],
   },
   {
@@ -203,7 +219,7 @@ export const LINES: readonly ChangeLine[] = [
     id: "sex_caste_words",
     category: "names",
     title: "Sex and caste in one set of words",
-    did: "Male is written male, a caste written in the sex column gives the sex too (a worker is female), and old Beeline's Queen is written gyne.",
+    did: "Male is written male, a caste written in the sex column gives the sex too (a worker is female), and old Beeline's Queen is written gyne. A word that is neither a sex nor a caste is left out.",
     match: [{ kinds: ["sex_caste_vocabulary"] }],
   },
   {
@@ -313,9 +329,9 @@ export const LINES: readonly ChangeLine[] = [
   },
   {
     id: "staff_corrected",
-    category: "places",
+    category: "staff",
     title: "Corrected by staff",
-    did: "A correction staff made to the old record, in new Beeline or by hand before cutover: mostly trap samples whose method and end date were put right, and a few counties and localities.",
+    did: "A correction staff made to the old record, in new Beeline or in a file of corrections before cutover, which can be to any of its collector, numbers, dates, place or method. On 15 November 2026 they were trap samples whose method and end date were put right, and a few counties and localities.",
     match: [{ kinds: ["staff_correction"] }],
   },
   {
@@ -390,7 +406,11 @@ export const LINE_SQL = `CASE
   ${LINES.flatMap((l) =>
     l.match
       .filter((m) => m.kinds.length > 0)
-      .map((m) => `WHEN kind IN (${list(m.kinds)})${m.columns ? ` AND "column" IN (${list(m.columns)})` : ""} THEN '${l.id}'`),
+      .map(
+        (m) =>
+          `WHEN kind IN (${list(m.kinds)})${m.columns ? ` AND "column" IN (${list(m.columns)})` : ""}` +
+          `${m.old === "blank" ? " AND legacy = ''" : m.old === "given" ? " AND legacy <> ''" : ""} THEN '${l.id}'`,
+      ),
   ).join("\n  ")}
   ELSE 'other'
 END`;
@@ -431,6 +451,10 @@ export interface ChangesSummary {
   activeSince: string;
   reference: { rows: number; fingerprint: string };
   matched: { active: number; settled: number };
+  /** Field numbers both sides hold, one of them more than once, which the comparison cannot pair and so leaves off every line. */
+  duplicated: number;
+  /** When the export compared was written: tonight's, unless the export failed and an older file was read. */
+  exportWrittenAt: string;
   /**
    * The folder under the summary's own that holds this night's CSVs. Each
    * night writes a new one and the summary names it, so the counts on the
@@ -484,6 +508,18 @@ export async function writeChanges(
   await conn.run("SET threads = 1");
   try {
     const comparison = await compareLegacyExport(conn, exportPath, rulings);
+    // A field number held more than once on one side and present on the
+    // other names no pair the comparison can make, so none of its differences
+    // is on any line. One held twice on one side only is a record that side
+    // alone holds, which a line already counts (the empty records not carried
+    // over, say), so the comparison's own `duplicated` overstates the gap.
+    const [[unmatched]] = (await (await conn.run(`
+      SELECT count(*) FROM (
+        SELECT "fieldNumber" AS n FROM cmp_export GROUP BY 1 HAVING count(*) > 1
+        UNION
+        SELECT "fieldNumber" FROM legacy_occurrence WHERE nullif("fieldNumber", '') IS NOT NULL GROUP BY 1 HAVING count(*) > 1) x
+      WHERE EXISTS (SELECT 1 FROM cmp_export e WHERE e."fieldNumber" = x.n)
+        AND EXISTS (SELECT 1 FROM legacy_occurrence l WHERE l."fieldNumber" = x.n)`)).getRows()) as [[bigint]];
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE chg_line AS
       SELECT k.*, ${LINE_SQL} AS line FROM cmp_kinded k`);
@@ -491,10 +527,6 @@ export async function writeChanges(
     await conn.run(`INSERT INTO chg_meta VALUES ${LINES.map((l) => `(${sqlString(l.id)}, ${sqlString(l.category)}, ${sqlString(l.title)})`).join(", ")}`);
     await conn.run(`CREATE OR REPLACE TEMP TABLE chg_outcome (outcome TEXT, words TEXT)`);
     await conn.run(`INSERT INTO chg_outcome VALUES ${Object.entries(OUTCOME_WORDS).map(([o, w]) => `(${sqlString(o)}, ${sqlString(w)})`).join(", ")}`);
-    await conn.run(`CREATE OR REPLACE TEMP TABLE chg_reason (ruling_id INTEGER, reason TEXT)`);
-    if (rulings.length > 0) {
-      await conn.run(`INSERT INTO chg_reason VALUES ${rulings.map((r, i) => `(${i}, ${sqlString(r.reason)})`).join(", ")}`);
-    }
 
     const counts = new Map(
       ((await (await conn.run(`
@@ -575,6 +607,8 @@ export async function writeChanges(
       activeSince,
       reference: comparison.reference,
       matched: comparison.matched,
+      duplicated: Number(unmatched),
+      exportWrittenAt: (await stat(exportPath)).mtime.toISOString(),
       generation,
       lines,
     };
@@ -602,8 +636,9 @@ export async function writeChanges(
 
 /**
  * Every difference on one line, one row each: the record, its season, the
- * column, old Beeline's value and new Beeline's, what new Beeline did, the
- * outcome, and the ruling's own reason. With a byte order mark, so a
+ * column, old Beeline's value and new Beeline's, what new Beeline did and the
+ * outcome. Not the ruling's own reason, which is written for whoever keeps
+ * the comparison (file names, issue numbers). With a byte order mark, so a
  * spreadsheet reads the names in it as UTF-8; replaced only once complete.
  */
 async function writeLineCsv(conn: DuckDBConnection, line: string, path: string): Promise<void> {
@@ -614,11 +649,10 @@ async function writeLineCsv(conn: DuckDBConnection, line: string, path: string):
       COPY (
         SELECT c.field_number, CASE WHEN c.active_season THEN 'active' ELSE 'settled' END AS season,
                c."column", c.legacy AS old_beeline, c.exported AS new_beeline,
-               m.title AS what_new_beeline_did, coalesce(o.words, c.outcome) AS outcome, coalesce(r.reason, '') AS why
+               m.title AS what_new_beeline_did, coalesce(o.words, c.outcome) AS outcome
         FROM chg_line c
         JOIN chg_meta m ON m.line = c.line
         LEFT JOIN chg_outcome o ON o.outcome = c.outcome
-        LEFT JOIN chg_reason r ON r.ruling_id = c.ruling_id
         WHERE c.line = ${sqlString(line)}
         ORDER BY c.field_number, c."column"
       ) TO ${sqlString(body)} (HEADER, DELIMITER ',', QUOTE '"', ESCAPE '"')`);

@@ -840,10 +840,26 @@ export function buildJobs(
       },
     },
     {
+      // One Darwin Core archive per calendar year for each atlas and for
+      // Master Melittology, for staff to review; none for the BLM surveys,
+      // whose samples are not theirs by geography (beeline-rvun). After the
+      // legacy export, so it reads the same store; on Exports.
+      name: "dwc-archives",
+      schedule: { kind: "dailyLA", hour: 4 },
+      window: "night",
+      async run(ctx) {
+        const manifest = await writeProgramArchives(ctx.db, config.exportsDir ?? deploymentPath("data/exports"), { step: ctx.step });
+        return describeManifest(manifest);
+      },
+    },
+    {
       // What new Beeline did to the old Beeline's records, sorted into lines a
       // taxonomist can read, for /exports/changes (beeline-eznn). After the
-      // export, whose file it compares with the staged old records; on one
-      // thread, as the export is, for the memory of the comparison.
+      // export, whose file it compares with the staged old records, and last,
+      // so a slow night pushes nothing else out of the night window; on one
+      // thread, as the export is, for the memory of the comparison. The page
+      // says when the file it compared was written, so a night whose export
+      // failed shows that it read the night before's.
       name: "legacy-changes",
       schedule: { kind: "dailyLA", hour: 4 },
       window: "night",
@@ -860,19 +876,6 @@ export function buildJobs(
           writeChanges(ctx.conn, path, rulings, changesDir(dir)),
         );
         return describeChanges(summary);
-      },
-    },
-    {
-      // One Darwin Core archive per calendar year for each atlas and for
-      // Master Melittology, for staff to review; none for the BLM surveys,
-      // whose samples are not theirs by geography (beeline-rvun). After the
-      // legacy export, so it reads the same store; on Exports.
-      name: "dwc-archives",
-      schedule: { kind: "dailyLA", hour: 4 },
-      window: "night",
-      async run(ctx) {
-        const manifest = await writeProgramArchives(ctx.db, config.exportsDir ?? deploymentPath("data/exports"), { step: ctx.step });
-        return describeManifest(manifest);
       },
     },
   ];

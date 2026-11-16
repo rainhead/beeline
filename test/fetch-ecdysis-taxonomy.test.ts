@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fetchEcdysisTaxonomy, parsePhpCsv, readExport } from "../src/fetch-ecdysis-taxonomy.js";
+import { fetchEcdysisTaxonomy, parsePhpCsv, readExport, retryAfterMs } from "../src/fetch-ecdysis-taxonomy.js";
 
 /**
  * Fetching Ecdysis's thesaurus (beeline-7gob).
@@ -154,6 +154,17 @@ describe("fetching the insects", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("Retry-After is read as seconds or as a date, capped at ten minutes, and a minute when it says neither", () => {
+    const now = Date.parse("2026-11-16T20:00:00Z");
+    expect(retryAfterMs("30", now)).toBe(30_000);
+    expect(retryAfterMs("Mon, 16 Nov 2026 20:05:00 GMT", now)).toBe(300_000);
+    expect(retryAfterMs("Mon, 16 Nov 2026 21:00:00 GMT", now)).toBe(600_000);
+    expect(retryAfterMs("3600", now)).toBe(600_000);
+    expect(retryAfterMs(null, now)).toBe(60_000);
+    expect(retryAfterMs("soon", now)).toBe(60_000);
+    expect(retryAfterMs("Mon, 16 Nov 2026 19:00:00 GMT", now)).toBe(60_000);
   });
 
   test("a gateway that fails twice fails the fetch, naming the taxon", async () => {

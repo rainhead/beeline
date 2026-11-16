@@ -193,10 +193,14 @@ interface RateLimited {
   waitMs: number;
 }
 
-/** How long a 429 asks for: its Retry-After in seconds, a minute without one, and never more than ten. */
-function retryAfterMs(res: Response): number {
-  const seconds = Number(res.headers.get("retry-after"));
-  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 600) * 1000 : 60_000;
+/**
+ * How long a 429 asks for: its Retry-After, which HTTP allows as seconds or
+ * as a date, a minute without one, and never more than ten.
+ */
+export function retryAfterMs(header: string | null, now: number = Date.now()): number {
+  const value = header?.trim() ?? "";
+  const seconds = /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - now;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 600_000) : 60_000;
 }
 
 /**
@@ -227,7 +231,7 @@ async function askForExport(f: typeof fetch, tid: number, signal?: AbortSignal):
   }
   if (res.status === 500) return "too large";
   if ([502, 503, 504].includes(res.status)) return "unavailable";
-  if (res.status === 429) return { waitMs: retryAfterMs(res) };
+  if (res.status === 429) return { waitMs: retryAfterMs(res.headers.get("retry-after")) };
   if (!res.ok) throw new Error(`Ecdysis answered ${res.status} to the export of taxon ${tid}`);
   const text = await res.text();
   return text.replace(/^\uFEFF/, "").trim() === "" ? "too large" : text;

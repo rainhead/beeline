@@ -106,7 +106,7 @@ describe("a promoted sample's host", () => {
     expect(await hostOf("116")).toEqual(["Holodiscus discolor", "species"]);
   });
 
-  test("leaves the copy of the taxon each host name comes to as fresh as its definition, being its one writer of a name with no id", async () => {
+  test("refreshes the copy of the taxon each host name comes to, being its one writer of a name with no id", async () => {
     expect(await rows(conn, "SELECT host_name, inat_taxon_id FROM host_name_taxon_cache")).toEqual([["Solidago canadensis", 999001n]]);
     expect(await rows(conn, "SELECT count(*) FROM host_name_taxon_stale")).toEqual([[0n]]);
   });

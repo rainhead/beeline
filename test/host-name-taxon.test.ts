@@ -158,6 +158,85 @@ describe("a sample's host read by its name", () => {
     expect(await rows(conn, "SELECT count(*) FROM sample_host_unresolved")).toEqual([[0n]]);
   });
 
+  test("every sample with a host name and no id is read through a current vascular plant or listed, whatever its case", async () => {
+    // One sample for each way a name can come out. Taxa 1 (Alpha lanata) and 2 (Beta) are current vascular
+    // plants (store()); the rest are added here, synthetic.
+    const { conn, sample } = await store();
+    const taxon = async (id: number, name: string, active: boolean, ancestors: number[]) => {
+      await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES (${id}, '${name}', 'species', 10, ${active})`);
+      for (const [d, a] of ancestors.entries()) await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${a}, ${d})`);
+    };
+    const lookup = async (key: string, id: number, name: string, matched = name) => {
+      await conn.run(`INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('${key}', 'species', 1, true)`);
+      await conn.run(`INSERT INTO plant_name_lookup_hit VALUES ('${key}', 'species', ${id}, '${name}', 'species', true, '${matched}')`);
+    };
+    await taxon(3, "Gamma retired", false, [3, 211194]); // retired, nothing after it
+    await taxon(4, "Delta bare", true, []); // the cache holds no lineage for it
+    await lookup("gamma retired", 3, "Gamma retired");
+    await lookup("delta bare", 4, "Delta bare");
+    await lookup("epsilon unread", 9, "Epsilon unread"); // a taxon the cache has not read
+    await lookup("zeta common", 1, "Alpha lanata", "Zeta common"); // matched only through matched_term
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('eta none', 'species', 0, true)");
+    const cases = {
+      read: await sample("1", "NULL", "'Alpha lanata'"),
+      retired: await sample("2", "NULL", "'Gamma retired'"),
+      noLineage: await sample("3", "NULL", "'Delta bare'"),
+      unread: await sample("4", "NULL", "'Epsilon unread'"),
+      otherName: await sample("5", "NULL", "'Zeta common'"),
+      noMatch: await sample("6", "NULL", "'Eta none'"),
+      notAsked: await sample("7", "NULL", "'Theta'"),
+      noName: await sample("8", "NULL", "' × '"),
+    };
+    await refreshPlantCommonNames(conn);
+    const listed = new Map(
+      ((await rows(conn, "SELECT sample_id, read, outcome FROM sample_host_unresolved")) as Array<[number, boolean, string]>).map(([id, ...r]) => [id, r]),
+    );
+    expect(Object.fromEntries(Object.entries(cases).map(([k, id]) => [k, listed.get(id) ?? "not listed"]))).toEqual({
+      read: "not listed",
+      // The page says "no longer used" under the volunteer's name: read through nothing current, and listed.
+      retired: [false, "taxon no longer current"],
+      // Read, but nothing says it is a vascular plant, so it is listed for whoever must fail closed.
+      noLineage: [true, "lineage not read"],
+      unread: [false, "taxon not read yet"],
+      otherName: [false, "matched by another name"],
+      noMatch: [false, "no match"],
+      notAsked: [false, "not looked up"],
+      noName: [false, "no name"],
+    });
+    // The guarantee, over all of them: read through a current vascular plant, or listed.
+    expect(
+      await rows(
+        conn,
+        `SELECT s.entity_id FROM sample s
+         WHERE s.host_inat_taxon_id IS NULL AND s.host_name_as_observed IS NOT NULL
+           AND s.entity_id NOT IN (SELECT sample_id FROM sample_host WHERE current_taxon_id IS NOT NULL AND is_vascular)
+           AND s.entity_id NOT IN (SELECT sample_id FROM sample_host_unresolved)`,
+      ),
+    ).toEqual([]);
+  });
+
+  test("a reading left by a failed refresh after the name stopped matching shows as read, under the lookup's new outcome", async () => {
+    const { conn, sample } = await store();
+    const s = await sample("1", "NULL", "'Alpha lanata'");
+    await refreshPlantCommonNames(conn);
+    // Asked again, iNaturalist no longer has a taxon of the name; the refresh that should follow has not run.
+    await conn.run("DELETE FROM plant_name_lookup_hit WHERE name_key = 'alpha lanata'");
+    expect(await rows(conn, "SELECT sample_id, read, outcome FROM sample_host_unresolved")).toEqual([[s, true, "no match"]]);
+  });
+
+  test("names the taxa the lookup's other hits stand for today, which a person weighs", async () => {
+    // Beta's active genus wins; a retired Beta replaced by taxon 1 (Alpha lanata) is the other plant the name meant.
+    const { conn, sample } = await store();
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('beta', 'genus', 2, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('beta', 'genus', 2, 'Beta', 'genus', true, 'Beta'), ('beta', 'genus', 8, 'Beta', 'genus', false, 'Beta')");
+    await conn.run("INSERT INTO plant_name_lookup_hit_replacement VALUES ('beta', 'genus', 8, 1)");
+    await sample("1", "NULL", "'Beta'");
+    await refreshPlantCommonNames(conn);
+    expect(await rows(conn, "SELECT read, outcome, candidate_taxon_id, other_taxa FROM sample_host_unresolved")).toEqual([
+      [true, "other taxa had this name", 2n, "Alpha lanata"],
+    ]);
+  });
+
   test("a name whose taxon is a plant but not a vascular one is read, and listed for a person", async () => {
     // Synthetic: no host name on production resolves to a moss (2026-11-15), but the lookups search all plants.
     const { conn, sample } = await store();

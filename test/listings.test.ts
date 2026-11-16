@@ -789,8 +789,8 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
 
   it("reads a host with a name and no id through the taxon its name comes to, everywhere but hostInatTaxonId (beeline-rfkj.5)", async () => {
     const { app, conn } = await hostApp();
-    // C-1's host is a name and no id; the lookup found the taxon of that name. The hybrid sign and the
-    // case differ from iNaturalist's spelling, as old Beeline's do.
+    // C-1's host is a name and no id; the lookup found the taxon of that name. The spacing and the case
+    // differ from iNaturalist's spelling, as old Beeline's do (the record page's test covers a hybrid sign).
     await conn.run(`UPDATE sample SET host_name_as_observed = 'alpha  LANATA' WHERE sample_number = 'C-1'`);
     await lookedUp(conn, "alpha lanata", [{ id: 1, name: "Alpha lanata", matched: "Alpha lanata" }]);
     const body = await get(app, "/samples?scope=all");

@@ -679,7 +679,7 @@ describe("descriptive fields are a fill-only refresh", () => {
 
   test("a host read by its name that its observation then gives an id is read by the id, once (beeline-rfkj.5)", async () => {
     for (const id of [47604, 54321]) {
-      await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES (${id}, '${id === 47604 ? "Rubus" : "Rubus ursinus"}', 'genus', 20, true)`);
+      await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES (${id}, '${id === 47604 ? "Rubus" : "Rubus ursinus"}', '${id === 47604 ? "genus" : "species"}', ${id === 47604 ? 20 : 10}, true)`);
       await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${id}, 0)`);
     }
     await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('rubus', 'genus', 1, true)");

@@ -439,14 +439,29 @@ export interface HostNameTaxonStaleView {
   host_name: string;
 }
 
-/** schema/116: samples with a host name and no id that are not read through a taxon, or should be looked at, and why. */
+/** schema/116: samples with a host name and no id that a page does not read through a current vascular plant, or should be looked at, and why. */
 export interface SampleHostUnresolvedView {
   sample_id: BigIntCol;
   host_name: string;
   name_key: string | null;
   expected_rank: string | null;
-  outcome: PlantNameOutcome | "matched by another name" | "not copied yet" | "taxon not read yet" | "not a vascular plant" | "other taxa had this name" | "no name";
+  /** A page reads the host through a taxon that has a current taxon. */
+  read: boolean;
+  /** Null only for a sample not read for a reason no rule names. */
+  outcome:
+    | PlantNameOutcome
+    | "no name"
+    | "matched by another name"
+    | "not copied yet"
+    | "taxon not read yet"
+    | "taxon no longer current"
+    | "lineage not read"
+    | "not a vascular plant"
+    | "other taxa had this name"
+    | null;
   candidate_taxon_id: BigIntCol | null;
+  /** The taxa the lookup's other exact hits stand for today, separated by '; '. */
+  other_taxa: string | null;
   season: number;
   settled: boolean;
 }

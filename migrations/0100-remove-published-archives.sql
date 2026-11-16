@@ -13,10 +13,15 @@
 --
 -- This deletes determinations, which schema/040 calls append-only. They are
 -- deleted and not answered with newer events because they were never a
--- person's statement to Beeline: a load made them the same day, no nightly job
--- or export had read them, and the decision is that the load should not have
--- been made. The entity ids they held are not reused (entity_id_seq only
--- moves forward).
+-- person's statement to Beeline: a load made them the same day, and the
+-- decision is that the load should not have been made. Between the load and
+-- the deploy that runs this, specimen pages, the listings and the API showed
+-- these names, so somebody may have seen one; after it the store keeps no
+-- trace of them, and this file and beeline-wjwa are the record. The night
+-- jobs (backup at 3am Pacific, exports at 4am) had not run on the loaded
+-- store when this was written; a deploy after they have must run the export
+-- jobs again, since their files would carry the names. The entity ids the
+-- determinations held are not reused (entity_id_seq only moves forward).
 --
 -- The provenance table goes before the determinations it points at, since its
 -- foreign key would refuse the delete; the ids are kept aside first.

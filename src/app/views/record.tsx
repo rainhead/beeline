@@ -1174,6 +1174,8 @@ export function PublishedNotes({ m, notes }: { m: Messages; notes: readonly Arch
               )}
             </>
           )}
+          {/* Only where the name stops at the genus: under a species the subgenus says nothing more. */}
+          {!n.agrees && n.subgenus !== null && n.rank !== "species" && p.subgenus(n.subgenus)}
           {p.detail(n.sex, n.identified_by, n.date_identified)}
           <Meta block>{n.agrees ? p.sameNote(n.version) : p.differsNote(n.version)}</Meta>
         </div>

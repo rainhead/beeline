@@ -1494,6 +1494,8 @@ export const en = {
         differs: (publisher: string) => `${publisher} publishes this specimen as`,
         same: (publisher: string) => `${publisher} publishes this specimen under the same name`,
         noName: "a name that could not be read",
+        /** After a name that stops at the genus, where the record also states a subgenus. */
+        subgenus: (name: string) => `, subgenus ${name}`,
         /** After the name: the sex, who identified it and the year, whichever were published. */
         detail: (sex: string | null, by: string | null, year: string | null) =>
           `${sex === null ? "" : ` (${sex})`}${by === null && year === null ? "" : `, identified${by === null ? "" : ` by ${by}`}${year === null ? "" : ` in ${year}`}`}.`,

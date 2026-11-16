@@ -165,6 +165,13 @@ export interface ArchiveLoadResult {
   held: Record<HeldReason, number>;
   adopted: AdoptedName[];
   createdPeople: string[];
+  /**
+   * Specimens whose determination of record an earlier load recorded from
+   * this dataset, which no record of it now names readably: the record was
+   * withdrawn, or is now held. Their pages still show the earlier name as
+   * the publisher's and say nothing newer, so these are for a person.
+   */
+  unsupported: string[];
   heldPath: string;
 }
 
@@ -356,9 +363,18 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
              -- make, so a subgenus is not recorded as its genus.
              regexp_full_match(coalesce(genus, ''), '[A-Z][a-z]+')
                AND (species_epithet IS NULL OR regexp_full_match(species_epithet, '[a-z]+(-[a-z]+)?'))
+               -- A genus's author is never in brackets, so a bracket after a
+               -- lone genus is a subgenus; and nothing follows "sp.".
                AND regexp_full_match(coalesce(scientific_name, ''),
-                     CASE WHEN specific_epithet IS NULL THEN '[A-Z][a-z]+( [(A-Z][^?]*)?'
-                          ELSE '[A-Z][a-z]+ [a-z]+(-[a-z]+)?\\.?( [(A-Z][^?]*)?' END)
+                     CASE WHEN specific_epithet IS NULL THEN '[A-Z][a-z]+( [A-Z][^?(]*)?'
+                          WHEN species_epithet IS NULL THEN '[A-Z][a-z]+ spp?\\.?'
+                          ELSE '[A-Z][a-z]+ [a-z]+(-[a-z]+)?( [(A-Z][^?]*)?' END)
+               -- OSAC states the subgenus in a column of its own. On a record
+               -- with no epithet that is an identification to subgenus
+               -- (Lasioglossum, subgenus Dialictus: 818 records), which the
+               -- tree cannot hold and the genus alone does not say. Under a
+               -- species it is only where the species is filed.
+               AND NOT (species_epithet IS NULL AND subgenus IS NOT NULL)
                AND NOT regexp_matches(coalesce(scientific_name, ''), '(^|\\s)(cf|aff|nr)\\.?(\\s|$)')
                AND (taxon_rank IS NULL
                     OR lower(taxon_rank) = CASE WHEN species_epithet IS NULL THEN 'genus' ELSE 'species' END) AS name_readable,
@@ -398,7 +414,8 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
                             -- member of the household: John Smith does not
                             -- confirm a number on Jane Smith's specimen, and
                             -- Bob for Robert is held for a person.
-                            OR (${FOLD("pe.family_name")} = ${FOLD("regexp_extract(trim(part.collector), '([^ ]+)$', 1)")}
+                            OR (${FOLD("pe.family_name")} <> ''
+                                AND ${FOLD("pe.family_name")} = ${FOLD("regexp_extract(trim(part.collector), '([^ ]+)$', 1)")}
                                 AND (nullif(trim(pe.given_name), '') IS NULL
                                      OR NOT contains(trim(part.collector), ' ')
                                      OR CASE WHEN length(${FOLD("split_part(trim(pe.given_name), ' ', 1)")}) > 1
@@ -508,6 +525,8 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
         WHEN 'specimen_changed' THEN 'an earlier load recorded this record on another specimen'
         WHEN 'number_unconfirmed' THEN 'the record gives no collector or no day collected'
         WHEN 'sex_unreadable' THEN sex
+        WHEN 'name_unreadable' THEN CASE WHEN species_epithet IS NULL AND subgenus IS NOT NULL
+               THEN concat('identified to the subgenus ', subgenus, ', which the tree does not hold') END
         WHEN 'determiner_unknown' THEN coalesce(identified_by, 'the record names nobody')
         ELSE detail END
       WHERE outcome IS NOT NULL`);
@@ -622,6 +641,14 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
       held,
       adopted,
       createdPeople: toCreate,
+      unsupported: (
+        await all(
+          conn,
+          `SELECT sp.field_number FROM ar_recorded x JOIN specimen sp ON sp.entity_id = x.specimen_id
+           WHERE NOT EXISTS (SELECT 1 FROM ar_candidate c WHERE c.specimen_id = x.specimen_id AND c.outcome IS NULL)
+           ORDER BY 1`,
+        )
+      ).map((r) => String(r[0])),
       heldPath,
     };
     // Written before the commit, so a report that cannot be written fails

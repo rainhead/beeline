@@ -165,7 +165,7 @@ COMMENT ON VIEW archive_statement_current IS 'The newest statement of each recor
 -- the page shows it (Peter, 2026-11-15: every difference is visible).
 CREATE VIEW archive_note AS
 SELECT r.specimen_id, d.dataset_key, d.publisher, c.occurrence_id, c.version, c.catalog_number,
-       c.scientific_name, c.identified_by, c.date_identified, c.sex,
+       c.scientific_name, c.subgenus, c.identified_by, c.date_identified, c.sex,
        r.animal_id, r.held,
        coalesce(ad.determination_id IS NOT NULL AND r.held IS NULL
                 AND rec.animal_id = r.animal_id AND rec.qualifier IS NULL

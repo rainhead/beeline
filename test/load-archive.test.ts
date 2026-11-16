@@ -207,7 +207,7 @@ describe("a specimen an expert has already named in Beeline", () => {
 
     expect(await archiveNotes(db, await specimenId("26000001"))).toEqual([
       { publisher: "OSAC", version: "1.9", scientific_name: "Lasioglossum sisymbrii (Cockerell, 1895)", rank: "species",
-        name: "Lasioglossum sisymbrii", identified_by: "Lincoln R. Best", date_identified: String(CURRENT_SEASON), sex: "female", agrees: true },
+        subgenus: null, name: "Lasioglossum sisymbrii", identified_by: "Lincoln R. Best", date_identified: String(CURRENT_SEASON), sex: "female", agrees: true },
     ]);
     expect(await archiveNotes(db, await specimenId("26000002"))).toMatchObject([
       { scientific_name: "Lasioglossum Curtis, 1833", rank: "genus", name: "Lasioglossum", agrees: false },
@@ -341,7 +341,7 @@ describe("loading again, and the next version", () => {
       await archive("1.9", "2026-11-04", [row("26000001", { specificEpithet: "nonesuch", scientificName: "Lasioglossum nonesuch" })]),
       LATER,
     );
-    expect(result).toMatchObject({ revised: [], held: { name_unknown: 1 }, disagrees: { active: 1 } });
+    expect(result).toMatchObject({ revised: [], held: { name_unknown: 1 }, disagrees: { active: 1 }, unsupported: ["26000001"] });
     // The record is still version 1.8's name, and the page says what is published now.
     expect(await recordOf("26000001")).toEqual(["Lasioglossum sisymbrii", true, "worksheet_import"]);
     expect(await archiveNotes(db, await specimenId("26000001"))).toMatchObject([
@@ -389,7 +389,8 @@ describe("what cannot be read is held", () => {
       row("26000003", { recordedBy: "Someone Else" }),
       row("26000004", { day: String(Number(DAY) + 1) }),
       row("26000005", { recordedBy: "Someone Else | Ada Collector" }),
-      // The same family name under another given name confirms nothing, the same initial included.
+      // The same family name under another given name confirms nothing, though it starts with the same letter;
+      // a bare initial that matches does confirm.
       row("26000006", { recordedBy: "Bea Collector" }),
       row("26000007", { recordedBy: "A. Collector" }),
       row("26000008", { recordedBy: "Amy Collector" }),
@@ -445,9 +446,24 @@ describe("what cannot be read is held", () => {
       row("26000005", { scientificName: "Lasioglossum (Dialictus) sisymbrii (Cockerell, 1895)" }),
       // OSAC's scientificName misspells a name its columns spell rightly: the shape is what is compared.
       row("26000006", { scientificName: "Lasioglosum sisymbrii (Cockerell, 1895)" }),
+      // As OSAC writes an identification to subgenus: the rank and the name say genus, the subgenus has its own column.
+      row("26000007", { scientificName: "Lasioglossum Curtis, 1833", specificEpithet: undefined, taxonRank: "genus", subgenus: "Dialictus" }),
+      // A subgenus in brackets after a lone genus, under the rank OSAC would give it.
+      row("26000008", { scientificName: "Lasioglossum (Dialictus)", specificEpithet: undefined, taxonRank: "genus" }),
+      // Under a species the subgenus is only where the species is filed.
+      row("26000009", { subgenus: "Dialictus" }),
     ]);
-    expect((await load(dir)).held).toMatchObject({ name_unreadable: 5 });
-    expect((await recorded()).map((r) => [r[0], r[1], r[2]])).toEqual([["26000006", "Lasioglossum sisymbrii", "Lasioglosum sisymbrii (Cockerell, 1895)"]]);
+    expect((await load(dir)).held).toMatchObject({ name_unreadable: 7 });
+    expect((await recorded()).map((r) => [r[0], r[1], r[2]])).toEqual([
+      ["26000006", "Lasioglossum sisymbrii", "Lasioglosum sisymbrii (Cockerell, 1895)"],
+      ["26000009", "Lasioglossum sisymbrii", "Lasioglossum sisymbrii (Cockerell, 1895)"],
+    ]);
+    // The subgenus is shown, since the name as published leaves it out.
+    await determined("26000007", "Lasioglossum");
+    await load(dir, LATER);
+    const notes = await archiveNotes(db, await specimenId("26000007"));
+    expect(notes).toMatchObject([{ scientific_name: "Lasioglossum Curtis, 1833", subgenus: "Dialictus", agrees: false }]);
+    expect(String(PublishedNotes({ m: en, notes }))).toContain(", subgenus Dialictus");
   });
 
   test("a qualifier, which the loader does not read, refuses the archive", async () => {

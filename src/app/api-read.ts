@@ -283,7 +283,7 @@ export const DETERMINATION_PUBLISHED: Publish<DeterminationEvent> = {
   recorded_at: true, notes: true, of_record: true, archive_publisher: true, archive_version: true,
 };
 export const ARCHIVE_NOTE_PUBLISHED: Publish<ArchiveNote> = {
-  publisher: true, version: true, scientific_name: true, rank: true, name: true, identified_by: true, date_identified: true,
+  publisher: true, version: true, scientific_name: true, subgenus: true, rank: true, name: true, identified_by: true, date_identified: true,
   sex: true, agrees: true,
 };
 export const LABEL_PUBLISHED: Publish<SpecimenLabelRow> = {

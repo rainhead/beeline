@@ -312,6 +312,8 @@ export interface ArchiveNote {
   version: string;
   /** The name as published, authorship included. */
   scientific_name: string | null;
+  /** The subgenus the record states in a column of its own, which the name as published leaves out. */
+  subgenus: string | null;
   /** The published name as the tree holds it, or null where the load could not place it. */
   rank: string | null;
   name: string | null;
@@ -727,7 +729,7 @@ export async function determinationHistory(
  */
 export async function archiveNotes(db: Kysely<Database>, specimenId: number): Promise<ArchiveNote[]> {
   const found = await sql<ArchiveNote>`
-    SELECT n.publisher, n.version, n.scientific_name, an.rank, an.scientific_name AS name,
+    SELECT n.publisher, n.version, n.scientific_name, n.subgenus, an.rank, an.scientific_name AS name,
            n.identified_by, n.date_identified, n.sex, n.agrees
     FROM archive_note n
     LEFT JOIN animal an ON an.entity_id = n.animal_id

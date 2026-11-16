@@ -1121,6 +1121,71 @@ export interface WorksheetDeterminationTable {
   loaded_at: Timestamped;
 }
 
+// schema/042_archives.sql (beeline-muke)
+
+/** A dataset a museum publishes to GBIF whose records are Beeline's specimens. */
+export interface ArchiveDatasetTable {
+  dataset_key: string;
+  publisher: string;
+  title: string;
+  specimen_term: string;
+}
+
+/** A published version of a dataset that has been loaded. */
+export interface ArchiveVersionTable {
+  dataset_key: string;
+  version: string;
+  sequence: number;
+  published_on: ColumnType<Date, Date | string, Date | string>;
+  sha256: string;
+  records: number;
+  loaded_at: Timestamped;
+}
+
+/** What a dataset said about one of its records, from the version in which it first said it. Never updated. */
+export interface ArchiveStatementTable {
+  dataset_key: string;
+  occurrence_id: string;
+  version: string;
+  withdrawn: Generated<boolean>;
+  field_number: string | null;
+  catalog_number: string | null;
+  recorded_by: string | null;
+  event_date: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  scientific_name: string | null;
+  family: string | null;
+  genus: string | null;
+  subgenus: string | null;
+  specific_epithet: string | null;
+  taxon_rank: string | null;
+  identified_by: string | null;
+  date_identified: string | null;
+  sex: string | null;
+}
+
+/** How the last load read each record's newest statement; replaced by every load. */
+export interface ArchiveReadingTable {
+  dataset_key: string;
+  occurrence_id: string;
+  version: string;
+  specimen_id: number | null;
+  animal_id: number | null;
+  determiner_id: number | null;
+  sex: "female" | "male" | "gynandromorph" | null;
+  determined_on: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  held: string | null;
+  detail: string | null;
+}
+
+/** The archive record and version a determination was recorded from. */
+export interface ArchiveDeterminationTable {
+  determination_id: number;
+  dataset_key: string;
+  occurrence_id: string;
+  version: string;
+  loaded_at: Timestamped;
+}
+
 /** An old-Beeline record promotion set aside as a second print, tied to its specimen (beeline-iuva). */
 export interface LegacyDuplicateRecordTable {
   _id: string;
@@ -1761,6 +1826,11 @@ export interface Database {
   specimen_disposition: SpecimenDispositionTable;
   worksheet_determination: WorksheetDeterminationTable;
   legacy_duplicate_record: LegacyDuplicateRecordTable;
+  archive_dataset: ArchiveDatasetTable;
+  archive_version: ArchiveVersionTable;
+  archive_statement: ArchiveStatementTable;
+  archive_reading: ArchiveReadingTable;
+  archive_determination: ArchiveDeterminationTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;
   determination_batch: DeterminationBatchTable;

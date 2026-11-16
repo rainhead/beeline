@@ -292,6 +292,37 @@ export interface DeterminationEvent {
   notes: string | null;
   /** Whether determination_of_record picks this event out of the history. */
   of_record: boolean;
+  /**
+   * The publisher and version of the published archive a load recorded this
+   * from (schema/042), or null. Such a determination's channel is
+   * `worksheet_import`, which a deployed store cannot add to, so this, not
+   * the channel, says where it came from.
+   */
+  archive_publisher: string | null;
+  archive_version: string | null;
+}
+
+/**
+ * What a museum publishes about a specimen where Beeline's determination of
+ * record is not that statement (`archive_note`, schema/112): the name as
+ * published, and the tree's name for it where the load could place it.
+ */
+export interface ArchiveNote {
+  publisher: string;
+  version: string;
+  /** The name as published, authorship included. */
+  scientific_name: string | null;
+  /** The subgenus the record states in a column of its own, which the name as published leaves out. */
+  subgenus: string | null;
+  /** The published name as the tree holds it, or null where the load could not place it. */
+  rank: string | null;
+  name: string | null;
+  identified_by: string | null;
+  /** The year, as published. */
+  date_identified: string | null;
+  sex: string | null;
+  /** Whether Beeline's expert determination of record gives the same name. */
+  agrees: boolean;
 }
 
 export interface SpecimenDetail {
@@ -673,11 +704,14 @@ export async function determinationHistory(
            d.qualifier, d.verbatim_identification, d.sex, d.caste,
            coalesce(p.display_name, d.determiner_name) AS determiner,
            d.is_expert, d.channel, d.determined_on, d.determined_on_precision, d.recorded_at, d.notes,
-           (dor.entity_id IS NOT NULL) AS of_record
+           (dor.entity_id IS NOT NULL) AS of_record,
+           ads.publisher AS archive_publisher, ad.version AS archive_version
     FROM determination d
     JOIN animal an ON an.entity_id = d.animal_id
     LEFT JOIN person p ON p.entity_id = d.determiner_id
     LEFT JOIN determination_of_record dor ON dor.entity_id = d.entity_id
+    LEFT JOIN archive_determination ad ON ad.determination_id = d.entity_id
+    LEFT JOIN archive_dataset ads ON ads.dataset_key = ad.dataset_key
     WHERE d.specimen_id = ${specimenId}
     ORDER BY d.recorded_at DESC, d.entity_id DESC`.execute(db);
   return found.rows.map((r) => ({
@@ -686,6 +720,22 @@ export async function determinationHistory(
     is_expert: Boolean(r.is_expert),
     of_record: Boolean(r.of_record),
   }));
+}
+
+/**
+ * What museums publish about this specimen that its determination of record
+ * does not already say: a statement a load recorded as the record is in the
+ * history above and is left out here.
+ */
+export async function archiveNotes(db: Kysely<Database>, specimenId: number): Promise<ArchiveNote[]> {
+  const found = await sql<ArchiveNote>`
+    SELECT n.publisher, n.version, n.scientific_name, n.subgenus, an.rank, an.scientific_name AS name,
+           n.identified_by, n.date_identified, n.sex, n.agrees
+    FROM archive_note n
+    LEFT JOIN animal an ON an.entity_id = n.animal_id
+    WHERE n.specimen_id = ${specimenId} AND NOT n.is_record
+    ORDER BY n.publisher, n.occurrence_id`.execute(db);
+  return found.rows.map((r) => ({ ...r, agrees: Boolean(r.agrees) }));
 }
 
 /**
@@ -968,6 +1018,8 @@ export interface SpecimenRecord {
   specimen: SpecimenDetail;
   /** The determination history, newest first. */
   events: DeterminationEvent[];
+  /** What museums publish about the specimen, where the record is not that statement. */
+  published: ArchiveNote[];
   /** The sample's findings, as {@link SampleRecord} has them. */
   findings: RecordFinding[];
   labels: SpecimenLabelRow[];
@@ -983,11 +1035,12 @@ export async function gatherSpecimen(
 ): Promise<SpecimenRecord | null> {
   const specimen = await loadSpecimen(deps.db, specimenId, personId, reader);
   if (specimen === null) return null;
-  const [events, findings, labels, reprint] = await Promise.all([
+  const [events, published, findings, labels, reprint] = await Promise.all([
     determinationHistory(deps.db, specimen.specimen_id),
+    archiveNotes(deps.db, specimen.specimen_id),
     recordFindings(deps.db, specimen.sample.sample_id).then((f) => visibleFindings(f, specimen.sample)),
     specimenLabels(deps.db, specimen.specimen_id),
     specimenReprint(deps.db, specimen.specimen_id),
   ]);
-  return { specimen, events, findings, labels, reprint };
+  return { specimen, events, published, findings, labels, reprint };
 }

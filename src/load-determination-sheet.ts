@@ -396,7 +396,11 @@ export async function loadDeterminationSheet(conn: DuckDBConnection, opts: Deter
     await conn.run(`
       UPDATE determination SET determined_on = x.identified_on, determined_on_precision = x.identified_precision
       FROM ds_dated x
-      WHERE determination.entity_id = x.determination_id AND determination.determined_on IS NULL`);
+      WHERE determination.entity_id = x.determination_id AND determination.determined_on IS NULL
+        -- Never one a load read from a published archive (schema/042): it is
+        -- recorded as the archive states it, and that loader would take a
+        -- date written here for the publisher's revision.
+        AND NOT EXISTS (SELECT 1 FROM archive_determination ad WHERE ad.determination_id = determination.entity_id)`);
 
     const held = Object.fromEntries(HELD_REASONS.map((r) => [r, 0])) as Record<HeldReason, number>;
     for (const [reason, n] of await all(conn, `SELECT outcome, count(*) FROM ds_candidate GROUP BY outcome`)) {

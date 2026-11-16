@@ -132,6 +132,32 @@ describe("a sample's host read by its name", () => {
     expect(await rows(conn, "SELECT count(*) FROM sample_host_unresolved")).toEqual([[0n]]);
   });
 
+  test("a hit whose replacement has since been retired with nothing after it is a dead end, and names no other plant", async () => {
+    const { conn, sample } = await store();
+    await conn.run("UPDATE inat_taxon SET is_active = false WHERE inat_taxon_id = 1");
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('beta', 'genus', 2, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('beta', 'genus', 2, 'Beta', 'genus', true, 'Beta'), ('beta', 'genus', 8, 'Beta', 'genus', false, 'Beta')");
+    await conn.run("INSERT INTO plant_name_lookup_hit_replacement VALUES ('beta', 'genus', 8, 1)");
+    await sample("1", "NULL", "'Beta'");
+    await refreshPlantCommonNames(conn);
+    expect(await rows(conn, "SELECT standing FROM inat_taxon_current WHERE inat_taxon_id = 1")).toEqual([["retired"]]);
+    expect(await rows(conn, "SELECT count(*) FROM sample_host_unresolved")).toEqual([[0n]]);
+  });
+
+  test("a copy holding an older answer for the name lists the sample, which a page reads through the older answer until a refresh", async () => {
+    const { conn, sample } = await store();
+    const s = await sample("1", "NULL", "'Alpha lanata'");
+    await refreshPlantCommonNames(conn);
+    // The name is asked again and now comes to taxon 2; the refresh that should follow has not run (or failed).
+    await conn.run("DELETE FROM plant_name_lookup_hit WHERE name_key = 'alpha lanata'");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('alpha lanata', 'species', 2, 'Alpha lanata', 'species', true, 'Alpha lanata')");
+    expect(await rows(conn, `SELECT inat_taxon_id FROM sample_host WHERE sample_id = ${s}`)).toEqual([[1n]]);
+    expect(await rows(conn, "SELECT sample_id, outcome, candidate_taxon_id FROM sample_host_unresolved")).toEqual([[s, "not copied yet", 2n]]);
+    await refreshPlantCommonNames(conn);
+    expect(await rows(conn, `SELECT inat_taxon_id FROM sample_host WHERE sample_id = ${s}`)).toEqual([[2n]]);
+    expect(await rows(conn, "SELECT count(*) FROM sample_host_unresolved")).toEqual([[0n]]);
+  });
+
   test("a name whose taxon is a plant but not a vascular one is read, and listed for a person", async () => {
     // Synthetic: no host name on production resolves to a moss (2026-11-15), but the lookups search all plants.
     const { conn, sample } = await store();

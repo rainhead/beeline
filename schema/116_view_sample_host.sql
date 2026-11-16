@@ -93,9 +93,11 @@ COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an 
 --                             older name or a common name (host_name_taxon);
 --                             not read
 --   not copied yet            the name resolves, but the copy a page reads
---                             (host_name_taxon_cache) does not hold it yet: a
---                             refresh failed or has not run since; not read
---                             until the next one (the app's boot runs one)
+--                             (host_name_taxon_cache) does not hold it, or
+--                             holds an older answer: a refresh failed or has
+--                             not run since; read, if at all, through the
+--                             older answer until the next refresh (the app's
+--                             boot runs one)
 --   taxon not read yet        the name came to a taxon the taxon cache has
 --                             not read, or whose replacement it has not read
 --                             (pending); not read until it has, which the
@@ -113,8 +115,9 @@ COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an 
 --                             (inat_taxon_current), since the lookup's answer
 --                             names one replacement, which may itself have
 --                             been replaced since; a hit that is a dead end
---                             (no replacement) names no other plant and does
---                             not count.
+--                             (no replacement, or a replacement since retired
+--                             with nothing after it, or absent) names no other
+--                             plant and does not count.
 --   no name                   the name is only whitespace
 -- So every sample with a host name and no id is read (sample_host), or is
 -- here, or both. With each sample's season and whether it has settled, so a
@@ -126,13 +129,15 @@ WITH judged AS (
          CASE WHEN sh.raw_name IS NULL THEN 'no name'
               WHEN r.outcome <> 'matched' THEN r.outcome
               WHEN NOT r.by_own_name THEN 'matched by another name'
-              WHEN NOT EXISTS (SELECT 1 FROM host_name_taxon_cache hc WHERE hc.host_name = s.host_name_as_observed)
+              WHEN NOT EXISTS (SELECT 1 FROM host_name_taxon_cache hc
+                               WHERE hc.host_name = s.host_name_as_observed AND hc.inat_taxon_id = r.inat_taxon_id)
                 THEN 'not copied yet'
               WHEN c.inat_taxon_id IS NULL OR c.standing = 'pending' THEN 'taxon not read yet'
               WHEN c.is_vascular IS FALSE THEN 'not a vascular plant'
               WHEN EXISTS (SELECT 1 FROM plant_name_hit_current o
                            LEFT JOIN inat_taxon_current oc ON oc.inat_taxon_id = o.current_taxon_id
                            WHERE o.name_key = r.name_key AND o.expected_rank = r.expected_rank
+                             AND oc.standing IS DISTINCT FROM 'retired' AND oc.standing IS DISTINCT FROM 'absent'
                              AND coalesce(oc.current_taxon_id, o.current_taxon_id)
                                  <> coalesce(c.current_taxon_id, r.inat_taxon_id))
                 THEN 'other taxa had this name'

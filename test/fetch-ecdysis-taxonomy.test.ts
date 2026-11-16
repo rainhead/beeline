@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fetchEcdysisTaxonomy, parsePhpCsv, readExport } from "../src/fetch-ecdysis-taxonomy.js";
+import { fetchEcdysisTaxonomy, parsePhpCsv, readExport, retryAfterMs } from "../src/fetch-ecdysis-taxonomy.js";
 
 /**
  * Fetching Ecdysis's thesaurus (beeline-7gob).
@@ -129,6 +129,42 @@ describe("fetching the insects", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("a 429 waits as long as Retry-After says and asks again; four in a row fail the fetch", async () => {
+    // Insecta exports whole on the third ask, after two 429s.
+    const csv = [HEADER, ANIMALIA, row(6, "Insecta", 60, 1)].join("\n");
+    let asks = 0;
+    const answers = (limited: number): typeof fetch => async (input) => {
+      if (String(input).includes("/api/v2/taxonomy")) return Response.json({ results: [{ tid: 6, rankID: 60, kingdomName: "Animalia" }] });
+      asks++;
+      return asks <= limited ? new Response("", { status: 429, headers: { "Retry-After": "30" } }) : new Response(csv);
+    };
+    const waits: number[] = [];
+    const sleep = async (ms: number) => {
+      waits.push(ms);
+    };
+    const dir = await mkdtemp(join(tmpdir(), "beeline-ecdysis-taxonomy-"));
+    try {
+      const result = await fetchEcdysisTaxonomy({ dir, fetch: answers(2), retryDelayMs: 0, sleep });
+      expect(result.taxa).toBe(2);
+      expect(waits).toEqual([30_000, 30_000]);
+      asks = 0;
+      await expect(fetchEcdysisTaxonomy({ dir, fetch: answers(4), retryDelayMs: 0, sleep })).rejects.toThrow(/kept answering 429/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("Retry-After is read as seconds or as a date, capped at ten minutes, and a minute when it says neither", () => {
+    const now = Date.parse("2026-11-16T20:00:00Z");
+    expect(retryAfterMs("30", now)).toBe(30_000);
+    expect(retryAfterMs("Mon, 16 Nov 2026 20:05:00 GMT", now)).toBe(300_000);
+    expect(retryAfterMs("Mon, 16 Nov 2026 21:00:00 GMT", now)).toBe(600_000);
+    expect(retryAfterMs("3600", now)).toBe(600_000);
+    expect(retryAfterMs(null, now)).toBe(60_000);
+    expect(retryAfterMs("soon", now)).toBe(60_000);
+    expect(retryAfterMs("Mon, 16 Nov 2026 19:00:00 GMT", now)).toBe(60_000);
   });
 
   test("a gateway that fails twice fails the fetch, naming the taxon", async () => {

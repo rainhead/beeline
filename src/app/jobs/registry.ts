@@ -35,6 +35,9 @@ import { describeManifest, writeProgramArchives } from "../program-archives.js";
 import { purgeIdleSessions } from "../session.js";
 import { revokeOrphanedKeys } from "../api-keys.js";
 import { forgetEntryTaxa } from "../determine.js";
+import { describeRefresh, refreshEcdysisTaxonomy } from "../../load-ecdysis-taxonomy.js";
+import { join } from "node:path";
+import { fetchEcdysisTaxonomyInChild } from "../../fetch-ecdysis-taxonomy-child.js";
 import type { Job, JobContext } from "./framework.js";
 
 /** A fresh JWT per run (src/inat-jwt.ts); a failed mint aborts the job. */
@@ -584,6 +587,31 @@ export function buildJobs(
         await ctx.step("purge idle sessions", () => purgeIdleSessions(ctx.db));
         // Keys of accounts no longer linked to anyone (src/app/api-keys.ts).
         await ctx.step("revoke orphaned API keys", () => revokeOrphanedKeys(ctx.db));
+      },
+    },
+    {
+      // Ecdysis's insect taxonomy, fetched afresh once a week (beeline-xni1),
+      // so a name added to Ecdysis reaches the determination picker and the
+      // Ecdysis importer without anyone running pnpm ecdysis:taxonomy. On
+      // Saturday just after midnight, behind the session purge and well
+      // before the 1am jobs: the fetch took five minutes of exports from
+      // ecdysis.org on 2026-11-16 and the load three seconds. Into a folder inside the
+      // Ecdysis archive's, which the store is allowed to read (storeFiles).
+      // A fetch that shrank by more than a twentieth fails the run rather
+      // than load (src/load-ecdysis-taxonomy.ts).
+      name: "ecdysis-taxonomy",
+      schedule: { kind: "weeklyLA", weekday: 6, hour: 0 },
+      window: "night",
+      async run(ctx) {
+        const result = await refreshEcdysisTaxonomy(ctx.conn, {
+          dir: join(config.ecdysisDir ?? deploymentPath("data/ecdysis"), "taxonomy"),
+          signal: ctx.signal,
+          step: ctx.step,
+          // In a process of its own, so the million names it holds in memory
+          // are handed back when it exits (src/fetch-ecdysis-taxonomy-child.ts).
+          fetchTaxonomy: fetchEcdysisTaxonomyInChild,
+        });
+        return describeRefresh(result);
       },
     },
     {

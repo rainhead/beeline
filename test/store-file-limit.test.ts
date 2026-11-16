@@ -10,6 +10,7 @@ import { deriveAreas } from "../src/derive-area.js";
 import { deriveLocalities } from "../src/derive-locality.js";
 import { legacyExportPath, writeLegacyExport } from "../src/legacy-export.js";
 import { loadEcdysis } from "../src/load-ecdysis.js";
+import { loadEcdysisTaxonomy } from "../src/load-ecdysis-taxonomy.js";
 import { snapshotCatalog, verifySnapshot } from "../src/store-snapshot.js";
 import { buildTestGazetteer, insertCleanSample, rows } from "./helpers.js";
 
@@ -121,6 +122,14 @@ describe("the app's store still reaches", () => {
     // No determinerAliases given, so the file the nightly reads: ingest/determiner-aliases.csv.
     const result = await loadEcdysis(conn, { path: unpacked, catalogPrefix: "WSDA_" });
     expect(result.input).toBe("archive");
+  });
+
+  test("Ecdysis's taxonomy, fetched into the folder the weekly job uses", async () => {
+    const dir = join(config.ecdysisDir, "taxonomy");
+    await mkdir(dir, { recursive: true });
+    await cp(new URL("./fixtures/ecdysis-taxonomy/", import.meta.url).pathname, dir, { recursive: true });
+    const result = await loadEcdysisTaxonomy(conn, dir);
+    expect(result.taxa).toBeGreaterThan(0);
   });
 
   test("the gazetteer, for areas and for localities", async () => {

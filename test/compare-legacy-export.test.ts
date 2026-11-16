@@ -50,6 +50,9 @@ describe("the kind of a difference", () => {
     ["genus", "Lasioglossum", "Lasioglossum (Dialictus)", "subgenus_form"],
     ["scientificName", "Halictus ligatus", "Halictus ligatus Say, 1837", "authorship"],
     ["scientificName", "Lasioglossum titusi", "Lasioglossum titusi (Crawford, 1902)", "authorship"],
+    // Synthetic: a genus is not the authorship of the species it was, subgenus and all.
+    ["scientificName", "Bombus", "Bombus (Pyrobombus) mixtus Cresson, 1878", "changed"],
+    ["locality", "", " ", "whitespace"], // synthetic: a value of nothing but a space
     // In the shapes of the sandbox's comparison against the 2026-10-04 pull, names invented.
     ["firstNameInitial", "S.", "S", "initial_form"],
     ["firstNameInitial", "A.", "AC", "changed"],
@@ -448,12 +451,51 @@ describe("identifications, sex and caste, and reprints (beeline-eznn)", () => {
     ]);
   });
 
+  test("calls an identification that lost a rank coarser, and leaves a taken-away value unexplained", async () => {
+    // 25000009 was Lasioglossum nr. tenax; an expert's later identification
+    // names only the genus. 25000003, which an expert's genus now names on the
+    // old record, had a sex the export does not write: not the old default.
+    // And 25000002's volunteer gave a caste the newest volunteer
+    // identification takes away.
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, is_expert, channel, recorded_at)
+      SELECT sp.entity_id, a.entity_id, 'Lasioglossum', true, 'ecdysis_import', now() + INTERVAL 1 DAY
+      FROM specimen sp, animal a WHERE sp.field_number = '25000009' AND a.scientific_name = 'Lasioglossum' AND a.rank = 'genus'`);
+    const coarser = join(dir, "occurrences-coarser.csv");
+    await writeLegacyExport(conn, coarser);
+    await conn.run(`UPDATE legacy_occurrence SET genus = 'Bombus', sex = 'male' WHERE "fieldNumber" = '25000003'`);
+    await conn.run(`UPDATE legacy_occurrence SET "casteVolDet" = 'worker' WHERE "fieldNumber" = '25000002'`);
+    try {
+      await compareLegacyExport(conn, coarser, []);
+      const out = join(dir, "differences-coarser.csv");
+      await writeDifferences(conn, [], out);
+      const kinds = (await conn.runAndReadAll(
+        `SELECT field_number, "column", kind FROM read_csv('${out}', header = true, all_varchar = true)
+         WHERE (field_number = '25000009' AND "column" IN ('specificEpithet', 'scientificName'))
+            OR (field_number = '25000003' AND "column" = 'sex')
+            OR (field_number = '25000002' AND "column" = 'casteVolDet')
+         ORDER BY ALL`,
+      )).getRows() as [string, string, string][];
+      expect(kinds).toEqual([
+        ["25000002", "casteVolDet", "blanked"],
+        ["25000003", "sex", "blanked"],
+        // The old record wrote the species only in the full name, so only that column differs.
+        ["25000009", "scientificName", "coarser_determination"],
+      ]);
+    } finally {
+      await conn.run(`DELETE FROM determination WHERE channel = 'ecdysis_import' AND verbatim_identification = 'Lasioglossum'
+                        AND specimen_id = (SELECT entity_id FROM specimen WHERE field_number = '25000009')`);
+      await conn.run(`UPDATE legacy_occurrence SET genus = '', sex = '' WHERE "fieldNumber" = '25000003'`);
+      await conn.run(`UPDATE legacy_occurrence SET "casteVolDet" = '' WHERE "fieldNumber" = '25000002'`);
+    }
+  });
+
   test("names what a newer identification lost, and the old default sex it no longer carries", async () => {
     // Planted on the old records after the export: 25000005's old
     // identification gave a subgenus the expert's newer one does not; and
     // 25000003, which nobody identified, had the old Beeline's default male,
     // which the export no longer carries.
-    await conn.run(`UPDATE legacy_occurrence SET subgenus = 'Pyrobombus' WHERE "fieldNumber" = '25000005'`);
+    // The same genus as the newer identification's, so the subgenus is what it lost.
+    await conn.run(`UPDATE legacy_occurrence SET genus = 'Bombus', subgenus = 'Pyrobombus' WHERE "fieldNumber" = '25000005'`);
     await conn.run(`UPDATE legacy_occurrence SET sex = 'male' WHERE "fieldNumber" = '25000003'`);
     try {
       await compareLegacyExport(conn, exportPath, []);
@@ -469,7 +511,7 @@ describe("identifications, sex and caste, and reprints (beeline-eznn)", () => {
         ["25000005", "subgenus", "subgenus_dropped"],
       ]);
     } finally {
-      await conn.run(`UPDATE legacy_occurrence SET subgenus = '' WHERE "fieldNumber" = '25000005'`);
+      await conn.run(`UPDATE legacy_occurrence SET genus = '', subgenus = '' WHERE "fieldNumber" = '25000005'`);
       await conn.run(`UPDATE legacy_occurrence SET sex = '' WHERE "fieldNumber" = '25000003'`);
     }
   });

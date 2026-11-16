@@ -184,6 +184,14 @@ const squash = (x: string) => `trim(regexp_replace(${x}, '\\s+', ' ', 'g'))`;
 // A subgenus is one capitalised word in brackets; anything else bracketed
 // (an author and year) is not one.
 const withoutSubgenus = (x: string) => `trim(regexp_replace(${x}, '\\s*\\([A-Z][a-z]+\\)', '', 'g'))`;
+/**
+ * Whether an identification names a species: its epithet column, or an
+ * epithet after the genus in its full name, past any subgenus and any
+ * qualifier (Lasioglossum nr. tenax, whose epithet column the old Beeline
+ * left blank).
+ */
+const namesSpecies = (epithet: string, name: string) =>
+  `(trim(${epithet}) <> '' OR regexp_matches(${name}, '^[A-Z][a-z]+(\\s+\\([A-Z][a-z]+\\))?\\s+((cf|aff|nr)\\.\\s+)?[a-z]'))`;
 const subgenusOf = (x: string) => `regexp_extract(${x}, '\\(([A-Z][a-z]+)\\)', 1)`;
 // A collector column as its list of names, written any way the legacy entry
 // form allowed: the same split as promotion's legacy_name_list.
@@ -222,7 +230,10 @@ export const DIFFERENCE_KIND_SQL = `CASE
   WHEN "column" = 'scientificName' AND regexp_full_match(legacy, '\\S+\\s+sp\\.\\s*\\d+')
        AND regexp_full_match(exported, concat(regexp_extract(legacy, '^[A-Za-z]+', 0), '( \\([A-Z][a-z]+\\))?')) THEN 'morphospecies'
   WHEN "column" = 'scientificName' AND starts_with(legacy, concat(exported, ' '))
-       AND regexp_full_match(substr(legacy, length(exported) + 2), '\\(?[A-Z].*\\d{4}\\)?') THEN 'authorship'
+       AND regexp_full_match(substr(legacy, length(exported) + 2), '\\(?[A-Z].*\\d{4}\\)?')
+       -- An author, not a subgenus and the epithet it lost: Bombus is not the
+       -- authorship of Bombus (Pyrobombus) mixtus Cresson, 1878.
+       AND NOT regexp_matches(substr(legacy, length(exported) + 2), '^\\([A-Z][a-z]+\\)\\s+[a-z]') THEN 'authorship'
   ELSE 'changed'
 END`;
 
@@ -641,15 +652,24 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
   // gave, and the species where the newest names only a genus. The newest
   // stands, so these are for the taxonomists to see, not to hide among the
   // newer identifications (the audit of 2026-11-15, beeline-eznn).
+  // A record whose newest identification lost a rank the old one gave, a
+  // species or a genus (Cicindela on 25020928, re-identified above genus):
+  // coarser, in every name column the newer identification wrote.
   await conn.run(`
-    UPDATE cmp_value_difference d SET kind = 'subgenus_dropped'
-    WHERE d."column" = 'subgenus' AND d.kind = 'newer_determination' AND d.exported = ''`);
+    CREATE OR REPLACE TEMP TABLE cmp_coarser AS
+    SELECT DISTINCT p."e_fieldNumber" AS field_number FROM cmp_pairs p
+    WHERE (${namesSpecies('p."l_specificEpithet"', 'p."l_scientificName"')} AND NOT ${namesSpecies('p."e_specificEpithet"', 'p."e_scientificName"')})
+       OR (${withoutSubgenus('trim(p."l_genus")')} <> '' AND trim(p."e_genus") = '')`);
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'coarser_determination'
-    WHERE d.kind = 'newer_determination' AND d."column" IN ('specificEpithet', 'scientificName', 'taxonRank')
+    WHERE d.kind = 'newer_determination' AND d.field_number IN (SELECT field_number FROM cmp_coarser)`);
+  // The subgenus a newer identification of the same genus does not give.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'subgenus_dropped'
+    WHERE d."column" = 'subgenus' AND d.kind = 'newer_determination' AND d.exported = ''
       AND EXISTS (SELECT 1 FROM cmp_pairs p
                   WHERE p."e_fieldNumber" = d.field_number
-                    AND trim(p."l_specificEpithet") <> '' AND trim(p."e_specificEpithet") = '')`);
+                    AND lower(${withoutSubgenus('trim(p."l_genus")')}) = lower(${withoutSubgenus('trim(p."e_genus")')}))`);
   // A volunteer's identification the legacy system never received: from a
   // worksheet (beeline-pbk) or made in Beeline. Never a value taken away: the
   // export writes the newest volunteer identification's sex even where it

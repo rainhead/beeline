@@ -1,6 +1,6 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import type { Database, DraftCaste, DraftSex } from "../model.js";
-import { BEE_FAMILIES } from "../bee-families.js";
+import { BEE_FAMILIES, notABee } from "../bee-families.js";
 import { observationGone } from "./listings.js";
 import { NumberIndex, type NumberEntry, type NumberProblem } from "../determination-numbers.js";
 
@@ -96,7 +96,7 @@ export async function entrySeasons(db: Kysely<Database>, personId: number, deter
                SELECT 1 FROM determination d WHERE d.specimen_id = sp.entity_id AND NOT d.is_expert)
              AND NOT EXISTS (
                SELECT 1 FROM determination_draft dd
-               WHERE dd.specimen_id = sp.entity_id AND dd.determiner_id = ${determinerId} AND dd.animal_id IS NOT NULL)) AS INTEGER) AS unnamed
+               WHERE dd.specimen_id = sp.entity_id AND dd.determiner_id = ${determinerId} AND (dd.animal_id IS NOT NULL OR dd.ecdysis_tid IS NOT NULL))) AS INTEGER) AS unnamed
     FROM specimen sp
     JOIN sample_season ss ON ss.sample_id = sp.sample_id
     WHERE sp.sample_id IN ${reach(personId)}
@@ -311,7 +311,8 @@ const searchWords = (s: string) => s.toLowerCase().replace(/[().]/g, " ").split(
  * a genus comes before its species.
  */
 export async function searchEcdysisNames(db: Kysely<Database>, query: string, limit = 10): Promise<EcdysisName[]> {
-  const words = searchWords(query);
+  // Capped, since each word adds a condition: no name needs more than four.
+  const words = searchWords(query.slice(0, 100)).slice(0, 4);
   const first = words[0];
   if (first === undefined || first.length < ECDYSIS_SEARCH_MIN) return [];
   // Every key that starts with the first word sorts at or after it and before
@@ -324,7 +325,7 @@ export async function searchEcdysisNames(db: Kysely<Database>, query: string, li
     FROM ecdysis_adoptable e
     WHERE e.name_key >= ${first} AND e.name_key < ${after}
       ${later.length > 0 ? sql.join(later, sql` `) : sql``}
-      AND (e.family IS NULL OR e.family NOT IN (${sql.join(BEE_FAMILIES)}))
+      AND ${sql.raw(notABee("e"))}
       AND NOT EXISTS (SELECT 1 FROM animal a WHERE a.scientific_name = e.name)
     ORDER BY length(e.name), e.name
     LIMIT 200`.execute(db);
@@ -408,7 +409,7 @@ export async function saveDrafts(
       const found = await sql<{ tid: number }>`
         SELECT CAST(e.tid AS INTEGER) AS tid FROM ecdysis_adoptable e
         WHERE e.tid IN (${sql.join(rest)})
-          AND (e.family IS NULL OR e.family NOT IN (${sql.join(BEE_FAMILIES)}))
+          AND ${sql.raw(notABee("e"))}
           AND NOT EXISTS (SELECT 1 FROM animal a WHERE a.scientific_name = e.name)`.execute(db);
       for (const r of found.rows) offered.add(r.tid);
       const missing = rest.filter((t) => !offered.has(t));

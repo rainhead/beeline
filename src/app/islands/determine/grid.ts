@@ -218,7 +218,8 @@ class DetermineGrid extends LitElement {
           body: JSON.stringify({ writes }),
         });
         if (!res.ok) throw new Error(String(res.status));
-        const { rows } = (await res.json()) as { rows: EntryRow[] };
+        const { rows, taxa } = (await res.json()) as { rows: EntryRow[]; taxa?: Record<string, TaxonInfo> };
+        for (const [id, t] of Object.entries(taxa ?? {})) this.taxa.set(Number(id), t);
         const by = new Map(rows.map((r) => [r.id, r]));
         const landed = new Set(settle().map((w) => w.specimenId));
         this.rows = this.rows.map((r) => (landed.has(r.id) ? (by.get(r.id) ?? r) : r));

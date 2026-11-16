@@ -2,9 +2,9 @@ import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Kysely } from "kysely";
 import { adoptEcdysisNames } from "../src/adopt-ecdysis.js";
-import { loadEcdysisTaxonomy } from "../src/load-ecdysis-taxonomy.js";
+import { loadEcdysisTaxonomy, rebuildEcdysisAdoptable } from "../src/load-ecdysis-taxonomy.js";
 import { createKysely } from "../src/db.js";
-import { BadRequest, ecdysisKey, rowTaxa, saveDrafts, searchEcdysisNames, seasonRows, UnknownTaxon } from "../src/app/determine.js";
+import { BadRequest, ecdysisKey, entrySeasons, rowTaxa, saveDrafts, searchEcdysisNames, seasonRows, UnknownTaxon } from "../src/app/determine.js";
 import { commitDeterminationDrafts } from "../src/commit-determinations.js";
 import type { Database } from "../src/model.js";
 import { createMemoryDb, CURRENT_SEASON, insertCleanSample, rows } from "./helpers.js";
@@ -78,6 +78,22 @@ describe("the names Ecdysis offers for adoption", () => {
     expect(adopted).toEqual(offered);
   });
 
+  test("leave out what is filed under a name another shares at its rank, but not under one shared at another rank", async () => {
+    // Synthetic rows beside the real ones: a species under one of the two
+    // Rileya genera, and a genus spelled like the suborder Apocrita, as
+    // Ecdysis spells the beetle suborder Polyphaga like a genus.
+    await conn.run(`INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, admitted_parent_tid, fetched_on) VALUES
+      (9000001, 'species', 'Rileya alba', 'accepted', 9000001, 95505, DATE '2026-10-24'),
+      (9000002, 'genus', 'Apocrita', 'accepted', 9000002, 96610, DATE '2026-10-24')`);
+    await rebuildEcdysisAdoptable(conn);
+    const names = (await rows(conn, "SELECT name FROM ecdysis_adoptable")).map((r) => r[0]);
+    expect(names).not.toContain("Rileya alba");
+    // Apocrita is now a spelling two accepted names share, so adoption refuses
+    // it, but what is filed under the suborder is still offered.
+    expect(names).not.toContain("Apocrita");
+    expect(names).toContain("Chrysis");
+  });
+
   test("are rebuilt whenever the thesaurus is loaded", async () => {
     await conn.run("DELETE FROM ecdysis_adoptable");
     await loadEcdysisTaxonomy(conn, ECDYSIS_TAXONOMY);
@@ -98,6 +114,16 @@ describe("searching Ecdysis's names", () => {
     expect(await names("melecta")).toEqual([]);
     expect(await names("hymeno")).toEqual([]);
     expect(await names("ch")).toEqual([]);
+  });
+
+  test("leaves out a genus filed straight under Apoidea, which could be a bee", async () => {
+    // Synthetic: no such genus is in the fetch of 2026-11-15, but nothing in
+    // Ecdysis stops one being entered without a family.
+    await conn.run(`INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, admitted_parent_tid, fetched_on)
+                    VALUES (9000003, 'genus', 'Nofamilia', 'accepted', 9000003, 83534, DATE '2026-10-24')`);
+    await rebuildEcdysisAdoptable(conn);
+    expect(await rows(conn, "SELECT family, superfamily FROM ecdysis_adoptable WHERE name = 'Nofamilia'")).toEqual([[null, "Apoidea"]]);
+    expect(await names("nofam")).toEqual([]);
   });
 
   test("matches later words against later words of the name, in order", async () => {
@@ -126,6 +152,8 @@ describe("a draft that names a taxon from Ecdysis", () => {
     expect(row!.draft).toMatchObject({ animalId: null, ecdysisTid: 287425, sex: "female" });
     expect(await one("SELECT count(*) FROM animal WHERE scientific_name = 'Euodynerus'")).toBe(0);
     expect(await rowTaxa(db, [row!])).toEqual({ [ecdysisKey(287425)]: { name: "Euodynerus", rank: "genus", castes: false } });
+    // Named, as far as what is left to do goes: the season and the front page's note count it done.
+    expect(await entrySeasons(db, ada, ada)).toEqual([{ season: CURRENT_SEASON, specimens: 1, unnamed: 0 }]);
   });
 
   test("is refused for a bee, a name the search would not offer, or with a node of the tree as well", async () => {

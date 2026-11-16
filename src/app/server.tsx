@@ -1894,7 +1894,9 @@ export function createApp({
       const id = (v: unknown, nullable: boolean) => {
         if (nullable && (v === null || v === undefined)) return null;
         const n = Number(v);
-        if (!Number.isInteger(n)) throw new BadRequest("an id is not a whole number");
+        // Entity ids and Ecdysis's ids are positive and fit an INTEGER; anything
+        // else is refused here rather than reaching the store as a failed cast.
+        if (!Number.isInteger(n) || n < 1 || n > 2 ** 31 - 1) throw new BadRequest("an id is not a whole number from 1 to 2147483647");
         return n;
       };
       const text = (v: unknown) => (typeof v === "string" ? v : null);
@@ -1911,7 +1913,11 @@ export function createApp({
           caste: text(r.caste) as DraftWrite["caste"],
         };
       });
-      return { rows: await saveDrafts(db, c.get("acting").personId, determiner(c), clean) };
+      // The names of what was saved, as the batch route returns them: a name
+      // from Ecdysis that the tree adopted overnight comes back as a node the
+      // page's list of names may not have yet.
+      const rows = await saveDrafts(db, c.get("acting").personId, determiner(c), clean);
+      return { rows, taxa: await rowTaxa(db, rows) };
     }),
   );
 

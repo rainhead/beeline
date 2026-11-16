@@ -1,6 +1,6 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { adoptEcdysisNames } from "./adopt-ecdysis.js";
-import { BEE_FAMILIES } from "./bee-families.js";
+import { notABee } from "./bee-families.js";
 
 /**
  * The overnight commit (beeline-bcq): every volunteer's drafts become
@@ -44,8 +44,6 @@ const count = async (conn: DuckDBConnection, query: string): Promise<number> => 
   return Number(reader.getRows()[0]?.[0] ?? 0);
 };
 
-const sqlString = (s: string) => `'${s.replaceAll("'", "''")}'`;
-
 /** The node a draft names: its own, or the one adopted for its name from Ecdysis. */
 const DRAFT_NODE = `coalesce(dd.animal_id, (SELECT min(t.entity_id) FROM animal t WHERE t.ecdysis_tid = dd.ecdysis_tid))`;
 
@@ -61,7 +59,7 @@ export async function commitDeterminationDrafts(conn: DuckDBConnection): Promise
         FROM determination_draft dd
         JOIN ecdysis_adoptable e ON e.tid = dd.ecdysis_tid
         WHERE dd.ecdysis_tid IS NOT NULL AND dd.updated_at <= now()
-          AND (e.family IS NULL OR e.family NOT IN (${BEE_FAMILIES.map(sqlString).join(", ")}))
+          AND ${notABee("e")}
         ORDER BY e.name`)
     )
       .getRows()

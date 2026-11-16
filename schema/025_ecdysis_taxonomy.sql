@@ -61,12 +61,14 @@ CREATE TABLE ecdysis_adoptable (
   rank         TEXT NOT NULL,
   name         TEXT NOT NULL,
   family       TEXT,
+  superfamily  TEXT,
   insect_order TEXT,
   name_key     TEXT NOT NULL
 );
 COMMENT ON TABLE ecdysis_adoptable IS 'Ecdysis names the tree could adopt, for the determination picker (beeline-4wx3): accepted, the only accepted name at their spelling, plain ASCII, at order, suborder, superfamily, family, genus or species, and reaching Animalia up admitted_parent_tid. Derived from ecdysis_taxon by ingest/ecdysis-adoptable.sql whenever it is loaded. Names the tree already holds are left in; the search leaves them out.';
 COMMENT ON COLUMN ecdysis_adoptable.tid IS 'Ecdysis''s taxon id, as in ecdysis_taxon.tid.';
 COMMENT ON COLUMN ecdysis_adoptable.family IS 'The family above the name, or the name itself for a family; NULL above family rank. What the picker shows beside the name, and how it leaves out bees (src/bee-families.ts).';
+COMMENT ON COLUMN ecdysis_adoptable.superfamily IS 'The superfamily above the name, or the name itself for a superfamily. Read only to keep out a bee that Ecdysis files under Apoidea with no family between.';
 COMMENT ON COLUMN ecdysis_adoptable.insect_order IS 'The order above the name, or the name itself for an order. Shown beside it so that a katydid cannot be taken for a wasp of the same spelling.';
 COMMENT ON COLUMN ecdysis_adoptable.name_key IS 'The name in lower case: what a search compares the first word typed against.';
 

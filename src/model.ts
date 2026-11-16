@@ -690,6 +690,7 @@ export interface EcdysisAdoptableTable {
   rank: string;
   name: string;
   family: string | null;
+  superfamily: string | null;
   insect_order: string | null;
   /** The name in lower case, for prefix search. */
   name_key: string;

@@ -47,6 +47,9 @@ const date = (d: Date | string) =>
 // page's «sample» placeholder survives a formatter that expects a list.
 const listFormat = new Intl.ListFormat(locale, { style: "long", type: "conjunction" });
 const list = (xs: readonly string[] | string) => (Array.isArray(xs) ? listFormat.format(xs) : String(xs));
+// The same list in pieces, so a view can make each item a link and keep the
+// commas and "and" between them as the locale has them.
+const listParts = (xs: readonly string[]) => listFormat.formatToParts(xs);
 // An instant is said in Pacific time, by name, whatever clock the server
 // keeps: the sandbox runs in UTC and printed a 2pm edit as 9pm (Peter,
 // 2026-09-18), the same defect the front page's schedule note once had. The
@@ -126,7 +129,7 @@ export const en = {
   },
 
   /** Locale-aware value formatters, for views composing values into markup. */
-  format: { date, datePrecise, day, dateTime, dateRange, number: n, list, place },
+  format: { date, datePrecise, day, dateTime, dateRange, number: n, list, listParts, place },
 
   /** The combobox's own words (src/app/islands/combobox.ts, beeline-wn2). */
   combobox: {

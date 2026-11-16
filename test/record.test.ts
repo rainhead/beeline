@@ -704,6 +704,34 @@ describe("the floral host on the sample page", () => {
   });
 });
 
+describe("the collectors' names (beeline-3ugg)", () => {
+  // Alice collected with Bob; she has an iNaturalist account and he has none,
+  // so her page is addressed by her login and his by his id.
+  async function pairApp(signedInAs: "alice" | "staffer") {
+    const made = await recordApp(signedInAs);
+    await made.conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${made.alice}, 4401, 'alice_a')`);
+    await made.conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${made.aliceSample}, ${made.bob}, 2)`);
+    return made;
+  }
+
+  it("link each collector to their person page for staff, on the sample and the specimen", async () => {
+    const { app, aliceSample, specimen, bob } = await pairApp("staffer");
+    for (const path of [`/samples/${aliceSample}`, `/specimens/${specimen}`]) {
+      const body = await get(app, path);
+      expect(body, path).toContain(`<a href="/people/alice_a">Alice Adams</a> and <a href="/people/${bob}">Bob Barnes</a>`);
+    }
+  });
+
+  it("are plain names to a volunteer, whom the person page would turn away", async () => {
+    const { app, aliceSample, specimen } = await pairApp("alice");
+    for (const path of [`/samples/${aliceSample}`, `/specimens/${specimen}`]) {
+      const body = await get(app, path);
+      expect(body, path).toContain("Alice Adams and Bob Barnes");
+      expect(body, path).not.toContain(`href="/people/`);
+    }
+  });
+});
+
 describe("reaching a record", () => {
   it("lets a volunteer open their own, at either grain", async () => {
     const { app, aliceSample, specimen } = await recordApp();

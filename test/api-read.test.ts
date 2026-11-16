@@ -776,6 +776,8 @@ describe("what the API publishes of a record, field by field", () => {
         "taxon_geoprivacy", "url", "wildernesses",
       ].sort(),
     );
+    // A collector as a listing names them; where the page links them for staff is the page's (beeline-3ugg).
+    expect(Object.keys(sample.sample.collectors[0]).sort()).toEqual(["display", "label", "orcid"]);
     expect(Object.keys(sample).sort()).toEqual(["findings", "history", "hold", "sample", "specimens", "waivers"]);
     expect(Object.keys(sample.specimens.rows[0]).sort()).toEqual(
       ["authorship", "determiner", "field_number", "id", "is_expert", "label_at", "label_state", "qualifier", "rank", "reprint_requested", "scientific_name", "sex", "specimen_id", "specimen_number", "url"].sort(),

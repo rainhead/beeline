@@ -1161,7 +1161,8 @@ export function PublishedNotes({ m, notes }: { m: Messages; notes: readonly Arch
     <>
       <h3>{p.heading}</h3>
       {notes.map((n) => (
-        <p>
+        // A div, since the note beneath is a paragraph of its own.
+        <div>
           {n.agrees ? p.same(n.publisher) : p.differs(n.publisher)}
           {!n.agrees && (
             <>
@@ -1175,7 +1176,7 @@ export function PublishedNotes({ m, notes }: { m: Messages; notes: readonly Arch
           )}
           {p.detail(n.sex, n.identified_by, n.date_identified)}
           <Meta block>{n.agrees ? p.sameNote(n.version) : p.differsNote(n.version)}</Meta>
-        </p>
+        </div>
       ))}
     </>
   );

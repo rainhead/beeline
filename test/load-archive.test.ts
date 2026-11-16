@@ -389,17 +389,21 @@ describe("what cannot be read is held", () => {
       row("26000003", { recordedBy: "Someone Else" }),
       row("26000004", { day: String(Number(DAY) + 1) }),
       row("26000005", { recordedBy: "Someone Else | Ada Collector" }),
-      // The same family name under another given name confirms nothing.
+      // The same family name under another given name confirms nothing, the same initial included.
       row("26000006", { recordedBy: "Bea Collector" }),
       row("26000007", { recordedBy: "A. Collector" }),
+      row("26000008", { recordedBy: "Amy Collector" }),
+      // A short form of the given name, and collectors joined with a semicolon.
+      row("26000009", { recordedBy: "Someone Else; Adaline Collector" }),
     ]);
     const result = await load(dir);
-    expect(result.held).toMatchObject({ no_specimen: 1, repeated_number: 2, collector_disagrees: 2, date_disagrees: 1 });
-    expect(result.backfilled).toEqual({ active: 3, settled: 0 });
-    expect((await recorded()).map((r) => r[0])).toEqual(["26000001", "26000005", "26000007"]);
+    expect(result.held).toMatchObject({ no_specimen: 1, repeated_number: 2, collector_disagrees: 3, date_disagrees: 1 });
+    expect(result.backfilled).toEqual({ active: 4, settled: 0 });
+    expect((await recorded()).map((r) => r[0])).toEqual(["26000001", "26000005", "26000007", "26000009"]);
     expect(await heldRows(dir)).toEqual([
       ["26000003", "collector_disagrees"],
       ["26000006", "collector_disagrees"],
+      ["26000008", "collector_disagrees"],
       ["26000004", "date_disagrees"],
       ["99999999", "no_specimen"],
       ["26000002", "repeated_number"],
@@ -435,9 +439,15 @@ describe("what cannot be read is held", () => {
     const dir = await archive("1.9", "2026-11-04", [
       row("26000001", { scientificName: "Lasioglossum cf. sisymbrii" }),
       row("26000002", { scientificName: "Lasioglossum sisymbrii?" }),
+      // A subgenus the columns reduce to its genus, and a third epithet they drop.
+      row("26000003", { scientificName: "Lasioglossum (Dialictus)", specificEpithet: undefined, taxonRank: "subgenus" }),
+      row("26000004", { scientificName: "Lasioglossum sisymbrii nevadense (Crawford, 1907)", taxonRank: "subspecies" }),
+      row("26000005", { scientificName: "Lasioglossum (Dialictus) sisymbrii (Cockerell, 1895)" }),
+      // OSAC's scientificName misspells a name its columns spell rightly: the shape is what is compared.
+      row("26000006", { scientificName: "Lasioglosum sisymbrii (Cockerell, 1895)" }),
     ]);
-    expect((await load(dir)).held).toMatchObject({ name_unreadable: 2 });
-    expect(await recorded()).toEqual([]);
+    expect((await load(dir)).held).toMatchObject({ name_unreadable: 5 });
+    expect((await recorded()).map((r) => [r[0], r[1], r[2]])).toEqual([["26000006", "Lasioglossum sisymbrii", "Lasioglosum sisymbrii (Cockerell, 1895)"]]);
   });
 
   test("a qualifier, which the loader does not read, refuses the archive", async () => {

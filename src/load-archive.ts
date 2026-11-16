@@ -343,12 +343,25 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
         FROM r LEFT JOIN ar_taxon_alias ga ON ga.rank = 'genus' AND ga.alias = r.genus
       )
       SELECT g.*,
-             -- Not readable where the name as published says more than its
-             -- genus and epithet do: a qualifier or a doubt written into it
-             -- (cf., aff., nr., a question mark), which the parted columns drop.
+             -- Readable only where the genus and the epithet are the whole
+             -- of what the record says. The name as published must be a
+             -- genus, an epithet where the record gives one, and then
+             -- nothing or an authorship (which starts with a bracket or a
+             -- capital): any other word between or after them is something
+             -- the parted columns drop, a qualifier (cf., aff., nr.), a
+             -- subgenus, a third epithet, a question mark. Its shape is
+             -- compared, not its spelling: OSAC's scientificName misspells a
+             -- few names its own columns spell rightly (Ashmediella). And
+             -- the rank the record states must be the rank the columns
+             -- make, so a subgenus is not recorded as its genus.
              regexp_full_match(coalesce(genus, ''), '[A-Z][a-z]+')
                AND (species_epithet IS NULL OR regexp_full_match(species_epithet, '[a-z]+(-[a-z]+)?'))
-               AND NOT regexp_matches(coalesce(scientific_name, ''), '(^|\\s)(cf|aff|nr)\\.?(\\s|$)|\\?') AS name_readable,
+               AND regexp_full_match(coalesce(scientific_name, ''),
+                     CASE WHEN specific_epithet IS NULL THEN '[A-Z][a-z]+( [(A-Z][^?]*)?'
+                          ELSE '[A-Z][a-z]+ [a-z]+(-[a-z]+)?\\.?( [(A-Z][^?]*)?' END)
+               AND NOT regexp_matches(coalesce(scientific_name, ''), '(^|\\s)(cf|aff|nr)\\.?(\\s|$)')
+               AND (taxon_rank IS NULL
+                    OR lower(taxon_rank) = CASE WHEN species_epithet IS NULL THEN 'genus' ELSE 'species' END) AS name_readable,
              CASE WHEN species_epithet IS NULL THEN 'genus' ELSE 'species' END AS rank,
              CASE WHEN species_epithet IS NULL THEN genus_name
                   ELSE coalesce(sa.name, concat(genus_name, ' ', species_epithet)) END AS name,
@@ -370,19 +383,28 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
              sa.entity_id IN (SELECT sample_id FROM settled_sample) AS settled,
              EXISTS (SELECT 1
                      FROM sample_collector sc JOIN person pe ON pe.entity_id = sc.person_id,
-                          unnest(string_split(p.recorded_by, '|')) AS part(collector)
+                          -- OSAC joins collectors with a pipe on some records and a semicolon on others.
+                          unnest(string_split_regex(p.recorded_by, '[|;]')) AS part(collector)
                      WHERE sc.sample_id = sa.entity_id
                        AND (${FOLD("pe.display_name")} = ${FOLD("part.collector")}
                             -- The family name, where the given names do not
-                            -- contradict each other: the same first letter
-                            -- (Bob for Robert is not confirmed, and is held
-                            -- for a person), or a record or a person that
-                            -- gives only the family name. John Smith does not
-                            -- confirm a number on Jane Smith's specimen.
+                            -- contradict each other. Either side may give
+                            -- none, or only an initial (J. Smith), and then
+                            -- the first letter decides. Where both give a
+                            -- name in full, they must begin with the same
+                            -- three letters, which takes the short forms the
+                            -- archive writes (Steve for Steven, Kathy for
+                            -- Kathleen, Sara for Sarah) and not another
+                            -- member of the household: John Smith does not
+                            -- confirm a number on Jane Smith's specimen, and
+                            -- Bob for Robert is held for a person.
                             OR (${FOLD("pe.family_name")} = ${FOLD("regexp_extract(trim(part.collector), '([^ ]+)$', 1)")}
                                 AND (nullif(trim(pe.given_name), '') IS NULL
                                      OR NOT contains(trim(part.collector), ' ')
-                                     OR lower(left(trim(pe.given_name), 1)) = lower(left(trim(part.collector), 1)))))) AS collector_matches,
+                                     OR CASE WHEN length(${FOLD("split_part(trim(pe.given_name), ' ', 1)")}) > 1
+                                              AND length(${FOLD("split_part(trim(part.collector), ' ', 1)")}) > 1
+                                             THEN left(${FOLD("split_part(trim(pe.given_name), ' ', 1)")}, 3) = left(${FOLD("split_part(trim(part.collector), ' ', 1)")}, 3)
+                                             ELSE lower(left(trim(pe.given_name), 1)) = lower(left(trim(part.collector), 1)) END)))) AS collector_matches,
              (SELECT string_agg(pe.display_name, ' | ' ORDER BY sc.position)
               FROM sample_collector sc JOIN person pe ON pe.entity_id = sc.person_id WHERE sc.sample_id = sa.entity_id) AS collectors
       FROM ar_parsed p JOIN specimen sp ON sp.entity_id = p.specimen_id JOIN sample sa ON sa.entity_id = sp.sample_id

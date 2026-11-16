@@ -60,8 +60,28 @@ export async function fetchArchive(opts: {
   }
   const response = await get(url);
   if (!response.ok) throw new Error(`${url} answered ${response.status}`);
-  const zipped = new Uint8Array(await response.arrayBuffer());
-  if (zipped.length > MAX_ZIP_BYTES) throw new Error(`${url}: ${zipped.length} bytes, more than an archive is expected to be`);
+  // Read a piece at a time, so an answer far larger than an archive is
+  // refused before it is all in memory.
+  if (response.body === null) throw new Error(`${url} answered with nothing`);
+  const pieces: Uint8Array[] = [];
+  let size = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > MAX_ZIP_BYTES) {
+      await reader.cancel();
+      throw new Error(`${url}: more than ${MAX_ZIP_BYTES} bytes, more than an archive is expected to be`);
+    }
+    pieces.push(value);
+  }
+  const zipped = new Uint8Array(size);
+  let at = 0;
+  for (const piece of pieces) {
+    zipped.set(piece, at);
+    at += piece.length;
+  }
   // An archive is unpacked in memory, so no more than expected is: only the
   // files at its top level, where a Darwin Core archive keeps them, and
   // only up to a total.

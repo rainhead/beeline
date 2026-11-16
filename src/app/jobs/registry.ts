@@ -30,6 +30,7 @@ import { deploymentPath } from "../../deployment-path.js";
 import { describeManifest, writeProgramArchives } from "../program-archives.js";
 import { purgeIdleSessions } from "../session.js";
 import { revokeOrphanedKeys } from "../api-keys.js";
+import { forgetEntryTaxa } from "../determine.js";
 import type { Job, JobContext } from "./framework.js";
 
 /** A fresh JWT per run (src/inat-jwt.ts); a failed mint aborts the job. */
@@ -714,8 +715,19 @@ export function buildJobs(
       schedule: { kind: "dailyLA", hour: 1 },
       window: "night",
       async run(ctx) {
-        const { committed, unchanged, waiting } = await ctx.step("commit drafts", () => commitDeterminationDrafts(ctx.conn));
-        return `${committed} determination(s) recorded, ${unchanged} draft(s) unchanged and dropped, ${waiting} waiting for a name`;
+        const { committed, unchanged, waiting, adopted, unadoptable } = await ctx.step("commit drafts", () =>
+          commitDeterminationDrafts(ctx.conn),
+        );
+        const parts = [`${committed} determination(s) recorded, ${unchanged} draft(s) unchanged and dropped, ${waiting} waiting`];
+        if (adopted.length > 0) {
+          // The picker's list of the tree's names is remembered for ten
+          // minutes; without this a name just adopted would be in neither
+          // that list nor Ecdysis's search, which leaves out what the tree holds.
+          forgetEntryTaxa();
+          parts.push(`added to the tree from Ecdysis: ${adopted.join(", ")}`);
+        }
+        if (unadoptable > 0) parts.push(`${unadoptable} draft(s) name an Ecdysis taxon that can no longer be added to the tree`);
+        return parts.join("; ");
       },
     },
     {

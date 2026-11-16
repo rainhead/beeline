@@ -30,6 +30,10 @@ const CHUNK = 400;
 type Write = EntryValue & { specimenId: number };
 type TaxonInfo = { name: string; rank: string; castes: boolean };
 
+/** What picking a name writes: a node of the tree, or a name from Ecdysis the tree lacks (beeline-4wx3). */
+const namePatch = (t: PickerTaxon): Partial<EntryValue> =>
+  t.ecdysisTid !== undefined ? { animalId: null, ecdysisTid: t.ecdysisTid } : { animalId: t.id, ecdysisTid: null };
+
 /** A DATE as the calendar day it names, in the browser's zone: `new Date("2026-07-14")` is UTC midnight, the 13th here. */
 const localDate = (iso: string) => {
   const [y, mo, day] = iso.slice(0, 10).split("-").map(Number) as [number, number, number];
@@ -165,7 +169,19 @@ class DetermineGrid extends LitElement {
 
   #current(r: EntryRow): EntryValue {
     const v = this.#pending.get(r.id) ?? this.failed.get(r.id) ?? r.draft ?? r.prior;
-    return v ? { animalId: v.animalId, sex: v.sex, caste: v.caste } : { animalId: null, sex: null, caste: null };
+    return v
+      ? { animalId: v.animalId, ecdysisTid: v.ecdysisTid ?? null, sex: v.sex, caste: v.caste }
+      : { animalId: null, ecdysisTid: null, sex: null, caste: null };
+  }
+
+  /**
+   * Where a value's name is in this.taxa: the tree's entity id, or for a
+   * name from Ecdysis the tree lacks, its Ecdysis id made negative
+   * (PickerTaxon.id, rowTaxa).
+   */
+  #nameKey(v: EntryValue): number | null {
+    if (v.animalId !== null) return v.animalId;
+    return v.ecdysisTid != null ? -v.ecdysisTid : null;
   }
 
   #castes(animalId: number | null) {
@@ -202,7 +218,8 @@ class DetermineGrid extends LitElement {
           body: JSON.stringify({ writes }),
         });
         if (!res.ok) throw new Error(String(res.status));
-        const { rows } = (await res.json()) as { rows: EntryRow[] };
+        const { rows, taxa } = (await res.json()) as { rows: EntryRow[]; taxa?: Record<string, TaxonInfo> };
+        for (const [id, t] of Object.entries(taxa ?? {})) this.taxa.set(Number(id), t);
         const by = new Map(rows.map((r) => [r.id, r]));
         const landed = new Set(settle().map((w) => w.specimenId));
         this.rows = this.rows.map((r) => (landed.has(r.id) ? (by.get(r.id) ?? r) : r));
@@ -247,7 +264,7 @@ class DetermineGrid extends LitElement {
   /** Back to what the row said before today: its earlier determination, or nothing. */
   #undoRow(r: EntryRow) {
     const p = r.prior;
-    void this.#send([{ specimenId: r.id, animalId: p?.animalId ?? null, sex: p?.sex ?? null, caste: p?.caste ?? null }]);
+    void this.#send([{ specimenId: r.id, animalId: p?.animalId ?? null, ecdysisTid: null, sex: p?.sex ?? null, caste: p?.caste ?? null }]);
   }
 
   /**
@@ -492,7 +509,8 @@ class DetermineGrid extends LitElement {
     const cur = this.#current(r);
     const ro = this.data.readOnly;
     const number = r.fieldNumber ?? t.noNumber;
-    const named = cur.animalId !== null ? this.taxa.get(cur.animalId) : undefined;
+    const key = this.#nameKey(cur);
+    const named = key !== null ? this.taxa.get(key) : undefined;
     const classes = [this.selected.has(r.id) ? "selected" : "", this.flash === r.id ? "flash" : ""].join(" ");
     return html`<tr data-row=${r.id} class=${classes}>
       <td class="tick">
@@ -509,12 +527,12 @@ class DetermineGrid extends LitElement {
                 this.taxa.set(e.detail.id, e.detail);
                 this.#closeEditor(r);
                 this.#rowChanged(r);
-                void this.#write([r], { animalId: e.detail.id });
+                void this.#write([r], namePatch(e.detail));
               }}
               @cancel=${() => this.#closeEditor(r)}></determine-taxon-picker>`
           : html`<button type="button" class="name-cell" ?disabled=${ro} aria-label=${named ? t.changeName(`${named.name} ${named.rank}`, number) : t.addNameTo(number)}
               @click=${() => (this.editing = r.id)}>
-              ${cur.animalId !== null ? this.#name(cur.animalId) : html`<span class="meta">${t.addName}</span>`}
+              ${key !== null ? this.#name(key) : html`<span class="meta">${t.addName}</span>`}
             </button>`}
       </td>
       <td>${this.#sexControl(cur.animalId, cur, (sex, caste) => {
@@ -529,8 +547,8 @@ class DetermineGrid extends LitElement {
     </tr>`;
   }
 
-  #name(animalId: number) {
-    const t = this.taxa.get(animalId);
+  #name(key: number) {
+    const t = this.taxa.get(key);
     return t ? html`${nameTemplate(t)} <span class="determine-rank">${t.rank}</span>` : nothing;
   }
 
@@ -568,7 +586,7 @@ class DetermineGrid extends LitElement {
       <determine-taxon-picker placeholder=${b.namePlaceholder(n)} label=${b.nameLabel} ?disabled=${off}
         @pick=${(e: CustomEvent<PickerTaxon>) => {
           this.taxa.set(e.detail.id, e.detail);
-          this.#bulk({ animalId: e.detail.id }, b.named(n, e.detail.name));
+          this.#bulk(namePatch(e.detail), b.named(n, e.detail.name));
         }}></determine-taxon-picker>
       ${this.#sexControl(social ? first!.animalId : null, same, (sex, caste) => this.#bulk({ sex, caste }, b.sexSet(n)), b.sexLabel, off)}
       <span class="done">

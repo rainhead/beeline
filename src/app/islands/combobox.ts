@@ -294,7 +294,9 @@ export class BeelineCombobox extends LitElement {
             }}
           >
             ${shown.length === 0
-              ? html`<p class="meta">${this.emptyText}</p>`
+              ? this.emptyText === ""
+                ? nothing
+                : html`<p class="meta">${this.emptyText}</p>`
               : html`<ul role="listbox" id=${this.#listId}>
                   ${shown.map(
                     (o, i) => html`<li

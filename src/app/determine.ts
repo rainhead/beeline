@@ -1,6 +1,6 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import type { Database, DraftCaste, DraftSex } from "../model.js";
-import { BEE_FAMILIES } from "../bee-families.js";
+import { BEE_FAMILIES, notABee } from "../bee-families.js";
 import { observationGone } from "./listings.js";
 import { NumberIndex, type NumberEntry, type NumberProblem } from "../determination-numbers.js";
 
@@ -26,6 +26,12 @@ export { BEE_FAMILIES };
 
 export interface EntryValue {
   animalId: number | null;
+  /**
+   * A name chosen from Ecdysis that the tree does not hold yet, in place of
+   * animalId (beeline-4wx3). Only a draft carries one: the overnight commit
+   * adopts the name into the tree and records the determination against it.
+   */
+  ecdysisTid?: number | null;
   sex: DraftSex | null;
   caste: DraftCaste | null;
 }
@@ -66,6 +72,8 @@ export interface EntryTaxon {
   rank: string;
   name: string;
   family: string | null;
+  /** Shown beside a name that is not a bee, so a katydid cannot be taken for a wasp of the same spelling. */
+  order: string | null;
   bee: boolean;
   castes: boolean;
   /** Specimens whose determination of record is this node: how common it is, to order suggestions. */
@@ -88,7 +96,7 @@ export async function entrySeasons(db: Kysely<Database>, personId: number, deter
                SELECT 1 FROM determination d WHERE d.specimen_id = sp.entity_id AND NOT d.is_expert)
              AND NOT EXISTS (
                SELECT 1 FROM determination_draft dd
-               WHERE dd.specimen_id = sp.entity_id AND dd.determiner_id = ${determinerId} AND dd.animal_id IS NOT NULL)) AS INTEGER) AS unnamed
+               WHERE dd.specimen_id = sp.entity_id AND dd.determiner_id = ${determinerId} AND (dd.animal_id IS NOT NULL OR dd.ecdysis_tid IS NOT NULL))) AS INTEGER) AS unnamed
     FROM specimen sp
     JOIN sample_season ss ON ss.sample_id = sp.sample_id
     WHERE sp.sample_id IN ${reach(personId)}
@@ -120,6 +128,7 @@ interface RawRow {
   prior_on: string | null;
   prior_channel: string | null;
   draft_animal: number | null;
+  draft_ecdysis: number | null;
   draft_sex: DraftSex | null;
   draft_caste: DraftCaste | null;
   draft_at: string | null;
@@ -153,7 +162,7 @@ async function loadRows(
            s.host_name_as_observed AS host,
            vol.animal_id AS prior_animal, vol.sex AS prior_sex, vol.caste AS prior_caste,
            CAST(vol.determined_on AS TEXT) AS prior_on, vol.channel AS prior_channel,
-           dd.animal_id AS draft_animal, dd.sex AS draft_sex, dd.caste AS draft_caste,
+           dd.animal_id AS draft_animal, CAST(dd.ecdysis_tid AS INTEGER) AS draft_ecdysis, dd.sex AS draft_sex, dd.caste AS draft_caste,
            CAST(dd.updated_at AS TEXT) AS draft_at
     FROM specimen sp
     JOIN sample s ON s.entity_id = sp.sample_id
@@ -180,9 +189,11 @@ async function loadRows(
     prior:
       r.prior_animal === null
         ? null
-        : { animalId: r.prior_animal, sex: r.prior_sex, caste: r.prior_caste, determinedOn: r.prior_on, channel: r.prior_channel ?? "" },
+        : { animalId: r.prior_animal, ecdysisTid: null, sex: r.prior_sex, caste: r.prior_caste, determinedOn: r.prior_on, channel: r.prior_channel ?? "" },
     draft:
-      r.draft_at === null ? null : { animalId: r.draft_animal, sex: r.draft_sex, caste: r.draft_caste, updatedAt: r.draft_at },
+      r.draft_at === null
+        ? null
+        : { animalId: r.draft_animal, ecdysisTid: r.draft_ecdysis, sex: r.draft_sex, caste: r.draft_caste, updatedAt: r.draft_at },
   }));
 }
 
@@ -242,9 +253,9 @@ export async function entryTaxa(db: Kysely<Database>, now = Date.now()): Promise
       LEFT JOIN (SELECT animal_id, count(*) AS n FROM determination_of_record GROUP BY animal_id) u ON u.animal_id = a.entity_id`.execute(db)
   ).rows;
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const family = (id: number): string | null => {
+  const above = (id: number, rank: string): string | null => {
     for (let n = byId.get(id); n !== undefined; n = n.parent_id === null ? undefined : byId.get(n.parent_id)) {
-      if (n.rank === "family") return n.name;
+      if (n.rank === rank) return n.name;
     }
     return null;
   };
@@ -252,8 +263,17 @@ export async function entryTaxa(db: Kysely<Database>, now = Date.now()): Promise
     // Kingdom to class are scaffolding: nobody names a pinned insect "Insecta".
     .filter((n) => !["kingdom", "phylum", "class"].includes(n.rank))
     .map((n) => {
-      const f = family(n.id);
-      return { id: n.id, rank: n.rank, name: n.name, family: f, bee: f !== null && BEE_FAMILIES.includes(f), castes: n.castes, uses: n.uses };
+      const f = above(n.id, "family");
+      return {
+        id: n.id,
+        rank: n.rank,
+        name: n.name,
+        family: f,
+        order: above(n.id, "order"),
+        bee: f !== null && BEE_FAMILIES.includes(f),
+        castes: n.castes,
+        uses: n.uses,
+      };
     });
   taxaMemo = { at: now, taxa };
   return taxa;
@@ -263,6 +283,62 @@ export async function entryTaxa(db: Kysely<Database>, now = Date.now()): Promise
 export const forgetEntryTaxa = () => {
   taxaMemo = null;
 };
+
+/** A name from Ecdysis that the tree does not hold yet, offered by the picker once the bycatch box is ticked. */
+export interface EcdysisName {
+  /** Ecdysis's taxon id. */
+  tid: number;
+  rank: string;
+  name: string;
+  family: string | null;
+  order: string | null;
+}
+
+/** Fewer letters than this match too many of Ecdysis's names to be worth sending. */
+export const ECDYSIS_SEARCH_MIN = 3;
+
+const searchWords = (s: string) => s.toLowerCase().replace(/[().]/g, " ").split(/\s+/).filter(Boolean);
+
+/**
+ * Names from Ecdysis's taxonomy for what is typed (beeline-4wx3): those the
+ * tree could adopt (ecdysis_adoptable) and does not already spell, leaving
+ * out bees, since a bee's name the tree lacks waits for a taxonomist
+ * (src/load-ecdysis.ts). The first word typed must start the name, so a
+ * species is found through its genus (`tenthredo a`), not by its epithet
+ * alone as names in the tree are: with no limit by place, an epithet alone
+ * matches species from every continent. Each later word must start a later
+ * word of the name, as in the picker's own search. Shortest names first, so
+ * a genus comes before its species.
+ */
+export async function searchEcdysisNames(db: Kysely<Database>, query: string, limit = 10): Promise<EcdysisName[]> {
+  // Capped, since each word adds a condition: no name needs more than four.
+  const words = searchWords(query.slice(0, 100)).slice(0, 4);
+  const first = words[0];
+  if (first === undefined || first.length < ECDYSIS_SEARCH_MIN) return [];
+  // Every key that starts with the first word sorts at or after it and before
+  // the word with its last letter moved one on: a range the table's sort
+  // lets the engine read only part of.
+  const after = first.slice(0, -1) + String.fromCharCode(first.charCodeAt(first.length - 1) + 1);
+  const later = words.slice(1).map((w) => sql`AND contains(e.name_key, ${` ${w}`})`);
+  const result = await sql<{ tid: number; rank: string; name: string; family: string | null; order: string | null }>`
+    SELECT CAST(e.tid AS INTEGER) AS tid, e.rank, e.name, e.family, e.insect_order AS "order"
+    FROM ecdysis_adoptable e
+    WHERE e.name_key >= ${first} AND e.name_key < ${after}
+      ${later.length > 0 ? sql.join(later, sql` `) : sql``}
+      AND ${sql.raw(notABee("e"))}
+      AND NOT EXISTS (SELECT 1 FROM animal a WHERE a.scientific_name = e.name)
+    ORDER BY length(e.name), e.name
+    LIMIT 200`.execute(db);
+  return result.rows
+    .filter((r) => {
+      // In order, each word starting a word of the name: what the SQL above
+      // only approximates, since it does not check the order.
+      let i = 0;
+      for (const w of searchWords(r.name)) if (i < words.length && w.startsWith(words[i]!)) i++;
+      return i === words.length;
+    })
+    .slice(0, limit);
+}
 
 export class UnreachableSpecimens extends Error {
   constructor(readonly ids: number[]) {
@@ -293,7 +369,8 @@ export interface DraftWrite extends EntryValue {
   specimenId: number;
 }
 
-const same = (a: EntryValue, b: EntryValue) => a.animalId === b.animalId && a.sex === b.sex && a.caste === b.caste;
+const same = (a: EntryValue, b: EntryValue) =>
+  a.animalId === b.animalId && (a.ecdysisTid ?? null) === (b.ecdysisTid ?? null) && a.sex === b.sex && a.caste === b.caste;
 
 /**
  * Write what each specimen should now say. The value is normalised against
@@ -311,7 +388,38 @@ export async function saveDrafts(
 ): Promise<EntryRow[]> {
   const ids = [...new Set(writes.map((w) => w.specimenId))];
   await assertReachable(db, personId, ids);
-  const animalIds = [...new Set(writes.map((w) => w.animalId).filter((id): id is number => id !== null))];
+  if (writes.some((w) => w.animalId !== null && (w.ecdysisTid ?? null) !== null)) {
+    throw new BadRequest("a write names a taxon in the tree and one from Ecdysis");
+  }
+  // A name from Ecdysis that the tree has adopted since it was offered (the
+  // overnight commit adopted it for someone else's draft) is written as the
+  // node, so a draft carries an Ecdysis id only while the tree lacks the name.
+  const tids = [...new Set(writes.map((w) => w.ecdysisTid ?? null).filter((id): id is number => id !== null))];
+  const adopted = new Map<number, number>();
+  const offered = new Set<number>();
+  if (tids.length > 0) {
+    const held = await sql<{ tid: number; id: number }>`
+      SELECT CAST(ecdysis_tid AS INTEGER) AS tid, min(entity_id) AS id FROM animal
+      WHERE ecdysis_tid IN (${sql.join(tids)}) GROUP BY ecdysis_tid`.execute(db);
+    for (const r of held.rows) adopted.set(r.tid, r.id);
+    const rest = tids.filter((t) => !adopted.has(t));
+    if (rest.length > 0) {
+      // What the search offers (searchEcdysisNames), checked again here
+      // because an id is easy to type.
+      const found = await sql<{ tid: number }>`
+        SELECT CAST(e.tid AS INTEGER) AS tid FROM ecdysis_adoptable e
+        WHERE e.tid IN (${sql.join(rest)})
+          AND ${sql.raw(notABee("e"))}
+          AND NOT EXISTS (SELECT 1 FROM animal a WHERE a.scientific_name = e.name)`.execute(db);
+      for (const r of found.rows) offered.add(r.tid);
+      const missing = rest.filter((t) => !offered.has(t));
+      if (missing.length > 0) throw new UnknownTaxon(missing);
+    }
+  }
+  const resolved = writes.map((w) =>
+    w.ecdysisTid != null && adopted.has(w.ecdysisTid) ? { ...w, animalId: adopted.get(w.ecdysisTid)!, ecdysisTid: null } : w,
+  );
+  const animalIds = [...new Set(resolved.map((w) => w.animalId).filter((id): id is number => id !== null))];
   const castes = new Map<number, boolean>();
   if (animalIds.length > 0) {
     const found = await sql<{ id: number; castes: boolean }>`
@@ -324,26 +432,30 @@ export async function saveDrafts(
 
   const upserts: DraftWrite[] = [];
   const removals: number[] = [];
-  for (const w of new Map(writes.map((w) => [w.specimenId, w])).values()) {
+  for (const w of new Map(resolved.map((w) => [w.specimenId, w])).values()) {
     const sex: DraftSex | null = w.sex === "female" || w.sex === "male" ? w.sex : null;
+    // A name from Ecdysis is never a bee (searchEcdysisNames), so it has no castes.
     const social = w.animalId !== null && castes.get(w.animalId) === true;
     let caste: DraftCaste | null = null;
     if (social && sex === "male") caste = "drone";
     else if (social && sex === "female" && (w.caste === "gyne" || w.caste === "worker")) caste = w.caste;
-    const value: EntryValue = { animalId: w.animalId, sex, caste };
+    const value: EntryValue = { animalId: w.animalId, ecdysisTid: w.ecdysisTid ?? null, sex, caste };
     const prior = before.get(w.specimenId)?.prior ?? null;
-    const says = value.animalId !== null || value.sex !== null;
+    const says = value.animalId !== null || value.ecdysisTid != null || value.sex !== null;
     if (!says || (prior !== null && same(value, prior))) removals.push(w.specimenId);
     else upserts.push({ specimenId: w.specimenId, ...value });
   }
 
   if (upserts.length > 0) {
-    const values = upserts.map((u) => sql`(${u.specimenId}, ${determinerId}, ${u.animalId}, ${u.sex}, ${u.caste}, ${now.toISOString()})`);
+    const values = upserts.map(
+      (u) => sql`(${u.specimenId}, ${determinerId}, ${u.animalId}, ${u.ecdysisTid ?? null}, ${u.sex}, ${u.caste}, ${now.toISOString()})`,
+    );
     await sql`
-      INSERT INTO determination_draft (specimen_id, determiner_id, animal_id, sex, caste, updated_at)
+      INSERT INTO determination_draft (specimen_id, determiner_id, animal_id, ecdysis_tid, sex, caste, updated_at)
       VALUES ${sql.join(values)}
       ON CONFLICT (specimen_id, determiner_id) DO UPDATE SET
-        animal_id = excluded.animal_id, sex = excluded.sex, caste = excluded.caste, updated_at = excluded.updated_at`.execute(db);
+        animal_id = excluded.animal_id, ecdysis_tid = excluded.ecdysis_tid, sex = excluded.sex, caste = excluded.caste,
+        updated_at = excluded.updated_at`.execute(db);
   }
   if (removals.length > 0) {
     await sql`DELETE FROM determination_draft WHERE determiner_id = ${determinerId} AND specimen_id IN (${sql.join(removals)})`.execute(db);
@@ -451,16 +563,39 @@ export async function removeFromBatch(db: Kysely<Database>, determinerId: number
   }
 }
 
-/** The names rows already carry, so the page can show them before the full list loads. */
+/**
+ * The key a name chosen from Ecdysis goes by in rowTaxa's answer and the
+ * page's list of names, beside the tree's entity ids: the Ecdysis id made
+ * negative, since an entity id never is (the picker reads it the same way,
+ * src/app/islands/determine/picker.ts).
+ */
+export const ecdysisKey = (tid: number) => -tid;
+
+/**
+ * The names rows already carry, so the page can show them before the full
+ * list loads: the tree's by entity id, and a draft's name from Ecdysis under
+ * ecdysisKey.
+ */
 export async function rowTaxa(
   db: Kysely<Database>,
   rows: readonly EntryRow[],
 ): Promise<Record<number, { name: string; rank: string; castes: boolean }>> {
   const ids = [...new Set(rows.flatMap((r) => [r.prior?.animalId ?? null, r.draft?.animalId ?? null]).filter((id): id is number => id !== null))];
-  if (ids.length === 0) return {};
-  const found = await sql<{ id: number; name: string; rank: string; castes: boolean }>`
-    SELECT a.entity_id AS id, a.scientific_name AS name, a.rank, c.has_castes AS castes
-    FROM animal a JOIN animal_castes c ON c.animal_id = a.entity_id
-    WHERE a.entity_id IN (${sql.join(ids)})`.execute(db);
-  return Object.fromEntries(found.rows.map((r) => [r.id, { name: r.name, rank: r.rank, castes: r.castes }]));
+  const tids = [...new Set(rows.map((r) => r.draft?.ecdysisTid ?? null).filter((id): id is number => id !== null))];
+  const out: Record<number, { name: string; rank: string; castes: boolean }> = {};
+  if (ids.length > 0) {
+    const found = await sql<{ id: number; name: string; rank: string; castes: boolean }>`
+      SELECT a.entity_id AS id, a.scientific_name AS name, a.rank, c.has_castes AS castes
+      FROM animal a JOIN animal_castes c ON c.animal_id = a.entity_id
+      WHERE a.entity_id IN (${sql.join(ids)})`.execute(db);
+    for (const r of found.rows) out[r.id] = { name: r.name, rank: r.rank, castes: r.castes };
+  }
+  if (tids.length > 0) {
+    // From the thesaurus itself rather than ecdysis_adoptable, so a draft
+    // still shows its name if a later fetch stopped offering it.
+    const found = await sql<{ tid: number; name: string; rank: string }>`
+      SELECT CAST(tid AS INTEGER) AS tid, name, rank FROM ecdysis_taxon WHERE tid IN (${sql.join(tids)})`.execute(db);
+    for (const r of found.rows) out[ecdysisKey(r.tid)] = { name: r.name, rank: r.rank, castes: false };
+  }
+  return out;
 }

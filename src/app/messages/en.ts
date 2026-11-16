@@ -1685,6 +1685,12 @@ export const en = {
       noBees: "No bee name matches.",
       noNames: "No name matches.",
       bycatch: "Include wasps and other non-bees",
+      /** Beside a name Beeline does not hold yet, found in Ecdysis's list of insect names (beeline-4wx3). */
+      fromEcdysis: "new to Beeline",
+      fromEcdysisTitle: "From Ecdysis's list of insect names. Beeline adds it overnight, when your identification is saved.",
+      searchingEcdysis: "Searching Ecdysis…",
+      ecdysisFailed: "Ecdysis's names could not be searched. Try again in a moment.",
+      ecdysisShort: (letters: number) => `Type ${letters} letters of a genus to search all of Ecdysis's insect names.`,
     },
     saveFailed: "That didn't save. Check your connection, then try again.",
   },

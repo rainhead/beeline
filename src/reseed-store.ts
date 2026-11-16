@@ -4,6 +4,7 @@ import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
 import { loadPlantList } from "./load-plant-list.js";
+import { rebuildEcdysisAdoptable } from "./load-ecdysis-taxonomy.js";
 import { refreshPlantCommonNames } from "./plant-common-names.js";
 import {
   refuseReseedOfPrintedFile,
@@ -274,6 +275,8 @@ export async function carryStaging(
     if (await has("ecdysis_taxon")) {
       await conn.run(`INSERT INTO ecdysis_taxon BY NAME SELECT * FROM old.ecdysis_taxon`);
       await count("ecdysis_taxon");
+      // Derived from it, so rebuilt rather than carried (beeline-4wx3).
+      await rebuildEcdysisAdoptable(conn);
     }
     // Who has signed in, their sessions, API keys, when they were last here and
     // who viewed Beeline as them (schema/012). Keyed by iNat user id and by

@@ -278,7 +278,7 @@ describe("the overnight commit", () => {
       { specimenId: await spec("26000103"), animalId: null, sex: "male", caste: null },
     ]);
     const counts = await commitDeterminationDrafts(conn);
-    expect(counts).toEqual({ committed: 1, unchanged: 0, waiting: 1 });
+    expect(counts).toEqual({ committed: 1, unchanged: 0, waiting: 1, adopted: [], unadoptable: 0 });
     const made = await rows(
       conn,
       `SELECT channel, is_expert, determiner_id, verbatim_identification, sex, caste, determined_on IS NOT NULL
@@ -293,7 +293,7 @@ describe("the overnight commit", () => {
     // Written directly: saveDrafts would already have dropped it.
     await conn.run(`INSERT INTO determination_draft (specimen_id, determiner_id, animal_id, sex)
       VALUES (${await spec("26000102")}, ${ada}, ${await animal("Bombus")}, 'female')`);
-    expect(await commitDeterminationDrafts(conn)).toEqual({ committed: 0, unchanged: 1, waiting: 0 });
+    expect(await commitDeterminationDrafts(conn)).toEqual({ committed: 0, unchanged: 1, waiting: 0, adopted: [], unadoptable: 0 });
     expect(await rows(conn, `SELECT count(*) FROM determination WHERE channel = 'in_app'`)).toEqual([[1n]]);
   });
 

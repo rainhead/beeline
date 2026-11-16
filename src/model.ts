@@ -684,6 +684,18 @@ export interface EcdysisTaxonTable {
   fetched_on: ColumnType<Date, Date | string, Date | string>;
 }
 
+/** Ecdysis names the tree could adopt, for the determination picker; derived from ecdysis_taxon (beeline-4wx3). */
+export interface EcdysisAdoptableTable {
+  tid: BigIntCol;
+  rank: string;
+  name: string;
+  family: string | null;
+  superfamily: string | null;
+  insect_order: string | null;
+  /** The name in lower case, for prefix search. */
+  name_key: string;
+}
+
 // schema/030_samples_specimens.sql
 
 export type SampleKind = "net" | "trap";
@@ -1213,6 +1225,8 @@ export interface DeterminationDraftTable {
   sex: DraftSex | null;
   caste: DraftCaste | null;
   updated_at: Timestamped;
+  /** A name chosen from Ecdysis that the tree lacks, in place of animal_id; adopted at the overnight commit. */
+  ecdysis_tid: BigIntCol | null;
 }
 
 /** Specimens a person has gathered to name together, in the order added. */
@@ -1811,6 +1825,7 @@ export interface Database {
   animal: AnimalTable;
   animal_curation: AnimalCurationTable;
   ecdysis_taxon: EcdysisTaxonTable;
+  ecdysis_adoptable: EcdysisAdoptableTable;
   sample: SampleTable;
   elevation_source: ElevationSourceTable;
   sample_location: SampleLocationTable;

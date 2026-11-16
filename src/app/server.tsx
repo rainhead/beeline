@@ -44,6 +44,7 @@ import {
   defaultSeason,
   entrySeasons,
   entryTaxa,
+  searchEcdysisNames,
   locateSpecimen,
   removeFromBatch,
   rowTaxa,
@@ -1851,6 +1852,14 @@ export function createApp({
     return c.json(await entryTaxa(db));
   });
 
+  // Names from Ecdysis's taxonomy the tree does not hold yet, for the picker
+  // once its bycatch box is ticked (beeline-4wx3). Asked as someone types, so
+  // a short query answers nothing rather than thousands of names.
+  app.get("/determinations/ecdysis.json", async (c) => {
+    c.header("cache-control", "private, max-age=600");
+    return c.json(await searchEcdysisNames(db, c.req.query("q") ?? ""));
+  });
+
   /** Refuse a write while impersonating, and answer the module's refusals in HTTP. */
   const determineWrite = async (c: Context<AppEnv>, write: () => Promise<unknown>) => {
     if (c.get("acting").impersonating) return c.json({ error: c.get("m").errors.readOnlyImpersonating }, 403);
@@ -1885,7 +1894,9 @@ export function createApp({
       const id = (v: unknown, nullable: boolean) => {
         if (nullable && (v === null || v === undefined)) return null;
         const n = Number(v);
-        if (!Number.isInteger(n)) throw new BadRequest("an id is not a whole number");
+        // Entity ids and Ecdysis's ids are positive and fit an INTEGER; anything
+        // else is refused here rather than reaching the store as a failed cast.
+        if (!Number.isInteger(n) || n < 1 || n > 2 ** 31 - 1) throw new BadRequest("an id is not a whole number from 1 to 2147483647");
         return n;
       };
       const text = (v: unknown) => (typeof v === "string" ? v : null);
@@ -1897,11 +1908,16 @@ export function createApp({
         return {
           specimenId: id(r.specimenId, false)!,
           animalId: id(r.animalId, true),
+          ecdysisTid: id(r.ecdysisTid, true),
           sex: text(r.sex) as DraftWrite["sex"],
           caste: text(r.caste) as DraftWrite["caste"],
         };
       });
-      return { rows: await saveDrafts(db, c.get("acting").personId, determiner(c), clean) };
+      // The names of what was saved, as the batch route returns them: a name
+      // from Ecdysis that the tree adopted overnight comes back as a node the
+      // page's list of names may not have yet.
+      const rows = await saveDrafts(db, c.get("acting").personId, determiner(c), clean);
+      return { rows, taxa: await rowTaxa(db, rows) };
     }),
   );
 

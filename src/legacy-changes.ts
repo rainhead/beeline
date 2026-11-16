@@ -110,6 +110,12 @@ export interface ChangeLine {
    * Beeline's value was blank, or only where it was not, where `old` says so.
    */
   match: readonly { kinds: readonly string[]; columns?: readonly string[]; old?: "blank" | "given" }[];
+  /**
+   * A download kept elsewhere that says more than this line's own would, in
+   * place of it. A record new Beeline does not hold has no value of new
+   * Beeline's to compare, so its row would say only that old Beeline had it.
+   */
+  download?: { href: string; label: string };
 }
 
 /**
@@ -263,6 +269,10 @@ export const LINES: readonly ChangeLine[] = [
     title: "Not carried over",
     did: "Records new Beeline did not make into specimens, because the collector, the sample number, a date it can read or the specimen number was missing, or because they repeat a record that was kept. The held-back page lists each, with its reason. Counted here by field number, and there by record: old Beeline gave some field numbers to several empty records.",
     match: [{ kinds: HELD_BACK }],
+    download: {
+      href: "/exports/held-back.csv",
+      label: "Download every held-back record, with every column old Beeline held and why (CSV)",
+    },
   },
   {
     id: "numbered_here",
@@ -440,9 +450,9 @@ export interface LineSummary {
   /** Records under each outcome, commonest first. */
   outcomes: { outcome: string; active: number; settled: number }[];
   examples: ChangeExample[];
-  /** The line's CSV, every difference on it, in the same directory. */
-  file: string;
-  bytes: number;
+  /** The line's CSV, every difference on it, in the night's folder; null where the line's download is kept elsewhere. */
+  file: string | null;
+  bytes: number | null;
 }
 
 export interface ChangesSummary {
@@ -588,7 +598,7 @@ export async function writeChanges(
         const hidden = HIDDEN_VALUE_COLUMNS.has(column);
         ex.values.push({ column, kind, old: hidden ? null : legacy, new: hidden ? null : exported });
       }
-      await writeLineCsv(conn, l.id, path);
+      if (l.download === undefined) await writeLineCsv(conn, l.id, path);
       lines.push({
         line: l.id,
         ...n,
@@ -596,8 +606,8 @@ export async function writeChanges(
           .filter(([line]) => line === l.id)
           .map(([, outcome, active, settled]) => ({ outcome, active: Number(active), settled: Number(settled) })),
         examples: mine,
-        file: lineFile(l.id),
-        bytes: (await stat(path)).size,
+        file: l.download === undefined ? lineFile(l.id) : null,
+        bytes: l.download === undefined ? (await stat(path)).size : null,
       });
     }
 

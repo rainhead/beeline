@@ -70,7 +70,7 @@ export function LegacyChangesPage({ m, summary }: { m: Messages; summary: Change
           <h2>{s.cat.title}</h2>
           <p>{s.cat.intro}</p>
           {s.lines.map(({ def, sum }) => (
-            <Line m={m} id={def.id} title={def.title} did={def.did} sum={sum} since={since} generation={summary.generation} />
+            <Line m={m} id={def.id} title={def.title} did={def.did} sum={sum} since={since} generation={summary.generation} download={def.download} />
           ))}
         </section>
       ))}
@@ -87,6 +87,7 @@ function Line({
   sum,
   since,
   generation,
+  download,
 }: {
   m: Messages;
   id: string;
@@ -95,6 +96,8 @@ function Line({
   sum: LineSummary;
   since: string;
   generation: string;
+  /** A download kept elsewhere, in place of the line's own (ChangeLine.download). */
+  download: { href: string; label: string } | undefined;
 }) {
   const c = m.legacyChanges;
   return (
@@ -132,7 +135,13 @@ function Line({
         </>
       )}
       <p>
-        <LinkButton href={`/exports/changes/${generation}/${sum.file}`}>{c.download((sum.bytes / 1e6).toFixed(1))}</LinkButton>
+        {download !== undefined ? (
+          <LinkButton href={download.href}>{download.label}</LinkButton>
+        ) : (
+          sum.file !== null && (
+            <LinkButton href={`/exports/changes/${generation}/${sum.file}`}>{c.download(((sum.bytes ?? 0) / 1e6).toFixed(1))}</LinkButton>
+          )
+        )}
       </p>
     </article>
   );

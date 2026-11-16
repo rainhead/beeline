@@ -299,9 +299,11 @@ export async function refreshEcdysisTaxonomy(
 export function describeRefresh(r: RefreshEcdysisTaxonomyResult): string {
   const parts = [
     `${r.load.taxa} names from the fetch of ${r.load.fetchedOn}` + (r.previousFetchedOn !== null ? ` (replacing ${r.previousFetchedOn})` : ""),
-    `the tree's names: ${Object.entries(r.load.standing)
-      .map(([standing, n]) => `${n} ${standing}`)
-      .join(", ")}`,
+    `the tree's names: ${
+      Object.entries(r.load.standing)
+        .map(([standing, n]) => `${n} ${standing}`)
+        .join(", ") || "none"
+    }`,
   ];
   if (r.moved.length > 0) {
     const shown = r.moved.slice(0, 10).map((m) => `${m.name} (was ${m.was}, now ${m.now})`);

@@ -742,6 +742,19 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(await find("woolly", "specimens")).toEqual(["A-1"]);
   });
 
+  it("gives a trap's plant as near the trap, not visited, and still finds it by name (beeline-vjqy)", async () => {
+    const { app, conn } = await hostApp();
+    await conn.run(`UPDATE sample SET protocol = 'pan traps' WHERE sample_number = 'C-1'`);
+    const csv = parseCsv(await (await app.request("/samples.csv?scope=all")).text());
+    const taxa = (n: string) => csv.find((l) => l[0] === n)![csv[0]!.indexOf("associatedTaxa")];
+    expect(taxa("C-1")).toBe(`"near":"Plain name"`);
+    expect(taxa("A-1")).toBe(`"visits flowers of":"Alpha oldname"`);
+    const page = await get(app, "/samples?scope=all&host=plain");
+    expect(numbers(page)).toEqual(["C-1"]);
+    expect(page).toContain(en.listings.filters.nearTrap);
+    expect(await get(app, "/samples?scope=all&host=lanata")).not.toContain(en.listings.filters.nearTrap);
+  });
+
   it("adds the host's id, current name, family and common name to the CSV, beside the name as observed", async () => {
     const { app } = await hostApp();
     const sampleCsv = parseCsv(await (await app.request("/samples.csv?scope=all")).text());

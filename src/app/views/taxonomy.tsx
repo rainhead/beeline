@@ -413,7 +413,7 @@ function CollectedList({ m, node, groups }: { m: Messages; node: TaxonNode; grou
             <a href={href}>{where === "" ? t.nowhere(g.specimens) : t.from(g.specimens, where)}</a>
             {g.host_name !== null && (
               <>
-                , {t.off} <TaxonName rank={g.host_rank ?? ""} scientificName={g.host_name} />
+                , {g.near_trap ? t.nearTrap : t.off} <TaxonName rank={g.host_rank ?? ""} scientificName={g.host_name} />
               </>
             )}
             , {t.inSeasons(g.seasons.map(String))}.

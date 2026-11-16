@@ -51,7 +51,8 @@ const COLUMN_MEANING: Record<(typeof SAMPLE_CSV_HEADER)[number] | (typeof SPECIM
   coordinateUncertaintyInMeters: "How far from the point the bees may have been collected. Empty where the location is withheld.",
   minimumElevationInMeters: "Elevation of the point, in metres. Empty where the location is withheld.",
   maximumElevationInMeters: "The same as minimumElevationInMeters: Beeline holds one elevation.",
-  associatedTaxa: "The flower the bees were collected on, as the observation named it, in Darwin Core's quoted form.",
+  associatedTaxa:
+    "The flower the bees were collected on, as the observation named it, in Darwin Core's quoted form (\"visits flowers of\":\"Lupinus\"); where the sample's method names a trap, the plant near the trap (\"near\":\"Ceanothus\"), since a trap does not say which flower its bees visited.",
   scientificName: "The determination of record for the specimen: the name it is identified to. Empty while undetermined.",
   scientificNameAuthorship: "The authorship of that name.",
   taxonRank: "The rank of that name.",

@@ -565,7 +565,7 @@ class DetermineGrid extends LitElement {
     const s = r.sample;
     return html`<a href=${`/samples/${s.id}`}>${t.sampleHeading(s.number, this.#when(r))}</a>
       · ${m.format.place([s.locality, s.county])}
-      ${s.host ? html` · ${t.onHost} <i>${s.host}</i>` : nothing}
+      ${s.host ? html` · ${s.hostNearTrap ? t.nearHost : t.onHost} <i>${s.host}</i>` : nothing}
       ${s.observation
         ? html` <a class="inat-link" href=${`https://www.inaturalist.org/observations/${s.observation}`} title=${t.viewOnInat}>
             <img src="/static/inat-logo.png" alt=${t.viewOnInat} width="66" height="12" /></a>`

@@ -812,6 +812,8 @@ export const en = {
       methodAny: "Any",
       methodNet: "Net",
       methodTrap: "Trap",
+      /** After a plant in the host column, where the sample's method names a trap: a plant beside the trap, not a flower its bees visited (beeline-vjqy). */
+      nearTrap: "near the trap",
       qc: "Flags",
       qcAny: "Any",
       qcFlagged: "Any flag",
@@ -1099,6 +1101,8 @@ export const en = {
       /** The program the sample was collected for (beeline-8w8n): its atlas, else Master Melittology itself. */
       program: "Program",
       host: "Floral host",
+      /** In place of the floral host where the sample's method names a trap (beeline-vjqy). */
+      plantNearTrap: "Plant near the trap",
       /**
        * Directly under the host's scientific name, whenever iNaturalist's
        * current name for the taxon differs from the name the sample was
@@ -1648,6 +1652,8 @@ export const en = {
       saved: "Entered",
       sampleHeading: (sampleNumber: string, when: string) => `Sample ${sampleNumber} · ${when}`,
       onHost: "on",
+      /** In place of onHost where the sample was trapped: the trap was near the plant (beeline-vjqy). */
+      nearHost: "in a trap near",
       viewOnInat: "View on iNaturalist",
       addName: "Add a name",
       /** What a screen reader calls one row's name button, name box and caste buttons, so rows can be told apart by ear. */
@@ -1843,6 +1849,8 @@ export const en = {
       from: (count: number, where: string) => `${n(count)} from ${where}`,
       nowhere: (count: number) => `${n(count)} with no place recorded`,
       off: "off",
+      /** In place of "off" before a plant, where the samples were trapped: the trap was near it (beeline-vjqy). */
+      nearTrap: "in a trap near",
       inSeasons: (seasons: readonly string[]) => `in ${list(seasons)}`,
       /** The places and plants past the first few, folded away, the fewest specimens last. */
       more: (count: number) => `${n(count)} more ${count === 1 ? "place or plant" : "places and plants"}`,
@@ -3213,7 +3221,7 @@ export const en = {
       "floral-host": {
         term: "Floral host",
         definition:
-          "The plant from which a sample was collected, identified via the sample's iNaturalist observation. Floral hosts must be vascular plants. Samples collected without a host plant record none.",
+          "The plant from which a sample was collected, identified via the sample's iNaturalist observation. Floral hosts must be vascular plants. Samples collected without a host plant record none. A trap does not say which flower its bees visited, so a trap sample's observation names a plant near the trap instead, and Beeline never calls it a floral host.",
       },
       "heads-up": {
         term: "Heads-up",

@@ -1,5 +1,5 @@
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
@@ -155,10 +155,10 @@ describe("writing the changes", () => {
     await writeLegacyExport(conn, legacyExportPath(exportsDir));
     await conn.run(`UPDATE legacy_occurrence SET sex = 'male' WHERE "fieldNumber" = '25000005'`);
     await conn.run(`UPDATE legacy_occurrence SET "taxonomicNotes" = 'planted' WHERE "fieldNumber" = '25000001'`);
-    // A line's file from an earlier night, which has nothing on it now.
+    // An earlier night's folder that no summary names any more.
     const dir = changesDir(exportsDir);
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "coarser.csv"), "stale");
+    await mkdir(join(dir, "an-older-night"), { recursive: true });
+    await writeFile(join(dir, "an-older-night", "coarser.csv"), "stale");
     await conn.run("SET threads = 3");
     summary = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), dir);
   });
@@ -180,8 +180,8 @@ describe("writing the changes", () => {
     expect(unexplained.outcomes.map((o) => o.outcome)).toEqual(["unexplained"]);
   });
 
-  test("writes each line's every value to its own file, and removes the file of a line that has none now", async () => {
-    const dir = changesDir(exportsDir);
+  test("writes each line's every value to its own file, in a folder of the night's own", async () => {
+    const dir = join(changesDir(exportsDir), summary.generation);
     const sex = summary.lines.find((l) => l.line === "newer_expert_sex")!;
     const bytes = await readFile(join(dir, sex.file));
     expect(bytes.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
@@ -190,8 +190,21 @@ describe("writing the changes", () => {
     expect(rows).toHaveLength(sex.values);
     expect(rows[0]).toContain("25000005,settled,sex,male,female,Sex or caste from a newer expert identification,Not a fault in either,");
     expect(sex.bytes).toBe((await stat(join(dir, sex.file))).size);
-    await expect(stat(join(dir, "coarser.csv"))).rejects.toThrow();
     expect(await readChangesSummary(exportsDir)).toEqual(summary);
+    // The older night's folder, which no summary named, is gone.
+    await expect(stat(join(changesDir(exportsDir), "an-older-night"))).rejects.toThrow();
+  });
+
+  test("keeps the night before's folder, which a reader may still be downloading from, and nothing older", async () => {
+    const root = changesDir(exportsDir);
+    const second = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), root);
+    expect(second.generation).not.toBe(summary.generation);
+    await stat(join(root, summary.generation, "newer_expert_sex.csv"));
+    const third = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), root);
+    await expect(stat(join(root, summary.generation))).rejects.toThrow();
+    expect((await readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort()).toEqual(
+      [second.generation, third.generation].sort(),
+    );
   });
 
   test("leaves no temporary table behind and puts the thread count back", async () => {

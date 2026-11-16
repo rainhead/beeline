@@ -1,6 +1,6 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
@@ -431,6 +431,13 @@ export interface ChangesSummary {
   activeSince: string;
   reference: { rows: number; fingerprint: string };
   matched: { active: number; settled: number };
+  /**
+   * The folder under the summary's own that holds this night's CSVs. Each
+   * night writes a new one and the summary names it, so the counts on the
+   * page and the file a reader downloads are always one night's, however a
+   * night fails.
+   */
+  generation: string;
   /** Every line that has a difference, in the page's order. */
   lines: LineSummary[];
 }
@@ -441,8 +448,16 @@ export const lineFile = (line: string) => `${line}.csv`;
 
 /** The summary the job last wrote, or null where none has been. */
 export async function readChangesSummary(exportsDir: string): Promise<ChangesSummary | null> {
+  return readSummaryIn(changesDir(exportsDir));
+}
+
+/** The path of one line's CSV, in the night's folder the summary names. */
+export const changesFilePath = (exportsDir: string, summary: ChangesSummary, file: string) =>
+  join(changesDir(exportsDir), summary.generation, file);
+
+async function readSummaryIn(dir: string): Promise<ChangesSummary | null> {
   try {
-    return JSON.parse(await readFile(join(changesDir(exportsDir), SUMMARY), "utf8")) as ChangesSummary;
+    return JSON.parse(await readFile(join(dir, SUMMARY), "utf8")) as ChangesSummary;
   } catch {
     return null;
   }
@@ -455,7 +470,7 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 /**
  * Compare the export at `exportPath` with old Beeline's records, sort every
  * difference into its line, and write the summary and the CSVs
- * into `dir`, one file per line. On one thread, as the export is, for its memory: measured on
+ * into `dir`, one file per line in a folder of the night's own. On one thread, as the export is, for its memory: measured on
  * the production backup of 15 November 2026 it completed with DuckDB held to
  * 768 MB, spilling. Every temporary table it made is gone when it returns,
  * since the app's shared connection runs it.
@@ -522,18 +537,14 @@ export async function writeChanges(
       FROM vals v WHERE v.v <= ${VALUES_PER_EXAMPLE}
       ORDER BY v.line, v.r, v."column"`)).getRows()) as [string, string, number | bigint | null, string, string, string, string][];
 
+    const previous = (await readSummaryIn(dir))?.generation ?? null;
+    const generation = new Date().toISOString().replace(/[:.]/g, "-");
+    await mkdir(join(dir, generation), { recursive: true });
     const lines: LineSummary[] = [];
-    // The files of lines that had differences on an earlier night and have
-    // none now, removed only once the new summary stops naming them, so a
-    // night that fails part-way leaves the last summary's downloads in place.
-    const stale: string[] = [];
     for (const l of LINES) {
-      const path = join(dir, lineFile(l.id));
+      const path = join(dir, generation, lineFile(l.id));
       const n = counts.get(l.id);
-      if (n === undefined) {
-        stale.push(path);
-        continue;
-      }
+      if (n === undefined) continue;
       const mine: ChangeExample[] = [];
       for (const [line, fieldNumber, specimenId, column, kind, legacy, exported] of examples) {
         if (line !== l.id) continue;
@@ -562,12 +573,19 @@ export async function writeChanges(
       activeSince,
       reference: comparison.reference,
       matched: comparison.matched,
+      generation,
       lines,
     };
     // Last, so a page never reads a summary naming files not yet written.
     await writeFile(join(dir, `${SUMMARY}.tmp`), JSON.stringify(summary, null, 2));
     await rename(join(dir, `${SUMMARY}.tmp`), join(dir, SUMMARY));
-    for (const path of stale) await rm(path, { force: true });
+    // Every older night's folder but the one the last summary named, which a
+    // reader who loaded the page just before may still be downloading from.
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name !== generation && entry.name !== previous) {
+        await rm(join(dir, entry.name), { recursive: true, force: true });
+      }
+    }
     return summary;
   } finally {
     try {

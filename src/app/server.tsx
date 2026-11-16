@@ -63,7 +63,7 @@ import { stepTrend } from "./job-steps.js";
 import { Exports } from "./views/exports.js";
 import { HeldBackPage } from "./views/held-back.js";
 import { LegacyChangesPage } from "./views/legacy-changes.js";
-import { changesDir, readChangesSummary } from "../legacy-changes.js";
+import { changesFilePath, readChangesSummary } from "../legacy-changes.js";
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
@@ -2109,7 +2109,7 @@ export function createApp({
     if (line === undefined) return errorResponse(c, "notFound");
     let handle;
     try {
-      handle = await open(join(changesDir(exportsDir()), name), "r");
+      handle = await open(changesFilePath(exportsDir(), summary!, name), "r");
     } catch {
       return errorResponse(c, "notFound");
     }

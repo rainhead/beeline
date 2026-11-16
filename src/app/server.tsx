@@ -44,6 +44,7 @@ import {
   defaultSeason,
   entrySeasons,
   entryTaxa,
+  searchEcdysisNames,
   locateSpecimen,
   removeFromBatch,
   rowTaxa,
@@ -1851,6 +1852,14 @@ export function createApp({
     return c.json(await entryTaxa(db));
   });
 
+  // Names from Ecdysis's taxonomy the tree does not hold yet, for the picker
+  // once its bycatch box is ticked (beeline-4wx3). Asked as someone types, so
+  // a short query answers nothing rather than thousands of names.
+  app.get("/determinations/ecdysis.json", async (c) => {
+    c.header("cache-control", "private, max-age=600");
+    return c.json(await searchEcdysisNames(db, c.req.query("q") ?? ""));
+  });
+
   /** Refuse a write while impersonating, and answer the module's refusals in HTTP. */
   const determineWrite = async (c: Context<AppEnv>, write: () => Promise<unknown>) => {
     if (c.get("acting").impersonating) return c.json({ error: c.get("m").errors.readOnlyImpersonating }, 403);
@@ -1897,6 +1906,7 @@ export function createApp({
         return {
           specimenId: id(r.specimenId, false)!,
           animalId: id(r.animalId, true),
+          ecdysisTid: id(r.ecdysisTid, true),
           sex: text(r.sex) as DraftWrite["sex"],
           caste: text(r.caste) as DraftWrite["caste"],
         };

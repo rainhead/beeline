@@ -714,8 +714,13 @@ export function buildJobs(
       schedule: { kind: "dailyLA", hour: 1 },
       window: "night",
       async run(ctx) {
-        const { committed, unchanged, waiting } = await ctx.step("commit drafts", () => commitDeterminationDrafts(ctx.conn));
-        return `${committed} determination(s) recorded, ${unchanged} draft(s) unchanged and dropped, ${waiting} waiting for a name`;
+        const { committed, unchanged, waiting, adopted, unadoptable } = await ctx.step("commit drafts", () =>
+          commitDeterminationDrafts(ctx.conn),
+        );
+        const parts = [`${committed} determination(s) recorded, ${unchanged} draft(s) unchanged and dropped, ${waiting} waiting`];
+        if (adopted.length > 0) parts.push(`added to the tree from Ecdysis: ${adopted.join(", ")}`);
+        if (unadoptable > 0) parts.push(`${unadoptable} draft(s) name an Ecdysis taxon that can no longer be added to the tree`);
+        return parts.join("; ");
       },
     },
     {

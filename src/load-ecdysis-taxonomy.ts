@@ -66,6 +66,12 @@ export interface LoadEcdysisTaxonomyResult {
 }
 
 const MATCH_SQL = new URL("../ingest/match-ecdysis.sql", import.meta.url).pathname;
+const ADOPTABLE_SQL = new URL("../ingest/ecdysis-adoptable.sql", import.meta.url).pathname;
+
+/** Rebuild ecdysis_adoptable from ecdysis_taxon (schema/025): after every load, and after db:reseed carries the thesaurus. */
+export async function rebuildEcdysisAdoptable(conn: DuckDBConnection): Promise<void> {
+  await conn.run(await readFile(ADOPTABLE_SQL, "utf8"));
+}
 
 /** Restate animal.ecdysis_tid from animal_ecdysis_match. Legacy promotion and every writer of the tree run it too. */
 export async function matchAnimalsToEcdysis(conn: DuckDBConnection): Promise<void> {
@@ -154,6 +160,7 @@ export async function loadEcdysisTaxonomy(
     if (Number(await scalar("SELECT count(*) FROM ecdysis_taxon")) === 0) {
       throw new Error(`${path} holds no name at a rank the store admits — refusing to replace the loaded thesaurus with nothing`);
     }
+    await rebuildEcdysisAdoptable(conn);
     await matchAnimalsToEcdysis(conn);
     await conn.run("COMMIT");
   } catch (err) {

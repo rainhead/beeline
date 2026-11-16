@@ -15,6 +15,9 @@ determine-grid button[disabled] { opacity: 0.45; cursor: not-allowed; }
 /* The name picker */
 .determine-picker { min-width: 16rem; }
 /* The list under it is the combobox's (components.css). */
+/* A name from Ecdysis the tree does not hold yet (beeline-4wx3). */
+/* Outlined, not filled: a highlighted option is already filled with the secondary container. */
+.determine-new { padding: 0 var(--space-1-5); border: 1px solid var(--md-sys-color-outline); border-radius: var(--radius-full); color: var(--md-sys-color-on-surface-variant); font: var(--md-sys-typescale-label); white-space: nowrap; }
 .determine-bycatch { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--md-sys-color-outline-variant); font: var(--md-sys-typescale-label); }
 
 /* Sex: one segmented control, a click sets it and a click on the choice set clears it */

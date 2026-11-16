@@ -54,11 +54,14 @@ CREATE TABLE determination_draft (
   sex           TEXT CHECK (sex IN ('female', 'male')),
   caste         TEXT CHECK (caste IN ('gyne', 'worker', 'drone')),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ecdysis_tid   BIGINT,
   PRIMARY KEY (specimen_id, determiner_id),
-  CHECK (caste IS NULL OR (caste = 'drone') = (sex = 'male'))
+  CHECK (caste IS NULL OR (caste = 'drone') = (sex = 'male')),
+  CHECK (animal_id IS NULL OR ecdysis_tid IS NULL)
 );
 COMMENT ON TABLE determination_draft IS 'A volunteer''s entry for a specimen that is not a determination yet: freely changeable until the overnight commit turns it into an in_app determination (src/commit-determinations.ts). Nothing downstream reads it. A draft with no animal (sex only, on a specimen never named) waits until it has one.';
 COMMENT ON COLUMN determination_draft.determiner_id IS 'Whoever is signed in — never the person being acted for. Becomes determination.determiner_id.';
+COMMENT ON COLUMN determination_draft.ecdysis_tid IS 'A name chosen from Ecdysis that the tree does not hold yet (ecdysis_adoptable, beeline-4wx3), in place of animal_id. The overnight commit adopts it into the tree and records the determination against the new node; until then nothing is added to the tree, so a name picked by mistake and changed leaves no trace. At most one of animal_id and ecdysis_tid is set: a CHECK on a store built from the schema, and saveDrafts on one migrated to it, since a deployed table cannot gain a CHECK.';
 COMMENT ON COLUMN determination_draft.updated_at IS 'The last change. Its Pacific date becomes determination.determined_on, so a determination says the day it was made rather than the night it was committed.';
 
 -- A batch is a person's list of specimens to work through in the order they

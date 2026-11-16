@@ -156,13 +156,15 @@ describe("the taxonomy pages", () => {
     expect(bar.match(/href="([^"]+)"/)?.[1]).toBe("/how-it-works");
     const records = between(menu, 'class="menu-section nav-records"', "</nav>");
     expect(records.match(/href="([^"]+)"/)?.[1]).toBe("/how-it-works");
+    // Identifying is in the bar too, beside Specimens, and so not repeated
+    // among the reference pages.
+    expect(bar).toContain(`href="/determinations"`);
     // The rest alphabetical, by the labels a person reads.
     const group = between(menu, `aria-label="${en.layout.more}"`, "</nav>");
     expect([...group.matchAll(/href="([^"]+)"/g)].map((match) => match[1])).toEqual([
       "/design",
       "/exports",
       "/glossary",
-      "/determinations",
       "/jobs",
       "/people",
       "/print-runs",

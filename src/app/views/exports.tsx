@@ -42,6 +42,8 @@ export function Exports({
     <>
       <PageHeader title={e.heading} lede={e.intro} />
       <p>
+        <a href="/exports/changes">{m.legacyChanges.linkFromExports}</a>
+        <br />
         <a href="/exports/held-back">{m.heldBack.linkFromExports}</a>
       </p>
       <h2>{e.occurrences}</h2>

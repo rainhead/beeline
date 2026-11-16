@@ -2129,6 +2129,37 @@ export const en = {
     noStaging:
       "This copy of Beeline holds no copy of the old Beeline's records, so it cannot say which were held back.",
   },
+  legacyChanges: {
+    title: "What new Beeline changed",
+    heading: "What new Beeline changed in the old Beeline's records",
+    intro:
+      "Every value in new Beeline's occurrences file that differs from the old Beeline's record of the same field number, as the old Beeline held it at cutover, sorted by what new Beeline did. Each line says what was done, how many records it touched, whether the old value was wrong or only written another way, and a few records to look at. Each line's download lists every value it changed.",
+    linkFromExports: "What new Beeline changed in the old Beeline's records",
+    missing: "Not worked out yet. It appears after the next nightly run, or after running the legacy-changes job on Jobs.",
+    written: (when: string) => `Worked out ${when}, from the occurrences file of that night.`,
+    matched: (active: number, settled: number, since: string) =>
+      `${n(active + settled)} records matched by field number: ${n(active)} from the active seasons (${since} on) and ${n(settled)} from the settled ones.`,
+    contents: "Contents",
+    colLine: "What new Beeline did",
+    colActive: (since: string) => `Active seasons (${since} on)`,
+    colSettled: "Settled seasons",
+    countsNote: "Counts are records. A record is counted once on each line it is on, so the lines add up to more than the records.",
+    outcome: "Outcome",
+    values: (values: number) => `${n(values)} ${values === 1 ? "value" : "values"} changed.`,
+    examples: "For example",
+    download: (bytes: string) => `Download every value on this line (CSV, ${bytes} MB)`,
+    blank: "blank",
+    /** Between old Beeline's value and new Beeline's: "male, now female". */
+    now: "now",
+    hiddenPoint: "a different point",
+    heldBackLink: "Held back from the old Beeline",
+    /** A record-level difference, as an example: old Beeline held a record, new Beeline does not, or the reverse. */
+    record: {
+      onlyOld: "In old Beeline only",
+      onlyNew: "In new Beeline only",
+    },
+    noSpecimen: "no specimen in new Beeline",
+  },
   jobs: {
     title: "Jobs",
     heading: "Scheduled jobs",
@@ -2144,6 +2175,8 @@ export const en = {
         "Asks iNaturalist which plant each name on the old Beeline's plant list is, 300 names a night, and reads in the plants it finds. A name iNaturalist does not recognise, or matches to two plants, is left unmatched and is listed in the store, not guessed. The list's common names are used for host plants once their names are matched. Start it again from here to get through the list faster.",
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
+      "legacy-changes":
+        "Compares the occurrences file the export just wrote with the old Beeline's records as they stood at cutover, and sorts every difference by what new Beeline did, for What new Beeline changed on Exports.",
       "legacy-copy":
         "Copies every specimen printed here into the old Beeline at old.melittologist.org, so volunteers can enter their identifications there until it closes at the end of December 2026. Sends only what changed since the last copy, and never overwrites an identification a volunteer entered there.",
       "legacy-volunteer-import":

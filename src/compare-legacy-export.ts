@@ -824,8 +824,12 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
     FROM (${perColumn})`);
   await kindFromStore(conn);
 
-  // Why a staged record has no exported counterpart: the blocking finding
-  // that kept it from promotion, where the store has promoted at all.
+  // Why a staged record has no exported counterpart: a second print the
+  // one-time repair tied to a specimen, so carried over and not a specimen
+  // of its own (235 on the backup of 15 November 2026, which the blocking
+  // finding promotion still gives them had been calling held back); else the
+  // blocking finding that kept it from promotion, where the store has
+  // promoted at all.
   const promoted = await one(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_promotion_finding'`);
   const activeSince = `(SELECT active_since FROM season)`;
   await conn.run(`
@@ -834,10 +838,11 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
     FROM legacy_occurrence l
     WHERE nullif(l."fieldNumber", '') IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM cmp_export e WHERE e."fieldNumber" = l."fieldNumber")`);
-  const why = promoted > 0
+  const finding = promoted > 0
     ? `coalesce((SELECT min(f.rule) FROM legacy_promotion_finding f
                  WHERE f._id = o._id AND f.severity = 'blocking'), 'not_exported')`
     : `'not_exported'`;
+  const why = `CASE WHEN EXISTS (SELECT 1 FROM legacy_duplicate_record r WHERE r._id = o._id) THEN 'tied_second_record' ELSE ${finding} END`;
   const minted = await one(conn, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'minted_field_number'`);
   const mintedKind = minted > 0
     ? `CASE WHEN EXISTS (SELECT 1 FROM minted_field_number m WHERE m.field_number = e."fieldNumber")
@@ -885,6 +890,20 @@ async function attribute(conn: DuckDBConnection, rulings: readonly Ruling[]): Pr
        AND (r.kind = '' OR r.kind = d.kind)
        AND (r.field_number = '' OR r.field_number = d.field_number))
     WHERE pick = 1`);
+}
+
+/**
+ * Drop every temporary table and view the comparison made (`cmp_`), and the
+ * changes page's own (`chg_`, src/legacy-changes.ts): a job runs them on
+ * the app's shared connection, where a temporary table outlives the job and
+ * holds its memory.
+ */
+export async function dropComparisonTables(conn: DuckDBConnection): Promise<void> {
+  const ours = (name: string) => `temporary AND (starts_with(${name}, 'cmp_') OR starts_with(${name}, 'chg_'))`;
+  const views = (await (await conn.run(`SELECT view_name FROM duckdb_views() WHERE ${ours("view_name")}`)).getRows()) as [string][];
+  for (const [v] of views) await conn.run(`DROP VIEW IF EXISTS temp."${v}"`);
+  const tables = (await (await conn.run(`SELECT table_name FROM duckdb_tables() WHERE ${ours("table_name")}`)).getRows()) as [string][];
+  for (const [t] of tables) await conn.run(`DROP TABLE IF EXISTS temp."${t}"`);
 }
 
 async function one(conn: DuckDBConnection, sql: string): Promise<number> {

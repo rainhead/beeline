@@ -298,6 +298,9 @@ export const HISTORY_PUBLISHED: Publish<SampleChange> = {
 /** A sample as the API publishes it, with its id and address. */
 const sampleOf = (sample: SampleDetail, origin: string) => ({
   ...pick(sample, SAMPLE_PUBLISHED),
+  // As a listing names them: the handle is only where the page links each
+  // one, for staff, and a program has no use for it (RecordCollector).
+  collectors: sample.collectors.map(({ display, label, orcid }) => ({ display, label, orcid })),
   id: sample.sample_id,
   url: `${origin}/samples/${sample.sample_id}`,
 });

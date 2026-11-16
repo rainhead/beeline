@@ -141,6 +141,25 @@ export function RecordScopeNote({ m, mine }: { m: Messages; mine: boolean }) {
 }
 
 /**
+ * Who collected a sample, in recordedBy order, as one list. Every collector
+ * is a person, so every one has a page; staff get each name as a link to it,
+ * and everyone else the names alone, since the page would turn them away.
+ */
+function Collectors({ m, sample, links }: { m: Messages; sample: SampleDetail; links: boolean }) {
+  if (!links) return <>{m.format.list(sample.collectors.map((c) => c.display))}</>;
+  let i = 0;
+  return (
+    <>
+      {m.format.listParts(sample.collectors.map((c) => c.display)).map((part) => {
+        if (part.type === "literal") return part.value;
+        const collector = sample.collectors[i++]!;
+        return <a href={`/people/${encodeURIComponent(collector.handle)}`}>{part.value}</a>;
+      })}
+    </>
+  );
+}
+
+/**
  * What the sample is: who collected it, when, how, and where it belongs.
  * Place is here and coordinates are in `WhereCollected` — they are two
  * different claims, one about a label's text and one about a point on the
@@ -151,9 +170,15 @@ export function SampleFacts({
   sample,
   placeEdit = null,
   methodEdit = false,
+  personLinks = false,
 }: {
   m: Messages;
   sample: SampleDetail;
+  /**
+   * Whether each collector's name links to their person page: for staff,
+   * who are the only readers that page lets in (beeline-3ugg).
+   */
+  personLinks?: boolean;
   /**
    * Whether the reader may correct the method and dates: staff, on a sample
    * from old records (beeline-p8y1) or a trap sample entered in Beeline past
@@ -169,7 +194,7 @@ export function SampleFacts({
 }) {
   const s = m.record.sample;
   const items: Array<Detail | null> = [
-    { term: <Term m={m} slug="collector">{s.collectors}</Term>, value: m.format.list(sample.collectors.map((c) => c.display)) },
+    { term: <Term m={m} slug="collector">{s.collectors}</Term>, value: <Collectors m={m} sample={sample} links={personLinks} /> },
     { term: s.collected, value: m.format.dateRange(sample.date_start, sample.date_end) },
     // One row, not two: the kind and the protocol are the same fact, and on
     // every sample minted from an observation the protocol is the constant
@@ -980,6 +1005,7 @@ export function SamplePage({
           sample={sample}
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
           methodEdit={admin && (sample.from_old_records || enteredPastItsForm)}
+          personLinks={admin}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
       </Card>
@@ -1439,7 +1465,7 @@ export function SpecimenPage({
           <a href={sampleHref(sample.sample_id)}>{m.record.sample.title(sample.sample_number)}</a>{" "}
           <FlagChips m={m} flags={asListedFlags(findings.filter((f) => f.specimen_id === null))} sampleId={sample.sample_id} />
         </h2>
-        <SampleFacts m={m} sample={sample} />
+        <SampleFacts m={m} sample={sample} personLinks={admin} />
       </Card>
       <Card>
         <WhereCollected m={m} sample={sample} />

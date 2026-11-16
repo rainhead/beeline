@@ -15,6 +15,7 @@ import type { LocalityBasis } from "../locality-rule.js";
 import { observationGone, ownSamplesSql, placeColumns, withheld, type ListedCollector, type Reader } from "./listings.js";
 import { readSampleLog, sampleHistory, SAMPLE_STATE_SQL, STORE_IDENTITY_SQL, type SampleChange } from "../sample-change.js";
 import { fromOldRecords } from "./sample-method.js";
+import { personHandle } from "./roster.js";
 import { specimenLabels, specimenReprint, type SpecimenLabelRow, type SpecimenReprint } from "./print-runs.js";
 
 /**
@@ -75,6 +76,16 @@ export const SPECIMEN_PAGE_SIZE = 50;
 
 /** A person on a determination or a collector list, in both name forms. */
 export type { ListedCollector };
+
+/**
+ * A collector on a record page: as a listing names them, and where their own
+ * page is (`personHandle`), which the page links for staff (beeline-3ugg). The
+ * API leaves the handle out: a login is iNaturalist's to publish, and an
+ * entity_id is redrawn by a rebuild, so neither is a name for a program to keep.
+ */
+export interface RecordCollector extends ListedCollector {
+  handle: string;
+}
 
 export interface SampleDetail {
   sample_id: number;
@@ -201,7 +212,7 @@ export interface SampleDetail {
    */
   ecoregion: string | null;
   /** Everyone who collected it, in recordedBy order (beeline-77j). */
-  collectors: ListedCollector[];
+  collectors: RecordCollector[];
 }
 
 export interface LocalitySuggestion {
@@ -618,16 +629,22 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
 }
 
 /** Everyone who collected one sample, in recordedBy order. */
-async function collectorsOfSample(db: Kysely<Database>, sampleId: number): Promise<ListedCollector[]> {
+async function collectorsOfSample(db: Kysely<Database>, sampleId: number): Promise<RecordCollector[]> {
   const rows = await db
     .selectFrom("sample_collector as c")
     .innerJoin("person as p", "p.entity_id", "c.person_id")
     .leftJoin("person_orcid_of_record as o", "o.person_id", "c.person_id")
+    .leftJoin("inat_account as a", "a.person_id", "c.person_id")
     .where("c.sample_id", "=", sampleId)
-    .select(["p.display_name", "p.given_name", "p.family_name", "p.label_name", "o.orcid"])
+    .select(["c.person_id", "p.display_name", "p.given_name", "p.family_name", "p.label_name", "o.orcid", "a.login"])
     .orderBy("c.position")
     .execute();
-  return rows.map((r) => ({ display: r.display_name, label: labelName(r), orcid: r.orcid }));
+  return rows.map((r) => ({
+    display: r.display_name,
+    label: labelName(r),
+    orcid: r.orcid,
+    handle: personHandle({ person_id: Number(r.person_id), login: r.login }),
+  }));
 }
 
 /** One sample, as this reader may see it, or null when there is no such sample. */

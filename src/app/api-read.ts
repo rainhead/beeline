@@ -39,6 +39,7 @@ import {
   gatherSpecimen,
   parsePage,
   SPECIMEN_PAGE_SIZE,
+  type ArchiveNote,
   type DeterminationEvent,
   type RecordDeps,
   type RecordFinding,
@@ -279,7 +280,11 @@ export const FINDING_PUBLISHED: Publish<RecordFinding> = {
 export const DETERMINATION_PUBLISHED: Publish<DeterminationEvent> = {
   entity_id: true, rank: true, scientific_name: true, authorship: true, qualifier: true, verbatim_identification: true,
   sex: true, caste: true, determiner: true, is_expert: true, channel: true, determined_on: true, determined_on_precision: true,
-  recorded_at: true, notes: true, of_record: true,
+  recorded_at: true, notes: true, of_record: true, archive_publisher: true, archive_version: true,
+};
+export const ARCHIVE_NOTE_PUBLISHED: Publish<ArchiveNote> = {
+  publisher: true, version: true, scientific_name: true, rank: true, name: true, identified_by: true, date_identified: true,
+  sex: true, agrees: true,
 };
 export const LABEL_PUBLISHED: Publish<SpecimenLabelRow> = {
   print_run_id: false, number_text: true, state: true, sheet: true, cell: true, prepared_at: true, printed_at: true,
@@ -359,6 +364,7 @@ export function specimenJson(record: SpecimenRecord, origin: string) {
     specimen: { ...pick(specimen, SPECIMEN_PUBLISHED), id: specimen.specimen_id, url: `${origin}/specimens/${specimen.specimen_id}` },
     sample: sampleOf(specimen.sample, origin),
     determinations: record.events.map((e) => pick(e, DETERMINATION_PUBLISHED)),
+    published: record.published.map((n) => pick(n, ARCHIVE_NOTE_PUBLISHED)),
     findings: record.findings.map((f) => pick(f, FINDING_PUBLISHED)),
     labels: record.labels.map((l) => pick(l, LABEL_PUBLISHED)),
     reprint: plain(record.reprint),

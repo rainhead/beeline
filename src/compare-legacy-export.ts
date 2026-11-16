@@ -506,7 +506,8 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
                       OR (d.exported = concat(upper(left(trim(p.given_name), 1)), '.')
                           AND d.legacy = split_part(trim(p.label_name), ' ', 1))))`);
   // An identification the legacy system never received: the specimen's
-  // newest expert determination came from Ecdysis or was made in Beeline.
+  // newest expert determination came from Ecdysis, an expert's sheet or a
+  // museum's published archive (src/load-archive.ts), or was made in Beeline.
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'newer_determination'
     WHERE d."column" IN (${list(IDENTIFICATION_COLUMNS)})

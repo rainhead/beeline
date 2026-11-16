@@ -60,7 +60,15 @@ export const VALUE_KINDS = [
   "collector_order_contradicted", // a record whose recordedBy and name columns list its pair in opposite orders
   "initial_from_surname", // an initial taken from the family name: T. for an A.
   "label_name", // the initials a label name gives: J. / J.M.
-  "newer_determination", // an expert identification from Ecdysis or Beeline, newer than the legacy record's
+  "newer_determination", // an expert identification from Ecdysis or Beeline, newer than the legacy record's; for sex and caste, the newest that states one
+  "newer_volunteer_determination", // a volunteer's identification from a worksheet or made in Beeline (beeline-eznn)
+  "second_print", // carried from the specimen's other old record, a second print the one-time repair tied to it (beeline-iuva)
+  "sex_caste_vocabulary", // sex and caste as promotion reads the legacy pair: Male → male, a worker is female, Queen → gyne
+  "repair_placed", // a record promotion held back, placed by the one-time repair in its sample, whose values it takes
+  "reprinted", // the label's print date is a later printing's: the specimen was reprinted
+  "unidentified_sex_dropped", // the old record's sex or caste on a record no expert identified, an entry default from 2023: not carried
+  "subgenus_dropped", // a subgenus the old record gave, lost when a newer expert identification replaced it
+  "coarser_determination", // the newest expert identification names less than the old record's (a species before, a genus now)
   "one_day_range", // an end the legacy record wrote on its start day: 2018-7-26/2018-7-26
   "standin_replaced", // a stand-in point for an obscured observation, replaced by its true point (beeline-b34)
   "login_renamed", // the same iNaturalist user id under another login
@@ -85,7 +93,11 @@ export function rulingKey(r: Pick<Ruling, "field_number" | "column" | "kind">): 
 }
 
 export function rulingProblem(r: Ruling): string | null {
-  if (!COLUMNS.has(r.column)) return `'${r.column}' is neither an exported column nor ${RECORD_COLUMN}`;
+  // A blank column rules on a kind in every column, for kinds that are about
+  // the record rather than one field: a record the repair placed takes every
+  // value of its sample. It names a kind, or it would rule on everything.
+  if (r.column === "" && r.kind === "") return "a ruling with no column must name a kind";
+  if (r.column !== "" && !COLUMNS.has(r.column)) return `'${r.column}' is neither an exported column nor ${RECORD_COLUMN}`;
   if (r.kind !== "") {
     if (r.column === RECORD_COLUMN) {
       // The finding names are promotion's vocabulary and can grow; a misspelt

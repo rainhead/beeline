@@ -369,6 +369,36 @@ describe("the legacy-format export", () => {
     expect(got[0]).toMatchObject({ decimalLatitude: "44.5000", decimalLongitude: "-123.0000", coordinateSource: "public" });
   });
 
+  test("carries the old record's sex only where it names an expert identification (beeline-eznn)", async () => {
+    // From 2023 the old Beeline wrote "male" on records nobody had identified,
+    // as an entry default: 24,434 of them on the production store of
+    // 2026-11-15, and experts in Ecdysis found half of those bees female.
+    const [[sex, caste, genus, family, epithet, name]] = (await conn.runAndReadAll(
+      `SELECT sex, caste, genus, family, "specificEpithet", "scientificName" FROM legacy_occurrence WHERE "fieldNumber" = '25000003'`,
+    )).getRows() as [[string, string, string, string, string, string]];
+    expect(await rows(conn, `SELECT count(*) FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id
+                             WHERE sp.field_number = '25000003' AND d.is_expert`)).toEqual([[0n]]);
+    const sexOf = async () => {
+      const out = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+      await writeLegacyExport(conn, out);
+      return rows(conn, `SELECT sex, caste FROM read_csv('${out}', header = true, all_varchar = true, quote = '"', escape = '"')
+                         WHERE "fieldNumber" = '25000003'`);
+    };
+    try {
+      await conn.run(`UPDATE legacy_occurrence SET sex = 'male', caste = 'drone', genus = '', family = '', "specificEpithet" = '', "scientificName" = ''
+                      WHERE "fieldNumber" = '25000003'`);
+      expect(await sexOf()).toEqual([[null, null]]);
+      // Where the old record names the bee, its sex is the expert's and stays.
+      await conn.run(`UPDATE legacy_occurrence SET genus = 'Bombus' WHERE "fieldNumber" = '25000003'`);
+      expect(await sexOf()).toEqual([["male", "drone"]]);
+    } finally {
+      await conn.run(
+        `UPDATE legacy_occurrence SET sex = ?, caste = ?, genus = ?, family = ?, "specificEpithet" = ?, "scientificName" = ? WHERE "fieldNumber" = '25000003'`,
+        [sex, caste, genus, family, epithet, name] as never,
+      );
+    }
+  });
+
   test("keeps the sex an earlier determination stated when a newer one, as from Ecdysis, states none", async () => {
     await conn.run(`
       INSERT INTO determination (specimen_id, animal_id, verbatim_identification, determiner_name, is_expert, channel, recorded_at)

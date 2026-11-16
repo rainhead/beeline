@@ -187,6 +187,13 @@ describe("writing the changes", () => {
     expect(example!.specimenId).toEqual(expect.any(Number));
   });
 
+  test("lists each line's outcomes commonest first", () => {
+    for (const l of summary.lines) {
+      const sizes = l.outcomes.map((o) => o.active + o.settled);
+      expect(sizes, l.line).toEqual([...sizes].sort((a, b) => b - a));
+    }
+  });
+
   test("puts what no ruling explains on its own line rather than leaving it off", () => {
     // The fixture has a few of its own, among them on this record.
     const unexplained = summary.lines.find((l) => l.line === "unexplained")!;

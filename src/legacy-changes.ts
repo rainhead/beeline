@@ -538,9 +538,9 @@ export async function writeChanges(
       ]),
     );
     const outcomes = (await (await conn.run(`
-      SELECT line, outcome, count(DISTINCT field_number) FILTER (WHERE active_season),
-             count(DISTINCT field_number) FILTER (WHERE NOT active_season)
-      FROM chg_line GROUP BY 1, 2 ORDER BY 1, 3 + 4 DESC, 2`)).getRows()) as [string, string, bigint, bigint][];
+      SELECT line, outcome, count(DISTINCT field_number) FILTER (WHERE active_season) AS active,
+             count(DISTINCT field_number) FILTER (WHERE NOT active_season) AS settled
+      FROM chg_line GROUP BY 1, 2 ORDER BY line, active + settled DESC, outcome`)).getRows()) as [string, string, bigint, bigint][];
     // A few records each, one for each of the commonest changes the line
     // makes, so the examples show its range rather than one change three
     // times, and then the lowest field numbers where it makes fewer kinds of

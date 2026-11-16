@@ -523,12 +523,15 @@ export async function writeChanges(
       ORDER BY v.line, v.r, v."column"`)).getRows()) as [string, string, number | bigint | null, string, string, string, string][];
 
     const lines: LineSummary[] = [];
+    // The files of lines that had differences on an earlier night and have
+    // none now, removed only once the new summary stops naming them, so a
+    // night that fails part-way leaves the last summary's downloads in place.
+    const stale: string[] = [];
     for (const l of LINES) {
       const path = join(dir, lineFile(l.id));
       const n = counts.get(l.id);
       if (n === undefined) {
-        // A line that had differences last night and has none now.
-        await rm(path, { force: true });
+        stale.push(path);
         continue;
       }
       const mine: ChangeExample[] = [];
@@ -564,6 +567,7 @@ export async function writeChanges(
     // Last, so a page never reads a summary naming files not yet written.
     await writeFile(join(dir, `${SUMMARY}.tmp`), JSON.stringify(summary, null, 2));
     await rename(join(dir, `${SUMMARY}.tmp`), join(dir, SUMMARY));
+    for (const path of stale) await rm(path, { force: true });
     return summary;
   } finally {
     try {

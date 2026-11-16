@@ -19,6 +19,7 @@ import {
 import { programHref } from "../programs.js";
 import { plantNameKey } from "../../plant-name-key.js";
 import type { ListedFlag } from "../listings.js";
+import { methodNamesTrap } from "../../trap-method.js";
 import {
   Absent,
   AtlasMark,
@@ -280,7 +281,9 @@ export function SampleFacts({
     sample.host_name_as_observed === null
       ? null
       : {
-          term: <Term m={m} slug="floral-host">{s.host}</Term>,
+          // A trap does not say which flower its bees visited, so the plant
+          // its observation names is one beside the trap (beeline-vjqy).
+          term: <Term m={m} slug="floral-host">{methodNamesTrap(sample.protocol) ? s.plantNearTrap : s.host}</Term>,
           // A scientific name, so it is printed like one. Italics come from
           // the rank and never from the string: 'Onagraceae' and
           // 'Chamaenerion' are both one word and only the second is italic.

@@ -472,8 +472,11 @@ describe("the floral host on the sample page", () => {
     listed: Array<[scientific: string, common: string, id: number]> = [],
     /** Lookups of a host's name, as the plant names job stores iNaturalist's answer: the normalised name came to the hit, by its own name. */
     lookups: Array<[nameKey: string, id: number, hitName: string]> = [],
+    /** The sample's method, where the test needs one. */
+    protocol?: string,
   ) {
     const t = await recordApp();
+    if (protocol !== undefined) await t.conn.run(`UPDATE sample SET protocol = $1 WHERE entity_id = ${t.aliceSample}`, [protocol]);
     for (const [key, id, hitName] of lookups) {
       await t.conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ($1, 'species', 1, true)", [key]);
       await t.conn.run("INSERT INTO plant_name_lookup_hit VALUES ($1, 'species', $2, $3, 'species', true, $3)", [key, id, hitName]);
@@ -528,6 +531,16 @@ describe("the floral host on the sample page", () => {
   /** What a person sees of a value: without titles and hidden text, and so without any common name. */
   const seen = (html: string) => html.replace(/ title="[^"]*"/g, "").replace(/<span class="visually-hidden">.*?<\/span>/g, "");
   const NOW = (name: string) => `now <span class="taxon">${name}</span> on iNaturalist`;
+
+  it("calls a trap's plant a plant near the trap, never a floral host (beeline-vjqy)", async () => {
+    const taxa = [...lineage, species(1, "Alpha one", alpha)];
+    const trapped = await withHost({ id: 1, name: "Alpha one", rank: "species" }, taxa, [], [], "pan traps");
+    expect(trapped).toContain(en.record.sample.plantNearTrap);
+    expect(trapped).not.toContain(en.record.sample.host);
+    const netted = await withHost({ id: 1, name: "Alpha one", rank: "species" }, taxa, [], [], "aerial net");
+    expect(netted).toContain(en.record.sample.host);
+    expect(netted).not.toContain(en.record.sample.plantNearTrap);
+  });
 
   it("puts the list's common name in the scientific name's tooltip, and shows nothing else", async () => {
     const row = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { oregon: "iNaturalist's name" })], [["Alpha one", "listed one, other name", 1]]));

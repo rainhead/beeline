@@ -172,6 +172,13 @@ export const LINES: readonly ChangeLine[] = [
     match: [{ kinds: ["newer_volunteer_determination"] }],
   },
   {
+    id: "trap_plant",
+    category: "identifications",
+    title: "A trap's plant is near the trap, not a flower its bees visited",
+    did: "Old Beeline said the bees of a trapped sample visited flowers of the plant its observation names. A trap does not say which flower any bee visited, so new Beeline says the plant was near the trap.",
+    match: [{ kinds: ["changed", "filled"], columns: ["relationshipOfResource"] }],
+  },
+  {
     id: "subgenus_dropped",
     category: "gaps",
     title: "Subgenus no longer given after a newer identification",

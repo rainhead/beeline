@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import { BEE_FAMILIES } from "../bee-families.js";
 import type { Database, DeterminationQualifier } from "../model.js";
+import { methodNamesTrapSql } from "../trap-method.js";
 
 /**
  * What the "Your bees" page and the front page read about a person's
@@ -666,6 +667,12 @@ export interface CollectedGroup {
   /** The floral host as observed; null for a bee taken off no flower, or none recorded. */
   host_name: string | null;
   host_rank: string | null;
+  /**
+   * How the group's bees came off the plant: off it, in a trap near it (a
+   * method naming a trap, beeline-vjqy), or both. One group either way, since
+   * the listing it links to cannot tell them apart.
+   */
+  plant: "off" | "trap" | "both";
   /** Collection years, newest first. */
   seasons: number[];
   specimens: number;
@@ -695,6 +702,7 @@ export async function collectedOf(db: Kysely<Database>, personId: number, animal
     state_province: string | null;
     host_name: string | null;
     host_rank: string | null;
+    near_trap: boolean;
     season: unknown;
     date_start: Date;
     date_end: Date;
@@ -704,7 +712,8 @@ export async function collectedOf(db: Kysely<Database>, personId: number, animal
       UNION ALL
       SELECT a.entity_id, below.depth + 1 FROM animal a JOIN below ON a.parent_id = below.entity_id WHERE below.depth < 32
     )
-    SELECT s.locality, s.county, s.state_province, s.host_name_as_observed AS host_name, s.host_rank, ss.season,
+    SELECT s.locality, s.county, s.state_province, s.host_name_as_observed AS host_name, s.host_rank,
+           ${sql.raw(methodNamesTrapSql("s.protocol"))} AS near_trap, ss.season,
            s.date_start, s.date_end
     FROM specimen sp
     JOIN sample s ON s.entity_id = sp.sample_id
@@ -716,12 +725,15 @@ export async function collectedOf(db: Kysely<Database>, personId: number, animal
   const isoDay = (d: Date) => new Date(d).toISOString().slice(0, 10);
   for (const r of rows) {
     const key = JSON.stringify([r.locality, r.county, r.state_province, r.host_name, r.host_rank]);
+    const how = r.near_trap ? "trap" : "off";
     const from = isoDay(r.date_start);
     const to = isoDay(r.date_end);
     let g = groups.get(key);
     if (g === undefined) {
-      g = { locality: r.locality, county: r.county, state_province: r.state_province, host_name: r.host_name, host_rank: r.host_rank, seasons: [], specimens: 0, from, to };
+      g = { locality: r.locality, county: r.county, state_province: r.state_province, host_name: r.host_name, host_rank: r.host_rank, plant: how, seasons: [], specimens: 0, from, to };
       groups.set(key, g);
+    } else if (g.plant !== how) {
+      g.plant = "both";
     }
     const season = Number(r.season);
     if (!g.seasons.includes(season)) g.seasons.push(season);

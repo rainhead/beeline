@@ -500,6 +500,31 @@ describe("the reader's own specimens on a name's page (beeline-nstp)", () => {
     expect(corvallisListing).not.toContain("26000301");
   });
 
+  it("says a trap's plant was near the trap, and one group with both says both (beeline-vjqy)", async () => {
+    await collectors();
+    const app = await taxonomyApp();
+    const yours = async () =>
+      between(await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" })), `<h2 id="yours">`, "</section>");
+    const rubus = '<span class="taxon"><i>Rubus</i> <i>armeniacus</i></span>';
+    const t = en.taxonomy.yours;
+    await conn.run(`UPDATE sample SET protocol = 'pan traps' WHERE sample_number = '2'`);
+    expect(await yours()).toContain(`, ${t.nearTrap} ${rubus}, in `);
+    // A second sample of Ada's at Bald Hill, netted off the same plant on the same day: still one line, which says both.
+    const netted = await insertCleanSample(conn, {
+      sample_number: "'4'",
+      locality: "'Bald Hill'",
+      host_name_as_observed: "'Rubus armeniacus'",
+      host_rank: "'species'",
+    });
+    const [[bee]] = (await (
+      await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${netted}, 1, '26000401') RETURNING entity_id`)
+    ).getRows()) as [[number]];
+    await determine(bee, "Lasioglossum tenax", "2025-01-10 12:00:00+00", true);
+    const both = await yours();
+    expect(both).toContain(`, ${t.offOrNearTrap} ${rubus}, in `);
+    expect(both).toContain(t.from(2, "Bald Hill, BentonCo, OR"));
+  });
+
   it("follows the name down, so a species shows only its own", async () => {
     await collectors();
     const body = await page(await taxonomyApp(), taxonHref({ rank: "species", scientific_name: "Lasioglossum zonulum" }));

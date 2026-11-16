@@ -350,6 +350,59 @@ describe("the legacy-format export", () => {
     expect(row!.catalogNumber).toBeNull();
   });
 
+  test("says a trap's plant was near it, not visited, whatever the old record said (beeline-vjqy)", async () => {
+    // Synthetic, in the shape of 2000117 on production (2026-11-16): a pan-trap
+    // sample whose observation is identified as a plant beside the trap, and
+    // whose old record said its bees visited flowers of it.
+    const { conn: fresh } = await createMemoryDb();
+    await fresh.run(`INSERT INTO person (display_name, given_name, family_name) VALUES ('Cy Newcomer', 'Cy', 'Newcomer')`);
+    const sampleId = await insertCleanSample(fresh, {
+      inat_observation_id: "123457",
+      host_name_as_observed: "'Ceanothus'",
+      host_rank: "'genus'",
+      protocol: "'pan traps'",
+    });
+    await fresh.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sampleId}, 1, '26090003')`);
+    const out = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+    await writeLegacyExport(fresh, out);
+    const [row] = (await fresh.runAndReadAll(`SELECT * FROM read_csv('${out}', header = true, all_varchar = true)`)).getRowObjectsJson() as Record<string, string | null>[];
+    expect(row).toMatchObject({ relationshipOfResource: "near", genusPlant: "Ceanothus", taxonRankPlant: "genus" });
+
+    const [[sample]] = (await conn.runAndReadAll(`SELECT sp.sample_id FROM specimen sp WHERE sp.field_number = '25000001'`)).getRows() as [[number]];
+    const [[before]] = (await conn.runAndReadAll(`SELECT protocol FROM sample WHERE entity_id = ${sample}`)).getRows() as [[string | null]];
+    await conn.run(`CREATE TEMP TABLE trap_test_before AS SELECT * FROM legacy_occurrence WHERE "fieldNumber" = '25000001'`);
+    await conn.run(`UPDATE legacy_occurrence SET "samplingProtocol" = 'pan traps', "relationshipOfResource" = 'visits flowers of', "genusPlant" = 'Ceanothus'
+                    WHERE "fieldNumber" = '25000001'`);
+    await conn.run(`UPDATE sample SET protocol = 'pan traps' WHERE entity_id = ${sample}`);
+    const exported = async () => {
+      const path = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+      await writeLegacyExport(conn, path);
+      return (await conn.runAndReadAll(
+        `SELECT "relationshipOfResource" FROM read_csv('${path}', header = true, all_varchar = true) WHERE "fieldNumber" = '25000001'`,
+      )).getRows();
+    };
+    try {
+      expect(await exported()).toEqual([["near"]]);
+      // A number there, as the 2026 vane-trap records hold, is not the claim and stays.
+      await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '10' WHERE "fieldNumber" = '25000001'`);
+      expect(await exported()).toEqual([["10"]]);
+      // A plant named only to its order is a plant all the same.
+      await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = 'visits flowers of', "genusPlant" = '', "speciesPlant" = '',
+                        "familyPlant" = '', "orderPlant" = 'Rosales', "phylumPlant" = '' WHERE "fieldNumber" = '25000001'`);
+      expect(await exported()).toEqual([["near"]]);
+      // And with no plant in the old record there is nothing to be near.
+      await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '', "orderPlant" = '' WHERE "fieldNumber" = '25000001'`);
+      expect(await exported()).toEqual([[null]]);
+    } finally {
+      await conn.run(`UPDATE sample SET protocol = ${before === null ? "NULL" : `'${before}'`} WHERE entity_id = ${sample}`);
+      await conn.run(`UPDATE legacy_occurrence o SET "samplingProtocol" = b."samplingProtocol", "relationshipOfResource" = b."relationshipOfResource",
+                        "genusPlant" = b."genusPlant", "speciesPlant" = b."speciesPlant", "familyPlant" = b."familyPlant",
+                        "orderPlant" = b."orderPlant", "phylumPlant" = b."phylumPlant"
+                      FROM trap_test_before b WHERE o._id = b._id`);
+      await conn.run(`DROP TABLE trap_test_before`);
+    }
+  });
+
   test("writes coordinates to four places and sorts as the reference's composite_sort does", async () => {
     const { conn: fresh } = await createMemoryDb();
     await fresh.run(`INSERT INTO person (display_name, given_name, family_name) VALUES ('Cy Newcomer', 'Cy', 'Newcomer')`);

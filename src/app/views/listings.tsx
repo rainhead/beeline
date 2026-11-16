@@ -24,6 +24,7 @@ import {
 } from "../listings.js";
 import { sampleHref, specimenHref, type LocalitySuggestion } from "../record.js";
 import { ChevronDownIcon } from "./icons.js";
+import { methodNamesTrap } from "../../trap-method.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
@@ -790,7 +791,10 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                   {row.host_name === null ? (
                     <Absent label={m.absence.none} />
                   ) : (
-                    <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} vernacular={row.host_common_name} />
+                    <>
+                      <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} vernacular={row.host_common_name} />
+                      {methodNamesTrap(row.protocol) && <Meta block>{f.nearTrap}</Meta>}
+                    </>
                   )}
                 </td>
                 <td>{row.kind === "trap" ? f.methodTrap : f.methodNet}</td>
@@ -1074,7 +1078,10 @@ export function SpecimenListing(
                   {row.host_name === null ? (
                     <Absent label={m.absence.none} />
                   ) : (
-                    <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} vernacular={row.host_common_name} />
+                    <>
+                      <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} vernacular={row.host_common_name} />
+                      {methodNamesTrap(row.protocol) && <Meta block>{f.nearTrap}</Meta>}
+                    </>
                   )}
                 </td>
                 <td>

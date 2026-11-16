@@ -3,6 +3,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { methodNamesTrapSql } from "./trap-method.js";
 
 /**
  * Every specimen as the legacy system's occurrences file (beeline-6q8,
@@ -334,7 +335,21 @@ rows AS (
                WHEN loc.source = 'inat_trusted' THEN 'private'
                WHEN loc.source = 'inat_public' THEN 'public' END`)} AS "coordinateSource",
     ${t(ownRow('"samplingProtocol"', "samplingProtocol", "s.protocol"))} AS "samplingProtocol",
-    ${t(orStaged("relationshipOfResource", `CASE WHEN nullif(s.host_name_as_observed, '') IS NOT NULL THEN 'visits flowers of' END`))} AS "relationshipOfResource",
+    -- A trap's plant is near the trap, never a flower its bees were seen on
+    -- (beeline-vjqy): judged on the row's own method, as the file writes it,
+    -- and only where the row writes a plant (the old record's, for a record
+    -- old Beeline held; the sample's otherwise) and the old record said
+    -- "visits flowers of" or nothing. Old trap records
+    -- hold other things here too, most of them a number on the 2026 vane-trap
+    -- records (10, 18, 6: 17,263 records on the backup of 16 November 2026),
+    -- which are not this claim and stay as the old record had them.
+    ${t(`CASE WHEN ${methodNamesTrapSql(ownRow('"samplingProtocol"', "samplingProtocol", "s.protocol"))}
+               AND CASE WHEN lo._id IS NOT NULL
+                        THEN coalesce(nullif(lo."genusPlant", ''), nullif(lo."speciesPlant", ''), nullif(lo."familyPlant", ''),
+                                      nullif(lo."orderPlant", ''), nullif(lo."phylumPlant", '')) IS NOT NULL
+                        ELSE nullif(s.host_name_as_observed, '') IS NOT NULL END
+               AND coalesce(trim(lo."relationshipOfResource"), '') IN ('', 'visits flowers of') THEN 'near'
+               ELSE ${orStaged("relationshipOfResource", `CASE WHEN nullif(s.host_name_as_observed, '') IS NOT NULL THEN 'visits flowers of' END`)} END`)} AS "relationshipOfResource",
     ${t(`lo."resourceID"`)} AS "resourceID",
     ${t(`lo."relatedResourceID"`)} AS "relatedResourceID",
     ${t(`lo."relationshipRemarks"`)} AS "relationshipRemarks",

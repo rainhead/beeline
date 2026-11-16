@@ -48,9 +48,12 @@ const STYLESHEETS = ["/tokens.css", "/static/elements.css", "/static/layout.css"
 const versioned = (href: string, version: string) => `${href}${href.includes("?") ? "&" : "?"}v=${version}`;
 
 /**
- * The header nav: the page that explains the process, then the records people
- * work through. "How Beeline works" is here rather than in the menu at
- * Andony's request (gh-262), so nobody has to open a menu to find it.
+ * The header nav: the page that explains the process, the records people
+ * work through, and the page where volunteers identify their own specimens.
+ * "How Beeline works" is here rather than in the menu at Andony's request
+ * (gh-262), and "Identify specimens" at Caleb's (email, 2026-11-16):
+ * entering determinations is one of the main things a volunteer comes to do,
+ * and a link on every page says so without anyone opening a menu.
  * Rendered twice — inline on wide screens, in the hamburger menu on narrow ones.
  */
 function NavLinks({ m }: { m: Messages }) {
@@ -59,6 +62,7 @@ function NavLinks({ m }: { m: Messages }) {
       <a href="/how-it-works">{m.layout.nav.howItWorks}</a>
       <a href="/samples">{m.layout.nav.samples}</a>
       <a href="/specimens">{m.layout.nav.specimens}</a>
+      <a href="/determinations">{m.layout.nav.identify}</a>
     </>
   );
 }
@@ -74,7 +78,6 @@ function MoreLinks({ m, admin, jobsFailing }: { m: Messages; admin: boolean; job
     <nav class="menu-section" aria-label={m.layout.more}>
       {[
         { href: "/glossary", label: m.layout.nav.glossary, shown: true },
-        { href: "/determinations", label: m.layout.nav.identify, shown: true },
         { href: "/taxonomy", label: m.layout.nav.taxonomy, shown: true },
         { href: "/programs", label: m.layout.nav.programs, shown: true },
         // /people and /jobs are gated; /design is only unlisted — it reads no

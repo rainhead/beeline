@@ -418,7 +418,7 @@ export interface LineSummary {
   /** Values: a record can differ in several columns on one line. */
   values: number;
   /** Records under each outcome, commonest first. */
-  outcomes: { outcome: string; records: number }[];
+  outcomes: { outcome: string; active: number; settled: number }[];
   examples: ChangeExample[];
   /** The line's CSV, every difference on it, in the same directory. */
   file: string;
@@ -445,15 +445,13 @@ export interface ChangesSummary {
 export const changesDir = (exportsDir: string) => join(exportsDir, "changes");
 const SUMMARY = "summary.json";
 export const lineFile = (line: string) => `${line}.csv`;
+/** A night's folder, named for the instant it was written: 2026-11-16T12-00-00-000Z. */
+export const GENERATION = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
 /** The summary the job last wrote, or null where none has been. */
 export async function readChangesSummary(exportsDir: string): Promise<ChangesSummary | null> {
   return readSummaryIn(changesDir(exportsDir));
 }
-
-/** The path of one line's CSV, in the night's folder the summary names. */
-export const changesFilePath = (exportsDir: string, summary: ChangesSummary, file: string) =>
-  join(changesDir(exportsDir), summary.generation, file);
 
 async function readSummaryIn(dir: string): Promise<ChangesSummary | null> {
   try {
@@ -508,7 +506,9 @@ export async function writeChanges(
       ]),
     );
     const outcomes = (await (await conn.run(`
-      SELECT line, outcome, count(DISTINCT field_number) FROM chg_line GROUP BY 1, 2 ORDER BY 1, 3 DESC, 2`)).getRows()) as [string, string, bigint][];
+      SELECT line, outcome, count(DISTINCT field_number) FILTER (WHERE active_season),
+             count(DISTINCT field_number) FILTER (WHERE NOT active_season)
+      FROM chg_line GROUP BY 1, 2 ORDER BY 1, 3 + 4 DESC, 2`)).getRows()) as [string, string, bigint, bigint][];
     // A few records each, one for each of the commonest changes the line
     // makes, so the examples show its range rather than one change three
     // times, and then the lowest field numbers where it makes fewer kinds of
@@ -560,7 +560,9 @@ export async function writeChanges(
       lines.push({
         line: l.id,
         ...n,
-        outcomes: outcomes.filter(([line]) => line === l.id).map(([, outcome, records]) => ({ outcome, records: Number(records) })),
+        outcomes: outcomes
+          .filter(([line]) => line === l.id)
+          .map(([, outcome, active, settled]) => ({ outcome, active: Number(active), settled: Number(settled) })),
         examples: mine,
         file: lineFile(l.id),
         bytes: (await stat(path)).size,
@@ -582,7 +584,9 @@ export async function writeChanges(
     // Every older night's folder but the one the last summary named, which a
     // reader who loaded the page just before may still be downloading from.
     for (const entry of await readdir(dir, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name !== generation && entry.name !== previous) {
+      // Only a folder named as this writes one, so --out pointed at a folder
+      // with anything else in it never loses the rest.
+      if (entry.isDirectory() && GENERATION.test(entry.name) && entry.name !== generation && entry.name !== previous) {
         await rm(join(dir, entry.name), { recursive: true, force: true });
       }
     }
@@ -630,12 +634,13 @@ async function writeLineCsv(conn: DuckDBConnection, line: string, path: string):
 
 /** Describe a summary for the job's run detail. */
 export function describeChanges(s: ChangesSummary): string {
+  // Active seasons first, then settled, as every count here is reported.
   const records = (id: string) => {
     const l = s.lines.find((x) => x.line === id);
-    return l === undefined ? 0 : l.active + l.settled;
+    return l === undefined ? "0 / 0" : `${l.active} / ${l.settled}`;
   };
   const values = s.lines.reduce((t, l) => t + l.values, 0);
-  return `${values} differing values on ${s.lines.length} lines; ${records("unexplained")} records not yet explained, ${records("other")} unsorted`;
+  return `${values} differing values on ${s.lines.length} lines; records (active / settled) not yet explained ${records("unexplained")}, unsorted ${records("other")}`;
 }
 
 // CLI: pnpm legacy:changes [db] [export.csv] [--out dir]

@@ -142,6 +142,10 @@ describe("writing the changes", () => {
   let conn: DuckDBConnection;
   let exportsDir: string;
   let summary: ChangesSummary;
+  /** The second run's night, which the third keeps (set by the test of keeping nights). */
+  let nightBefore = "";
+  /** A night's folder from long before, named as the job names one. */
+  const OLDER_NIGHT = "2026-01-01T00-00-00-000Z";
 
   // Synthetic, in the shapes the production store showed on 2026-11-15: an
   // Ecdysis identification giving a sex the old record had otherwise
@@ -155,10 +159,12 @@ describe("writing the changes", () => {
     await writeLegacyExport(conn, legacyExportPath(exportsDir));
     await conn.run(`UPDATE legacy_occurrence SET sex = 'male' WHERE "fieldNumber" = '25000005'`);
     await conn.run(`UPDATE legacy_occurrence SET "taxonomicNotes" = 'planted' WHERE "fieldNumber" = '25000001'`);
-    // An earlier night's folder that no summary names any more.
+    // An earlier night's folder that no summary names any more, and a folder
+    // this did not write, as --out pointed at the exports folder would hold.
     const dir = changesDir(exportsDir);
-    await mkdir(join(dir, "an-older-night"), { recursive: true });
-    await writeFile(join(dir, "an-older-night", "coarser.csv"), "stale");
+    await mkdir(join(dir, OLDER_NIGHT), { recursive: true });
+    await writeFile(join(dir, OLDER_NIGHT, "coarser.csv"), "stale");
+    await mkdir(join(dir, "dwca"), { recursive: true });
     await conn.run("SET threads = 3");
     summary = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), dir);
   });
@@ -166,7 +172,7 @@ describe("writing the changes", () => {
   test("counts the records on each line by season, with a record to look at and what changed on it", () => {
     const sex = summary.lines.find((l) => l.line === "newer_expert_sex")!;
     expect(sex.active + sex.settled).toBe(1);
-    expect(sex.outcomes).toEqual([{ outcome: "expected", records: 1 }]);
+    expect(sex.outcomes).toEqual([{ outcome: "expected", active: 0, settled: 1 }]);
     const [example] = sex.examples;
     expect(example).toMatchObject({ fieldNumber: "25000005", values: [{ column: "sex", kind: "newer_determination", old: "male", new: "female" }] });
     expect(example!.specimenId).toEqual(expect.any(Number));
@@ -191,8 +197,9 @@ describe("writing the changes", () => {
     expect(rows[0]).toContain("25000005,settled,sex,male,female,Sex or caste from a newer expert identification,Not a fault in either,");
     expect(sex.bytes).toBe((await stat(join(dir, sex.file))).size);
     expect(await readChangesSummary(exportsDir)).toEqual(summary);
-    // The older night's folder, which no summary named, is gone.
-    await expect(stat(join(changesDir(exportsDir), "an-older-night"))).rejects.toThrow();
+    // The older night's folder, which no summary named, is gone; the folder it did not write is not.
+    await expect(stat(join(changesDir(exportsDir), OLDER_NIGHT))).rejects.toThrow();
+    await stat(join(changesDir(exportsDir), "dwca"));
   });
 
   test("keeps the night before's folder, which a reader may still be downloading from, and nothing older", async () => {
@@ -203,8 +210,9 @@ describe("writing the changes", () => {
     const third = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), root);
     await expect(stat(join(root, summary.generation))).rejects.toThrow();
     expect((await readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort()).toEqual(
-      [second.generation, third.generation].sort(),
+      [second.generation, third.generation, "dwca"].sort(),
     );
+    nightBefore = second.generation;
   });
 
   test("leaves no temporary table behind and puts the thread count back", async () => {
@@ -240,14 +248,23 @@ describe("writing the changes", () => {
     expect(page).toContain("Sex or caste from a newer expert identification");
     expect(page).toContain(`href="#newer_expert_sex"`);
     expect(page).toContain("Not yet explained");
-    const res = await app.request("/exports/changes/newer_expert_sex.csv");
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/csv");
-    expect((await app.request("/exports/changes/coarser.csv")).status).toBe(404);
+    // The page links to the night it shows, and the night before stays downloadable.
+    const shown = (await readChangesSummary(exportsDir))!.generation;
+    expect(page).toContain(`href="/exports/changes/${shown}/newer_expert_sex.csv"`);
+    for (const night of [shown, nightBefore]) {
+      const res = await app.request(`/exports/changes/${night}/newer_expert_sex.csv`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/csv");
+    }
+    // A night removed, a line with nothing on it, a folder that is no night, a file that is no line's.
+    expect((await app.request(`/exports/changes/${summary.generation}/newer_expert_sex.csv`)).status).toBe(404);
+    expect((await app.request(`/exports/changes/${shown}/coarser.csv`)).status).toBe(404);
+    expect((await app.request("/exports/changes/dwca/newer_expert_sex.csv")).status).toBe(404);
+    expect((await app.request(`/exports/changes/${shown}/summary.csv`)).status).toBe(404);
 
     who = Number(volunteer);
     expect((await app.request("/exports/changes")).status).toBe(403);
-    expect((await app.request("/exports/changes/newer_expert_sex.csv")).status).toBe(403);
+    expect((await app.request(`/exports/changes/${shown}/newer_expert_sex.csv`)).status).toBe(403);
   });
 
   test("says when nothing has been worked out yet", async () => {
@@ -276,7 +293,7 @@ describe("the legacy-changes job", () => {
     expect(await last()).toMatchObject({ outcome: "failed", detail: expect.stringMatching(/run legacy-export first/) });
     await writeLegacyExport(conn, legacyExportPath(dir));
     await runJob({ db, conn }, job);
-    expect(await last()).toMatchObject({ outcome: "succeeded", detail: expect.stringMatching(/differing values on \d+ lines; \d+ records not yet explained, 0 unsorted/) });
+    expect(await last()).toMatchObject({ outcome: "succeeded", detail: expect.stringMatching(/differing values on \d+ lines; records \(active \/ settled\) not yet explained \d+ \/ \d+, unsorted 0 \/ 0/) });
     expect((await readChangesSummary(dir))?.matched.settled).toBeGreaterThan(0);
   });
 });

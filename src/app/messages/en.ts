@@ -2146,6 +2146,8 @@ export const en = {
     countsNote: "Counts are records. A record is counted once on each line it is on, so the lines add up to more than the records.",
     outcome: "Outcome",
     values: (values: number) => `${n(values)} ${values === 1 ? "value" : "values"} changed.`,
+    /** Records under one outcome, the active seasons first: "12 active, 3,400 settled". */
+    bySeason: (active: number, settled: number) => `${n(active)} active, ${n(settled)} settled`,
     examples: "For example",
     download: (bytes: string) => `Download every value on this line (CSV, ${bytes} MB)`,
     blank: "blank",

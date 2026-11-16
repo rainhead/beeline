@@ -63,7 +63,7 @@ import { stepTrend } from "./job-steps.js";
 import { Exports } from "./views/exports.js";
 import { HeldBackPage } from "./views/held-back.js";
 import { LegacyChangesPage } from "./views/legacy-changes.js";
-import { changesFilePath, readChangesSummary } from "../legacy-changes.js";
+import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../legacy-changes.js";
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
@@ -2099,17 +2099,19 @@ export function createApp({
     return c.html(await page(c, m.legacyChanges.title, <LegacyChangesPage m={m} summary={await readChangesSummary(exportsDir())} />));
   });
 
-  // One line's CSV, only a file the summary names, and by one handle, since
-  // the job replaces it by rename.
-  app.get("/exports/changes/:file{[a-z_]+\\.csv}", async (c) => {
+  // One line's CSV from the night the page named, which the job keeps for a
+  // night after the next is written, so a page loaded before a run still
+  // downloads what it shows: only a night's folder and a line's file, by
+  // name, and by one handle.
+  app.get("/exports/changes/:generation/:file{[a-z_]+\\.csv}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
+    const generation = c.req.param("generation");
     const name = c.req.param("file");
-    const summary = await readChangesSummary(exportsDir());
-    const line = summary?.lines.find((l) => l.file === name);
-    if (line === undefined) return errorResponse(c, "notFound");
+    const line = LINES.find((l) => lineFile(l.id) === name);
+    if (!GENERATION.test(generation) || line === undefined) return errorResponse(c, "notFound");
     let handle;
     try {
-      handle = await open(changesFilePath(exportsDir(), summary!, name), "r");
+      handle = await open(join(changesDir(exportsDir()), generation, name), "r");
     } catch {
       return errorResponse(c, "notFound");
     }
@@ -2123,7 +2125,7 @@ export function createApp({
     return c.body(Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream, 200, {
       "content-type": "text/csv; charset=utf-8",
       "content-length": String(st.size),
-      "content-disposition": `attachment; filename="beeline-changed-${line.line.replaceAll("_", "-")}.csv"`,
+      "content-disposition": `attachment; filename="beeline-changed-${line.id.replaceAll("_", "-")}-${generation.slice(0, 10)}.csv"`,
     });
   });
 

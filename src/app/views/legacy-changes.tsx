@@ -70,7 +70,7 @@ export function LegacyChangesPage({ m, summary }: { m: Messages; summary: Change
           <h2>{s.cat.title}</h2>
           <p>{s.cat.intro}</p>
           {s.lines.map(({ def, sum }) => (
-            <Line m={m} id={def.id} title={def.title} did={def.did} sum={sum} since={since} />
+            <Line m={m} id={def.id} title={def.title} did={def.did} sum={sum} since={since} generation={summary.generation} />
           ))}
         </section>
       ))}
@@ -78,7 +78,24 @@ export function LegacyChangesPage({ m, summary }: { m: Messages; summary: Change
   );
 }
 
-function Line({ m, id, title, did, sum, since }: { m: Messages; id: string; title: string; did: string; sum: LineSummary; since: string }) {
+/** One line. Its download names the night's folder, so it is the night this page shows even after a later night is written. */
+function Line({
+  m,
+  id,
+  title,
+  did,
+  sum,
+  since,
+  generation,
+}: {
+  m: Messages;
+  id: string;
+  title: string;
+  did: string;
+  sum: LineSummary;
+  since: string;
+  generation: string;
+}) {
   const c = m.legacyChanges;
   return (
     <article id={id}>
@@ -99,7 +116,9 @@ function Line({ m, id, title, did, sum, since }: { m: Messages; id: string; titl
           {c.outcome}:{" "}
           {sum.outcomes.length === 1
             ? (OUTCOME_WORDS[sum.outcomes[0]!.outcome] ?? sum.outcomes[0]!.outcome)
-            : sum.outcomes.map((o) => `${OUTCOME_WORDS[o.outcome] ?? o.outcome} (${m.format.number(o.records)})`).join("; ")}
+            : sum.outcomes
+                .map((o) => `${OUTCOME_WORDS[o.outcome] ?? o.outcome} (${c.bySeason(o.active, o.settled)})`)
+                .join("; ")}
         </Meta>
       </p>
       {sum.examples.length > 0 && (
@@ -113,7 +132,7 @@ function Line({ m, id, title, did, sum, since }: { m: Messages; id: string; titl
         </>
       )}
       <p>
-        <LinkButton href={`/exports/changes/${sum.file}`}>{c.download((sum.bytes / 1e6).toFixed(1))}</LinkButton>
+        <LinkButton href={`/exports/changes/${generation}/${sum.file}`}>{c.download((sum.bytes / 1e6).toFixed(1))}</LinkButton>
       </p>
     </article>
   );

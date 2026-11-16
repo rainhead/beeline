@@ -667,8 +667,12 @@ export interface CollectedGroup {
   /** The floral host as observed; null for a bee taken off no flower, or none recorded. */
   host_name: string | null;
   host_rank: string | null;
-  /** Whether the samples' method names a trap, so the plant is one near the trap, not a host (beeline-vjqy). */
-  near_trap: boolean;
+  /**
+   * How the group's bees came off the plant: off it, in a trap near it (a
+   * method naming a trap, beeline-vjqy), or both. One group either way, since
+   * the listing it links to cannot tell them apart.
+   */
+  plant: "off" | "trap" | "both";
   /** Collection years, newest first. */
   seasons: number[];
   specimens: number;
@@ -720,13 +724,16 @@ export async function collectedOf(db: Kysely<Database>, personId: number, animal
   const groups = new Map<string, CollectedGroup>();
   const isoDay = (d: Date) => new Date(d).toISOString().slice(0, 10);
   for (const r of rows) {
-    const key = JSON.stringify([r.locality, r.county, r.state_province, r.host_name, r.host_rank, r.near_trap]);
+    const key = JSON.stringify([r.locality, r.county, r.state_province, r.host_name, r.host_rank]);
+    const how = r.near_trap ? "trap" : "off";
     const from = isoDay(r.date_start);
     const to = isoDay(r.date_end);
     let g = groups.get(key);
     if (g === undefined) {
-      g = { locality: r.locality, county: r.county, state_province: r.state_province, host_name: r.host_name, host_rank: r.host_rank, near_trap: r.near_trap, seasons: [], specimens: 0, from, to };
+      g = { locality: r.locality, county: r.county, state_province: r.state_province, host_name: r.host_name, host_rank: r.host_rank, plant: how, seasons: [], specimens: 0, from, to };
       groups.set(key, g);
+    } else if (g.plant !== how) {
+      g.plant = "both";
     }
     const season = Number(r.season);
     if (!g.seasons.includes(season)) g.seasons.push(season);

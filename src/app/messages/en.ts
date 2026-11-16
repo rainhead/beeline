@@ -1851,6 +1851,8 @@ export const en = {
       off: "off",
       /** In place of "off" before a plant, where the samples were trapped: the trap was near it (beeline-vjqy). */
       nearTrap: "in a trap near",
+      /** Where some of the group's bees were netted off the plant and some trapped near it. */
+      offOrNearTrap: "off or in a trap near",
       inSeasons: (seasons: readonly string[]) => `in ${list(seasons)}`,
       /** The places and plants past the first few, folded away, the fewest specimens last. */
       more: (count: number) => `${n(count)} more ${count === 1 ? "place or plant" : "places and plants"}`,

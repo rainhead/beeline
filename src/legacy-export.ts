@@ -345,7 +345,8 @@ rows AS (
     -- which are not this claim and stay as the old record had them.
     ${t(`CASE WHEN ${methodNamesTrapSql(ownRow('"samplingProtocol"', "samplingProtocol", "s.protocol"))}
                AND CASE WHEN lo._id IS NOT NULL
-                        THEN coalesce(nullif(lo."genusPlant", ''), nullif(lo."speciesPlant", ''), nullif(lo."familyPlant", '')) IS NOT NULL
+                        THEN coalesce(nullif(lo."genusPlant", ''), nullif(lo."speciesPlant", ''), nullif(lo."familyPlant", ''),
+                                      nullif(lo."orderPlant", ''), nullif(lo."phylumPlant", '')) IS NOT NULL
                         ELSE nullif(s.host_name_as_observed, '') IS NOT NULL END
                AND coalesce(trim(lo."relationshipOfResource"), '') IN ('', 'visits flowers of') THEN 'near'
                ELSE ${orStaged("relationshipOfResource", `CASE WHEN nullif(s.host_name_as_observed, '') IS NOT NULL THEN 'visits flowers of' END`)} END`)} AS "relationshipOfResource",

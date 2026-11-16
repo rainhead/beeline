@@ -386,14 +386,18 @@ describe("the legacy-format export", () => {
       // A number there, as the 2026 vane-trap records hold, is not the claim and stays.
       await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '10' WHERE "fieldNumber" = '25000001'`);
       expect(await exported()).toEqual([["10"]]);
+      // A plant named only to its order is a plant all the same.
+      await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = 'visits flowers of', "genusPlant" = '', "speciesPlant" = '',
+                        "familyPlant" = '', "orderPlant" = 'Rosales', "phylumPlant" = '' WHERE "fieldNumber" = '25000001'`);
+      expect(await exported()).toEqual([["near"]]);
       // And with no plant in the old record there is nothing to be near.
-      await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '', "genusPlant" = '', "speciesPlant" = '', "familyPlant" = ''
-                      WHERE "fieldNumber" = '25000001'`);
+      await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '', "orderPlant" = '' WHERE "fieldNumber" = '25000001'`);
       expect(await exported()).toEqual([[null]]);
     } finally {
       await conn.run(`UPDATE sample SET protocol = ${before === null ? "NULL" : `'${before}'`} WHERE entity_id = ${sample}`);
       await conn.run(`UPDATE legacy_occurrence o SET "samplingProtocol" = b."samplingProtocol", "relationshipOfResource" = b."relationshipOfResource",
-                        "genusPlant" = b."genusPlant", "speciesPlant" = b."speciesPlant", "familyPlant" = b."familyPlant"
+                        "genusPlant" = b."genusPlant", "speciesPlant" = b."speciesPlant", "familyPlant" = b."familyPlant",
+                        "orderPlant" = b."orderPlant", "phylumPlant" = b."phylumPlant"
                       FROM trap_test_before b WHERE o._id = b._id`);
       await conn.run(`DROP TABLE trap_test_before`);
     }

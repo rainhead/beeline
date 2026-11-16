@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
-import { compareLegacyExport, DIFFERENCE_KIND_SQL, seasonDate, writeDifferences } from "../src/compare-legacy-export.js";
+import { compareLegacyExport, DIFFERENCE_KIND_SQL, namesSpecies, seasonDate, writeDifferences } from "../src/compare-legacy-export.js";
 import { parseRulings, readRulings, RULING_COLUMNS, rulingProblem, type Ruling } from "../src/legacy-export-rulings.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { promotedStore } from "./promoted-store.js";
@@ -80,6 +80,29 @@ describe("the kind of a difference", () => {
       `SELECT ${DIFFERENCE_KIND_SQL} FROM (SELECT ${lit(column)} AS "column", ${lit(exported)} AS exported, ${lit(legacy)} AS legacy)`,
     );
     expect(reader.getRows()[0]![0]).toBe(kind);
+    conn.closeSync();
+  });
+});
+
+describe("whether an identification names a species", () => {
+  // (epithet column, full name, names a species?): the old Beeline's shapes.
+  const cases: [string, string, boolean][] = [
+    ["", "Lasioglossum nr. tenax", true],
+    ["", "Andrena (Melandrena) nivalis", true],
+    ["", "Halictus ligatus Say, 1837", true],
+    ["ligatus", "", true],
+    ["", "Bombus", false],
+    ["", "Melissodes sp.1", false],
+    ["", "Andrena sp.", false],
+    ["", "Bombus indet.", false],
+    ["", "Not a bee", false],
+    ["sp.", "Andrena sp.", false],
+  ];
+  test.each(cases)("epithet '%s', name '%s': %s", async (epithet, name, species) => {
+    const conn = await (await DuckDBInstance.create(":memory:")).connect();
+    const lit = (x: string) => `'${x.replaceAll("'", "''")}'`;
+    const reader = await conn.runAndReadAll(`SELECT ${namesSpecies("e", "n")} FROM (SELECT ${lit(epithet)} AS e, ${lit(name)} AS n)`);
+    expect(reader.getRows()[0]![0]).toBe(species);
     conn.closeSync();
   });
 });

@@ -177,6 +177,9 @@ export function legacyExportSql(
   // Everything after the genus and an optional "(Subgenus)": the epithet can
   // be more than one word ("verbesinae complex"), so the last word is not it.
   const epithet = (name: string) => `regexp_replace(${name}, '^\\S+\\s+(\\([^)]*\\)\\s+)?', '')`;
+  // Whether the old record names an expert identification: the only kind of
+  // record whose own sex and caste the export carries (beeline-eznn).
+  const expertNamed = `concat(trim(lo.family), trim(lo.genus), trim(lo."specificEpithet"), trim(lo."scientificName")) <> ''`;
   // A row whose own point is written — an imported point Beeline has not
   // replaced — describes that point in full: its elevation and uncertainty
   // are the legacy row's too, as the legacy file had them. The sample keeps
@@ -249,9 +252,9 @@ latest AS (
 ),
 expert AS (SELECT * FROM latest WHERE is_expert AND rn = 1),
 -- Sex and caste as the newest expert determination that states them: an
--- Ecdysis identification records a name and no sex, and becoming the record
--- must not erase the sex an earlier determination gave (35,000 specimens on
--- the sandbox, 2026-09-28).
+-- identification that gives a name and no sex must not erase the sex an
+-- earlier determination gave (35,000 specimens on the sandbox, 2026-09-28).
+-- Many Ecdysis identifications do give a sex, and then it is the newest.
 stated AS (
   SELECT specimen_id,
          arg_max(sex, (recorded_at, entity_id)) FILTER (WHERE nullif(sex, '') IS NOT NULL) AS sex,
@@ -371,11 +374,17 @@ rows AS (
     ${t(unidentified("scientificName", `CASE WHEN e.qualifier IS NOT NULL AND el.species IS NOT NULL
                THEN concat(el.genus, ' ', e.qualifier, ' ', ${epithet("el.species")})
                ELSE ea.scientific_name END`))} AS "scientificName",
-    -- Beeline keeps sex and caste on a determination, so a specimen the legacy
-    -- system sexed but nobody has identified has nowhere to hold them: 24,217
-    -- such rows in the 2026-09-27 corpus. Those carry the staged value.
-    ${t(`coalesce(st.sex, lo."sex")`)} AS "sex",
-    ${t(`coalesce(st.caste, lo."caste")`)} AS "caste",
+    -- Sex and caste are the expert's, so the old record's are carried only
+    -- where it names an expert identification (Peter, 2026-11-15,
+    -- beeline-eznn). From 2023 the old Beeline wrote "male" on records nobody
+    -- had identified: 24,434 of them on the store of 2026-11-15 (1,352 in
+    -- 2023, 4,965 in 2024, 18,117 in 2025), and no unidentified record said
+    -- female but 38 a volunteer had named. Where experts have since sexed such
+    -- a bee in Ecdysis, the old "male" was female 7,150 times and male 6,917,
+    -- so it was an entry default, not an identification. Until then this
+    -- carried the old value for every specimen nobody had identified.
+    ${t(`coalesce(st.sex, CASE WHEN ${expertNamed} THEN lo."sex" END)`)} AS "sex",
+    ${t(`coalesce(st.caste, CASE WHEN ${expertNamed} THEN lo."caste" END)`)} AS "caste",
     ${t(unidentified("taxonRank", "CASE WHEN ea.rank IS NOT NULL THEN concat(upper(left(ea.rank, 1)), substr(ea.rank, 2)) END"))} AS "taxonRank",
     ${t(unidentified("identifiedBy", "coalesce(nullif(e.determiner_name, ''), dp.display_name)"))} AS "identifiedBy",
     -- A volunteer's identification, where Beeline holds one; where it holds

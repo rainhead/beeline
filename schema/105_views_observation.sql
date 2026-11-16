@@ -277,3 +277,21 @@ JOIN observation_field f ON f.inat_id = s.inat_observation_id
 WHERE s.geoprivacy       IS DISTINCT FROM nullif(f.geoprivacy, 'open')
    OR s.taxon_geoprivacy IS DISTINCT FROM nullif(f.taxon_geoprivacy, 'open');
 COMMENT ON VIEW sample_geoprivacy_stale IS 'Linked samples whose geoprivacy or taxon_geoprivacy disagrees with their observation''s projection: the flags are a copy promotion rewrites, and this names a copy a writer left behind. Empty after every observation promotion; what that promotion''s flag statement updates.';
+
+-- The floral host an observation names, as a sample is to take it
+-- (beeline-rfkj.11): observation_field's host columns, except that a taxon
+-- in inat_taxon_not_a_host (Homo sapiens, a user's flag) is no host at all,
+-- so every column is NULL, as for an observation with no taxon. Minting
+-- (ingest/mint-samples.sql), the QC rule on the host
+-- (qc_rule_non_tracheophyte_host) and the dashboard's unminted observations
+-- read this and not observation_field, so the three agree; observation_field
+-- stays a faithful copy of the load.
+CREATE VIEW observation_host AS
+SELECT f.inat_id,
+       CASE WHEN x.inat_taxon_id IS NULL THEN f.host_taxon_id END        AS host_taxon_id,
+       CASE WHEN x.inat_taxon_id IS NULL THEN f.host_taxon_name END      AS host_taxon_name,
+       CASE WHEN x.inat_taxon_id IS NULL THEN f.host_taxon_rank END      AS host_taxon_rank,
+       CASE WHEN x.inat_taxon_id IS NULL THEN f.host_is_tracheophyte END AS host_is_tracheophyte
+FROM observation_field f
+LEFT JOIN inat_taxon_not_a_host x ON x.inat_taxon_id = f.host_taxon_id;
+COMMENT ON VIEW observation_host IS 'Each observation''s floral host as a sample takes it: observation_field''s host_taxon_id, host_taxon_name, host_taxon_rank and host_is_tracheophyte, all NULL where the taxon is one that means no host (inat_taxon_not_a_host). What minting, qc_rule_non_tracheophyte_host and the dashboard read.';

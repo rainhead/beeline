@@ -42,3 +42,26 @@ COMMENT ON COLUMN plant_common_name_cache.source IS 'list or inaturalist: where 
 COMMENT ON COLUMN plant_common_name_cache.list_entry IS 'The scientific name of the list entry the name came from, when it came from the list.';
 COMMENT ON COLUMN plant_common_name_cache.list_entry_depth IS 'How far above the taxon its entry sits; 0 is the taxon''s own entry.';
 COMMENT ON COLUMN plant_common_name_cache.refreshed_at IS 'When the copy was last refreshed.';
+
+-- The taxon each host name resolves to, kept for the same reason
+-- (beeline-rfkj.5). A sample with a host name and no iNaturalist id is read
+-- through the taxon its name comes to (sample_host, schema/116), and working
+-- that out resolves every name (plant_name_resolution, schema/111: about 60
+-- milliseconds on production's store of 2026-11-15, whatever is asked for),
+-- too much for a page. So host_name_taxon (schema/116), the definition, is
+-- copied here by the same refresh as the common names (refreshPlantCommonNames,
+-- src/plant-common-names.ts), which runs after everything that changes what it
+-- says: the boot load of the plant list, the plant-names job, the taxa fetch
+-- and legacy promotion, the one writer of a host name with no id. Keyed by the
+-- name exactly as the sample holds it, so a reader joins on the sample's
+-- column and normalises nothing. host_name_taxon_stale (schema/116) lists
+-- where the copy and its definition part.
+CREATE TABLE host_name_taxon_cache (
+  host_name     TEXT PRIMARY KEY,
+  inat_taxon_id BIGINT NOT NULL,
+  refreshed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE host_name_taxon_cache IS 'A copy of the rows of host_name_taxon (schema/116): each host name of a sample with no host id that resolves to a taxon a host may be read through. Refreshed with plant_common_name_cache by refreshPlantCommonNames; derived, never edited. host_name_taxon_stale says whether it is out of date.';
+COMMENT ON COLUMN host_name_taxon_cache.host_name IS 'sample.host_name_as_observed, exactly as stored.';
+COMMENT ON COLUMN host_name_taxon_cache.inat_taxon_id IS 'The taxon the name resolves to (plant_name_resolution.inat_taxon_id); need not be in inat_taxon yet.';
+COMMENT ON COLUMN host_name_taxon_cache.refreshed_at IS 'When the copy was last refreshed.';

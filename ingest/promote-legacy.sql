@@ -734,7 +734,12 @@ INSERT INTO sample (entity_id, kind, sample_number,
                     locality, protocol)
 SELECT s.sample_id, s.kind,
        s.sid, s.p_date_start, s.date_end, s.specimen_count, s.inat_obs_id,
-       s.host_name, s.host_rank,
+       -- No host where the name is a taxon that means none: old Beeline copied
+       -- iNaturalist's taxon into its plant columns, Homo sapiens (a user's
+       -- flag) included, on 1,360 rows of the 2026-11-15 production store
+       -- (inat_taxon_not_a_host, beeline-rfkj.11).
+       CASE WHEN x.name IS NULL THEN s.host_name END,
+       CASE WHEN x.name IS NULL THEN s.host_rank END,
        -- Country to ISO 3166-1 alpha-3, matching the 'USA' that most records
        -- already carry. Canada arrived spelled both ways, splitting British
        -- Columbia's records as well as the Yukon's.
@@ -742,7 +747,8 @@ SELECT s.sample_id, s.kind,
                                   ELSE nullif(s.country, '') END,
        nullif(s.state_province, ''),
        nullif(s.county, ''), nullif(s.locality, ''), nullif(s.protocol, '')
-FROM legacy_sample_map s;
+FROM legacy_sample_map s
+LEFT JOIN inat_taxon_not_a_host x ON x.name = s.host_name;
 
 -- Geography assigns the atlas, through the lookup that also knows the
 -- regions no atlas covers (schema/010). No row here means one thing —

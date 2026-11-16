@@ -183,6 +183,13 @@ export interface InatTaxonAbsentTable {
   asked_at: Generated<Date>;
 }
 
+/** Taxa that, as an observation's taxon, mean it names no floral host (Homo sapiens, a user's flag; beeline-rfkj.11). */
+export interface InatTaxonNotAHostTable {
+  inat_taxon_id: BigIntCol;
+  name: string;
+  reason: string;
+}
+
 /** Absent verdicts from the last 30 days, the ones that still count. */
 export interface InatTaxonKnownAbsentView {
   inat_taxon_id: BigIntCol;
@@ -410,6 +417,53 @@ export interface InatTaxonCurrentNamedView extends InatTaxonCurrentView {
 /** A sample's host (inat_taxon_id is the stored id), resolved to its current taxon when read (schema/116); one row for each sample whose host id is cached. */
 export interface SampleHostView extends InatTaxonCurrentNamedView {
   sample_id: BigIntCol;
+  /** id: the sample's own host id; name: no id, found through its host name's lookup (beeline-rfkj.5). */
+  resolved_by: "id" | "name";
+}
+
+/** schema/068: the taxon each host name of a sample with no host id resolves to, copied from host_name_taxon. */
+export interface HostNameTaxonCacheTable {
+  host_name: string;
+  inat_taxon_id: BigIntCol;
+  refreshed_at: Generated<Date>;
+}
+
+/** schema/116: the definition host_name_taxon_cache copies. */
+export interface HostNameTaxonView {
+  host_name: string;
+  inat_taxon_id: BigIntCol;
+}
+
+/** schema/116: host names where the copy and its definition part. */
+export interface HostNameTaxonStaleView {
+  host_name: string;
+}
+
+/** schema/116: samples with a host name and no id that a page does not read through a current vascular plant, or should be looked at, and why. */
+export interface SampleHostUnresolvedView {
+  sample_id: BigIntCol;
+  host_name: string;
+  name_key: string | null;
+  expected_rank: string | null;
+  /** A page reads the host through a taxon that has a current taxon. */
+  read: boolean;
+  /** Null only for a sample not read for a reason no rule names. */
+  outcome:
+    | PlantNameOutcome
+    | "no name"
+    | "matched by another name"
+    | "not copied yet"
+    | "taxon not read yet"
+    | "taxon no longer current"
+    | "lineage not read"
+    | "not a vascular plant"
+    | "other taxa had this name"
+    | null;
+  candidate_taxon_id: BigIntCol | null;
+  /** The taxa the lookup's other exact hits stand for today, separated by '; '. */
+  other_taxa: string | null;
+  season: number;
+  settled: boolean;
 }
 
 /** What iNaturalist has done with a stored taxon (schema/113): see inat_taxon_current. */
@@ -686,6 +740,15 @@ export interface SampleElevationStaleView {
   elevation_m: number;
   elevation_latitude: number;
   elevation_longitude: number;
+}
+
+/** schema/105: an observation's floral host as a sample takes it, none where the taxon means no host. */
+export interface ObservationHostView {
+  inat_id: BigIntCol;
+  host_taxon_id: BigIntCol | null;
+  host_taxon_name: string | null;
+  host_taxon_rank: string | null;
+  host_is_tracheophyte: boolean | null;
 }
 
 /** schema/105: a linked sample whose geoprivacy flags no longer say what its observation does. */
@@ -1824,6 +1887,7 @@ export interface Database {
   sample_number_gap: SampleNumberGapView;
   sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;
+  observation_host: ObservationHostView;
   sample_geoprivacy_stale: SampleGeoprivacyStaleView;
   sample_elevation_pending: SampleElevationPendingView;
   sample_locality_candidate_current: SampleLocalityCandidateCurrentView;
@@ -1862,6 +1926,7 @@ export interface Database {
   inat_taxon_ancestor: InatTaxonAncestorTable;
   inat_taxon_replacement: InatTaxonReplacementTable;
   inat_taxon_absent: InatTaxonAbsentTable;
+  inat_taxon_not_a_host: InatTaxonNotAHostTable;
   inat_taxon_known_absent: InatTaxonKnownAbsentView;
   inat_taxon_uncached: InatTaxonUncachedView;
   plant_list: PlantListTable;
@@ -1893,6 +1958,10 @@ export interface Database {
   plant_common_name_stale: PlantCommonNameStaleView;
   inat_taxon_current_named: InatTaxonCurrentNamedView;
   sample_host: SampleHostView;
+  host_name_taxon_cache: HostNameTaxonCacheTable;
+  host_name_taxon: HostNameTaxonView;
+  host_name_taxon_stale: HostNameTaxonStaleView;
+  sample_host_unresolved: SampleHostUnresolvedView;
   inat_taxon_recheck: InatTaxonRecheckView;
   inat_taxon_stalest: InatTaxonStalestView;
   animal_ecdysis: AnimalEcdysisView;

@@ -4,8 +4,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
-import { compareLegacyExport, DIFFERENCE_KIND_SQL, seasonDate, writeDifferences } from "../src/compare-legacy-export.js";
-import { parseRulings, readRulings, RULING_COLUMNS, type Ruling } from "../src/legacy-export-rulings.js";
+import { compareLegacyExport, DIFFERENCE_KIND_SQL, namesSpecies, seasonDate, writeDifferences } from "../src/compare-legacy-export.js";
+import { parseRulings, readRulings, RULING_COLUMNS, rulingProblem, type Ruling } from "../src/legacy-export-rulings.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { promotedStore } from "./promoted-store.js";
 
@@ -50,6 +50,9 @@ describe("the kind of a difference", () => {
     ["genus", "Lasioglossum", "Lasioglossum (Dialictus)", "subgenus_form"],
     ["scientificName", "Halictus ligatus", "Halictus ligatus Say, 1837", "authorship"],
     ["scientificName", "Lasioglossum titusi", "Lasioglossum titusi (Crawford, 1902)", "authorship"],
+    // Synthetic: a genus is not the authorship of the species it was, subgenus and all.
+    ["scientificName", "Bombus", "Bombus (Pyrobombus) mixtus Cresson, 1878", "changed"],
+    ["locality", "", " ", "whitespace"], // synthetic: a value of nothing but a space
     // In the shapes of the sandbox's comparison against the 2026-10-04 pull, names invented.
     ["firstNameInitial", "S.", "S", "initial_form"],
     ["firstNameInitial", "A.", "AC", "changed"],
@@ -77,6 +80,29 @@ describe("the kind of a difference", () => {
       `SELECT ${DIFFERENCE_KIND_SQL} FROM (SELECT ${lit(column)} AS "column", ${lit(exported)} AS exported, ${lit(legacy)} AS legacy)`,
     );
     expect(reader.getRows()[0]![0]).toBe(kind);
+    conn.closeSync();
+  });
+});
+
+describe("whether an identification names a species", () => {
+  // (epithet column, full name, names a species?): the old Beeline's shapes.
+  const cases: [string, string, boolean][] = [
+    ["", "Lasioglossum nr. tenax", true],
+    ["", "Andrena (Melandrena) nivalis", true],
+    ["", "Halictus ligatus Say, 1837", true],
+    ["ligatus", "", true],
+    ["", "Bombus", false],
+    ["", "Melissodes sp.1", false],
+    ["", "Andrena sp.", false],
+    ["", "Bombus indet.", false],
+    ["", "Not a bee", false],
+    ["sp.", "Andrena sp.", false],
+  ];
+  test.each(cases)("epithet '%s', name '%s': %s", async (epithet, name, species) => {
+    const conn = await (await DuckDBInstance.create(":memory:")).connect();
+    const lit = (x: string) => `'${x.replaceAll("'", "''")}'`;
+    const reader = await conn.runAndReadAll(`SELECT ${namesSpecies("e", "n")} FROM (SELECT ${lit(epithet)} AS e, ${lit(name)} AS n)`);
+    expect(reader.getRows()[0]![0]).toBe(species);
     conn.closeSync();
   });
 });
@@ -127,27 +153,28 @@ describe("comparing against rulings", () => {
   let numbers: string[];
 
   // Differences are planted by editing staging after the export is written:
-  // one record's sex recapitalised, another's taxonomic notes filled, and a
-  // third record dropped from staging, so the export holds it alone.
+  // one record's method recapitalised, another's taxonomic notes filled, and
+  // a third record dropped from staging, so the export holds it alone. Not
+  // the sex, whose capitals are the sex and caste vocabulary's to explain.
   beforeAll(async () => {
     ({ conn } = await promotedStore("occurrences"));
     dir = await mkdtemp(join(tmpdir(), "compare-legacy-"));
     exportPath = join(dir, "occurrences.csv");
     await writeLegacyExport(conn, exportPath);
     numbers = ((await conn.runAndReadAll(
-      `SELECT "fieldNumber" FROM legacy_occurrence WHERE sex <> '' AND "fieldNumber" <> '' ORDER BY 1`,
+      `SELECT "fieldNumber" FROM legacy_occurrence WHERE "samplingProtocol" <> '' AND "fieldNumber" <> '' ORDER BY 1 LIMIT 1`,
     )).getRows() as [string][]).map(([n]) => n);
     const other = ((await conn.runAndReadAll(
-      `SELECT "fieldNumber" FROM legacy_occurrence WHERE sex = '' AND "fieldNumber" <> '' ORDER BY 1 LIMIT 2`,
+      `SELECT "fieldNumber" FROM legacy_occurrence WHERE "fieldNumber" <> '' AND "fieldNumber" <> '${numbers[0]}' ORDER BY 1 DESC LIMIT 2`,
     )).getRows() as [string][]).map(([n]) => n);
     numbers.push(...other);
-    await conn.run(`UPDATE legacy_occurrence SET sex = upper(sex) WHERE "fieldNumber" = '${numbers[0]}'`);
+    await conn.run(`UPDATE legacy_occurrence SET "samplingProtocol" = upper("samplingProtocol") WHERE "fieldNumber" = '${numbers[0]}'`);
     await conn.run(`UPDATE legacy_occurrence SET "taxonomicNotes" = 'planted' WHERE "fieldNumber" = '${numbers.at(-2)}'`);
     await conn.run(`DELETE FROM legacy_occurrence WHERE "fieldNumber" = '${numbers.at(-1)}'`);
   });
 
   const ruling = (o: Partial<Ruling>): Ruling => ({
-    field_number: "", column: "sex", kind: "", outcome: "expected", reason: "test", source: "test",
+    field_number: "", column: "samplingProtocol", kind: "", outcome: "expected", reason: "test", source: "test",
     decided_by: "test", decided_on: "2026-10-04", ...o,
   });
 
@@ -165,7 +192,7 @@ describe("comparing against rulings", () => {
 
   test("finds each planted difference, with its kind", async () => {
     const found = await unexplained([]);
-    expect(found).toContain(`${numbers[0]} sex case`);
+    expect(found).toContain(`${numbers[0]} samplingProtocol case`);
     expect(found).toContain(`${numbers.at(-2)} taxonomicNotes blanked`);
     expect(found).toContain(`${numbers.at(-1)} (record) not_in_legacy`);
   });
@@ -173,7 +200,7 @@ describe("comparing against rulings", () => {
   test("a ruling explains exactly the differences it names and nothing else", async () => {
     const before = await unexplained([]);
     const after = await unexplained([ruling({ field_number: numbers[0]!, kind: "case" })]);
-    expect(before.filter((d) => !after.includes(d))).toEqual([`${numbers[0]} sex case`]);
+    expect(before.filter((d) => !after.includes(d))).toEqual([`${numbers[0]} samplingProtocol case`]);
     expect(after.filter((d) => !before.includes(d))).toEqual([]);
   });
 
@@ -181,6 +208,21 @@ describe("comparing against rulings", () => {
     const rulings = [ruling({ outcome: "expected" }), ruling({ field_number: numbers[0]!, outcome: "beeline-wrong" })];
     const r = await compareLegacyExport(conn, exportPath, rulings);
     expect(r.rulings.map((x) => [x.ruling.outcome, x.active + x.settled])).toEqual([["expected", 0], ["beeline-wrong", 1]]);
+  });
+
+  test("a ruling with no column covers its kind in every column, below a ruling naming the column", async () => {
+    const before = await unexplained([]);
+    const after = await unexplained([ruling({ column: "", kind: "case" })]);
+    expect(before.filter((d) => !after.includes(d))).toContain(`${numbers[0]} samplingProtocol case`);
+    const r = await compareLegacyExport(conn, exportPath, [
+      ruling({ column: "", kind: "case", outcome: "expected" }),
+      ruling({ kind: "case", outcome: "beeline-wrong" }),
+    ]);
+    expect(r.rulings.map((x) => [x.ruling.column, x.ruling.outcome, x.active + x.settled])).toEqual([
+      ["", "expected", expect.any(Number)],
+      ["samplingProtocol", "beeline-wrong", 1],
+    ]);
+    expect(rulingProblem(ruling({ column: "", kind: "" }))).toContain("must name a kind");
   });
 
   test("a beeline-wrong ruling that matches nothing is retired, any other matches nothing", async () => {
@@ -195,13 +237,15 @@ describe("comparing against rulings", () => {
   test("every kind is counted in records, under its outcome, with a record to look at", async () => {
     const r = await compareLegacyExport(conn, exportPath, [ruling({ kind: "case", outcome: "expected" })]);
     const byKind = (kind: string, outcome: string) => r.kinds.find((k) => k.kind === kind && k.outcome === outcome);
-    // The recapitalised sex: one record, explained, quoted with its number.
-    const sex = byKind("case", "expected")!;
-    expect(sex.active + sex.settled).toBe(1);
-    expect(sex.columns).toEqual(["sex"]);
-    expect(sex.examples).toEqual([{ column: "sex", exported: expect.any(String), legacy: expect.any(String), n: 1, fieldNumber: numbers[0] }]);
-    expect(sex.fieldNumbers).toEqual([numbers[0]]);
-    expect(byKind("case", "unexplained")?.columns ?? []).not.toContain("sex");
+    // The recapitalised method: one record, explained, quoted with its number.
+    const method = byKind("case", "expected")!;
+    expect(method.active + method.settled).toBe(1);
+    expect(method.columns).toEqual(["samplingProtocol"]);
+    expect(method.examples).toEqual([
+      { column: "samplingProtocol", exported: expect.any(String), legacy: expect.any(String), n: 1, fieldNumber: numbers[0] },
+    ]);
+    expect(method.fieldNumbers).toEqual([numbers[0]]);
+    expect(byKind("case", "unexplained")?.columns ?? []).not.toContain("samplingProtocol");
     // The record dropped from staging: a record kind quotes no pair, only the number.
     const dropped = byKind("not_in_legacy", "unexplained")!;
     expect(dropped.columns).toEqual(["(record)"]);
@@ -353,5 +397,154 @@ describe("what the store knows about a difference", () => {
       ["25000009", "firstNameInitial", "label_name"],
       ["25000009", "genus", "subgenus_form"],
     ]);
+  });
+});
+
+describe("identifications, sex and caste, and reprints (beeline-eznn)", () => {
+  let conn: DuckDBConnection;
+  let dir: string;
+  let exportPath: string;
+
+  // Synthetic, in the shapes the production store showed on 2026-11-15:
+  // an Ecdysis identification giving a sex the old record had otherwise
+  // (2310599), a volunteer's identification from a worksheet, the old
+  // Beeline's capitalised sex, and a label new Beeline printed again.
+  beforeAll(async () => {
+    ({ conn } = await promotedStore("occurrences"));
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, is_expert, channel)
+      SELECT sp.entity_id, a.entity_id, 'Bombus vosnesenskii', 'female', true, 'ecdysis_import'
+      FROM specimen sp, animal a WHERE sp.field_number = '25000005' AND a.scientific_name = 'Bombus vosnesenskii'`);
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, is_expert, channel)
+      SELECT sp.entity_id, a.entity_id, 'Bombus', 'male', false, 'worksheet_import'
+      FROM specimen sp, animal a WHERE sp.field_number = '25000002' AND a.scientific_name = 'Bombus'`);
+    // Printed again in a run of new Beeline's, which minted no number for it.
+    const [[staff]] = (await conn.runAndReadAll(`SELECT min(entity_id) FROM person`)).getRows() as [[number]];
+    await conn.run(`INSERT INTO print_run (prepared_by, prepared_at, approved_by, approved_at, printed_by, printed_at)
+      VALUES (${staff}, TIMESTAMP '2026-11-04 11:00:00', ${staff}, TIMESTAMP '2026-11-04 11:30:00', ${staff}, TIMESTAMP '2026-11-04 12:00:00')`);
+    await conn.run(`INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text,
+                                               collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
+      SELECT (SELECT max(entity_id) FROM print_run), sp.entity_id, 1, 0, 'here', '0 0', 'then', 'Ada', 'net', sp.field_number,
+             0, 0, s.date_start, s.date_end
+      FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.field_number = '25000009'`);
+    dir = await mkdtemp(join(tmpdir(), "compare-ident-"));
+    exportPath = join(dir, "occurrences.csv");
+    await writeLegacyExport(conn, exportPath);
+    // The old records as they stood: a male where the expert now says female,
+    // no volunteer identification, a capitalised sex, an older print date.
+    await conn.run(`UPDATE legacy_occurrence SET sex = 'male' WHERE "fieldNumber" = '25000005'`);
+    await conn.run(`UPDATE legacy_occurrence SET "genusVolDet" = '', "sexVolDet" = '' WHERE "fieldNumber" = '25000002'`);
+    await conn.run(`UPDATE legacy_occurrence SET sex = upper(sex) WHERE "fieldNumber" = '25000001' AND sex <> ''`);
+    await conn.run(`UPDATE legacy_occurrence SET "dateLabelPrint" = '11-Aug-25' WHERE "fieldNumber" = '25000009'`);
+    // A range staff corrected to the one day it was (as on 25000003's
+    // sample, collected on one day): the old record wrote an end the next
+    // day, and the correction takes it away, so the export writes no end and
+    // the date and days of the year as for one day.
+    await conn.run(`UPDATE legacy_occurrence
+      SET day2 = CAST(try_cast(day AS INTEGER) + 1 AS VARCHAR), month2 = month, year2 = year,
+          "verbatimEventDate" = 'a range', "startDayofYear" = '1', "endDayofYear" = '2'
+      WHERE "fieldNumber" = '25000003'`);
+    await conn.run(`INSERT INTO legacy_correction (_id, field, base_value, new_value, author, reason)
+      SELECT o._id, f.field, CASE f.field WHEN 'day2' THEN o.day2 WHEN 'month2' THEN o.month2 ELSE o.year2 END, '', 'test', 'one day'
+      FROM legacy_occurrence o, (VALUES ('day2'), ('month2'), ('year2')) f(field) WHERE o."fieldNumber" = '25000003'`);
+  });
+
+  test("tells a newer identification, a reprint and a corrected date from a spelling of the old record's", async () => {
+    await compareLegacyExport(conn, exportPath, []);
+    const path = join(dir, "differences.csv");
+    await writeDifferences(conn, [], path);
+    const kinds = (await conn.runAndReadAll(
+      `SELECT field_number, "column", kind FROM read_csv('${path}', header = true, all_varchar = true)
+       WHERE (field_number = '25000005' AND "column" = 'sex')
+          OR (field_number = '25000002' AND "column" IN ('genusVolDet', 'sexVolDet'))
+          OR (field_number = '25000001' AND "column" = 'sex')
+          OR (field_number = '25000009' AND "column" = 'dateLabelPrint')
+          OR (field_number = '25000003' AND "column" IN ('day2', 'verbatimEventDate', 'startDayofYear', 'endDayofYear'))
+       ORDER BY ALL`,
+    )).getRows() as [string, string, string][];
+    expect(kinds).toEqual([
+      ["25000001", "sex", "sex_caste_vocabulary"],
+      ["25000002", "genusVolDet", "newer_volunteer_determination"],
+      ["25000002", "sexVolDet", "newer_volunteer_determination"],
+      ["25000003", "day2", "staff_correction"],
+      ["25000003", "endDayofYear", "staff_correction"],
+      ["25000003", "startDayofYear", "staff_correction"],
+      ["25000003", "verbatimEventDate", "staff_correction"],
+      ["25000005", "sex", "newer_determination"],
+      ["25000009", "dateLabelPrint", "reprinted"],
+    ]);
+  });
+
+  test("calls an identification that lost a rank coarser, and leaves a taken-away value unexplained", async () => {
+    // 25000009 was Lasioglossum nr. tenax; an expert's later identification
+    // names only the genus. 25000003, which an expert's genus now names on the
+    // old record, had a sex the export does not write: not the old default.
+    // And 25000002's volunteer gave a caste the newest volunteer
+    // identification takes away.
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, is_expert, channel, recorded_at)
+      SELECT sp.entity_id, a.entity_id, 'Lasioglossum', true, 'ecdysis_import', now() + INTERVAL 1 DAY
+      FROM specimen sp, animal a WHERE sp.field_number = '25000009' AND a.scientific_name = 'Lasioglossum' AND a.rank = 'genus'`);
+    const coarser = join(dir, "occurrences-coarser.csv");
+    await writeLegacyExport(conn, coarser);
+    await conn.run(`UPDATE legacy_occurrence SET genus = 'Bombus', sex = 'male' WHERE "fieldNumber" = '25000003'`);
+    await conn.run(`UPDATE legacy_occurrence SET "casteVolDet" = 'worker' WHERE "fieldNumber" = '25000002'`);
+    try {
+      await compareLegacyExport(conn, coarser, []);
+      const out = join(dir, "differences-coarser.csv");
+      await writeDifferences(conn, [], out);
+      const kinds = (await conn.runAndReadAll(
+        `SELECT field_number, "column", kind FROM read_csv('${out}', header = true, all_varchar = true)
+         WHERE (field_number = '25000009' AND "column" IN ('specificEpithet', 'scientificName'))
+            OR (field_number = '25000003' AND "column" = 'sex')
+            OR (field_number = '25000002' AND "column" = 'casteVolDet')
+         ORDER BY ALL`,
+      )).getRows() as [string, string, string][];
+      expect(kinds).toEqual([
+        ["25000002", "casteVolDet", "blanked"],
+        ["25000003", "sex", "blanked"],
+        // The old record wrote the species only in the full name, so only that column differs.
+        ["25000009", "scientificName", "coarser_determination"],
+      ]);
+    } finally {
+      await conn.run(`DELETE FROM determination WHERE channel = 'ecdysis_import' AND verbatim_identification = 'Lasioglossum'
+                        AND specimen_id = (SELECT entity_id FROM specimen WHERE field_number = '25000009')`);
+      await conn.run(`UPDATE legacy_occurrence SET genus = '', sex = '' WHERE "fieldNumber" = '25000003'`);
+      await conn.run(`UPDATE legacy_occurrence SET "casteVolDet" = '' WHERE "fieldNumber" = '25000002'`);
+    }
+  });
+
+  test("names what a newer identification lost, and the old default sex it no longer carries", async () => {
+    // Planted on the old records after the export: 25000005's old
+    // identification gave a subgenus the expert's newer one does not; and
+    // 25000003, which nobody identified, had the old Beeline's default male,
+    // which the export no longer carries.
+    // The same genus as the newer identification's, so the subgenus is what it lost.
+    await conn.run(`UPDATE legacy_occurrence SET genus = 'Bombus', subgenus = 'Pyrobombus' WHERE "fieldNumber" = '25000005'`);
+    await conn.run(`UPDATE legacy_occurrence SET sex = 'male' WHERE "fieldNumber" = '25000003'`);
+    try {
+      await compareLegacyExport(conn, exportPath, []);
+      const out = join(dir, "differences-loss.csv");
+      await writeDifferences(conn, [], out);
+      const kinds = (await conn.runAndReadAll(
+        `SELECT field_number, "column", kind FROM read_csv('${out}', header = true, all_varchar = true)
+         WHERE (field_number = '25000005' AND "column" = 'subgenus') OR (field_number = '25000003' AND "column" = 'sex')
+         ORDER BY ALL`,
+      )).getRows() as [string, string, string][];
+      expect(kinds).toEqual([
+        ["25000003", "sex", "unidentified_sex_dropped"],
+        ["25000005", "subgenus", "subgenus_dropped"],
+      ]);
+    } finally {
+      await conn.run(`UPDATE legacy_occurrence SET genus = '', subgenus = '' WHERE "fieldNumber" = '25000005'`);
+      await conn.run(`UPDATE legacy_occurrence SET sex = '' WHERE "fieldNumber" = '25000003'`);
+    }
+  });
+
+  test("the checked-in rulings explain each of them", async () => {
+    const rulings = await readRulings(new URL("../ingest/legacy-export-rulings.csv", import.meta.url).pathname);
+    const r = await compareLegacyExport(conn, exportPath, rulings);
+    const left = r.unexplained.groups.filter((g) =>
+      ["sex_caste_vocabulary", "newer_volunteer_determination", "newer_determination", "reprinted"].includes(g.kind),
+    );
+    expect(left).toEqual([]);
   });
 });

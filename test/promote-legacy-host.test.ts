@@ -83,6 +83,10 @@ beforeAll(async () => {
   // host as a genus and a bare epithet.
   await insert("host-116a", "9116", { sid: "116", genus: "", species: "" });
   await insert("host-116b", "9216", { sid: "116", genus: "Holodiscus", species: "discolor" }, "2");
+  // A lookup the plant names job had stored for one of the names (synthetic taxon id), so the copy promotion
+  // refreshes has something in it (beeline-rfkj.5).
+  await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('solidago canadensis', 'species', 1, true)");
+  await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('solidago canadensis', 'species', 999001, 'Solidago canadensis', 'species', true, 'Solidago canadensis')");
   await promoteLegacy(conn, FIXTURE_INPUTS);
   promoted = await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`);
   migration = await readFile(`${MIGRATIONS_DIR}0091-host-name-from-genus-and-epithet.sql`, "utf8");
@@ -100,6 +104,11 @@ describe("a promoted sample's host", () => {
 
   test("passes over a first record with no plant column", async () => {
     expect(await hostOf("116")).toEqual(["Holodiscus discolor", "species"]);
+  });
+
+  test("refreshes the copy of the taxon each host name comes to, being its one writer of a name with no id", async () => {
+    expect(await rows(conn, "SELECT host_name, inat_taxon_id FROM host_name_taxon_cache")).toEqual([["Solidago canadensis", 999001n]]);
+    expect(await rows(conn, "SELECT count(*) FROM host_name_taxon_stale")).toEqual([[0n]]);
   });
 });
 
@@ -169,4 +178,21 @@ describe("migration 0091, on a store promoted before the rule", () => {
     expect(await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`)).toEqual(after);
   });
 
+});
+
+describe("a host that means no host (beeline-rfkj.11)", () => {
+  test("old Beeline's Homo sapiens, a user's flag copied from iNaturalist, is promoted as no host", async () => {
+    // The plant columns of production's legacy row 7c0bff7d…, one of 1,360 that name Homo sapiens.
+    const { conn: own } = await createMemoryDb();
+    await loadLegacyStaging(own, FIXTURE);
+    await own.run(`UPDATE legacy_occurrence SET "speciesPlant" = 'Homo sapiens', "genusPlant" = 'Homo',
+                     "familyPlant" = 'Hominidae', "orderPlant" = '', "phylumPlant" = 'Chordata'
+                   WHERE "fieldNumber" = '25000001'`);
+    await promoteLegacy(own, FIXTURE_INPUTS);
+    const hosts = await rows(own, `SELECT s.host_name_as_observed, s.host_rank FROM sample s
+                                   JOIN legacy_specimen_number n ON n.sample_id = s.entity_id
+                                   WHERE n._id IN (SELECT _id FROM legacy_occurrence WHERE "fieldNumber" = '25000001')`);
+    // Every plant named in SHAPES above went through the same promotion and kept its host.
+    expect(hosts).toEqual([[null, null]]);
+  });
 });

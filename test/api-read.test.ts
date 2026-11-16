@@ -740,6 +740,25 @@ describe("a host on the record and in the listing (beeline-rfkj.4)", () => {
     expect(record).toMatchObject({ host_current_name: listed.hostCurrentName, host_family: listed.hostFamily, host_common_name: listed.hostCommonName });
     expect(String(record.host_inat_taxon_id)).toBe(String(listed.hostInatTaxonId));
   });
+
+  it("says the same of a host with a name and no id, read through the taxon its name comes to, and gives it no id (beeline-rfkj.5)", async () => {
+    const w = await world();
+    const { conn } = w;
+    await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active) VALUES (100, 'Familia alpha', 'family', 30, NULL, true)`);
+    await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active, preferred_common_name) VALUES (1, 'Alpha lanata', 'species', 10, 100, true, 'Woolly alpha')`);
+    await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (100, 100, 0), (1, 1, 0), (1, 100, 1)`);
+    // What the plant names job stores when iNaturalist answers the name.
+    await conn.run(`INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('alpha lanata', 'species', 1, true)`);
+    await conn.run(`INSERT INTO plant_name_lookup_hit VALUES ('alpha lanata', 'species', 1, 'Alpha lanata', 'species', true, 'Alpha lanata')`);
+    await conn.run(`UPDATE sample SET host_inat_taxon_id = NULL, host_name_as_observed = 'Alpha lanata', host_rank = 'species' WHERE entity_id = ${w.ids.a1}`);
+    await refreshPlantCommonNames(conn);
+    const record = (await w.json(w.keys.alice, `/samples/${w.ids.a1}`)).sample;
+    const listed = (await w.json(w.keys.alice, "/samples?scope=all")).rows.find((r: any) => r.id === w.ids.a1);
+    expect(listed).toMatchObject({ hostInatTaxonId: null, hostCurrentName: "Alpha lanata", hostFamily: "Familia alpha", hostCommonName: "woolly alpha" });
+    // The taxon the name came to is carried internally and never published.
+    expect(JSON.stringify(listed)).not.toContain("host_name_taxon");
+    expect(record).toMatchObject({ host_inat_taxon_id: null, host_current_name: "Alpha lanata", host_family: "Familia alpha", host_common_name: "woolly alpha" });
+  });
 });
 
 describe("what the API publishes of a record, field by field", () => {

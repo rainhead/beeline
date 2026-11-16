@@ -77,3 +77,26 @@ CREATE TABLE inat_taxon_absent (
 );
 COMMENT ON TABLE inat_taxon_absent IS 'Taxon ids iNaturalist was asked for and did not return (deleted upstream while a sample still names them). Subtracted from inat_taxon_uncached for 30 days (inat_taxon_known_absent) so the fetcher stops re-asking, then asked again; delete a row to ask sooner. A response that lists the taxon, as itself or as an ancestor, deletes its row. A stored taxon that a refresh no longer gets back is recorded here too and keeps its row.';
 COMMENT ON COLUMN inat_taxon_absent.asked_at IS 'When iNaturalist was last asked and answered without it. Older than 30 days, the verdict no longer counts.';
+
+-- Taxa that, given as an observation's taxon, mean the observation names NO
+-- host, rather than a host that is not a plant (beeline-rfkj.11). Homo
+-- sapiens is how an iNaturalist user flags an observation as not really an
+-- observation of anything (Peter, 2026-11-15); it is not the bee, which is
+-- what the other animals identified as an observation's subject are (Andrena,
+-- Apis mellifera), and which qc_rule_non_tracheophyte_host rightly catches.
+-- Seeded here, so another such taxon is a row and not code. Applied where a
+-- host is written (observation_host, schema/105; ingest/promote-legacy.sql by
+-- name), never at read time, because a sample's host columns are read in a
+-- dozen places and one missed reader would send the flag to GBIF. (The export
+-- to old Beeline still gives old Beeline's own rows back their own plant
+-- columns, Homo sapiens included, as it does every column it imported.)
+CREATE TABLE inat_taxon_not_a_host (
+  inat_taxon_id BIGINT PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  reason        TEXT NOT NULL
+);
+COMMENT ON TABLE inat_taxon_not_a_host IS 'iNaturalist taxa that, as an observation''s taxon, mean the observation names no floral host (beeline-rfkj.11). observation_host gives such an observation no host, so minting writes none and a sample keeps what it has; legacy promotion drops a host of this name. Seeded in the schema.';
+COMMENT ON COLUMN inat_taxon_not_a_host.name IS 'The taxon''s scientific name, as iNaturalist and old Beeline''s plant columns write it, for the legacy rows, which carry the name and no id.';
+COMMENT ON COLUMN inat_taxon_not_a_host.reason IS 'Why the taxon means no host, in a few words.';
+INSERT INTO inat_taxon_not_a_host VALUES
+  (43584, 'Homo sapiens', 'An iNaturalist user''s way of flagging an observation as not an observation of anything (Peter, 2026-11-15).');

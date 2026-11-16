@@ -81,6 +81,8 @@ export class BeelineCombobox extends LitElement {
   #initial = "";
   /** The chevron opened the list: show every choice, whatever is typed, until the next keystroke. */
   #all = false;
+  /** Closes the list a moment after focus leaves the combobox; cancelled if focus comes back first. */
+  #closeTimer: ReturnType<typeof setTimeout> | undefined;
   readonly #listId = `combobox-${++lists}`;
 
   constructor() {
@@ -140,6 +142,11 @@ export class BeelineCombobox extends LitElement {
     super.connectedCallback();
   }
 
+  override disconnectedCallback() {
+    clearTimeout(this.#closeTimer);
+    super.disconnectedCallback();
+  }
+
   override firstUpdated() {
     if (this.autofocus) this.querySelector("input")?.focus();
   }
@@ -181,7 +188,8 @@ export class BeelineCombobox extends LitElement {
       if (this.active < 0 && !e.altKey) this.active = 0;
       return;
     }
-    const r = keyAction({ open: this.open, active: this.active, count: shown.length, free: this.free }, e.key, e.altKey);
+    const footer = this.renderFooter !== undefined && this.#panelShown(shown);
+    const r = keyAction({ open: this.open, active: this.active, count: shown.length, free: this.free, footer }, e.key, e.altKey, e.shiftKey);
     if (r.prevent) e.preventDefault();
     const option = r.pick ? shown[this.active] : undefined;
     this.open = r.open;
@@ -195,7 +203,21 @@ export class BeelineCombobox extends LitElement {
     const shown = this.#shown();
     const showPanel = this.#panelShown(shown);
     const activeId = this.open && this.active >= 0 && this.active < shown.length ? `${this.#listId}-${this.active}` : nothing;
-    return html`<div class="combobox">
+    // The list closes when focus leaves the whole combobox, not the box
+    // alone: a control under the list (the taxon picker's bycatch box) can
+    // take focus, by Tab or because clicking its label focuses it, and
+    // closing then removed the very control being used (beeline-4wx3).
+    // The delay lets a click land before the list goes; focus coming back
+    // within it cancels the close.
+    return html`<div
+      class="combobox"
+      @focusin=${() => clearTimeout(this.#closeTimer)}
+      @focusout=${(e: FocusEvent) => {
+        if (e.relatedTarget instanceof Node && this.contains(e.relatedTarget)) return;
+        clearTimeout(this.#closeTimer);
+        this.#closeTimer = setTimeout(() => (this.open = false), 150);
+      }}
+    >
       <input
         id=${this.inputId || nothing}
         name=${this.name || nothing}
@@ -230,7 +252,6 @@ export class BeelineCombobox extends LitElement {
         @click=${() => {
           if (!this.open && this.search === undefined) this.#openList(shown);
         }}
-        @blur=${() => setTimeout(() => (this.open = false), 150)}
         @keydown=${(e: KeyboardEvent) => this.#key(e, shown)}
       />
       ${this.search === undefined
@@ -264,7 +285,14 @@ export class BeelineCombobox extends LitElement {
           </button>`
         : nothing}
       ${showPanel
-        ? html`<div class="combobox-panel">
+        ? html`<div
+            class="combobox-panel"
+            @change=${() => {
+              // A control under the list changed what the list shows: send
+              // focus back to the box, so typing goes on refining the search.
+              this.querySelector<HTMLInputElement>("input[role=combobox]")?.focus();
+            }}
+          >
             ${shown.length === 0
               ? html`<p class="meta">${this.emptyText}</p>`
               : html`<ul role="listbox" id=${this.#listId}>

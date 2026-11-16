@@ -4,6 +4,7 @@ import { createMemoryDb, insertCleanSample, currentSeasonDate, rows } from "./he
 import { canonicalJson } from "../src/sync-inat.js";
 import { promoteObservations } from "../src/promote-observations.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
+import { refreshPlantCommonNames } from "../src/plant-common-names.js";
 
 /**
  * Minting samples from observations (beeline-oyq).
@@ -602,6 +603,97 @@ describe("descriptive fields are a fill-only refresh", () => {
     await promoteObservations(conn);
     expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed FROM sample WHERE entity_id = ${kept}`))
       .toEqual([null, "Ericameria nauseosa"]);
+  });
+
+  // Homo sapiens is how an iNaturalist user flags an observation as not one of anything (Peter,
+  // 2026-11-15, beeline-rfkj.11): no host, not a host that is not a plant. 43584 is its real id;
+  // the ancestry is shortened, keeping what matters, that Tracheophyta (211194) is not in it.
+  const human = { id: 43584, name: "Homo sapiens", rank: "species", ancestor_ids: [48460, 1, 2, 40151, 43583, 43584] };
+  const bee = { id: 57669, name: "Andrena", rank: "genus", ancestor_ids: [48460, 1, 47120, 47158, 57669] };
+  const hostFinding = (sampleId: number) =>
+    count(`SELECT count(*) FROM qc_finding WHERE rule_name = 'non_tracheophyte_host' AND sample_id = ${sampleId}`);
+
+  test("an observation identified as Homo sapiens mints a sample with no host, and the host rule is silent", async () => {
+    await stage(obs(7, { taxon: human }));
+    await promoteObservations(conn);
+    const [[minted]] = (await rows(conn, "SELECT entity_id FROM sample")) as [[number]];
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${minted}`))
+      .toEqual([null, null, null]);
+    expect(await hostFinding(minted)).toBe(0);
+    // The projection still says what iNaturalist said: only the sample's reading of it changes.
+    expect(await one("SELECT host_taxon_id, host_taxon_name FROM observation_field WHERE inat_id = 7")).toEqual([43584n, "Homo sapiens"]);
+  });
+
+  test("an observation that turns Homo sapiens leaves a plant host as it is", async () => {
+    const kept = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'",
+      host_name_as_observed: "'Rubus'", host_inat_taxon_id: "47604", host_rank: "'genus'",
+    });
+    await stage(obs(7, { taxon: human }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${kept}`))
+      .toEqual([47604n, "Rubus", "genus"]);
+    expect(await hostFinding(kept)).toBe(0);
+  });
+
+  test("an observation that turns Homo sapiens clears a host the taxon cache knows is no plant, and keeps one it knows is", async () => {
+    // The bee identified as the subject, then the flag: kept, the sample would print with the bee
+    // as its host and the rule, which reads the flagged observation, would no longer say so.
+    const lineage = async (id: number, ancestors: number[]) => {
+      for (const [depth, a] of [id, ...ancestors].entries()) {
+        await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${a}, ${depth})`);
+      }
+    };
+    await lineage(57669, [47158, 47120, 1, 48460]);
+    await lineage(47604, [211194, 47126, 48460]);
+    const wasBee = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'",
+      host_name_as_observed: "'Andrena'", host_inat_taxon_id: "57669", host_rank: "'genus'",
+    });
+    const wasPlant = await insertCleanSample(conn, {
+      inat_observation_id: "8", sample_number: "'8'",
+      host_name_as_observed: "'Rubus'", host_inat_taxon_id: "47604", host_rank: "'genus'",
+    });
+    // A bee the cache has not read: nothing says it is no plant, so it stays.
+    const unread = await insertCleanSample(conn, {
+      inat_observation_id: "9", sample_number: "'9'",
+      host_name_as_observed: "'Apis mellifera'", host_inat_taxon_id: "47219", host_rank: "'species'",
+    });
+    await stage(obs(7, { taxon: human }));
+    await stage(obs(8, { ofvs: ofvs("8", "3"), taxon: human }));
+    await stage(obs(9, { ofvs: ofvs("9", "3"), taxon: human }));
+    await promoteObservations(conn);
+    const host = (id: number) => one(`SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${id}`);
+    expect(await host(wasBee)).toEqual([null, null, null]);
+    expect(await host(wasPlant)).toEqual([47604n, "Rubus", "genus"]);
+    expect(await host(unread)).toEqual([47219n, "Apis mellifera", "species"]);
+  });
+
+  test("the bee identified as the observation's subject is still a host that is not a plant", async () => {
+    await stage(obs(7, { taxon: bee }));
+    await promoteObservations(conn);
+    const [[minted]] = (await rows(conn, "SELECT entity_id FROM sample")) as [[number]];
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed FROM sample WHERE entity_id = ${minted}`)).toEqual([57669n, "Andrena"]);
+    expect(await hostFinding(minted)).toBe(1);
+  });
+
+  test("a host read by its name that its observation then gives an id is read by the id, once (beeline-rfkj.5)", async () => {
+    for (const id of [47604, 54321]) {
+      await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES (${id}, '${id === 47604 ? "Rubus" : "Rubus ursinus"}', '${id === 47604 ? "genus" : "species"}', ${id === 47604 ? 20 : 10}, true)`);
+      await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${id}, 0)`);
+    }
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('rubus', 'genus', 1, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('rubus', 'genus', 47604, 'Rubus', 'genus', true, 'Rubus')");
+    const named = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'", host_name_as_observed: "'Rubus'", host_inat_taxon_id: "NULL", host_rank: "'genus'",
+    });
+    await refreshPlantCommonNames(conn);
+    const read = () => rows(conn, `SELECT inat_taxon_id, resolved_by FROM sample_host WHERE sample_id = ${named}`);
+    expect(await read()).toEqual([[47604n, "name"]]);
+    await stage(obs(7, { taxon: { id: 54321, name: "Rubus ursinus", rank: "species", ancestor_ids: [48460, 47126, 211194, 47604, 54321] } }));
+    await promoteObservations(conn);
+    // No refresh since: the copy still holds the name, which nothing reads for a sample with an id.
+    expect(await read()).toEqual([[54321n, "id"]]);
   });
 
   test("an atlas a human assigned is not moved by the lookup", async () => {

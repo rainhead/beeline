@@ -24,6 +24,14 @@ export interface PickerTaxon {
 let taxaPromise: Promise<PickerTaxon[]> | null = null;
 let pickers = 0;
 
+/**
+ * Whether the bycatch box is ticked: one answer for every picker on the
+ * page, since the grid makes a new picker for each row it edits and someone
+ * naming a tray of wasps should not have to tick it on every row.
+ */
+let widened = false;
+const live = new Set<DetermineTaxonPicker>();
+
 /** The whole list, fetched once per page and shared by every picker on it. */
 export function loadTaxa(): Promise<PickerTaxon[]> {
   taxaPromise ??= fetch("/determinations/taxa.json", { credentials: "same-origin" }).then((r) => {
@@ -104,7 +112,7 @@ export class DetermineTaxonPicker extends LitElement {
     this.label = "";
     this.autofocus = false;
     this.disabled = false;
-    this.bycatch = false;
+    this.bycatch = widened;
     this.taxa = [];
   }
 
@@ -114,7 +122,14 @@ export class DetermineTaxonPicker extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    live.add(this);
+    this.bycatch = widened;
     loadTaxa().then((t) => (this.taxa = t)).catch(() => undefined);
+  }
+
+  override disconnectedCallback() {
+    live.delete(this);
+    super.disconnectedCallback();
   }
 
   override render() {
@@ -139,7 +154,14 @@ export class DetermineTaxonPicker extends LitElement {
           <span class="meta">${t.rank === "family" ? "" : (t.family ?? "")}</span>`;
       }}
       .renderFooter=${() => html`<label class="determine-bycatch" @mousedown=${(e: Event) => e.preventDefault()}>
-        <input type="checkbox" .checked=${this.bycatch} @change=${() => (this.bycatch = !this.bycatch)} />
+        <input
+          type="checkbox"
+          .checked=${this.bycatch}
+          @change=${() => {
+            widened = !this.bycatch;
+            for (const p of live) p.bycatch = widened;
+          }}
+        />
         ${p.bycatch}
       </label>`}
       @pick=${(e: CustomEvent<ComboboxOption>) => {

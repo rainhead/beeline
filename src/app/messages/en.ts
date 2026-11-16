@@ -2193,10 +2193,12 @@ export const en = {
         "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
       "ecdysis-fetch":
         "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from Ecdysis's own list of names where it accepts them, and the rest are listed in the run.",
+      "ecdysis-taxonomy":
+        "Fetches Ecdysis's whole list of insect names again, so a name added there can be picked on Identify specimens and used by the Ecdysis import. Lists the names in Beeline whose standing in Ecdysis changed, curation decisions Ecdysis has moved from under, and volunteers' entries whose name Ecdysis no longer offers. A fetch much smaller than the last is not loaded.",
       "store-backup":
         "Copies the whole store and the staff decisions and change histories into one file in the Bee Line folder on the OSU shared drive, for recovery only. It checks that the copies open and that the file Drive holds is the one sent, and keeps every night's copy for two weeks and the first of each month for a year.",
       "commit-determinations":
-        "Turns the day's entries on Identify specimens into determinations. Until it runs, volunteers can change what they entered; after it, a change is added beside the old one.",
+        "Turns the day's entries on Identify specimens into determinations. Until it runs, volunteers can change what they entered; after it, a change is added beside the old one. A name picked from Ecdysis's list is added to Beeline's names first.",
       "resource-budget":
         "Reads what the machine used in the last day and an hour — processor, memory, swap and disk — from Fly's metrics, and fails when it came close to a limit, so somebody looks before the machine is throttled, killed or its disk grows.",
       "weekly-sweep":

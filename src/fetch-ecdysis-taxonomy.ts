@@ -75,7 +75,11 @@ export interface FetchEcdysisTaxonomyOptions {
   progress?: (message: string) => void;
   /** How long to wait before asking again after a failed export; 15 seconds, and 0 in tests. */
   retryDelayMs?: number;
+  /** How the fetch waits, for a retry or for a 429's Retry-After; replaced in tests. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const within = (ms: number, signal?: AbortSignal) =>
   signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
@@ -183,8 +187,23 @@ export function readExport(text: string, where: string): TaxonRow[] {
   });
 }
 
-/** One request for an export: the CSV, `too large` for a 500 or an empty body, or `unavailable` for a gateway's 502, 503 or 504. */
-async function askForExport(f: typeof fetch, tid: number, signal?: AbortSignal): Promise<string | "too large" | "unavailable"> {
+/** Ecdysis asked us to slow down (429), and for how long. */
+interface RateLimited {
+  waitMs: number;
+}
+
+/** How long a 429 asks for: its Retry-After in seconds, a minute without one, and never more than ten. */
+function retryAfterMs(res: Response): number {
+  const seconds = Number(res.headers.get("retry-after"));
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 600) * 1000 : 60_000;
+}
+
+/**
+ * One request for an export: the CSV, `too large` for a 500 or an empty
+ * body, `unavailable` for a gateway's 502, 503 or 504, or how long to wait
+ * for a 429.
+ */
+async function askForExport(f: typeof fetch, tid: number, signal?: AbortSignal): Promise<string | "too large" | "unavailable" | RateLimited> {
   const body = new URLSearchParams({
     target: String(tid),
     displayauthor: "1",
@@ -207,6 +226,7 @@ async function askForExport(f: typeof fetch, tid: number, signal?: AbortSignal):
   }
   if (res.status === 500) return "too large";
   if ([502, 503, 504].includes(res.status)) return "unavailable";
+  if (res.status === 429) return { waitMs: retryAfterMs(res) };
   if (!res.ok) throw new Error(`Ecdysis answered ${res.status} to the export of taxon ${tid}`);
   const text = await res.text();
   return text.replace(/^\uFEFF/, "").trim() === "" ? "too large" : text;
@@ -218,11 +238,29 @@ async function askForExport(f: typeof fetch, tid: number, signal?: AbortSignal):
  * branch too large to export answers, and also how a passing fault answers,
  * and a genus mistaken for too large is split into one request per species.
  */
-async function exportBranch(f: typeof fetch, tid: number, retryDelayMs: number, signal?: AbortSignal): Promise<string | null> {
-  let answer = await askForExport(f, tid, signal);
+async function exportBranch(
+  f: typeof fetch,
+  tid: number,
+  retryDelayMs: number,
+  signal: AbortSignal | undefined,
+  sleep: (ms: number) => Promise<void>,
+): Promise<string | null> {
+  // Asked to slow down: wait as long as Ecdysis says and ask again, up to
+  // three more times. The weekly job meets this when the fetch has been run
+  // by hand the same day (2026-11-16, the third fetch of the day).
+  const ask = async () => {
+    let answer = await askForExport(f, tid, signal);
+    for (let tries = 0; typeof answer === "object" && tries < 3; tries++) {
+      await sleep(answer.waitMs);
+      answer = await askForExport(f, tid, signal);
+    }
+    if (typeof answer === "object") throw new Error(`Ecdysis kept answering 429 (too many requests) to the export of taxon ${tid}`);
+    return answer;
+  };
+  let answer = await ask();
   if (answer === "too large" || answer === "unavailable") {
-    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-    answer = await askForExport(f, tid, signal);
+    await sleep(retryDelayMs);
+    answer = await ask();
   }
   if (answer === "unavailable") throw new Error(`Ecdysis was unavailable for the export of taxon ${tid}, twice`);
   return answer === "too large" ? null : answer;
@@ -263,7 +301,7 @@ export async function fetchEcdysisTaxonomy(options: FetchEcdysisTaxonomyOptions 
   const taxa = new Map<string, TaxonRow>();
   const exports: FetchedExport[] = [];
   const visit = async (target: Child): Promise<void> => {
-    const text = await exportBranch(f, target.tid, options.retryDelayMs ?? 15_000, options.signal);
+    const text = await exportBranch(f, target.tid, options.retryDelayMs ?? 15_000, options.signal, options.sleep ?? sleep);
     if (text !== null) {
       const rows = readExport(text, `the export of ${target.name} (${target.tid})`);
       // A branch's export repeats the chain above it, so the same name

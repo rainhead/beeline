@@ -189,6 +189,109 @@ export async function loadEcdysisTaxonomy(
   return result;
 }
 
+/** What the weekly refresh did (refreshEcdysisTaxonomy). */
+export interface RefreshEcdysisTaxonomyResult {
+  load: LoadEcdysisTaxonomyResult;
+  /** The day of the fetch it replaced, or null when the store held none. */
+  previousFetchedOn: string | null;
+  /** Nodes of the tree whose standing in Ecdysis changed, with what it was and is: "accepted", "synonym of X", "absent". */
+  moved: { rank: string; name: string; was: string; now: string }[];
+  /** Curation decisions the new fetch has moved from under (animal_curation_stale). */
+  curationStale: number;
+  /** Volunteers' drafts naming an Ecdysis taxon the store no longer offers for adoption (beeline-n06p). */
+  draftsNoLongerOffered: number;
+}
+
+/** A refresh refuses a fetch with fewer names than this share of what the store holds: Ecdysis does not lose a twentieth of its insects in a week. */
+export const REFRESH_SHRINK_LIMIT = 0.95;
+
+/**
+ * Fetch Ecdysis's thesaurus afresh and load it (beeline-xni1): the weekly job
+ * on production, so names added to Ecdysis reach the determination picker
+ * and the importer without anyone running pnpm ecdysis:taxonomy.
+ *
+ * The fetch (about three minutes of exports from ecdysis.org) happens before
+ * the store is touched and writes its file only once it is whole, so a
+ * failed fetch changes nothing. A fetch with markedly fewer names than the
+ * store holds is refused rather than loaded: loading it would take Ecdysis
+ * ids away from names in the tree and stop offering names to the picker,
+ * and a truncated export looks exactly like that. Then the load replaces
+ * the table in one transaction, as the CLI's does.
+ *
+ * What it reports is what someone might need to act on: the tree's names
+ * whose standing in Ecdysis changed, the curation decisions the new fetch
+ * has moved from under, and volunteers' drafts whose name Ecdysis no longer
+ * offers, which wait at the overnight commit.
+ */
+export async function refreshEcdysisTaxonomy(
+  conn: DuckDBConnection,
+  options: {
+    dir: string;
+    signal?: AbortSignal;
+    fetchTaxonomy?: typeof fetchEcdysisTaxonomy;
+    /** The job's step(), which times each part; run directly otherwise. */
+    step?: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
+  },
+): Promise<RefreshEcdysisTaxonomyResult> {
+  const step = options.step ?? (<T>(_: string, fn: () => Promise<T>) => fn());
+  const rowsOf = async (sql: string) => (await conn.run(sql)).getRows();
+  const fetched = await step("fetch from Ecdysis", () =>
+    (options.fetchTaxonomy ?? fetchEcdysisTaxonomy)({ dir: options.dir, signal: options.signal }),
+  );
+  const [[held, previous]] = (await rowsOf("SELECT count(*), CAST(max(fetched_on) AS TEXT) FROM ecdysis_taxon")) as [[bigint, string | null]];
+  if (fetched.taxa < Number(held) * REFRESH_SHRINK_LIMIT) {
+    throw new Error(
+      `the fetch holds ${fetched.taxa} names against the ${held} the store holds, fewer than ${REFRESH_SHRINK_LIMIT * 100}%: ` +
+        `not loaded, since a truncated export would take Ecdysis ids away from names in the tree`,
+    );
+  }
+  const standing = `SELECT entity_id, rank, scientific_name,
+                           CASE WHEN standing = 'synonym' THEN concat('synonym of ', accepted_name) ELSE standing END
+                    FROM animal_ecdysis`;
+  const before = new Map((await rowsOf(standing)).map((r) => [Number(r[0]), String(r[3])]));
+  const load = await step("load into the store", () => loadEcdysisTaxonomy(conn, options.dir));
+  const moved = (await rowsOf(standing))
+    .map((r) => ({ id: Number(r[0]), rank: String(r[1]), name: String(r[2]), now: String(r[3]) }))
+    .filter((n) => before.has(n.id) && before.get(n.id) !== n.now)
+    .map((n) => ({ rank: n.rank, name: n.name, was: before.get(n.id)!, now: n.now }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  // "not loaded" to anything is the first load, not a move.
+  const realMoves = moved.filter((m) => m.was !== "not loaded");
+  const [[curationStale]] = (await rowsOf("SELECT count(*) FROM animal_curation_stale")) as [[bigint]];
+  const [[waiting]] = (await rowsOf(
+    `SELECT count(*) FROM determination_draft d
+     WHERE d.ecdysis_tid IS NOT NULL AND d.animal_id IS NULL
+       AND NOT EXISTS (SELECT 1 FROM ecdysis_adoptable e WHERE e.tid = d.ecdysis_tid)
+       AND NOT EXISTS (SELECT 1 FROM animal a WHERE a.ecdysis_tid = d.ecdysis_tid)`,
+  )) as [[bigint]];
+  return {
+    load,
+    previousFetchedOn: previous,
+    moved: realMoves,
+    curationStale: Number(curationStale),
+    draftsNoLongerOffered: Number(waiting),
+  };
+}
+
+/** The refresh in a line for the jobs page: counts first, then the names that moved, the first ten of them. */
+export function describeRefresh(r: RefreshEcdysisTaxonomyResult): string {
+  const parts = [
+    `${r.load.taxa} names from the fetch of ${r.load.fetchedOn}` + (r.previousFetchedOn !== null ? ` (replacing ${r.previousFetchedOn})` : ""),
+    `the tree's names: ${Object.entries(r.load.standing)
+      .map(([standing, n]) => `${n} ${standing}`)
+      .join(", ")}`,
+  ];
+  if (r.moved.length > 0) {
+    const shown = r.moved.slice(0, 10).map((m) => `${m.name} (was ${m.was}, now ${m.now})`);
+    parts.push(`${r.moved.length} moved in Ecdysis: ${shown.join("; ")}${r.moved.length > 10 ? "; …" : ""}`);
+  } else {
+    parts.push("none of the tree's names moved in Ecdysis");
+  }
+  if (r.curationStale > 0) parts.push(`${r.curationStale} curation decision(s) Ecdysis has moved from under (/taxonomy?decided=moved)`);
+  if (r.draftsNoLongerOffered > 0) parts.push(`${r.draftsNoLongerOffered} volunteer draft(s) name a taxon Ecdysis no longer offers`);
+  return parts.join("; ");
+}
+
 // CLI: pnpm ecdysis:taxonomy [db] [--fetch-only | --cached]
 //   Fetch the insects of Ecdysis's thesaurus into data/ecdysis-taxonomy/ and
 //   load them. --fetch-only stops before the store, which is what lets the

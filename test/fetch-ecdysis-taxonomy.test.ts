@@ -131,6 +131,31 @@ describe("fetching the insects", () => {
     }
   });
 
+  test("a 429 waits as long as Retry-After says and asks again; four in a row fail the fetch", async () => {
+    // Insecta exports whole on the third ask, after two 429s.
+    const csv = [HEADER, ANIMALIA, row(6, "Insecta", 60, 1)].join("\n");
+    let asks = 0;
+    const answers = (limited: number): typeof fetch => async (input) => {
+      if (String(input).includes("/api/v2/taxonomy")) return Response.json({ results: [{ tid: 6, rankID: 60, kingdomName: "Animalia" }] });
+      asks++;
+      return asks <= limited ? new Response("", { status: 429, headers: { "Retry-After": "30" } }) : new Response(csv);
+    };
+    const waits: number[] = [];
+    const sleep = async (ms: number) => {
+      waits.push(ms);
+    };
+    const dir = await mkdtemp(join(tmpdir(), "beeline-ecdysis-taxonomy-"));
+    try {
+      const result = await fetchEcdysisTaxonomy({ dir, fetch: answers(2), retryDelayMs: 0, sleep });
+      expect(result.taxa).toBe(2);
+      expect(waits).toEqual([30_000, 30_000]);
+      asks = 0;
+      await expect(fetchEcdysisTaxonomy({ dir, fetch: answers(4), retryDelayMs: 0, sleep })).rejects.toThrow(/kept answering 429/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a gateway that fails twice fails the fetch, naming the taxon", async () => {
     const f: typeof fetch = async (input) =>
       String(input).includes("/api/v2/taxonomy")

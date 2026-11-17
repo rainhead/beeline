@@ -10,6 +10,7 @@ import type { TaxonQualifier } from "../views/components/taxon.js";
 import type { LocalityBasis } from "../../locality-rule.js";
 import type { AreaKind, OutOfDateField } from "../../model.js";
 import { OLD_BEELINE_ORIGIN } from "../old-beeline.js";
+import type { AreaTab } from "../areas.js";
 
 /** An outside data source the site footer credits, with the licence or terms it asks credit under, where it names some. */
 export interface CreditedSource {
@@ -1895,16 +1896,34 @@ export const en = {
    * everyone signed in. The counts link into the listings for staff only,
    * since a volunteer's listings hold only their own records.
    */
-  /** The Areas page (beeline-9jd4), which staff read. */
+  /** The Areas pages (beeline-9jd4), which staff read. */
   areas: {
     title: "Areas",
-    intro:
-      "Every refuge, park, island, wilderness, county and ecoregion that at least one sample was collected in, by its true coordinates. A sample is in every area its point lies inside, so one sample can count in a refuge, a county and an ecoregion at once.",
-    none: "No sample has been placed in an area yet. The nightly run places them, once the gazetteer is on the machine.",
-    kindsLabel: "Kinds of area",
-    /** A link to a kind's section: "Islands (26)". */
-    kindCount: (kind: string, count: number) => `${kind} (${n(count)})`,
-    colArea: "Area",
+    /** Under the title, one per tab. */
+    intro: {
+      districts:
+        "Every county and regional district that at least one sample was collected in, by its true coordinates, under its state or province.",
+      properties:
+        "Every refuge, park, preserve and wildlife area unit that at least one sample was collected in, by its true coordinates. A sample is in every property its point lies inside, so one sample can count in two.",
+      ecoregions: "Every EPA Level III ecoregion that at least one sample was collected in, by its true coordinates.",
+    } satisfies Record<AreaTab, string>,
+    tabsLabel: "Kinds of area",
+    tab: {
+      districts: "Administrative districts",
+      properties: "Properties",
+      ecoregions: "Ecoregions",
+    } satisfies Record<AreaTab, string>,
+    none: "No sample has been placed in one yet. The nightly run places them, once the gazetteer is on the machine.",
+    sectionsLabel: "Sections of this page",
+    /** A link to a section: "OR, USA (36)". */
+    sectionCount: (heading: string, count: number) => `${heading} (${n(count)})`,
+    /** In place of a state: no sample in the district has a point a state could be read from. */
+    stateUnknown: "State not known",
+    colArea: {
+      districts: "District",
+      properties: "Property",
+      ecoregions: "Ecoregion",
+    } satisfies Record<AreaTab, string>,
     colActive: "Samples, active seasons",
     colSettled: "Samples, settled seasons",
     /** The pill of the listings' area filter. */
@@ -1929,9 +1948,7 @@ export const en = {
       state_park:
         "Washington's state parks and British Columbia's provincial parks, protected areas and ecological reserves. Oregon's state parks are under Other parks and reserves.",
       park:
-        "Every other park or reserve that OpenStreetMap outlines: Oregon's state parks, county and city parks, land trust preserves. Some refuges and parks listed above appear here again, under OpenStreetMap's name for them.",
-      island: "Islands of 100 hectares or more, from OpenStreetMap.",
-      wilderness: "A sample counts only if its point is more than 100 m inside the outline.",
+        "Every other park or reserve that OpenStreetMap outlines: Oregon's state parks, county and city parks, land trust preserves. Some refuges and parks listed under their own kind appear here again, under OpenStreetMap's name for them.",
     } as Partial<Record<AreaKind, string>>,
   },
 

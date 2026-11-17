@@ -33,8 +33,8 @@ import { Glossary } from "./views/glossary.js";
 import { HowItWorks } from "./views/how-it-works.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { ProgramIndex, ProgramPage } from "./views/programs.js";
-import { AreaIndex } from "./views/areas.js";
-import { listAreas } from "./areas.js";
+import { AreaIndex, areasHref } from "./views/areas.js";
+import { AREA_TABS, isAreaTab, listAreas } from "./areas.js";
 import { listPrograms, loadProgram, programHref } from "./programs.js";
 import { readProgramContacts, recordProgramContact, programContactProblem } from "../program-contacts.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomyCsv, taxonomySummary } from "./taxonomy.js";
@@ -1777,12 +1777,19 @@ export function createApp({
     return c.html(await page(c, m.programs.title, <ProgramIndex m={m} programs={await listPrograms(db)} admin={c.get("admin")} />));
   });
 
-  // The areas, by kind (beeline-9jd4). Staff only: its counts are of every
-  // sample, whoever may see where it is (src/app/areas.ts).
-  app.get("/areas", async (c) => {
+  // The areas, as three pages (beeline-9jd4). Staff only: their counts are of
+  // every sample, whoever may see where it is (src/app/areas.ts).
+  app.get("/areas", (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    return c.redirect(areasHref(AREA_TABS[0]));
+  });
+
+  app.get("/areas/:tab", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
-    return c.html(await page(c, m.areas.title, <AreaIndex m={m} groups={await listAreas(db)} />));
+    const tab = c.req.param("tab");
+    if (!isAreaTab(tab)) return errorResponse(c, "notFound");
+    return c.html(await page(c, m.areas.title, <AreaIndex m={m} tab={tab} groups={await listAreas(db, tab)} />));
   });
 
   app.get("/programs/:code", async (c) => {

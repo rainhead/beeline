@@ -182,34 +182,56 @@ describe("the Areas page (beeline-9jd4)", () => {
     return { ...made, settledId };
   }
 
-  it("lists every area a sample lies inside, by kind, with its samples split by season", async () => {
+  it("lists the areas a sample lies inside as districts, properties and ecoregions, with their samples split by season", async () => {
     const { db } = await withSettledRefugeSample();
-    const groups = await listAreas(db);
-    expect(groups.map((g) => g.kind)).toEqual(["refuge", "wilderness", "county", "ecoregion"]);
-    expect(groups[0]!.areas).toEqual([
-      { key: REFUGE_KEY, name: "William L. Finley National Wildlife Refuge", active: 1, settled: 1 },
+    // A district is under the state its samples' points say it is in.
+    expect(await listAreas(db, "districts")).toEqual([
+      {
+        grouping: { by: "state", state: "OR", country: "USA" },
+        areas: [{ key: "census:41003", name: "Benton County", active: 2, settled: 1 }],
+      },
     ]);
-    expect(groups.find((g) => g.kind === "county")!.areas).toEqual([
-      { key: "census:41003", name: "Benton County", active: 2, settled: 1 },
+    expect(await listAreas(db, "properties")).toEqual([
+      {
+        grouping: { by: "kind", kind: "refuge" },
+        areas: [{ key: REFUGE_KEY, name: "William L. Finley National Wildlife Refuge", active: 1, settled: 1 }],
+      },
     ]);
+    const ecoregions = await listAreas(db, "ecoregions");
+    expect(ecoregions.map((g) => g.grouping)).toEqual([{ by: "kind", kind: "ecoregion" }]);
+    expect(ecoregions[0]!.areas.map((a) => a.name)).toEqual(["Coast Range", "Willamette Valley"]);
   });
 
-  it("is staff's alone, and links each area to the samples inside it", async () => {
+  it("is staff's alone, on every tab", async () => {
     const { appFor } = await withSettledRefugeSample();
-    expect((await appFor("alice").request("/areas")).status).toBe(403);
-    const res = await appFor("bob").request("/areas");
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain(en.areas.kind.refuge);
-    expect(html).toContain(`href="/samples?scope=all&amp;area=usfws%3A99001"`);
-    expect(html).toContain("William L. Finley National Wildlife Refuge");
-    // The kinds come in alphabetical order of their headings (Peter, 2026-11-17).
-    const headings = [en.areas.kind.county, en.areas.kind.ecoregion, en.areas.kind.wilderness, en.areas.kind.refuge];
-    const at = headings.map((h) => html.indexOf(`>${h}</h2>`));
-    expect(at.every((i) => i >= 0)).toBe(true);
-    expect(at).toEqual([...at].sort((x, y) => x - y));
-    // No kind that nothing lies inside.
-    expect(html).not.toContain(en.areas.kind.island);
+    for (const path of ["/areas", "/areas/districts", "/areas/properties", "/areas/ecoregions"]) {
+      expect((await appFor("alice").request(path)).status).toBe(403);
+    }
+    const first = await appFor("bob").request("/areas");
+    expect(first.status).toBe(302);
+    expect(first.headers.get("location")).toBe("/areas/districts");
+    expect((await appFor("bob").request("/areas/islands")).status).toBe(404);
+  });
+
+  it("names a district's state, links each area to the samples inside it, and lists no wilderness", async () => {
+    const { appFor } = await withSettledRefugeSample();
+    const bob = appFor("bob");
+    const districts = await (await bob.request("/areas/districts")).text();
+    expect(districts).toContain(">OR, USA</h2>");
+    expect(districts).toContain(`href="/samples?scope=all&amp;area=census%3A41003"`);
+    for (const tab of [en.areas.tab.districts, en.areas.tab.properties, en.areas.tab.ecoregions]) {
+      expect(districts).toContain(tab);
+    }
+    const properties = await (await bob.request("/areas/properties")).text();
+    expect(properties).toContain(`href="/samples?scope=all&amp;area=usfws%3A99001"`);
+    expect(properties).toContain("William L. Finley National Wildlife Refuge");
+    const ecoregions = await (await bob.request("/areas/ecoregions")).text();
+    expect(ecoregions).toContain("Coast Range");
+    // One sample is inside the Alsea Wilderness, which no tab lists (Peter, 2026-11-17).
+    for (const html of [districts, properties, ecoregions]) {
+      expect(html).not.toContain("Alsea Wilderness");
+      expect(html).not.toContain(en.areas.kind.wilderness);
+    }
   });
 
   it("the area filter finds exactly the samples inside the area, on both listings, and names it in a pill", async () => {

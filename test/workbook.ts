@@ -17,7 +17,8 @@ export type TestCell =
   | { boolean: boolean }
   | { error: string };
 
-const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// The quote too: a sheet's name goes into an attribute, and a name with a quote in it would end the attribute early.
+const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /**
  * A workbook of one sheet, written the plain way: text in text-formatted

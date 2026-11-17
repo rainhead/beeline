@@ -1,6 +1,7 @@
 -- Migration for schema/038 and schema/173 (beeline-rax1): each sample's
 -- area derivation records what its point says the country and state or
--- province are, and the version of the step that found them, and the new
+-- province are, how far the point is from its county's edge, and the version
+-- of the step that found them, and the new
 -- view sample_place_disagreement reads them. DuckDB cannot add a NOT NULL
 -- column to a table that has rows, so the table is replaced, as 0068 did for
 -- the locality candidates. The rows it held come across as version 0 with no
@@ -35,6 +36,7 @@ CREATE TABLE sample_area_derivation (
   country         TEXT,
   state_province  TEXT,
   county_inside   BOOLEAN,
+  county_edge_m   DOUBLE,
   derived_at      TIMESTAMP NOT NULL
 );
 COMMENT ON TABLE sample_area_derivation IS 'The point and gazetteer build a sample''s areas (sample_area) were worked out at, as sample_locality_suggestion records them for a name: a moved point, a new build or a new rule is tested again. Also what that point says the sample''s country and state or province are.';
@@ -43,6 +45,7 @@ COMMENT ON COLUMN sample_area_derivation.rule_version IS 'AREA_RULE_VERSION in s
 COMMENT ON COLUMN sample_area_derivation.country IS 'What the point says the country is: that of the one county or BC regional district it was found in (USA, CAN), however it was reached. NULL where it is in no county, or in two.';
 COMMENT ON COLUMN sample_area_derivation.state_province IS 'What the point says the state or province is (OR, BC), from the same county as country. Not an attribute of the county: a statement about this sample''s point, which the sample''s own state_province may contradict.';
 COMMENT ON COLUMN sample_area_derivation.county_inside IS 'TRUE where the point lies inside that county''s outline; FALSE where it lies outside every county and took the nearest within 1 km, on the shore (COUNTY_SHORE_M), which near a land border can be across it. NULL where there is no county.';
+COMMENT ON COLUMN sample_area_derivation.county_edge_m IS 'Metres from the point to the nearest edge of that county: inside it where county_inside, outside it on the shore otherwise. A point within 100 m of the edge, the program''s allowance for GPS error, may be in the next county or state; sample_place_disagreement leaves those out.';
 
 INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, rule_version, derived_at)
 SELECT sample_id, latitude, longitude, gazetteer_build, 0, derived_at FROM area_derivation_before;
@@ -81,12 +84,21 @@ COMMENT ON VIEW sample_ecoregion_missing IS 'Samples with a believed-true point,
 -- point says (beeline-rax1). The county stamp (src/derive-area.ts) makes the
 -- two agree on every sample that follows its point, so what is left here is
 -- mostly what it leaves alone on purpose: a printed sample, whose place is
--- what its labels say, a settled one, an old-system record, one frozen into
--- a run that has not printed, and a point on the shore whose nearest county
--- is in another state (county_inside FALSE). A sample tested by "Check
--- iNaturalist now" and not yet stamped by the nightly is here too, until the
--- nightly. A sample in no county, or in two, is never here: its point says
--- nothing about the state.
+-- what its labels say, a settled one, an old-system record, and one frozen
+-- into a run that has not printed. printed and settled name the first two;
+-- the others show neither, and neither does a sample tested by "Check
+-- iNaturalist now" that the nightly has yet to stamp, which leaves the view
+-- that night.
+--
+-- A point within 100 m of its county's edge is left out: that is the
+-- program's allowance for GPS error (Peter, 2026-10-26, for wildernesses),
+-- and on production on 2026-11-17 it was nine of 32 disagreements, among
+-- them two of the three from the active seasons: samples 12 and 21 m inside
+-- Montana on the Idaho line, recorded ID. So is a sample in no county, or
+-- in two: its point says nothing about the state. A point on the shore that
+-- took the nearest county (county_inside FALSE) stays, since its nearest
+-- county may be across a land border that the gazetteer has no outline
+-- beyond, and the page words it that way.
 --
 -- A report, not a QC finding: it blocks nothing and changes nothing that
 -- prints, and on a printed or settled sample the volunteer can rarely fix it
@@ -97,7 +109,7 @@ CREATE VIEW sample_place_disagreement AS
 SELECT s.entity_id AS sample_id,
        s.country, s.state_province,
        d.country AS point_country, d.state_province AS point_state_province,
-       d.county_inside,
+       d.county_inside, d.county_edge_m,
        EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id) AS printed,
        EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = s.entity_id) AS settled
 FROM sample_area_derivation d
@@ -106,5 +118,6 @@ JOIN sample s ON s.entity_id = d.sample_id
 WHERE abs(d.latitude - l.latitude) <= 5e-5
   AND abs(d.longitude - l.longitude) <= 5e-5
   AND d.state_province IS NOT NULL
+  AND NOT (d.county_inside AND d.county_edge_m <= 100)
   AND (s.state_province IS DISTINCT FROM d.state_province OR s.country IS DISTINCT FROM d.country);
-COMMENT ON VIEW sample_place_disagreement IS 'Samples whose recorded state or province, or country, is not the one their point says (sample_area_derivation), with whether the point is inside its county or only near it on the shore. printed and settled say why the county stamp left it; read counts split by season.';
+COMMENT ON VIEW sample_place_disagreement IS 'Samples whose recorded state or province, or country, is not the one their point says (sample_area_derivation), leaving out points within 100 m of their county''s edge. county_inside is FALSE where the point is in no county and took the nearest on the shore. printed and settled say why the county stamp left two of the kinds it leaves alone; read counts split by season.';

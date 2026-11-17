@@ -236,7 +236,8 @@ async function testBatch(
   appender.closeSync();
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE area_batch_hit AS
-    SELECT DISTINCT sample_id, 'wilderness.net' AS source, wid AS source_id, 'wilderness' AS kind, FALSE AS by_shore
+    SELECT DISTINCT sample_id, 'wilderness.net' AS source, wid AS source_id, 'wilderness' AS kind, FALSE AS by_shore,
+           CAST(NULL AS DOUBLE) AS edge_m
     FROM (SELECT b.sample_id, b.lat, b.lon, w.wid,
                  ST_ClosestPoint(ST_Boundary(w.geom), ST_Point(b.lon, b.lat)) AS edge
           FROM area_batch b JOIN ${G}.wilderness w ON ST_Contains(w.geom, ST_Point(b.lon, b.lat)))
@@ -247,9 +248,15 @@ async function testBatch(
           > ${WILDERNESS_EDGE_M}
     UNION ALL
     -- The county or regional district the point is in, with no allowance at
-    -- the line between two: a point is in one or the other.
-    SELECT DISTINCT b.sample_id, r.source, r.source_id, 'county', FALSE
-    FROM area_batch b JOIN ${G}.region r ON ST_Contains(r.geom, ST_Point(b.lon, b.lat))
+    -- the line between two: a point is in one or the other. With how far
+    -- inside it is, which says whether its state could be GPS error
+    -- (sample_place_disagreement, beeline-rax1).
+    SELECT DISTINCT sample_id, source, source_id, 'county', FALSE,
+           2 * 6371000 * asin(sqrt(pow(sin(radians(ST_Y(edge) - lat) / 2), 2)
+             + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2))) AS edge_m
+    FROM (SELECT b.sample_id, b.lat, b.lon, r.source, r.source_id,
+                 ST_ClosestPoint(ST_Boundary(r.geom), ST_Point(b.lon, b.lat)) AS edge
+          FROM area_batch b JOIN ${G}.region r ON ST_Contains(r.geom, ST_Point(b.lon, b.lat)))
     UNION ALL
     -- A point in no county at all, on a beach outside boundaries that stop
     -- at the shoreline, takes the nearest within COUNTY_SHORE_M: one row, so
@@ -258,7 +265,7 @@ async function testBatch(
     -- Not refused across a border the gazetteer does not cover: a point just
     -- inside Alberta is recorded in the BC district beside it, and only the
     -- stamp's state check keeps that off the sample's county.
-    SELECT sample_id, source, source_id, 'county', TRUE
+    SELECT sample_id, source, source_id, 'county', TRUE, m
     FROM (SELECT b.sample_id, r.source, r.source_id,
                  ST_ClosestPoint(r.geom, ST_Point(b.lon, b.lat)) AS edge, b.lat, b.lon
           FROM area_batch b JOIN ${G}.region r ON ST_DWithin(r.geom, ST_Point(b.lon, b.lat), 0.03)
@@ -274,14 +281,14 @@ ${ecoregions ? `    UNION ALL
     -- gazetteer, so two neighbours can lap over each other by a few metres
     -- (none did on 300,000 random points; ingest/gazetteer.sql), and the
     -- pages and the counts assume a sample has one ecoregion.
-    SELECT sample_id, 'epa-cec', code, 'ecoregion', FALSE
+    SELECT sample_id, 'epa-cec', code, 'ecoregion', FALSE, NULL
     FROM (SELECT b.sample_id, e.code
           FROM area_batch b JOIN ${G}.ecoregion e ON ST_Contains(e.geom, ST_Point(b.lon, b.lat)))
     QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY code) = 1
     UNION ALL
     -- A point in no ecoregion, on a beach outside outlines that stop at the
     -- shoreline, takes the nearest within ECOREGION_SHORE_M, as a county does.
-    SELECT sample_id, 'epa-cec', code, 'ecoregion', TRUE
+    SELECT sample_id, 'epa-cec', code, 'ecoregion', TRUE, NULL
     FROM (SELECT b.sample_id, e.code,
                  ST_ClosestPoint(e.geom, ST_Point(b.lon, b.lat)) AS edge, b.lat, b.lon
           FROM area_batch b JOIN ${G}.ecoregion e ON ST_DWithin(e.geom, ST_Point(b.lon, b.lat), 0.03)
@@ -298,7 +305,7 @@ ${ecoregions ? `    UNION ALL
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE area_batch_place AS
     SELECT h.sample_id, any_value(r.country) AS country, any_value(r.state) AS state_province,
-           any_value(NOT h.by_shore) AS county_inside
+           any_value(NOT h.by_shore) AS county_inside, any_value(h.edge_m) AS county_edge_m
     FROM area_batch_hit h
     JOIN (SELECT source, source_id, state, country FROM ${G}.region) r
       ON r.source = h.source AND r.source_id = h.source_id
@@ -325,8 +332,10 @@ ${ecoregions ? `    UNION ALL
     await conn.run(`DELETE FROM sample_area_derivation WHERE sample_id IN (SELECT sample_id FROM area_batch)`);
     await conn.run(
       `INSERT INTO sample_area_derivation
-         (sample_id, latitude, longitude, gazetteer_build, rule_version, country, state_province, county_inside, derived_at)
-       SELECT b.sample_id, b.lat, b.lon, $1, $3, p.country, p.state_province, p.county_inside, $2::TIMESTAMP
+         (sample_id, latitude, longitude, gazetteer_build, rule_version, country, state_province, county_inside,
+          county_edge_m, derived_at)
+       SELECT b.sample_id, b.lat, b.lon, $1, $3, p.country, p.state_province, p.county_inside, p.county_edge_m,
+              $2::TIMESTAMP
        FROM area_batch b LEFT JOIN area_batch_place p ON p.sample_id = b.sample_id`,
       [buildId, now, AREA_RULE_VERSION],
     );

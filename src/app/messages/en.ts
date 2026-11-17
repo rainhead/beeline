@@ -1104,11 +1104,12 @@ export const en = {
        * settled sample's place as its labels say, so a person decides which
        * is wrong. `point` and `recorded` are already formatted places
        * ("OR, USA"); `recorded` is null where the record names neither.
-       * `inside` is false for a point on the shore just outside every county,
-       * which took the nearest one.
+       * `inside` is false for a point in no county Beeline has an outline
+       * for, which took the nearest within 1 km: on the shore, or across a
+       * border with a province or country Beeline has no outlines for.
        */
       placeDisagrees: (point: string, recorded: string | null, inside: boolean) =>
-        `${inside ? `These coordinates are in ${point}` : `These coordinates are just off the shore, nearest ${point}`}, but this record says ${recorded ?? "no state or country"}.`,
+        `${inside ? `These coordinates are in ${point}` : `These coordinates are in no county Beeline has an outline for; the nearest, within 1 km, is in ${point}`}, but this record says ${recorded ?? "no state or country"}.`,
       /** The program the sample was collected for (beeline-8w8n): its atlas, else Master Melittology itself. */
       program: "Program",
       host: "Floral host",

@@ -870,6 +870,8 @@ export interface SampleAreaDerivationTable {
   state_province: string | null;
   /** True inside the county's outline; false where it took the nearest on the shore; null with no county. */
   county_inside: boolean | null;
+  /** Metres from the point to that county's nearest edge (inside it, or outside on the shore). */
+  county_edge_m: number | null;
   derived_at: Date;
 }
 
@@ -894,6 +896,7 @@ export interface SamplePlaceDisagreementView {
   point_country: string | null;
   point_state_province: string;
   county_inside: boolean;
+  county_edge_m: number;
   printed: boolean;
   settled: boolean;
 }

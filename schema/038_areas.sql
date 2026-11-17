@@ -59,6 +59,7 @@ CREATE TABLE sample_area_derivation (
   country         TEXT,
   state_province  TEXT,
   county_inside   BOOLEAN,
+  county_edge_m   DOUBLE,
   derived_at      TIMESTAMP NOT NULL
 );
 COMMENT ON TABLE sample_area_derivation IS 'The point and gazetteer build a sample''s areas (sample_area) were worked out at, as sample_locality_suggestion records them for a name: a moved point, a new build or a new rule is tested again. Also what that point says the sample''s country and state or province are.';
@@ -67,6 +68,7 @@ COMMENT ON COLUMN sample_area_derivation.rule_version IS 'AREA_RULE_VERSION in s
 COMMENT ON COLUMN sample_area_derivation.country IS 'What the point says the country is: that of the one county or BC regional district it was found in (USA, CAN), however it was reached. NULL where it is in no county, or in two.';
 COMMENT ON COLUMN sample_area_derivation.state_province IS 'What the point says the state or province is (OR, BC), from the same county as country. Not an attribute of the county: a statement about this sample''s point, which the sample''s own state_province may contradict.';
 COMMENT ON COLUMN sample_area_derivation.county_inside IS 'TRUE where the point lies inside that county''s outline; FALSE where it lies outside every county and took the nearest within 1 km, on the shore (COUNTY_SHORE_M), which near a land border can be across it. NULL where there is no county.';
+COMMENT ON COLUMN sample_area_derivation.county_edge_m IS 'Metres from the point to the nearest edge of that county: inside it where county_inside, outside it on the shore otherwise. A point within 100 m of the edge, the program''s allowance for GPS error, may be in the next county or state; sample_place_disagreement leaves those out.';
 
 -- No foreign key to area: DuckDB updates a referenced row as a delete and an
 -- insert, and refuses the delete, so one would stop a new gazetteer build from

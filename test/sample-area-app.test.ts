@@ -132,25 +132,25 @@ describe("a sample whose recorded state is not its point's (beeline-rax1)", () =
   // after the areas were found, as a printed sample's labels might.
   const line = escaped(en.record.sample.placeDisagrees("OR, USA", "WA, USA", true));
 
-  async function disagreeing(geoprivacy: "NULL" | "'obscured'") {
-    const made = await setup(geoprivacy);
+  async function disagreeing() {
+    const made = await setup("NULL");
     await made.conn.run(`UPDATE sample SET state_province = 'WA' WHERE entity_id = ${made.sampleId}`);
     await made.conn.run(`INSERT INTO person_admin (person_id) SELECT entity_id FROM person WHERE display_name = 'Bob Barnes'`);
     return made;
   }
 
   it("is said to staff on the sample page", async () => {
-    const { appFor, sampleId } = await disagreeing("NULL");
+    const { appFor, sampleId } = await disagreeing();
     expect(await (await appFor("bob").request(`/samples/${sampleId}`)).text()).toContain(line);
   });
 
   it("is not said to the collector, who does not correct a printed place", async () => {
-    const { appFor, sampleId } = await disagreeing("NULL");
+    const { appFor, sampleId } = await disagreeing();
     expect(await (await appFor("alice").request(`/samples/${sampleId}`)).text()).not.toContain(line);
   });
 
   it("is not said where the point agrees", async () => {
-    const { appFor, sampleId, conn } = await disagreeing("NULL");
+    const { appFor, sampleId, conn } = await disagreeing();
     await conn.run(`UPDATE sample SET state_province = 'OR' WHERE entity_id = ${sampleId}`);
     expect(await (await appFor("bob").request(`/samples/${sampleId}`)).text()).not.toContain("These coordinates are");
   });

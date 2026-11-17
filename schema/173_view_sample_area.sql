@@ -31,12 +31,21 @@ COMMENT ON VIEW sample_ecoregion_missing IS 'Samples with a believed-true point,
 -- point says (beeline-rax1). The county stamp (src/derive-area.ts) makes the
 -- two agree on every sample that follows its point, so what is left here is
 -- mostly what it leaves alone on purpose: a printed sample, whose place is
--- what its labels say, a settled one, an old-system record, one frozen into
--- a run that has not printed, and a point on the shore whose nearest county
--- is in another state (county_inside FALSE). A sample tested by "Check
--- iNaturalist now" and not yet stamped by the nightly is here too, until the
--- nightly. A sample in no county, or in two, is never here: its point says
--- nothing about the state.
+-- what its labels say, a settled one, an old-system record, and one frozen
+-- into a run that has not printed. printed and settled name the first two;
+-- the others show neither, and neither does a sample tested by "Check
+-- iNaturalist now" that the nightly has yet to stamp, which leaves the view
+-- that night.
+--
+-- A point within 100 m of its county's edge is left out: that is the
+-- program's allowance for GPS error (Peter, 2026-10-26, for wildernesses),
+-- and on production on 2026-11-17 it was nine of 32 disagreements, among
+-- them two of the three from the active seasons: samples 12 and 21 m inside
+-- Montana on the Idaho line, recorded ID. So is a sample in no county, or
+-- in two: its point says nothing about the state. A point on the shore that
+-- took the nearest county (county_inside FALSE) stays, since its nearest
+-- county may be across a land border that the gazetteer has no outline
+-- beyond, and the page words it that way.
 --
 -- A report, not a QC finding: it blocks nothing and changes nothing that
 -- prints, and on a printed or settled sample the volunteer can rarely fix it
@@ -47,7 +56,7 @@ CREATE VIEW sample_place_disagreement AS
 SELECT s.entity_id AS sample_id,
        s.country, s.state_province,
        d.country AS point_country, d.state_province AS point_state_province,
-       d.county_inside,
+       d.county_inside, d.county_edge_m,
        EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id) AS printed,
        EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = s.entity_id) AS settled
 FROM sample_area_derivation d
@@ -56,5 +65,6 @@ JOIN sample s ON s.entity_id = d.sample_id
 WHERE abs(d.latitude - l.latitude) <= 5e-5
   AND abs(d.longitude - l.longitude) <= 5e-5
   AND d.state_province IS NOT NULL
+  AND NOT (d.county_inside AND d.county_edge_m <= 100)
   AND (s.state_province IS DISTINCT FROM d.state_province OR s.country IS DISTINCT FROM d.country);
-COMMENT ON VIEW sample_place_disagreement IS 'Samples whose recorded state or province, or country, is not the one their point says (sample_area_derivation), with whether the point is inside its county or only near it on the shore. printed and settled say why the county stamp left it; read counts split by season.';
+COMMENT ON VIEW sample_place_disagreement IS 'Samples whose recorded state or province, or country, is not the one their point says (sample_area_derivation), leaving out points within 100 m of their county''s edge. county_inside is FALSE where the point is in no county and took the nearest on the shore. printed and settled say why the county stamp left two of the kinds it leaves alone; read counts split by season.';

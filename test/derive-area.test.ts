@@ -483,6 +483,14 @@ describe("what the point says the state and country are (beeline-rax1)", () => {
     // Still to print: the stamp makes it Oregon, so it is not in the view.
     const follows = await insertCleanSample(conn, { inat_observation_id: "5004", sample_number: "'4'", state_province: "'WA'" }, ALSEA);
     const agrees = await insertCleanSample(conn, { inat_observation_id: "5005", sample_number: "'5'" }, ALSEA);
+    // Printed in Washington about 55 m inside the county's northern edge:
+    // within GPS error of the line, so not a disagreement.
+    const nearEdge = await insertCleanSample(
+      conn,
+      { inat_observation_id: "5006", sample_number: "'6'", state_province: "'WA'" },
+      { latitude: "44.9995", longitude: "-123.60" },
+    );
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${nearEdge}, 1)`);
     await deriveAreas(conn, path, { stampCounties: true });
     expect(await disagreements(conn)).toEqual([
       [printed, "USA", "WA", "USA", "OR", true, true, false],
@@ -490,6 +498,7 @@ describe("what the point says the state and country are (beeline-rax1)", () => {
       [shore, "USA", "WA", "USA", "OR", false, false, false],
     ]);
     expect(await rows(conn, `SELECT state_province FROM sample WHERE entity_id IN (${follows}, ${agrees})`)).toEqual([["OR"], ["OR"]]);
+    expect(await rows(conn, `SELECT round(county_edge_m) FROM sample_area_derivation WHERE sample_id = ${nearEdge}`)).toEqual([[56]]);
     // A point that moves takes its sample out until it is tested again.
     await conn.run(`UPDATE sample_location SET latitude = 44.6 WHERE sample_id = ${printed}`);
     expect((await disagreements(conn)).map((r) => r[0])).not.toContain(printed);

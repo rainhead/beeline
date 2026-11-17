@@ -908,6 +908,9 @@ export const en = {
     csv: {
       menu: "Download",
       download: "Download as CSV",
+      edit: "Download an Excel file to edit",
+      editNote:
+        "The same rows as the CSV, in an Excel file whose cells are all kept as text, so Excel leaves them as they are. Edit it and upload it back; type a date as YYYY-MM-DD.",
       note:
         "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +
         "less any location hidden here. Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
@@ -2024,14 +2027,14 @@ export const en = {
     title: "Edited downloads",
     heading: "Compare an edited download",
     intro:
-      "Upload a copy of the specimens download that you have edited in a spreadsheet. Beeline keeps the file and lists every cell that differs from what it says now. Beeline does not apply changes from a file yet, so an upload changes no record.",
-    linkFromSpecimens: "Compare an edited download",
+      "Upload the Excel file you downloaded from Specimens and edited. Beeline keeps the file and lists every cell that differs from what it says now. Beeline does not apply changes from a file yet, so an upload changes no record.",
+    linkFromSpecimens: "Upload an edited Excel file",
     linkFromExports: "Compare an edited copy of the specimens download",
     form: {
       heading: "Upload a file",
-      fileLabel: "CSV file",
+      fileLabel: "Excel file",
       fileHint:
-        "Up to 20 MB and 20,000 rows. Edit a file you downloaded from Specimens, and leave its specimenId, specimenVersion and sampleVersion columns as they are: Beeline finds each row by them.",
+        "The Excel file from Specimens, up to 20 MB and 20,000 rows. Leave its specimenId, specimenVersion and sampleVersion columns as they are: Beeline finds each row by them. Keep the cells you edit formatted as text, and type a date as YYYY-MM-DD.",
       referenceLabel: "Request behind the file (optional)",
       referenceHint:
         "Where the request came from, so a change can be traced to who asked for it: an email's message id or a link to an issue, such as https://github.com/example/example/issues/1. Never an address or a name.",
@@ -2045,17 +2048,23 @@ export const en = {
     refused: {
       noFile: "Choose a file to upload.",
       too_large: "That file is larger than 20 MB, so Beeline did not read it. Download fewer specimens and edit that.",
-      not_utf8:
-        "Save the spreadsheet again as \"CSV UTF-8\" and upload that. Beeline could not read this file because it is not saved in that format.",
+      too_large_unpacked:
+        "That file is far larger once it is opened than its size suggests, so Beeline did not read it. Download the Excel file from Specimens again and edit that.",
+      not_a_zip:
+        "Beeline reads only the Excel file from Specimens, and this is not an Excel file. Download the Excel file from Specimens, edit that, and upload it. A CSV file, or an older .xls file, is not read.",
+      not_a_workbook:
+        "This file is not a spreadsheet Beeline can read. Download the Excel file from Specimens, edit that, and upload it.",
+      unreadable:
+        "Beeline could not read this spreadsheet. Download the Excel file from Specimens again, make the edit in the new file, and save it as an Excel workbook (.xlsx).",
       no_specimen_id_column:
-        "This file has no specimenId column, so Beeline cannot tell which specimen each row is about. Download the specimens again and edit the new file, leaving that column in.",
+        "This file has no specimenId column, so Beeline cannot tell which specimen each row is about. Download the Excel file from Specimens again and edit the new file, leaving that column in.",
       too_many_rows: "That file has more than 20,000 rows, so Beeline did not read it. Split it into smaller files.",
       no_rows: "That file has a row of column names and nothing after it.",
-      malformed:
-        "A cell in this file opens a quotation mark that never closes, which usually comes from editing the file as text. Open it in a spreadsheet, save it again as \"CSV UTF-8\", and upload that.",
     } as Record<string, string>,
     refusedRepeatedColumn: (column: string) =>
       `The column ${column} is in this file more than once, so Beeline cannot tell which one to read. Delete the extra one and upload the file again.`,
+    refusedNearMiss: (column: string) =>
+      `This file has no column headed exactly ${column}, though one is headed almost like it. Put the heading back as it was in the download.`,
     page: {
       title: (fileName: string) => fileName,
       uploadedCopy: "An uploaded copy of the specimens download.",
@@ -2063,7 +2072,12 @@ export const en = {
       uploaded: (when: string, who: string) => `Uploaded ${when} by ${who}`,
       reference: (reference: string) => `Request behind the file: ${reference}`,
       notChanged:
-        "Nothing has been changed. This page only says what differs between the file and what Beeline says now. Beeline does not apply changes from a file yet.",
+        "Nothing has been changed. This page only says what differs between the file and what Beeline says now. Beeline does not apply changes from a file yet, and it does not yet check that a name is in the taxonomy or that a determiner is someone it knows. Those checks come when Beeline can apply changes.",
+      unrecognisedHeading: "Columns that were not read",
+      unrecognisedNote: "Beeline reads only the columns of its download, under the headings it gave them. These columns were not read.",
+      unrecognised: (letter: string) => `column ${letter}`,
+      unrecognisedMeant: "Probably meant",
+      unrecognisedFix: "Put the heading back exactly as it was in the download to have it read.",
       countsHeading: "Rows in the file",
       colCount: "Rows",
       colActive: "Active seasons",
@@ -2074,17 +2088,15 @@ export const en = {
       rowsChanged: "With something different",
       rowsHeld: "Not matched to a specimen",
       changesHeading: "What differs",
-      /** Nothing in the file is a change Beeline would make: whether anything is held, and whether other columns differ, says what else the page lists. */
-      nothingOffered: (held: boolean, other: boolean) =>
+      /** Nothing is listed as differing: whether anything is held, and whether other columns differ, says what else the page lists. */
+      nothingDiffers: (held: boolean, other: boolean) =>
         !held && !other
           ? "Nothing in the file differs from what Beeline says."
-          : `Beeline would change nothing from this file. ${
-              held && other
-                ? "The changes it would not make, and the differences in other columns, are listed below."
-                : held
-                  ? "The changes it would not make are listed below."
-                  : "The differences in other columns are listed below."
-            }`,
+          : held && other
+            ? "Every difference in the file is either held, with the reason, or in a column Beeline does not read. Both are listed below."
+            : held
+              ? "Every difference in the file is held, with the reason. They are listed below."
+              : "The only differences are in columns Beeline does not read. They are listed below.",
       kind: {
         determination: "Identifications",
         method_dates: "Collecting dates and methods",
@@ -2093,12 +2105,13 @@ export const en = {
         disposition: "Dispositions and remarks",
         not_applied: "Other columns",
       } as Record<string, string>,
-      sampleNote: "A sample's change is listed once, however many of its specimens the file holds.",
+      sampleNote: "A sample's difference is listed once, however many of its specimens the file holds.",
       unitNote: {
-        determination: "An identification is taken whole. If one of its cells can't be used, the others wait with it.",
-        disposition: "A disposition is taken whole with its remarks. If one of them can't be used, the other waits with it.",
-        method_dates: "A sample's dates and method are taken whole. If one of them can't be used, the other waits with it.",
-        coordinates: "A sample's coordinates are taken whole: latitude, longitude and uncertainty. If one of them can't be used, the others wait with it.",
+        determination: "An identification is read whole. If one of its cells can't be used, the others wait with it.",
+        disposition: "A disposition is read whole with its remarks. If one of them can't be used, the other waits with it.",
+        method_dates: "A sample's dates and method are read whole. If one of them can't be used, the other waits with it.",
+        place: "A blank locality means the sample follows its iNaturalist observation's locality again.",
+        coordinates: "A sample's coordinates are read whole: latitude, longitude and uncertainty. If one of them can't be used, the others wait with it.",
       } as Record<string, string>,
       was: "was",
       fileSays: "file says",
@@ -2109,34 +2122,73 @@ export const en = {
       printed: "labels printed",
       notPrinted: "labels not printed",
       heldHeading: "Held",
-      heldIntro: "Each item here is a change Beeline would not make from this file, and the reason why.",
+      heldIntro: "Each item here differs from what Beeline says, but Beeline cannot use it from the file as it stands. Under each heading is what to do about it.",
       noHeld: "Nothing is held.",
+      /** What is wrong, as a heading. */
       held: {
-        no_id: "Rows where the specimenId is blank or is not a number",
+        no_id: "Rows with no specimenId, or one that is not a number",
         repeated: "Rows whose specimenId is on another row too",
         no_specimen: "Rows for a specimen that Beeline does not have",
         number_disagrees: "Rows whose field number is not the field number of that specimen",
         number_unreadable: "Cells that should hold a number and do not",
         date_unreadable: "Cells that should hold a date and do not",
-        date_ambiguous: "Dates that could be read two ways, day first or month first",
-        cannot_be_blank: "Cells left blank that Beeline cannot leave blank",
+        converted_to_date: "Cells the spreadsheet turned into a date",
+        holds_formula: "Cells that hold a formula",
+        converted_other: "Cells the spreadsheet turned into something that is not text, such as TRUE or an error",
+        name_blank: "Identifications with no scientific name",
+        qualifier_unknown: "Identifications whose qualifier is not cf., aff. or nr.",
+        sex_unknown: "Identifications whose sex is not female, male or gynandromorph",
+        caste_unknown: "Identifications whose caste is not gyne, worker or drone",
+        caste_sex: "Identifications whose caste does not fit the sex",
+        date_identified_future: "Identifications dated after today",
+        disposition_unknown: "Dispositions that are not in collection or missing",
+        remarks_blank: "Dispositions with no remark",
+        event_date_blank: "Collecting dates left blank",
+        event_date_future: "Collecting dates after today",
+        coordinates_incomplete: "Coordinates with only one of latitude and longitude, or an uncertainty and no point",
+        latitude_range: "Latitudes outside -90 to 90",
+        longitude_range: "Longitudes outside -180 to 180",
+        uncertainty_invalid: "Coordinate uncertainties that are not a whole number of meters greater than zero",
         specimen_changed_since: "Changes held because the specimen's record has changed in Beeline since this file was downloaded",
         sample_changed_since: "Changes held because the sample's record has changed in Beeline since this file was downloaded",
-        rows_disagree: "Changes held because rows of the same sample say different things",
-        column_missing:
-          "Changes held because the file is missing a column Beeline adds to the download; download again and make the edit in the new file",
+        rows_disagree: "Rows of the same sample that say different things about it",
+        column_missing: "Changes held because the file is missing a column Beeline needs to read them",
+      } as Record<string, string>,
+      /** What to do about it, under the heading. */
+      heldTodo: {
+        no_id: "Beeline finds each row by it, so put back the number that was in the download.",
+        repeated: "Keep one row for each specimen.",
+        no_specimen: "Check the specimenId against a new download.",
+        number_disagrees: "Leave the fieldNumber and specimenId columns as they were, or download again and make the edit in the new file.",
+        number_unreadable: "Type the number with digits and a decimal point only, such as 44.5646.",
+        date_unreadable: "Type the date as YYYY-MM-DD, such as 2026-07-14. A date identified may also be YYYY-MM or YYYY, and a collecting date may be two days with a slash between, 2026-07-14/2026-07-16.",
+        converted_to_date: "Format the cell as text, then type the value as YYYY-MM-DD.",
+        holds_formula: "Beeline reads what was typed, not a formula. Format the cell as text and type the value itself.",
+        converted_other: "Format the cell as text, then type the value again.",
+        name_blank: "Type the name, or put back the one that was there.",
+        qualifier_unknown: "Use one of those, or leave it blank.",
+        sex_unknown: "Use one of those, or leave it blank.",
+        caste_unknown: "Use one of those, or leave it blank.",
+        caste_sex: "A drone is male, and a male is a drone. Correct one of them, or leave the caste blank.",
+        date_identified_future: "Check the date.",
+        disposition_unknown: "Use one of those, or leave it blank.",
+        remarks_blank: "Beeline keeps a disposition with the remark that says what became of the pin, so type the remark.",
+        event_date_blank: "Type the date as YYYY-MM-DD, or put back the one that was there.",
+        event_date_future: "Check the date.",
+        coordinates_incomplete: "Give both latitude and longitude, or clear all three cells.",
+        latitude_range: "Check the number.",
+        longitude_range: "Check the number.",
+        uncertainty_invalid: "Check the number, or clear it.",
+        specimen_changed_since: "Download again and make the edit in the new file.",
+        sample_changed_since: "Download again and make the edit in the new file.",
+        rows_disagree: "Make the rows of that sample say the same.",
+        column_missing: "Download again and make the edit in the new file, leaving every column in.",
       } as Record<string, string>,
       heldDetail: {
         no_id: "The specimenId cell says",
         repeated: "Specimen",
         no_specimen: "Specimen",
         number_disagrees: "The file gives the field number as",
-        number_unreadable: "The file says",
-        date_unreadable: "The file says",
-        date_ambiguous: "The file says",
-        cannot_be_blank: "The cell is",
-        specimen_changed_since: "The file's version of the specimen is",
-        sample_changed_since: "The file says",
         rows_disagree: "The rows say",
         column_missing: "Missing column",
       } as Record<string, string>,

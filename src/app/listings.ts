@@ -7,6 +7,7 @@ import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type Sa
 import { labelName } from "../person-name.js";
 import { orcidUrl } from "../orcid.js";
 import { plantRelationship } from "../trap-method.js";
+import { xlsxWriter } from "./xlsx.js";
 
 /**
  * Browsing the collection: the query layer behind /samples and /specimens.
@@ -1803,6 +1804,40 @@ export function csvStream<Row>(
       head: () => [encoder.encode(CSV_BOM + csvLine(header))],
       page: (page) => [encoder.encode(page.rows.map((r) => csvLine(toRow(r, page))).join(""))],
       tail: () => [],
+    },
+    timing,
+  );
+}
+
+/**
+ * A value as the text of a spreadsheet cell, or null for none. The same text
+ * the CSV writes, without its formula guard: a text cell is never evaluated,
+ * so a leading `=` is just a character, and the guard would change what the
+ * person sees and what the upload compares (docs/architecture/loading-an-edited-download.md).
+ */
+export function textCell(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return value instanceof Date ? isoDate(value) : String(value);
+}
+
+export const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+/** A listing as an Excel file, one sheet with the header in row 1 and every cell text: the same pages and rows as csvStream. */
+export function xlsxStream<Row>(
+  sheetName: string,
+  header: readonly string[],
+  fetch: (limit: number, offset: number) => Promise<Page<Row>>,
+  toRow: (row: Row, page: Page<Row>) => readonly unknown[],
+  timing?: CsvTiming,
+): ReadableStream<Uint8Array> {
+  const writer = xlsxWriter({ sheetName, header });
+  return pagedStream(
+    header[0] ?? "xlsx",
+    fetch,
+    {
+      head: () => writer.head(),
+      page: (page) => writer.rows(page.rows.map((r) => toRow(r, page).map(textCell))),
+      tail: () => writer.tail(),
     },
     timing,
   );

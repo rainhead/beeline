@@ -1,5 +1,6 @@
 import { sql, type Kysely } from "kysely";
-import type { Database } from "../model.js";
+import { DETERMINATION_CASTES, DETERMINATION_QUALIFIERS, DETERMINATION_SEXES, type Database } from "../model.js";
+import { DISPOSITIONS } from "../load-dispositions.js";
 import {
   ALL,
   EMPTY_QUERY,
@@ -10,8 +11,10 @@ import {
   sampleVersion,
   specimenCsvRow,
   specimenVersion,
+  textCell,
   type SpecimenRow,
 } from "./listings.js";
+import { columnName, readXlsx, type CellType, type XlsxCell, type XLSX_REFUSALS } from "./xlsx.js";
 
 /**
  * Comparing an edited copy of the specimens download with what Beeline says
@@ -19,39 +22,70 @@ import {
  * is held, and a later slice applies it. See
  * docs/architecture/loading-an-edited-download.md for the decisions.
  *
- * What "Beeline says now" is comes from the download itself: the rows of
- * `listSpecimens` through `specimenCsvRow`, so the two cannot drift. Both
- * sides are then normalised, because a spreadsheet rewrites dates, numbers and
- * encodings without anyone editing the cell.
+ * The file is the Excel download, every cell of it text, so the comparison is
+ * exact: a cell is unchanged when its text is Beeline's text, and otherwise it
+ * is read strictly by the kind of column it is in. What Beeline says now comes
+ * from the download itself, the rows of `listSpecimens` through
+ * `specimenCsvRow` and `textCell`, so the two cannot drift.
  *
- * A fact is held or offered whole. The units are a specimen's determination,
- * a specimen's disposition, and for a sample its method and dates, its place
- * and its coordinates. If any cell of a unit is held, every differing cell of
- * the unit is held with it and none is offered, so that applying a plan takes
- * a unit and never half of one.
+ * A fact is held or listed whole. The units are a specimen's identification,
+ * a specimen's disposition and remarks, and for a sample its dates and method,
+ * its locality and its coordinates. A unit that differs is listed only if it
+ * is complete (`UNIT_RULES`, the one place that says what complete is);
+ * otherwise every cell of it that differs is held with the reason. Nothing
+ * here checks that a name is in the taxonomy or a determiner is a known
+ * person: those checks come when changes can be applied.
  */
 
 /** A whole file Beeline will not read. */
-export const REFUSALS = ["too_large", "not_utf8", "malformed", "no_specimen_id_column", "repeated_column", "too_many_rows", "no_rows"] as const;
+export const REFUSALS = [
+  "too_large",
+  "too_large_unpacked",
+  "too_many_rows",
+  "not_a_zip",
+  "not_a_workbook",
+  "unreadable",
+  "no_specimen_id_column",
+  "repeated_column",
+  "no_rows",
+] as const;
 export type Refusal = (typeof REFUSALS)[number];
+// The reader's refusals are all refusals here.
+const _readerRefusalsAreRefusals: (typeof XLSX_REFUSALS)[number] extends Refusal ? true : never = true;
+void _readerRefusalsAreRefusals;
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_ROWS = 20_000;
 
-/**
- * Why a row, a cell or a unit is held. The first four hold the whole row, in
- * this order; the next four are about one cell; the last four hold a unit
- * because of what the file was edited against or how its rows agree.
- */
+/** Why a row, a cell or a unit is held. */
 export const HOLD_REASONS = [
+  // The whole row, in this order.
   "no_id",
   "repeated",
   "no_specimen",
   "number_disagrees",
+  // A cell that cannot be read.
   "number_unreadable",
   "date_unreadable",
-  "date_ambiguous",
-  "cannot_be_blank",
+  "converted_to_date",
+  "holds_formula",
+  "converted_other",
+  // A unit that is not complete (UNIT_RULES).
+  "name_blank",
+  "qualifier_unknown",
+  "sex_unknown",
+  "caste_unknown",
+  "caste_sex",
+  "date_identified_future",
+  "disposition_unknown",
+  "remarks_blank",
+  "event_date_blank",
+  "event_date_future",
+  "coordinates_incomplete",
+  "latitude_range",
+  "longitude_range",
+  "uncertainty_invalid",
+  // What the file was edited against, and how its rows agree.
   "specimen_changed_since",
   "sample_changed_since",
   "rows_disagree",
@@ -65,15 +99,21 @@ export const CHANGE_KINDS = ["determination", "method_dates", "place", "coordina
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 export type SpecimenUnit = "determination" | "disposition";
 export type SampleUnit = "method_dates" | "place" | "coordinates";
+type Unit = SpecimenUnit | SampleUnit;
 const SPECIMEN_UNITS: readonly SpecimenUnit[] = ["determination", "disposition"];
 const SAMPLE_UNITS: readonly SampleUnit[] = ["method_dates", "place", "coordinates"];
 
-type Normalising = "text" | "lower" | "number" | "number_or_text" | "event_date" | "date_identified";
+/** How a column's cell is read when its text is not Beeline's text. */
+type Reads =
+  | "text" // any text: it differs
+  | "word" // text compared ignoring case, read as the lower-case word
+  | "number" // a plain decimal number
+  | "days" // YYYY-MM-DD, or YYYY-MM-DD/YYYY-MM-DD
+  | "moment"; // YYYY-MM-DD, YYYY-MM or YYYY
+
 interface ColumnRule {
   kind: ChangeKind;
-  norm: Normalising;
-  /** Beeline cannot leave it empty, so a blank cell over a value is not a change. */
-  required?: boolean;
+  reads: Reads;
 }
 
 /**
@@ -86,30 +126,25 @@ const NOT_COMPARED = new Set(["specimenId", "specimenVersion", "sampleVersion", 
 const RULES = new Map<string, ColumnRule>();
 for (const column of SPECIMEN_CSV_HEADER) {
   if (NOT_COMPARED.has(column)) continue;
-  RULES.set(column, { kind: "not_applied", norm: "text" });
+  RULES.set(column, { kind: "not_applied", reads: "text" });
 }
-const rule = (column: string, kind: ChangeKind, norm: Normalising, required = false) =>
-  RULES.set(column, { kind, norm, ...(required ? { required } : {}) });
-rule("scientificName", "determination", "text", true);
-rule("identificationQualifier", "determination", "lower");
-rule("sex", "determination", "lower");
-rule("caste", "determination", "lower");
+const rule = (column: string, kind: ChangeKind, reads: Reads) => RULES.set(column, { kind, reads });
+rule("scientificName", "determination", "text");
+rule("identificationQualifier", "determination", "word");
+rule("sex", "determination", "word");
+rule("caste", "determination", "word");
 rule("identifiedBy", "determination", "text");
-rule("dateIdentified", "determination", "date_identified");
+rule("dateIdentified", "determination", "moment");
 rule("samplingProtocol", "method_dates", "text");
-rule("eventDate", "method_dates", "event_date", true);
+rule("eventDate", "method_dates", "days");
 rule("locality", "place", "text");
 rule("decimalLatitude", "coordinates", "number");
 rule("decimalLongitude", "coordinates", "number");
 rule("coordinateUncertaintyInMeters", "coordinates", "number");
 rule("disposition", "disposition", "text");
 rule("occurrenceRemarks", "disposition", "text");
-// Beeline writes this as true or false; a spreadsheet writes TRUE.
-rule("identifiedByExpert", "not_applied", "lower");
-// Spreadsheets write 1200 as 1200.0; these are not applied, but a difference of spelling is not one.
-rule("minimumElevationInMeters", "not_applied", "number_or_text");
-rule("maximumElevationInMeters", "not_applied", "number_or_text");
-rule("hostInatTaxonId", "not_applied", "number_or_text");
+// Beeline writes this as true or false; a spreadsheet may write TRUE. Never applied.
+rule("identifiedByExpert", "not_applied", "word");
 
 /** The columns of the download a plan can say something about, in the download's order. */
 export const COMPARED_COLUMNS: readonly string[] = SPECIMEN_CSV_HEADER.filter((c) => RULES.has(c));
@@ -125,39 +160,57 @@ export interface SeasonSplit {
 export interface PlanCounts {
   /** Every data row in the file. */
   rows: SeasonSplit;
-  /** Rows of a specimen whose every cell agrees with Beeline's. */
+  /** Rows of a specimen whose every compared cell agrees with Beeline's. */
   unchanged: SeasonSplit;
-  /** Rows with at least one cell that differs or is held, whether the unit is offered or not. */
-  withChanges: SeasonSplit;
+  /** Rows with at least one cell that differs or is held, whether its unit is held or not. */
+  withDifferences: SeasonSplit;
   /** Rows not compared at all (the first four hold reasons). */
   held: SeasonSplit;
 }
+
+/** What a cell says, as read by the kind of column it is in. A later step reads this, not the text. */
+export type CellValue =
+  | { kind: "blank" }
+  | { kind: "text"; text: string }
+  /** Lower-cased: sex, caste, a qualifier. */
+  | { kind: "word"; word: string }
+  | { kind: "number"; number: number }
+  /** A day is `start` equal to `end`. */
+  | { kind: "days"; start: string; end: string }
+  /** `date` is as written: `2025`, `2025-07` or `2025-07-14`. */
+  | { kind: "moment"; date: string; precision: "year" | "month" | "day" };
 
 /** One cell of a unit, as the file gives it and as Beeline has it. */
 export interface UnitCell {
   column: string;
   /** What Beeline says now, as the download writes it; "" for none. */
   was: string;
-  /** What the file says, with the spreadsheet's quote taken off; "" for none. */
+  /** What the file says, trimmed; "" for none. */
   fileSays: string;
+  /** The file's cell as read. */
+  value: CellValue;
   differs: boolean;
 }
 
 /**
- * A specimen's determination or disposition, offered whole: every cell of the
- * unit that the file has, with which differ. At least one does.
+ * A specimen's identification or disposition that differs from Beeline's,
+ * complete: every cell of the unit that the file has, with which differ. At
+ * least one does.
  */
-export interface SpecimenChange {
+export interface SpecimenDifference {
   unit: SpecimenUnit;
   /** The row in the file, the header being row 1. */
   row: number;
   specimenId: number;
+  sampleId: number;
+  /** The determination the row was read from, the one of record when the file was downloaded; null for a specimen with none. */
+  determinationId: number | null;
   fieldNumber: string | null;
   cells: UnitCell[];
 }
 
-/** A sample's method and dates, place or coordinates, offered whole, once for the sample. */
-export interface SampleChange {
+/** A sample's dates and method, locality or coordinates that differ, complete, once for the sample. */
+export interface SampleDifference {
   unit: SampleUnit;
   sampleId: number;
   sampleNumber: string;
@@ -211,7 +264,7 @@ export interface HeldItem {
   unit: ChangeKind | null;
   /** The cell that caused the hold, or the first differing cell of the unit. */
   column: string | null;
-  /** Every differing cell of the unit held with it, and the cell that caused the hold. */
+  /** Every cell held with it. */
   columns: string[];
   /** The same cells, with what Beeline says and what the file says for each. */
   cells: HeldCell[];
@@ -219,12 +272,23 @@ export interface HeldItem {
   detail: string;
 }
 
+/** A column of the file that is not a column of the download, so was not read. */
+export interface UnrecognisedColumn {
+  /** The column's letter in the spreadsheet. */
+  letter: string;
+  header: string;
+  /** The download column it matches except for case or spaces, which is probably what was meant. */
+  probably: string | null;
+}
+
 export interface UploadPlan {
   counts: PlanCounts;
-  /** A specimen's determination or disposition, offered whole. */
-  changes: SpecimenChange[];
-  /** A sample's method and dates, place or coordinates, offered whole. */
-  sampleChanges: SampleChange[];
+  /** Columns of the file that were not read. */
+  unrecognised: UnrecognisedColumn[];
+  /** A specimen's identification or disposition that differs and is complete. */
+  differences: SpecimenDifference[];
+  /** A sample's dates and method, locality or coordinates that differ and are complete. */
+  sampleDifferences: SampleDifference[];
   held: HeldItem[];
   /** Differences in columns Beeline does not read from a file. */
   notApplied: CellChange[];
@@ -233,8 +297,9 @@ export interface UploadPlan {
 export interface ParsedUpload {
   /** Column name to its position in a row. */
   columns: Map<string, number>;
-  /** Data rows with their row number in the file (the header is row 1). Blank lines are left out. */
-  rows: Array<{ row: number; cells: string[] }>;
+  unrecognised: UnrecognisedColumn[];
+  /** Data rows with their row number in the sheet (the header is the first). Rows with nothing in them are left out. */
+  rows: Array<{ row: number; cells: Map<number, XlsxCell> }>;
 }
 
 export type Parsed = { ok: true; upload: ParsedUpload } | { ok: false; refusal: Refusal; detail?: string };
@@ -242,232 +307,262 @@ export type PlanResult = { ok: true; plan: UploadPlan; rowCount: number } | { ok
 
 // --- Reading the file ---
 
-/** RFC 4180: quoted cells, doubled quotes inside them, `\n`, `\r\n` or a lone `\r` between records. */
-export const parseCsvRecords = (text: string): string[][] => readCsv(text).records;
-
-/** The records, and whether the text ended inside a quoted cell, which swallowed the records after it. */
-function readCsv(text: string): { records: string[][]; unclosed: boolean } {
-  const records: string[][] = [];
-  let record: string[] = [];
-  let cell = "";
-  let quoted = false;
-  let started = false; // anything seen on this record, so a final newline adds none
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quoted) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          cell += '"';
-          i++;
-        } else quoted = false;
-      } else cell += ch;
-      continue;
-    }
-    if (ch === '"' && cell === "") {
-      quoted = true;
-      started = true;
-    } else if (ch === ",") {
-      record.push(cell);
-      cell = "";
-      started = true;
-    } else if (ch === "\n" || ch === "\r") {
-      if (ch === "\r" && text[i + 1] === "\n") i++;
-      record.push(cell);
-      records.push(record);
-      record = [];
-      cell = "";
-      started = false;
-    } else {
-      cell += ch;
-      started = true;
-    }
-  }
-  if (started || cell !== "") {
-    record.push(cell);
-    records.push(record);
-  }
-  return { records, unclosed: quoted };
-}
+const squashed = (header: string) => header.replace(/\s+/g, "").toLowerCase();
 
 /** Whether a file can be read at all, and if so its columns and rows. */
 export function parseUpload(bytes: Uint8Array): Parsed {
-  if (bytes.byteLength > MAX_FILE_BYTES) return { ok: false, refusal: "too_large" };
-  let text: string;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
-    return { ok: false, refusal: "not_utf8" };
-  }
-  if (text.startsWith("﻿")) text = text.slice(1);
-  const { records, unclosed } = readCsv(text);
-  if (unclosed) return { ok: false, refusal: "malformed" };
-  const header = records[0] ?? [];
+  const read = readXlsx(bytes, { maxBytes: MAX_FILE_BYTES, maxRows: MAX_ROWS + 1 });
+  if (!read.ok) return { ok: false, refusal: read.refusal };
+  const [head, ...body] = read.sheet.rows;
+  const known = new Set<string>(SPECIMEN_CSV_HEADER);
   const columns = new Map<string, number>();
-  for (const [i, name] of header.entries()) {
-    const key = name.trim();
-    if (key === "") continue;
-    // Two columns of one name: which one is meant cannot be told.
-    if (columns.has(key)) return { ok: false, refusal: "repeated_column", detail: key };
-    columns.set(key, i);
+  const unrecognised: UnrecognisedColumn[] = [];
+  if (head !== undefined) {
+    for (const [at, cell] of [...head.cells.entries()].sort((a, b) => a[0] - b[0])) {
+      const header = cell.text.trim();
+      if (header === "") continue;
+      if (known.has(header)) {
+        // Two columns of one name: which one is meant cannot be told.
+        if (columns.has(header)) return { ok: false, refusal: "repeated_column", detail: header };
+        columns.set(header, at);
+      } else {
+        const probably = SPECIMEN_CSV_HEADER.find((name) => squashed(name) === squashed(header)) ?? null;
+        unrecognised.push({ letter: columnName(at), header, probably });
+      }
+    }
   }
-  if (!columns.has("specimenId")) return { ok: false, refusal: "no_specimen_id_column" };
-  const rows: ParsedUpload["rows"] = [];
-  records.forEach((cells, i) => {
-    if (i === 0 || cells.every((c) => c.trim() === "")) return;
-    rows.push({ row: i + 1, cells });
-  });
+  if (!columns.has("specimenId")) {
+    return { ok: false, refusal: "no_specimen_id_column", ...(unrecognised.find((u) => u.probably === "specimenId") ? { detail: "specimenId" } : {}) };
+  }
+  const rows = body.filter((r) => [...r.cells.values()].some((c) => c.text.trim() !== ""));
   if (rows.length > MAX_ROWS) return { ok: false, refusal: "too_many_rows" };
   if (rows.length === 0) return { ok: false, refusal: "no_rows" };
-  return { ok: true, upload: { columns, rows } };
+  return { ok: true, upload: { columns, unrecognised, rows } };
 }
 
-// --- Normalising a cell ---
+// --- Reading a cell ---
 
-/** Undo the leading quote the download puts before a cell a spreadsheet would read as a formula (csvCell). */
-export function unguard(cell: string): string {
-  return /^'[=+\-@\t\r]/.test(cell) ? cell.slice(1) : cell;
+type CellProblem = "number_unreadable" | "date_unreadable" | "converted_to_date" | "holds_formula" | "converted_other";
+
+/** A cell as the strict reading found it: what it says, or why it cannot be used. */
+interface Evaluated {
+  column: string;
+  /** Beeline's text for the cell, trimmed. */
+  nowText: string;
+  /** The file's text, trimmed. */
+  fileText: string;
+  value: CellValue;
+  differs: boolean;
+  problem: CellProblem | null;
 }
 
-/** Text as compared: composed Unicode, a non-breaking space as a space, trimmed. */
-const clean = (text: string): string => text.replace(/ /g, " ").normalize("NFC").trim();
+const BLANK: CellValue = { kind: "blank" };
 
-/** A file's cell as text: the spreadsheet's quote taken off, then cleaned. */
-const cellText = (cell: string): string => clean(unguard(cell));
-
-type Key = string | number | null;
-type CellHold = "number_unreadable" | "date_unreadable" | "date_ambiguous" | "cannot_be_blank";
-type Normalised = { ok: true; key: Key } | { ok: false; reason: CellHold };
-
-const NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
-const readNumber = (text: string): number | null => (NUMBER.test(text) && Number.isFinite(Number(text)) ? Number(text) : null);
-
-const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+const PLAIN_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)$/;
+const NUMBER_WITH_EXPONENT = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 
 /** A real calendar day as `YYYY-MM-DD`, or null. */
-function validDay(y: number, m: number, d: number): string | null {
-  const date = new Date(Date.UTC(y, m - 1, d));
-  if (y < 1000 || date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null;
-  return date.toISOString().slice(0, 10);
-}
-
-/** What a date cell could mean. A reading that needs a guessed century is weak: it counts only where it equals what Beeline says. */
-interface Readings {
-  strong: Set<string>;
-  weak: Set<string>;
-}
-const readings = (): Readings => ({ strong: new Set(), weak: new Set() });
-
-/** A day as `YYYY-MM-DD`, or `M/D/YYYY` or `D/M/YYYY` (both readings), or either with a two-digit year (weak). */
-function dayReadings(text: string): Readings {
-  const out = readings();
-  let match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-  if (match) {
-    const day = validDay(Number(match[1]), Number(match[2]), Number(match[3]));
-    if (day !== null) out.strong.add(day);
-    return out;
-  }
-  match = /^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})$/.exec(text);
-  if (match) {
-    const [a, b] = [Number(match[1]), Number(match[2])];
-    const years = match[3]!.length === 4 ? [Number(match[3])] : [2000 + Number(match[3]), 1900 + Number(match[3])];
-    const into = match[3]!.length === 4 ? out.strong : out.weak;
-    for (const y of years) {
-      for (const day of [validDay(y, a, b), validDay(y, b, a)]) if (day !== null) into.add(day);
-    }
-  }
-  return out;
-}
-
-const combine = (left: Readings, right: Readings, out: Readings, join: (a: string, b: string) => string) => {
-  for (const a of left.strong) for (const b of right.strong) out.strong.add(join(a, b));
-  for (const a of [...left.strong, ...left.weak]) {
-    for (const b of [...right.strong, ...right.weak]) {
-      if (!(left.strong.has(a) && right.strong.has(b))) out.weak.add(join(a, b));
-    }
-  }
-};
-
-/** A day, or two days with a slash between: `start/end`; one day is the same as that day twice. */
-function eventDateReadings(text: string): Readings {
-  const out = dayReadings(text);
-  // M/D/YYYY has slashes of its own, so try each slash as the one between the days.
-  for (let i = text.indexOf("/"); i !== -1; i = text.indexOf("/", i + 1)) {
-    combine(dayReadings(text.slice(0, i).trim()), dayReadings(text.slice(i + 1).trim()), out, (a, b) => (a === b ? a : `${a}/${b}`));
-  }
-  return out;
-}
-
-/** `YYYY`, `YYYY-MM`, a day, or a spreadsheet's month: `Jul-2026`, `July 2026`, and `Jul-26` (weak). */
-function dateIdentifiedReadings(text: string): Readings {
-  const out = dayReadings(text);
-  if (/^\d{4}$/.test(text)) out.strong.add(text);
-  const month = /^(\d{4})-(\d{2})$/.exec(text);
-  if (month && Number(month[2]) >= 1 && Number(month[2]) <= 12) out.strong.add(text);
-  const named = /^([A-Za-z]+)\.?[\s-]+(\d{4}|\d{2})$/.exec(text);
-  if (named) {
-    const word = named[1]!.toLowerCase();
-    const at = MONTH_NAMES.findIndex((name) => name === word || (word.length === 3 && name.startsWith(word)));
-    if (at !== -1) {
-      const mm = String(at + 1).padStart(2, "0");
-      if (named[2]!.length === 4) out.strong.add(`${named[2]}-${mm}`);
-      else for (const century of [2000, 1900]) out.weak.add(`${century + Number(named[2])}-${mm}`);
-    }
-  }
-  return out;
-}
-
-/** Equal to what Beeline says under any reading, else the one reading it has, else why not. */
-function resolveDate(found: Readings, nowKey: string | null): Normalised {
-  if (nowKey !== null && (found.strong.has(nowKey) || found.weak.has(nowKey))) return { ok: true, key: nowKey };
-  if (found.strong.size === 0) return { ok: false, reason: "date_unreadable" };
-  if (found.strong.size > 1) return { ok: false, reason: "date_ambiguous" };
-  return { ok: true, key: [...found.strong][0]! };
-}
-
-function normalise(text: string, how: Normalising, nowKey: Key): Normalised {
-  if (text === "") return { ok: true, key: null };
-  switch (how) {
-    case "text":
-      return { ok: true, key: text };
-    case "lower":
-      return { ok: true, key: text.toLowerCase() };
-    case "number": {
-      const n = readNumber(text);
-      return n === null ? { ok: false, reason: "number_unreadable" } : { ok: true, key: n };
-    }
-    case "number_or_text":
-      return { ok: true, key: readNumber(text) ?? text };
-    case "event_date":
-      return resolveDate(eventDateReadings(text), typeof nowKey === "string" ? nowKey : null);
-    case "date_identified":
-      return resolveDate(dateIdentifiedReadings(text), typeof nowKey === "string" ? nowKey : null);
-  }
-}
-
-/** What Beeline's own text for a cell comes to: it writes dates in their canonical form already. */
-function nowKeyOf(text: string, how: Normalising): Key {
-  if (text === "") return null;
-  if (how === "lower") return text.toLowerCase();
-  if (how === "number") return readNumber(text) ?? text;
-  if (how === "number_or_text") return readNumber(text) ?? text;
+function validDay(text: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (m === null) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  if (y < 1000 || date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) return null;
   return text;
 }
 
-const sameKey = (a: Key, b: Key): boolean => (typeof a === "number" && typeof b === "number" ? Math.abs(a - b) <= 1e-9 : a === b);
+/** What a cell of this text says, or the problem if it says nothing the column can use. `type` allows an exponent only on a number. */
+function readText(reads: Reads, text: string, type: CellType): CellValue | CellProblem {
+  if (text === "") return BLANK;
+  switch (reads) {
+    case "text":
+      return { kind: "text", text };
+    case "word":
+      return { kind: "word", word: text.toLowerCase() };
+    case "number": {
+      if (!(type === "number" ? NUMBER_WITH_EXPONENT : PLAIN_NUMBER).test(text)) return "number_unreadable";
+      const number = Number(text);
+      return Number.isFinite(number) ? { kind: "number", number } : "number_unreadable";
+    }
+    case "days": {
+      const m = /^(\d{4}-\d{2}-\d{2})(?:\/(\d{4}-\d{2}-\d{2}))?$/.exec(text);
+      if (m === null) return "date_unreadable";
+      const start = validDay(m[1]!);
+      const end = m[2] === undefined ? start : validDay(m[2]);
+      return start === null || end === null || end < start ? "date_unreadable" : { kind: "days", start, end };
+    }
+    case "moment": {
+      if (/^\d{4}$/.test(text)) return { kind: "moment", date: text, precision: "year" };
+      const month = /^(\d{4})-(\d{2})$/.exec(text);
+      if (month !== null) return Number(month[2]) >= 1 && Number(month[2]) <= 12 ? { kind: "moment", date: text, precision: "month" } : "date_unreadable";
+      return validDay(text) === null ? "date_unreadable" : { kind: "moment", date: text, precision: "day" };
+    }
+  }
+}
 
-/** A field number as the file may have damaged it: identical, or all digits and equal once leading zeros are dropped. */
-const sameFieldNumber = (file: string, beeline: string): boolean =>
-  file === beeline || (/^\d+$/.test(file) && /^\d+$/.test(beeline) && file.replace(/^0+/, "") === beeline.replace(/^0+/, ""));
+const isProblem = (read: CellValue | CellProblem): read is CellProblem => typeof read === "string";
 
-/** A value of the download's row as the CSV writer would write it, minus the formula guard. */
-const textOf = (value: unknown): string =>
-  value === null || value === undefined ? "" : clean(value instanceof Date ? value.toISOString().slice(0, 10) : String(value));
+const sameValue = (a: CellValue, b: CellValue): boolean => {
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case "blank":
+      return true;
+    case "text":
+      return a.text === (b as typeof a).text;
+    case "word":
+      return a.word === (b as typeof a).word;
+    case "number":
+      return a.number === (b as typeof a).number;
+    case "days":
+      return a.start === (b as typeof a).start && a.end === (b as typeof a).end;
+    case "moment":
+      return a.date === (b as typeof a).date;
+  }
+};
+
+const PROBLEM_OF_TYPE: Partial<Record<CellType, CellProblem>> = {
+  date: "converted_to_date",
+  formula: "holds_formula",
+  boolean: "converted_other",
+  error: "converted_other",
+};
+
+/**
+ * One cell of a row against what Beeline says. Exact first: the file's text,
+ * trimmed, is Beeline's text, whatever the cell's type. Otherwise the cell is
+ * read strictly by the column's kind, and one the spreadsheet converted (to a
+ * date, a formula, a boolean or an error) or that is not in the form the
+ * column takes is a problem, not a value.
+ */
+function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): Evaluated {
+  const { reads, kind } = RULES.get(column)!;
+  const fileText = (cell?.text ?? "").trim();
+  const type: CellType = cell?.type ?? "text";
+  const was = nowText.trim();
+  const lenient = (): CellValue => {
+    const read = readText(reads, fileText, "text");
+    return isProblem(read) ? { kind: "text", text: fileText } : read;
+  };
+  if (fileText === was) return { column, nowText: was, fileText, value: lenient(), differs: false, problem: null };
+  // A column Beeline never reads from a file has no unit to hold: a difference is listed, whatever the cell is.
+  if (kind === "not_applied") {
+    const read = readText(reads, fileText, "text");
+    const value = isProblem(read) ? ({ kind: "text", text: fileText } as const) : read;
+    const nowRead = readText(reads, was, "text");
+    return { column, nowText: was, fileText, value, differs: isProblem(nowRead) || !sameValue(value, nowRead), problem: null };
+  }
+  const convertedTo = PROBLEM_OF_TYPE[type];
+  if (convertedTo !== undefined) {
+    return { column, nowText: was, fileText, value: { kind: "text", text: fileText }, differs: true, problem: convertedTo };
+  }
+  const read = readText(reads, fileText, type);
+  if (isProblem(read)) return { column, nowText: was, fileText, value: { kind: "text", text: fileText }, differs: true, problem: read };
+  const nowRead = readText(reads, was, "text");
+  return { column, nowText: was, fileText, value: read, differs: isProblem(nowRead) || !sameValue(read, nowRead), problem: null };
+}
+
+/** A cell the file does not have, as Beeline's own: what a unit is completed with when the file leaves its column out. */
+function fromBeeline(column: string, nowText: string): Evaluated {
+  const was = nowText.trim();
+  const read = readText(RULES.get(column)!.reads, was, "text");
+  return { column, nowText: was, fileText: was, value: isProblem(read) ? { kind: "text", text: was } : read, differs: false, problem: null };
+}
+
+// --- When a unit is complete ---
+
+/** Why a unit is not complete, and the cell that says so. */
+interface Incomplete {
+  reason: HoldReason;
+  column: string;
+}
+
+/** A day, `YYYY-MM-DD`, as Oregon reads today. */
+export const oregonToday = (now: Date = new Date()): string => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(now);
+
+type UnitCells = ReadonlyMap<string, Evaluated>;
+const blank = (cells: UnitCells, column: string): boolean => cells.get(column)!.value.kind === "blank";
+const wordOf = (cells: UnitCells, column: string): string | null => {
+  const v = cells.get(column)!.value;
+  return v.kind === "word" ? v.word : v.kind === "text" ? v.text : null;
+};
+const textOf = (cells: UnitCells, column: string): string => {
+  const v = cells.get(column)!.value;
+  return v.kind === "text" ? v.text : v.kind === "word" ? v.word : "";
+};
+
+/**
+ * What each unit needs to be complete, and the only place that says so. Each
+ * returns the first thing that is wrong, or null. What the store can hold is
+ * the rule where the schema has a CHECK: schema/040 for an identification,
+ * schema/030 for a disposition and for coordinates. A name being in the
+ * taxonomy, or a determiner being a known person, is not checked: that comes
+ * when changes can be applied.
+ */
+const UNIT_RULES: Record<Unit, (cells: UnitCells, today: string) => Incomplete | null> = {
+  determination(cells, today) {
+    if (blank(cells, "scientificName")) return { reason: "name_blank", column: "scientificName" };
+    const qualifier = wordOf(cells, "identificationQualifier");
+    if (qualifier !== null && !(DETERMINATION_QUALIFIERS as readonly string[]).includes(qualifier)) return { reason: "qualifier_unknown", column: "identificationQualifier" };
+    const sex = wordOf(cells, "sex");
+    if (sex !== null && !(DETERMINATION_SEXES as readonly string[]).includes(sex)) return { reason: "sex_unknown", column: "sex" };
+    const caste = wordOf(cells, "caste");
+    if (caste !== null && !(DETERMINATION_CASTES as readonly string[]).includes(caste)) return { reason: "caste_unknown", column: "caste" };
+    // The CHECK on determination: a drone is male and a male is a drone, where both are said.
+    if (caste !== null && sex !== null && (caste === "drone") !== (sex === "male")) return { reason: "caste_sex", column: "caste" };
+    const when = cells.get("dateIdentified")!.value;
+    if (when.kind === "moment") {
+      // The first day of the period said: a year or month that has begun is not in the future.
+      const first = when.precision === "year" ? `${when.date}-01-01` : when.precision === "month" ? `${when.date}-01` : when.date;
+      if (first > today) return { reason: "date_identified_future", column: "dateIdentified" };
+    }
+    return null;
+  },
+  disposition(cells) {
+    const disposition = textOf(cells, "disposition");
+    if (disposition !== "" && !(DISPOSITIONS as readonly string[]).includes(disposition)) return { reason: "disposition_unknown", column: "disposition" };
+    // specimen_disposition.remarks is NOT NULL and not empty: a row without a remark cannot be stored.
+    if (blank(cells, "occurrenceRemarks")) return { reason: "remarks_blank", column: "occurrenceRemarks" };
+    return null;
+  },
+  method_dates(cells, today) {
+    const days = cells.get("eventDate")!.value;
+    if (days.kind === "blank") return { reason: "event_date_blank", column: "eventDate" };
+    if (days.kind === "days" && days.end > today) return { reason: "event_date_future", column: "eventDate" };
+    return null;
+  },
+  coordinates(cells) {
+    const [latitude, longitude, uncertainty] = ["decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters"].map((c) => cells.get(c)!.value);
+    const none = (v: CellValue) => v.kind === "blank";
+    // A point is both its numbers, or nothing at all, and an uncertainty is the uncertainty of a point.
+    if (none(latitude!) !== none(longitude!) || (none(latitude!) && !none(uncertainty!))) {
+      return { reason: "coordinates_incomplete", column: none(latitude!) ? "decimalLatitude" : "decimalLongitude" };
+    }
+    if (latitude!.kind === "number" && Math.abs(latitude!.number) > 90) return { reason: "latitude_range", column: "decimalLatitude" };
+    if (longitude!.kind === "number" && Math.abs(longitude!.number) > 180) return { reason: "longitude_range", column: "decimalLongitude" };
+    // The CHECK: positive, and the column is an INTEGER.
+    if (uncertainty!.kind === "number" && !(Number.isInteger(uncertainty!.number) && uncertainty!.number > 0)) {
+      return { reason: "uncertainty_invalid", column: "coordinateUncertaintyInMeters" };
+    }
+    return null;
+  },
+  // Any text, blank included: a blank locality makes the sample follow iNaturalist's again (setPlace in sample-corrections.ts).
+  place: () => null,
+};
+
+/** The unit's first unusable cell, else the first thing its rule finds wrong. */
+function incomplete(unit: Unit, cells: UnitCells, today: string): Incomplete | null {
+  for (const column of columnsOfUnit(unit)) {
+    const problem = cells.get(column)!.problem;
+    if (problem !== null) return { reason: problem, column };
+  }
+  return UNIT_RULES[unit](cells, today);
+}
 
 // --- What Beeline says now ---
 
 interface Now {
   row: SpecimenRow;
-  /** The download's cells for this specimen, as text, by column name. */
+  /** The download's cells for this specimen, as text, trimmed, by column name. */
   cells: Map<string, string>;
   specimenVersion: string;
   sampleVersion: string;
@@ -492,7 +587,7 @@ async function readNow(db: Kysely<Database>, ids: number[]): Promise<Map<number,
     for (const row of page.rows) {
       const written = specimenCsvRow(row, page);
       const cells = new Map<string, string>();
-      SPECIMEN_CSV_HEADER.forEach((name, j) => cells.set(name, textOf(written[j])));
+      SPECIMEN_CSV_HEADER.forEach((name, j) => cells.set(name, (textCell(written[j]) ?? "").trim()));
       now.set(row.specimen_id, {
         row,
         cells,
@@ -536,44 +631,44 @@ async function readSampleFacts(db: Kysely<Database>, sampleIds: number[]): Promi
 
 const emptySplit = (): SeasonSplit => ({ active: 0, settled: 0, unplaced: 0 });
 
-/** What one cell of one row came to. */
-interface CellResult {
-  column: string;
-  fileText: string;
-  nowText: string;
-  norm: Normalised;
-  differs: boolean;
-}
-
-/** One matched row's cells of a sample-level unit, kept until the whole sample is known. */
-interface SampleRow {
+/** One matched row's cells, kept until the whole sample is known. */
+interface MatchedRow {
   row: number;
   specimenId: number;
   fieldNumber: string | null;
-  results: Map<string, CellResult>;
+  /** The cells of the columns the file has. */
+  results: Map<string, Evaluated>;
+  /** Those, and Beeline's own for the columns the file leaves out: what a unit is complete or not with. */
+  full: Map<string, Evaluated>;
   versionCell: string | null;
 }
 
 /** The plan for a file's bytes: refused, or what differs and what is held. Writes nothing. */
-export async function planUpload(db: Kysely<Database>, bytes: Uint8Array): Promise<PlanResult> {
+export async function planUpload(db: Kysely<Database>, bytes: Uint8Array, options: { today?: string } = {}): Promise<PlanResult> {
   const parsed = parseUpload(bytes);
   if (!parsed.ok) return parsed;
-  const plan = await comparePlan(db, parsed.upload);
+  const plan = await comparePlan(db, parsed.upload, options);
   return { ok: true, plan, rowCount: parsed.upload.rows.length };
 }
 
-export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): Promise<UploadPlan> {
+const heldCells = (cells: UnitCells, columns: string[]): HeldCell[] =>
+  columns.map((c) => ({ column: c, was: cells.get(c)!.nowText, fileSays: cells.get(c)!.fileText }));
+
+export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, options: { today?: string } = {}): Promise<UploadPlan> {
+  const today = options.today ?? oregonToday();
   const { columns, rows } = upload;
-  /** A cell of a row; null where the file has no such column or the row is too short to reach it. */
-  const cell = (cells: string[], column: string): string | null => {
+  const blankCell: XlsxCell = { text: "", type: "text" };
+  /** A cell of a row: a cell that is absent is blank. */
+  const cell = (cells: Map<number, XlsxCell>, column: string): XlsxCell => {
     const at = columns.get(column);
-    return at === undefined ? null : (cells[at] ?? null);
+    return at === undefined ? blankCell : (cells.get(at) ?? blankCell);
   };
+  const text = (cells: Map<number, XlsxCell>, column: string): string => cell(cells, column).text.trim();
 
   // Which specimen each row names.
   const idOf = rows.map(({ cells }) => {
-    const text = cellText(cell(cells, "specimenId") ?? "");
-    const n = /^\d+$/.test(text) ? Number(text) : 0;
+    const t = text(cells, "specimenId");
+    const n = /^\d+$/.test(t) ? Number(t) : 0;
     return Number.isSafeInteger(n) && n > 0 ? n : null;
   });
   const timesNamed = new Map<number, number>();
@@ -581,18 +676,19 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
   const now = await readNow(db, [...timesNamed.keys()]);
   const facts = await readSampleFacts(db, [...new Set([...now.values()].map((n) => n.row.sample_id))]);
 
-  const counts: PlanCounts = { rows: emptySplit(), unchanged: emptySplit(), withChanges: emptySplit(), held: emptySplit() };
+  const counts: PlanCounts = { rows: emptySplit(), unchanged: emptySplit(), withDifferences: emptySplit(), held: emptySplit() };
   const season = (sampleId: number | null): keyof SeasonSplit =>
     sampleId === null ? "unplaced" : facts.settled.has(sampleId) ? "settled" : "active";
-  const plan: UploadPlan = { counts, changes: [], sampleChanges: [], held: [], notApplied: [] };
+  const plan: UploadPlan = { counts, unrecognised: upload.unrecognised, differences: [], sampleDifferences: [], held: [], notApplied: [] };
 
   const hold = (
     item: Pick<HeldItem, "reason" | "row" | "specimenId" | "fieldNumber" | "detail"> &
       Partial<Pick<HeldItem, "rows" | "sampleNumber" | "sample" | "unit" | "column" | "columns" | "cells">>,
   ) => plan.held.push({ rows: [item.row], sampleNumber: null, sample: null, unit: null, column: null, columns: [], cells: [], ...item });
 
-  const bySample = new Map<number, SampleRow[]>();
+  const bySample = new Map<number, MatchedRow[]>();
   const touchedRows: Array<{ sampleId: number; touched: boolean }> = [];
+  const present = (unit: ChangeKind): string[] => columnsOfUnit(unit).filter((c) => columns.has(c));
 
   rows.forEach(({ row, cells }, index) => {
     const id = idOf[index] ?? null;
@@ -603,18 +699,18 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
 
     let reason: HoldReason | null = null;
     let detail = "";
-    const rawNumber = cell(cells, "fieldNumber");
-    const fileNumber = rawNumber === null ? null : cellText(rawNumber);
+    // The field number is checked as it is: a spreadsheet that kept the cell as text has not changed it.
+    const fileNumber = columns.has("fieldNumber") ? text(cells, "fieldNumber") : null;
     if (id === null) {
       reason = "no_id";
-      detail = cellText(cell(cells, "specimenId") ?? "");
+      detail = text(cells, "specimenId");
     } else if ((timesNamed.get(id) ?? 0) > 1) {
       reason = "repeated";
       detail = String(id);
     } else if (known === undefined) {
       reason = "no_specimen";
       detail = String(id);
-    } else if (fileNumber !== null && !sameFieldNumber(fileNumber, known.row.field_number ?? "")) {
+    } else if (fileNumber !== null && fileNumber !== (known.row.field_number ?? "").trim()) {
       reason = "number_disagrees";
       detail = fileNumber;
     }
@@ -626,26 +722,19 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
     const specimen = known!;
     const specimenId = id!;
     const sample = specimen.row.sample_id;
-    const sampleNumber = specimen.row.sample_number;
 
-    // Every compared column the file has, for this row.
-    const results = new Map<string, CellResult>();
+    // Every compared column the file has, for this row; Beeline's own for the rest.
+    const results = new Map<string, Evaluated>();
+    const full = new Map<string, Evaluated>();
     for (const column of COMPARED_COLUMNS) {
-      const raw = cell(cells, column);
-      if (raw === null) continue; // a column the file lacks, or a short row that stops before it, is never a difference
-      const r = RULES.get(column)!;
-      const fileText = cellText(raw);
       const nowText = specimen.cells.get(column) ?? "";
-      const nowKey = nowKeyOf(nowText, r.norm);
-      const norm: Normalised =
-        r.required && fileText === "" && nowText !== "" ? { ok: false, reason: "cannot_be_blank" } : normalise(fileText, r.norm, nowKey);
-      results.set(column, { column, fileText, nowText, norm, differs: norm.ok && !sameKey(norm.key, nowKey) });
+      if (columns.has(column)) {
+        const r = evaluate(column, cell(cells, column), nowText);
+        results.set(column, r);
+        full.set(column, r);
+      } else full.set(column, fromBeeline(column, nowText));
     }
-
-    let touched = false;
-    for (const result of results.values()) {
-      if (!result.norm.ok || result.differs) touched = true;
-    }
+    const touched = [...results.values()].some((r) => r.differs || r.problem !== null);
 
     for (const [column, result] of results) {
       if (RULES.get(column)!.kind === "not_applied" && result.differs) {
@@ -653,43 +742,46 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
       }
     }
 
-    // A specimen's own units: offered whole or held whole.
+    // A specimen's own units: listed whole or held whole.
     for (const unit of SPECIMEN_UNITS) {
-      const present = columnsOfUnit(unit).filter((c) => results.has(c));
-      const differing = present.filter((c) => results.get(c)!.differs);
-      // Every cell held with the unit: those that differ, and those that cannot be read.
-      const heldColumns = present.filter((c) => results.get(c)!.differs || !results.get(c)!.norm.ok);
-      const heldCells = heldColumns.map((c) => ({ column: c, was: results.get(c)!.nowText, fileSays: results.get(c)!.fileText }));
-      let held = false;
-      for (const column of present) {
-        const r = results.get(column)!;
-        if (!r.norm.ok) {
-          held = true;
-          hold({ reason: r.norm.reason, row, specimenId, fieldNumber, sampleNumber, sample: specimen.sample, unit, column, columns: heldColumns, cells: heldCells, detail: r.fileText });
+      const own = present(unit);
+      const touchedCells = own.filter((c) => results.get(c)!.differs || results.get(c)!.problem !== null);
+      if (touchedCells.length === 0) continue;
+      const wrong = incomplete(unit, full, today);
+      let why: { reason: HoldReason; column: string; detail: string } | null =
+        wrong === null ? null : { reason: wrong.reason, column: wrong.column, detail: full.get(wrong.column)!.fileText };
+      if (why === null) {
+        // The row's own cell says what it was edited against.
+        if (!columns.has("specimenVersion")) why = { reason: "column_missing", column: touchedCells[0]!, detail: "specimenVersion" };
+        else if (text(cells, "specimenVersion") !== specimen.specimenVersion) {
+          why = { reason: "specimen_changed_since", column: touchedCells[0]!, detail: text(cells, "specimenVersion") };
         }
       }
-      if (held || differing.length === 0) continue;
-      let why: HoldReason | null = null;
-      let detail = "";
-      // The row's own cell: a short row that stops before it cannot say what it was edited against.
-      const rawVersion = cell(cells, "specimenVersion");
-      if (rawVersion === null) {
-        why = "column_missing";
-        detail = "specimenVersion";
-      } else if (cellText(rawVersion) !== specimen.specimenVersion) {
-        why = "specimen_changed_since";
-        detail = cellText(rawVersion);
-      }
       if (why !== null) {
-        hold({ reason: why, row, specimenId, fieldNumber, sampleNumber, sample: specimen.sample, unit, column: differing[0]!, columns: heldColumns, cells: heldCells, detail });
+        const held = [...new Set([...touchedCells, ...(wrong === null ? [] : [wrong.column])])];
+        hold({
+          reason: why.reason,
+          row,
+          specimenId,
+          fieldNumber,
+          sampleNumber: specimen.row.sample_number,
+          sample: specimen.sample,
+          unit,
+          column: why.column,
+          columns: held,
+          cells: heldCells(full, held),
+          detail: why.detail,
+        });
         continue;
       }
-      plan.changes.push({
+      plan.differences.push({
         unit,
         row,
         specimenId,
+        sampleId: sample,
+        determinationId: specimen.row.determination_id ?? null,
         fieldNumber,
-        cells: present.map((c) => ({ column: c, was: results.get(c)!.nowText, fileSays: results.get(c)!.fileText, differs: results.get(c)!.differs })),
+        cells: own.map((c) => ({ column: c, was: results.get(c)!.nowText, fileSays: results.get(c)!.fileText, value: results.get(c)!.value, differs: results.get(c)!.differs })),
       });
     }
 
@@ -698,116 +790,85 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
       specimenId,
       fieldNumber,
       results,
-      versionCell: cell(cells, "sampleVersion") === null ? null : cellText(cell(cells, "sampleVersion")!),
+      full,
+      versionCell: columns.has("sampleVersion") ? text(cells, "sampleVersion") : null,
     });
     touchedRows.push({ sampleId: sample, touched });
   });
 
-  for (const { sampleId, touched } of touchedRows) counts[touched ? "withChanges" : "unchanged"][season(sampleId)]++;
+  for (const { sampleId, touched } of touchedRows) counts[touched ? "withDifferences" : "unchanged"][season(sampleId)]++;
 
-  // A sample's units: one change for the sample, however many of its rows say it.
+  // A sample's units: one difference for the sample, however many of its rows say it.
   const nowOfSample = new Map<number, Now>();
   for (const n of now.values()) if (!nowOfSample.has(n.row.sample_id)) nowOfSample.set(n.row.sample_id, n);
   for (const [sampleId, sampleRows] of bySample) {
     const sampleNow = nowOfSample.get(sampleId)!;
     const sampleNumber = sampleNow.row.sample_number;
-    const allRows = sampleRows.map((r) => r.row);
     for (const unit of SAMPLE_UNITS) {
-      // Only columns that some row of this sample reaches: a short row may stop before a column the file has.
-      const present = columnsOfUnit(unit).filter((c) => sampleRows.some((sr) => sr.results.has(c)));
-      if (present.length === 0) continue;
-      /** The cells of the unit that differ or cannot be read, as the first row that says so gives them. */
-      const cellsHeld = (): HeldCell[] =>
-        present.flatMap((c) => {
-          const says = sampleRows.find((sr) => sr.results.get(c)?.differs || (sr.results.has(c) && !sr.results.get(c)!.norm.ok))?.results.get(c);
-          return says === undefined ? [] : [{ column: c, was: says.nowText, fileSays: says.fileText }];
-        });
-      const held = (
-        reason: HoldReason,
-        rowsConcerned: SampleRow[],
-        column: string,
-        _columnsHeld: string[],
-        detail: string,
-      ) =>
+      const own = present(unit);
+      const touchedBy = (c: string) => sampleRows.filter((sr) => sr.results.get(c)!.differs || sr.results.get(c)!.problem !== null);
+      const touchedCells = own.filter((c) => touchedBy(c).length > 0);
+      if (touchedCells.length === 0) continue;
+      const first = touchedBy(touchedCells[0]!)[0]!;
+      const heldAs = (reason: HoldReason, rowsConcerned: MatchedRow[], column: string, detail: string, extra: string[] = []) => {
+        const columnsHeld = [...new Set([...touchedCells, ...extra])];
         hold({
           reason,
           row: rowsConcerned[0]!.row,
           rows: rowsConcerned.map((r) => r.row),
-          specimenId: null,
-          fieldNumber: null,
+          specimenId: rowsConcerned.length === 1 && reason !== "rows_disagree" ? rowsConcerned[0]!.specimenId : null,
+          fieldNumber: rowsConcerned.length === 1 && reason !== "rows_disagree" ? rowsConcerned[0]!.fieldNumber : null,
           sampleNumber,
           sample: sampleNow.sample,
           unit,
           column,
-          columns: cellsHeld().map((x) => x.column),
-          cells: cellsHeld(),
+          columns: columnsHeld,
+          // As the first row that says so gives them.
+          cells: heldCells(first.full, columnsHeld),
           detail,
         });
-      // A cell that cannot be read holds the unit for the whole sample, so the
-      // sample-mates' values are not offered either.
+      };
+      // Coordinates travel as a pair, so a file without one of the two columns cannot say a point.
+      const missing = unit === "coordinates" ? ["decimalLatitude", "decimalLongitude"].filter((c) => !columns.has(c)) : [];
+      if (missing.length > 0) {
+        heldAs("column_missing", sampleRows, touchedCells[0]!, missing.join(", "));
+        continue;
+      }
+      // A cell that cannot be used, or a unit that is not complete, holds it for the whole sample.
       let bad = false;
       for (const sr of sampleRows) {
-        for (const column of present) {
-          const r = sr.results.get(column);
-          if (r !== undefined && !r.norm.ok) {
-            bad = true;
-            hold({
-              reason: r.norm.reason,
-              row: sr.row,
-              specimenId: sr.specimenId,
-              fieldNumber: sr.fieldNumber,
-              sampleNumber,
-              sample: sampleNow.sample,
-              unit,
-              column,
-              columns: cellsHeld().map((x) => x.column),
-              cells: cellsHeld(),
-              detail: r.fileText,
-            });
-          }
+        const wrong = incomplete(unit, sr.full, today);
+        if (wrong !== null) {
+          bad = true;
+          heldAs(wrong.reason, [sr], wrong.column, sr.full.get(wrong.column)!.fileText, [wrong.column]);
         }
       }
       if (bad) continue;
-      const differing = present.filter((c) => sampleRows.some((sr) => sr.results.get(c)?.differs));
-      if (differing.length === 0) continue;
-      const first = sampleRows.find((sr) => sr.results.get(differing[0]!)?.differs) ?? sampleRows[0]!;
-
-      // A unit is offered only when every row of the sample in the file has every cell it needs. Coordinates
-      // travel as a pair, so a latitude without its longitude is not a point; elsewhere a row that stops
-      // before a column the other rows have says nothing about it.
-      const needed = unit === "coordinates" ? ["decimalLatitude", "decimalLongitude"] : present;
-      const missing = needed.filter((c) => sampleRows.some((sr) => !sr.results.has(c)));
-      if (missing.length > 0) {
-        held("column_missing", sampleRows, differing[0]!, differing, missing.join(", "));
-        continue;
-      }
-      const disagreeing = differing.find((c) => {
-        const keys = sampleRows.filter((sr) => sr.results.has(c)).map((sr) => (sr.results.get(c)!.norm as { ok: true; key: Key }).key);
-        return !keys.every((k) => sameKey(k, keys[0]!));
-      });
+      const differing = touchedCells.filter((c) => touchedBy(c).some((sr) => sr.results.get(c)!.differs));
+      const disagreeing = differing.find((c) => !sampleRows.every((sr) => sameValue(sr.results.get(c)!.value, sampleRows[0]!.results.get(c)!.value)));
       if (disagreeing !== undefined) {
-        const said = [...new Set(sampleRows.filter((sr) => sr.results.has(disagreeing)).map((sr) => sr.results.get(disagreeing)!.fileText))].map((t) => (t === "" ? "(blank)" : t));
-        held("rows_disagree", sampleRows, disagreeing, differing, said.join(" | "));
+        const said = [...new Set(sampleRows.map((sr) => sr.results.get(disagreeing)!.fileText))].map((t) => (t === "" ? "(blank)" : t));
+        heldAs("rows_disagree", sampleRows, disagreeing, said.join(" | "));
         continue;
       }
-      if (sampleRows.some((sr) => sr.versionCell === null)) {
-        held("column_missing", sampleRows, differing[0]!, differing, "sampleVersion");
+      if (!columns.has("sampleVersion")) {
+        heldAs("column_missing", sampleRows, touchedCells[0]!, "sampleVersion");
         continue;
       }
       if (sampleRows.some((sr) => sr.versionCell !== sampleNow.sampleVersion)) {
-        held("sample_changed_since", sampleRows, differing[0]!, differing, first.results.get(differing[0]!)?.fileText ?? "");
+        heldAs("sample_changed_since", sampleRows, touchedCells[0]!, first.results.get(touchedCells[0]!)!.fileText);
         continue;
       }
-      plan.sampleChanges.push({
+      plan.sampleDifferences.push({
         unit,
         sampleId,
         sampleNumber,
         sample: sampleNow.sample,
-        cells: present.map((c) => {
-          const r = (first.results.get(c) ?? sampleRows.find((sr) => sr.results.has(c))?.results.get(c))!;
-          return { column: c, was: r.nowText, fileSays: r.fileText, differs: differing.includes(c) };
+        cells: own.map((c) => {
+          const r = first.results.get(c)!;
+          return { column: c, was: r.nowText, fileSays: r.fileText, value: r.value, differs: differing.includes(c) };
         }),
-        rows: allRows,
+        rows: sampleRows.map((r) => r.row),
         specimensInFile: sampleRows.length,
         specimensInSample: facts.specimens.get(sampleId) ?? 0,
         printed: facts.printed.has(sampleId),
@@ -815,7 +876,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
     }
   }
   plan.held.sort((a, b) => a.row - b.row);
-  plan.sampleChanges.sort((a, b) => a.rows[0]! - b.rows[0]! || SAMPLE_UNITS.indexOf(a.unit) - SAMPLE_UNITS.indexOf(b.unit));
+  plan.sampleDifferences.sort((a, b) => a.rows[0]! - b.rows[0]! || SAMPLE_UNITS.indexOf(a.unit) - SAMPLE_UNITS.indexOf(b.unit));
   return plan;
 }
 

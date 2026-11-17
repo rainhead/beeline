@@ -2,8 +2,8 @@ import { dirname, join } from "node:path";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
-import { CSV_BOM, csvLine } from "../src/app/listings.js";
-import { parseCsvRecords } from "../src/app/upload-plan.js";
+import { readXlsx } from "../src/app/xlsx.js";
+import { buildWorkbook, type TestCell } from "./workbook.js";
 import { createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
@@ -17,8 +17,8 @@ const unusedInat: InatClient = {
  * one sample from the current season (`a1` with an expert's determination,
  * `a2` with none, `a3` with a volunteer's and no field number) and one of a
  * sample from a settled season (`b1`). The app answers as staff, or as a
- * volunteer when asked, and `download()` is its own specimens CSV, which the
- * tests edit.
+ * volunteer when asked, and `download()` is its own specimens Excel file,
+ * which the tests edit.
  */
 export async function uploadFixture(
   signedInAs: "staffer" | "volunteer" = "staffer",
@@ -114,45 +114,53 @@ export async function uploadFixture(
     resolveSession: async () => ({ personId: resolved, login: signedInAs, iconUrl: null }),
   });
 
-  const download = async () => (await app.request("/specimens.csv?scope=all")).text();
+  const download = async () => new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer());
   return { instance, conn, db, app, paths, staffer, volunteer, ids, download };
 }
 
 export type UploadFixture = Awaited<ReturnType<typeof uploadFixture>>;
 
-/** A file's cells, header first. */
-export const readRecords = (csv: string): string[][] => parseCsvRecords(csv.replace(/^﻿/, ""));
+/** A file's cells as text, header first; an absent cell is "". */
+export function matrixOf(workbook: Uint8Array): string[][] {
+  const read = readXlsx(workbook);
+  if (!read.ok) throw new Error(`not readable: ${read.refusal}`);
+  const width = Math.max(...read.sheet.rows.flatMap((r) => [...r.cells.keys()])) + 1;
+  return read.sheet.rows.map((r) => Array.from({ length: width }, (_, at) => r.cells.get(at)?.text ?? ""));
+}
 
 /**
  * An edited copy of the download: each entry sets cells of the row whose
- * `specimenId` it names. Written the way a spreadsheet would, with a BOM, so
- * a cell that needs quoting is quoted. `dropColumns` leaves columns out.
+ * `specimenId` it names, to text or to any kind of cell a spreadsheet can
+ * make of it. `dropColumns` leaves columns out, `renameColumns` changes a
+ * heading, `addColumns` adds a column with a value in every row, `dropRows`
+ * leaves specimens out.
  */
 export function edited(
-  download: string,
-  edits: Array<{ id: number; set: Record<string, string> }> = [],
-  options: { dropColumns?: string[]; lineEnding?: "\n" | "\r\n"; dropRows?: number[] } = {},
-): string {
-  const records = readRecords(download);
+  download: Uint8Array,
+  edits: Array<{ id: number; set: Record<string, TestCell> }> = [],
+  options: { dropColumns?: string[]; renameColumns?: Record<string, string>; addColumns?: Record<string, string>; dropRows?: number[] } = {},
+): Uint8Array {
+  const records = matrixOf(download);
   const head = records[0]!;
   const idAt = head.indexOf("specimenId");
   const drop = new Set((options.dropColumns ?? []).map((c) => head.indexOf(c)));
-  const kept = records
+  const rows: TestCell[][] = records
     .filter((r, i) => i === 0 || !(options.dropRows ?? []).includes(Number(r[idAt])))
-    .map((r, i) => {
+    .map((r, i): TestCell[] => {
+      let cells: TestCell[] = [...r];
       if (i > 0) {
         const edit = edits.filter((e) => String(e.id) === r[idAt]);
-        r = r.map((cell, at) => {
-          const name = head[at]!;
-          let value = cell;
-          for (const e of edit) if (name in e.set) value = e.set[name]!;
-          return value;
+        cells = cells.map((cell, at) => {
+          let value: TestCell = cell;
+          for (const e of edit) if (head[at]! in e.set) value = e.set[head[at]!]!;
+          return value === "" ? null : value;
         });
-      }
-      return r.filter((_, at) => !drop.has(at));
+      } else cells = cells.map((cell, at) => options.renameColumns?.[head[at]!] ?? cell);
+      cells = cells.filter((_, at) => !drop.has(at));
+      for (const [name, value] of Object.entries(options.addColumns ?? {})) cells.push(i === 0 ? name : value);
+      return cells;
     });
-  const text = kept.map((r) => csvLine(r)).join("");
-  return CSV_BOM + (options.lineEnding === "\r\n" ? text.replaceAll("\n", "\r\n") : text);
+  return buildWorkbook(rows);
 }
 
 export const bytesOf = (text: string): Uint8Array => new TextEncoder().encode(text);

@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
+import { readXlsx } from "../src/app/xlsx.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
 import { refreshPlantCommonNames } from "../src/plant-common-names.js";
@@ -1866,5 +1867,117 @@ describe("listing queries", () => {
     expect(page.total).toBe(3);
     const second = await listSamples(db, { ...EMPTY_QUERY }, alice, { staff: false, personIds: [alice] }, { limit: 2, offset: 2 });
     expect(second.rows).toHaveLength(1);
+  });
+});
+
+describe("the specimens Excel download (beeline-kgyd)", () => {
+  /** RFC 4180, enough for a comparison: quoted cells with doubled quotes and newlines inside. */
+  const csvRecords = (text: string): string[][] => {
+    const out: string[][] = [];
+    let record: string[] = [];
+    let cell = "";
+    let quoted = false;
+    const body = text.replace(/^﻿/, "");
+    for (let i = 0; i < body.length; i++) {
+      const ch = body[i]!;
+      if (quoted) {
+        if (ch === '"' && body[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else if (ch === '"') quoted = false;
+        else cell += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ",") {
+        record.push(cell);
+        cell = "";
+      } else if (ch === "\n") {
+        record.push(cell);
+        out.push(record);
+        record = [];
+        cell = "";
+      } else cell += ch;
+    }
+    return out;
+  };
+
+  const sheetOf = async (res: Response) => {
+    const read = readXlsx(new Uint8Array(await res.arrayBuffer()));
+    if (!read.ok) throw new Error(read.refusal);
+    return read.sheet;
+  };
+
+  it("has the CSV's rows and columns for the same query, in the same order, and the same values", async () => {
+    const { app, conn } = await listingApp("staffer");
+    // A value the CSV has to guard, which a text cell does not: the Excel file says it as it is.
+    await conn.run(`UPDATE determination SET determiner_name = '=Dee Determiner' WHERE determiner_name IS NOT NULL AND determiner_id IS NULL`);
+    for (const query of ["scope=all", "scope=OBA", "scope=WaBA", "scope=all&q=barnes", "scope=all&sort=atlas&dir=desc", "scope=all&from=2026-01-01"]) {
+      const csv = csvRecords(await (await app.request(`/specimens.csv?${query}`)).text());
+      const res = await app.request(`/specimens.xlsx?${query}`);
+      expect(res.status, query).toBe(200);
+      const sheet = await sheetOf(res);
+      expect(sheet.name).toBe("specimens");
+      expect(sheet.rows.length, query).toBe(csv.length);
+      expect(csv.length, query).toBeGreaterThan(1);
+      sheet.rows.forEach((row, i) => {
+        expect(row.row).toBe(i + 1);
+        csv[i]!.forEach((value, at) => {
+          // The CSV's guard, a quote before a leading =, +, -, @, tab or return, is not in the Excel file.
+          const unguarded = /^'[=+\-@\t\r]/.test(value) ? value.slice(1) : value;
+          // Null is a cell left out, and the CSV writes it as nothing.
+          expect(row.cells.get(at)?.text ?? "", `${query} row ${i + 1} column ${at}`).toBe(unguarded);
+        });
+      });
+    }
+  });
+
+  it("is a text cell everywhere, header included, and a leading = is only text", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await conn.run(`UPDATE determination SET determiner_name = '=Dee Determiner' WHERE determiner_name IS NOT NULL AND determiner_id IS NULL`);
+    const bytes = new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer());
+    const read = readXlsx(bytes);
+    if (!read.ok) throw new Error(read.refusal);
+    for (const row of read.sheet.rows) for (const cell of row.cells.values()) expect(cell.type).toBe("text");
+    expect(read.sheet.rows.flatMap((r) => [...r.cells.values()]).map((c) => c.text)).toContain("=Dee Determiner");
+    const xml = new TextDecoder().decode(unzipSync(bytes)["xl/worksheets/sheet1.xml"]);
+    expect(xml).not.toContain("<f>");
+    // Every cell has the Text format.
+    for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toContain(`s="1"`);
+  });
+
+  it("is stamped as an Excel file, and answers who may have it as the CSV does", async () => {
+    const { app } = await listingApp("staffer");
+    const res = await app.request("/specimens.xlsx?scope=all");
+    expect(res.headers.get("content-type")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    expect(res.headers.get("content-disposition")).toMatch(/^attachment; filename="beeline-specimens-\d{4}-\d{2}-\d{2}-\d{6}\.xlsx"$/);
+    // The same location rule as the CSV: what a volunteer may not see of a record is in neither file.
+    const alice = await listingApp("alice");
+    const csv = csvRecords(await (await alice.app.request("/specimens.csv?scope=all")).text());
+    const xlsx = await sheetOf(await alice.app.request("/specimens.xlsx?scope=all"));
+    expect(xlsx.rows.length).toBe(csv.length);
+    const lat = csv[0]!.indexOf("decimalLatitude");
+    expect(xlsx.rows.map((r) => r.cells.get(lat)?.text ?? "")).toEqual(csv.map((r) => r[lat]));
+    // Nobody signed in is not served, by either.
+    const anonymous = createApp({
+      ...(await scratchPaths()),
+      db: alice.db,
+      conn: alice.conn,
+      config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => null,
+    });
+    expect((await anonymous.request("/specimens.csv?scope=all")).status).toBe(401);
+    expect((await anonymous.request("/specimens.xlsx?scope=all")).status).toBe(401);
+  });
+
+  it("is offered beside the CSV on the specimens page, as the file to edit and upload back, and not on the samples page", async () => {
+    const { app } = await listingApp("staffer");
+    const specimens = await get(app, "/specimens?scope=all&q=barnes");
+    expect(specimens).toContain(`href="/specimens.csv?`);
+    expect(specimens).toMatch(/href="\/specimens\.xlsx\?[^"]*q=barnes/);
+    expect(specimens).toContain(en.listings.csv.edit);
+    expect(specimens).toContain(en.listings.csv.editNote);
+    expect(await get(app, "/samples?scope=all")).not.toContain(".xlsx");
+    // Everyone may download it, a volunteer too.
+    expect(await get((await listingApp("alice")).app, "/specimens?scope=all")).toContain(`/specimens.xlsx?`);
   });
 });

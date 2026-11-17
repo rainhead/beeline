@@ -199,6 +199,8 @@ import {
   STAFF_READER,
   parseListingQuery,
   csvStream,
+  xlsxStream,
+  XLSX_CONTENT_TYPE,
   toCsv,
   SAMPLE_CSV_HEADER,
   sampleCsvRow,
@@ -1196,17 +1198,32 @@ export function createApp({
     );
   });
 
-  app.get("/specimens.csv", async (c) => {
+  // The CSV and the Excel file are the same listing: the query, the reader,
+  // the paging and the host names are read once, here, so they cannot differ.
+  const specimenDownload = async (c: Context<AppEnv>, format: "csv" | "xlsx") => {
     const { personId, reader, query } = await listingRequest(c);
-    countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
+    countListingView(listingAttributes("specimens", format, query, viewer(c)));
     const hostNames = hostNamesOnce(db);
-    const body = csvStream(
-      SPECIMEN_CSV_HEADER,
-      async (limit, offset) => listSpecimens(db, query, personId, reader, { limit, offset, withTotal: false, hostNames: await hostNames() }),
-      specimenCsvRow,
-      csvGenerationTiming("specimens"),
-    );
-    return csv(c, body, "beeline-specimens");
+    return {
+      fetch: async (limit: number, offset: number) =>
+        listSpecimens(db, query, personId, reader, { limit, offset, withTotal: false, hostNames: await hostNames() }),
+      timing: csvGenerationTiming("specimens"),
+    };
+  };
+
+  app.get("/specimens.csv", async (c) => {
+    const { fetch, timing } = await specimenDownload(c, "csv");
+    return csv(c, csvStream(SPECIMEN_CSV_HEADER, fetch, specimenCsvRow, timing), "beeline-specimens");
+  });
+
+  // The file to edit and upload back (beeline-kgyd): every cell is text, so a
+  // spreadsheet cannot reformat what it holds.
+  app.get("/specimens.xlsx", async (c) => {
+    const { fetch, timing } = await specimenDownload(c, "xlsx");
+    return c.body(xlsxStream("specimens", SPECIMEN_CSV_HEADER, fetch, specimenCsvRow, timing), 200, {
+      "content-type": XLSX_CONTENT_TYPE,
+      "content-disposition": `attachment; filename="${exportFilename("beeline-specimens", new Date(), "xlsx")}"`,
+    });
   });
 
   // --- One record (beeline-2c3.34). The listings answer "what is there";
@@ -2058,11 +2075,13 @@ export function createApp({
   };
   const uploadFolder = (id: number) => join(uploadsPath, String(id));
   // Always this name: what the person called the file is kept in the store and never reaches the file system.
-  const uploadFile = (id: number) => join(uploadFolder(id), "upload.csv");
+  const uploadFile = (id: number) => join(uploadFolder(id), "upload.xlsx");
   const refusalText = (m: Messages, refused: Extract<Parsed, { ok: false }>) =>
     refused.refusal === "repeated_column"
       ? m.uploads.refusedRepeatedColumn(refused.detail ?? "")
-      : (m.uploads.refused[refused.refusal] ?? refused.refusal);
+      : refused.refusal === "no_specimen_id_column" && refused.detail !== undefined
+        ? m.uploads.refusedNearMiss(refused.detail)
+        : (m.uploads.refused[refused.refusal] ?? refused.refusal);
   const ownUploads = (personId: number): Promise<UploadListRow[]> =>
     db
       .selectFrom("upload")
@@ -2103,7 +2122,7 @@ export function createApp({
     const id = Number(
       (await sql<{ id: bigint }>`SELECT nextval('entity_id_seq') AS id`.execute(db)).rows[0]!.id,
     );
-    const fileName = file.name === "" ? "upload.csv" : file.name;
+    const fileName = file.name === "" ? "upload.xlsx" : file.name;
     // The parent may be new; the upload's own folder must be. A store put back
     // to an earlier copy can draw an id that an earlier upload already used,
     // and its kept file must never be overwritten: fail, writing nothing.

@@ -7,10 +7,10 @@ import {
   type CellChange,
   type HeldItem,
   type SampleLabel,
-  type SampleChange,
+  type SampleDifference,
   type SeasonSplit,
-  type SpecimenChange,
-  type UnitCell,
+  type SpecimenDifference,
+  type UnrecognisedColumn,
   type UploadPlan,
 } from "../upload-plan.js";
 import { Absent, Button, Callout, Card, DataTable, EmptyState, Field, Meta, PageHeader, TextField } from "./components/index.js";
@@ -57,7 +57,7 @@ export function Uploads({
         <h2>{u.form.heading}</h2>
         <form method="post" action="/uploads" enctype="multipart/form-data" class="form-column">
           <Field id="file" label={u.form.fileLabel} hint={u.form.fileHint}>
-            <input id="file" name="file" type="file" accept=".csv,text/csv" required />
+            <input id="file" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
           </Field>
           <TextField id="reference" name="reference" label={u.form.referenceLabel} hint={u.form.referenceHint} />
           <p class="row">
@@ -148,7 +148,7 @@ function CellLine({ m, c }: { m: Messages; c: CellChange }) {
   );
 }
 
-function SpecimenLine({ m, c }: { m: Messages; c: SpecimenChange }) {
+function SpecimenLine({ m, c }: { m: Messages; c: SpecimenDifference }) {
   const p = m.uploads.page;
   return (
     <>
@@ -158,7 +158,7 @@ function SpecimenLine({ m, c }: { m: Messages; c: SpecimenChange }) {
   );
 }
 
-function SampleLine({ m, c }: { m: Messages; c: SampleChange }) {
+function SampleLine({ m, c }: { m: Messages; c: SampleDifference }) {
   const p = m.uploads.page;
   return (
     <>
@@ -197,6 +197,30 @@ function HeldLine({ m, h }: { m: Messages; h: HeldItem }) {
   );
 }
 
+/** Columns of the file that Beeline did not read, near the top because they may hold edits that will not be used. */
+function Unrecognised({ m, columns }: { m: Messages; columns: UnrecognisedColumn[] }) {
+  const p = m.uploads.page;
+  return (
+    <section>
+      <h2>{p.unrecognisedHeading}</h2>
+      <p>{p.unrecognisedNote}</p>
+      <ul>
+        {columns.map((c) => (
+          <li>
+            <Col name={c.header} /> <Meta>{p.unrecognised(c.letter)}</Meta>
+            {c.probably !== null && (
+              <>
+                {" "}
+                {p.unrecognisedMeant} <Col name={c.probably} />. {p.unrecognisedFix}
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 const total = (s: SeasonSplit) => s.active + s.settled + s.unplaced;
 
 export function UploadPreview({ m, upload, plan }: { m: Messages; upload: UploadDetail; plan: UploadPlan }) {
@@ -204,13 +228,13 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
   const split: Array<[string, SeasonSplit]> = [
     [p.rowsTotal, plan.counts.rows],
     [p.rowsUnchanged, plan.counts.unchanged],
-    [p.rowsChanged, plan.counts.withChanges],
+    [p.rowsChanged, plan.counts.withDifferences],
     [p.rowsHeld, plan.counts.held],
   ];
-  const sampleChangesOf = (kind: string) => plan.sampleChanges.filter((c) => c.unit === kind);
-  const changesOf = (kind: string) => plan.changes.filter((c) => c.unit === kind);
+  const sampleChangesOf = (kind: string) => plan.sampleDifferences.filter((c) => c.unit === kind);
+  const changesOf = (kind: string) => plan.differences.filter((c) => c.unit === kind);
   const kinds = CHANGE_KINDS.filter((k) => k !== "not_applied");
-  const anyChange = plan.changes.length > 0 || plan.sampleChanges.length > 0;
+  const anyChange = plan.differences.length > 0 || plan.sampleDifferences.length > 0;
   const heldBy = (reason: string) => plan.held.filter((h) => h.reason === reason);
   return (
     <>
@@ -220,6 +244,7 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
       </p>
       {upload.reference !== null && <Meta block>{p.reference(upload.reference)}</Meta>}
       <Callout>{p.notChanged}</Callout>
+      {plan.unrecognised.length > 0 && <Unrecognised m={m} columns={plan.unrecognised} />}
 
       <h2>{p.countsHeading}</h2>
       <DataTable columns={["", p.colActive, p.colSettled, p.colUnplaced, p.colCount]}>
@@ -235,7 +260,7 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
       </DataTable>
 
       <h2>{p.changesHeading}</h2>
-      {!anyChange && <EmptyState>{p.nothingOffered(plan.held.length > 0, plan.notApplied.length > 0)}</EmptyState>}
+      {!anyChange && <EmptyState>{p.nothingDiffers(plan.held.length > 0, plan.notApplied.length > 0)}</EmptyState>}
       {kinds.map((kind) => {
         const own = changesOf(kind);
         const samples = sampleChangesOf(kind);
@@ -263,6 +288,7 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
             <h3>
               {p.held[reason]} <Meta>{m.format.number(items.length)}</Meta>
             </h3>
+            {p.heldTodo[reason] !== undefined && <p>{p.heldTodo[reason]}</p>}
             {[...new Set(items.flatMap((h) => (h.unit === null ? [] : [h.unit])))].map((unit) =>
               p.unitNote[unit] === undefined ? null : <Meta block>{p.unitNote[unit]}</Meta>,
             )}

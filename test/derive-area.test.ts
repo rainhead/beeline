@@ -498,7 +498,8 @@ describe("what the point says the state and country are (beeline-rax1)", () => {
       [shore, "USA", "WA", "USA", "OR", false, false, false],
     ]);
     expect(await rows(conn, `SELECT state_province FROM sample WHERE entity_id IN (${follows}, ${agrees})`)).toEqual([["OR"], ["OR"]]);
-    expect(await rows(conn, `SELECT round(county_edge_m) FROM sample_area_derivation WHERE sample_id = ${nearEdge}`)).toEqual([[56]]);
+    expect(await rows(conn, `SELECT sample_id, county_inside_100m FROM sample_area_derivation WHERE sample_id IN (${printed}, ${nearEdge}) ORDER BY 1`))
+      .toEqual([[printed, true], [nearEdge, false]]);
     // A point that moves takes its sample out until it is tested again.
     await conn.run(`UPDATE sample_location SET latitude = 44.6 WHERE sample_id = ${printed}`);
     expect((await disagreements(conn)).map((r) => r[0])).not.toContain(printed);

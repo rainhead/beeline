@@ -159,7 +159,7 @@ async function world({ extras = false }: { extras?: boolean } = {}) {
          ('wilderness.net', '1', 'wilderness', 'Hidden Wilderness', ST_GeomFromText('POINT(-122.5 48.7)'), 'test'),
          ('epa-cec', '2.3', 'ecoregion', 'Hidden Ecoregion', ST_GeomFromText('POINT(-122.5 48.7)'), 'test')`,
     );
-    await conn.run(`INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, rule_version, country, state_province, county_inside, county_edge_m, derived_at) VALUES (${extra.b4}, 48.7001, -122.5002, 'test', 1, 'CAN', 'BC', TRUE, 5000, current_timestamp)`);
+    await conn.run(`INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, rule_version, country, state_province, county_inside, county_inside_100m, derived_at) VALUES (${extra.b4}, 48.7001, -122.5002, 'test', 1, 'CAN', 'BC', TRUE, TRUE, current_timestamp)`);
     await conn.run(
       `INSERT INTO sample_area (sample_id, area_source, area_source_id) VALUES (${extra.b4}, 'wilderness.net', '1'), (${extra.b4}, 'epa-cec', '2.3')`,
     );

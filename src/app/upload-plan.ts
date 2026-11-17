@@ -170,29 +170,70 @@ rule("occurrenceRemarks", "disposition", "text");
 rule("identifiedByExpert", "not_applied", "word");
 
 /**
- * The tabs Beeline puts in the download beside `specimens`, which are for
- * looking up and are not read from an upload. An upload does not list them as
- * tabs that were not read, and a change to one changes nothing.
+ * The tabs Beeline puts in the download beside the one that is edited, which
+ * are for looking up and are not read from an upload. An upload does not list
+ * them as tabs that were not read, and a change to one changes nothing.
  */
-export const REFERENCE_TABS = ["names", "identifiers", "collectors", "about"] as const;
+export const REFERENCE_TABS = ["names", "identifiers", "about"] as const;
 
 /** How a column is read, for the file's own account of what each column takes. */
 export const columnRule = (column: string): { reads: Reads; kind: ChangeKind } | undefined => RULES.get(column);
 
 /**
- * The columns Beeline reads from an upload: those the comparison takes as
- * differences, which are every column with a rule that is not `not_applied`,
- * and those that find the row (the keys, and the field number it checks). The
- * download shades every other column, so that the file cannot say a column is
- * read that the comparison ignores: both come from RULES.
+ * The Excel file a person downloads to edit specimens (Peter, 2026-11-17: the
+ * uploads are by what a row is, specimens and samples; and the specimens file
+ * is for whatever is edited on a specimen, identifying first, not the CSV's
+ * 46 columns). A layout is a list of headings in order and the one place that
+ * says which columns are read from the file. The comparison finds columns by
+ * heading, so a file that has other columns under their own headings (an
+ * older download, or the CSV's columns pasted in) is still read: what differs
+ * in them is reported as columns Beeline does not read from this file.
+ *
+ * - `recognise`: to recognise the bee. Shaded, not read. `fieldNumber` is
+ *   still checked as the row's identity.
+ * - `read`: the columns the comparison takes as differences, white and
+ *   bold-headed: the specimen's two units, its identification and its
+ *   disposition with its remarks.
+ * - then the bookkeeping columns, shaded, read but not to be edited. The
+ *   `sampleVersion` of the CSV is not among them: only a sample's units use
+ *   it, and no file reads those today.
+ *
+ * The comparison still holds rules for a sample's dates and method, its
+ * locality and coordinates, but no file reads those columns: they wait for
+ * the samples upload (beeline-kgyd.4), which will bring its own layout.
  */
-export const READ_COLUMNS: readonly string[] = SPECIMEN_CSV_HEADER.filter((c) => NOT_COMPARED.has(c) || RULES.get(c)?.kind !== "not_applied");
-/** Read, but not to be edited: the file is edited against them. */
-export const LEAVE_ALONE_COLUMNS: readonly string[] = ["specimenId", "specimenVersion", "sampleVersion"];
-/** The columns shaded grey: the ones Beeline ignores, and the ones that must be left alone. */
-export const SHADED_COLUMNS: readonly string[] = SPECIMEN_CSV_HEADER.filter((c) => !READ_COLUMNS.includes(c) || LEAVE_ALONE_COLUMNS.includes(c));
-/** The columns whose headings are bold: the ones Beeline reads that a person may edit. */
-export const BOLD_COLUMNS: readonly string[] = READ_COLUMNS.filter((c) => !LEAVE_ALONE_COLUMNS.includes(c));
+export const BOOKKEEPING_COLUMNS = ["specimenId", "specimenVersion"] as const;
+
+export interface Layout {
+  recognise: readonly string[];
+  read: readonly string[];
+  /** Every heading, in order. */
+  headings: readonly string[];
+  /** The headings shaded grey: those that only recognise the bee, and the bookkeeping ones that must be left alone. */
+  shaded: readonly string[];
+}
+
+const layout = (recognise: readonly string[], read: readonly string[]): Layout => ({
+  recognise,
+  read,
+  headings: [...recognise, ...read, ...BOOKKEEPING_COLUMNS],
+  shaded: [...recognise, ...BOOKKEEPING_COLUMNS],
+});
+
+export const SPECIMENS_LAYOUT: Layout = layout(
+  ["fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa"],
+  ["scientificName", "identificationQualifier", "sex", "caste", "identifiedBy", "dateIdentified", "disposition", "occurrenceRemarks"],
+);
+
+// A layout cannot say a column is read that the comparison has no unit for, or that the download does not have.
+{
+  const known = new Set<string>(SPECIMEN_CSV_HEADER);
+  for (const c of SPECIMENS_LAYOUT.headings) if (!known.has(c)) throw new Error(`the specimens layout has a heading that is not a column of the download: ${c}`);
+  for (const c of SPECIMENS_LAYOUT.read) if (RULES.get(c) === undefined || RULES.get(c)!.kind === "not_applied") throw new Error(`the specimens layout reads ${c}, which the comparison does not take`);
+}
+
+/** What the comparison can read, for the samples upload that will use it and for tests: every column that belongs to a unit. */
+export const UNIT_COLUMNS: readonly string[] = SPECIMEN_CSV_HEADER.filter((c) => RULES.get(c) !== undefined && RULES.get(c)!.kind !== "not_applied");
 
 /** The most row numbers an item names; a count says how many more there are. A file of thousands of rows of one sample must not print them all. */
 export const ROWS_NAMED = 10;
@@ -352,11 +393,13 @@ export interface UploadPlan {
   /** A sample's dates and method, locality or coordinates that differ and are complete. */
   sampleDifferences: SampleDifference[];
   held: HeldItem[];
-  /** Differences in columns Beeline does not read from a file. */
+  /** Differences in columns Beeline does not read from this file: the columns that only help recognise the bee, and those it never reads. */
   notApplied: CellChange[];
 }
 
 export interface ParsedUpload {
+  /** Which columns are read from the file: the specimens layout, unless a test or a later upload says otherwise. */
+  layout: Layout;
   /** Column name to its position in a row. */
   columns: Map<string, number>;
   unrecognised: UnrecognisedColumn[];
@@ -402,7 +445,7 @@ export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits>
   const rows = body.filter((r) => [...r.cells.values()].some((c) => c.text.trim() !== ""));
   if (rows.length > MAX_ROWS) return { ok: false, refusal: "too_many_rows" };
   if (rows.length === 0) return { ok: false, refusal: "no_rows" };
-  return { ok: true, upload: { columns, unrecognised, otherSheets: read.otherSheets.filter((n) => !(REFERENCE_TABS as readonly string[]).includes(n)), rows } };
+  return { ok: true, upload: { layout: SPECIMENS_LAYOUT, columns, unrecognised, otherSheets: read.otherSheets.filter((n) => !(REFERENCE_TABS as readonly string[]).includes(n)), rows } };
 }
 
 // --- Reading a cell ---
@@ -522,8 +565,8 @@ const PROBLEM_OF_TYPE: Partial<Record<CellType, CellProblem>> = {
  * date, a formula, a boolean or an error) or that is not in the form the
  * column takes is a problem, not a value.
  */
-function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): Evaluated {
-  const { reads, kind } = RULES.get(column)!;
+function evaluate(column: string, cell: XlsxCell | undefined, nowText: string, applied: boolean): Evaluated {
+  const { reads } = RULES.get(column)!;
   const fileText = foldBreaks(cell?.text ?? "").trim();
   const type: CellType = cell?.type ?? "text";
   const was = foldBreaks(nowText).trim();
@@ -536,8 +579,8 @@ function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): 
   if (type === "number" && reads === "number" && roundedTo15(was) === Number(fileText) && roundedTo15(was) !== null) {
     return { column, nowText: was, fileText, value: readOwn(reads, was), differs: false, problem: null };
   }
-  // A column Beeline never reads from a file has no unit to hold: a difference is listed, whatever the cell is.
-  if (kind === "not_applied") {
+  // A column Beeline does not read from this file has no unit to hold: a difference is listed, whatever the cell is.
+  if (!applied) {
     const read = readText(reads, fileText, "text");
     const value = isProblem(read) ? ({ kind: "text", text: fileText } as const) : read;
     return { column, nowText: was, fileText, value, differs: !sameValue(value, readOwn(reads, was)), problem: null };
@@ -754,7 +797,8 @@ const heldCells = (cells: UnitCells, columns: string[]): HeldCell[] =>
 
 export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, options: { today?: string } = {}): Promise<UploadPlan> {
   const today = options.today ?? oregonToday();
-  const { columns, rows } = upload;
+  const { columns, rows, layout } = upload;
+  const readHere = new Set(layout.read);
   const blankCell: XlsxCell = { text: "", type: "text" };
   /** A cell of a row: a cell that is absent is blank. */
   const cell = (cells: Map<number, XlsxCell>, column: string): XlsxCell => {
@@ -786,7 +830,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
 
   const bySample = new Map<number, MatchedRow[]>();
   const touchedRows: Array<{ sampleId: number; touched: boolean }> = [];
-  const present = (unit: ChangeKind): string[] => columnsOfUnit(unit).filter((c) => columns.has(c));
+  const present = (unit: ChangeKind): string[] => columnsOfUnit(unit).filter((c) => readHere.has(c) && columns.has(c));
 
   rows.forEach(({ row, cells }, index) => {
     const id = idOf[index] ?? null;
@@ -828,7 +872,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
     for (const column of COMPARED_COLUMNS) {
       const nowText = specimen.cells.get(column) ?? "";
       if (columns.has(column)) {
-        const r = evaluate(column, cell(cells, column), nowText);
+        const r = evaluate(column, cell(cells, column), nowText, readHere.has(column));
         results.set(column, r);
         full.set(column, r);
       } else full.set(column, fromBeeline(column, nowText));
@@ -836,7 +880,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
     const touched = [...results.values()].some((r) => r.differs || r.problem !== null);
 
     for (const [column, result] of results) {
-      if (RULES.get(column)!.kind === "not_applied" && result.differs) {
+      if (!readHere.has(column) && result.differs) {
         plan.notApplied.push({ row, specimenId, fieldNumber, column, was: result.nowText, fileSays: result.fileText });
       }
     }

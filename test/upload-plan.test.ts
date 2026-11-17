@@ -8,7 +8,11 @@ import {
   HOLD_REASONS,
   MAX_FILE_BYTES,
   MAX_ROWS,
+  UNIT_COLUMNS,
+  comparePlan,
+  parseUpload,
   planUpload,
+  type Layout,
   type HeldItem,
   type UploadPlan,
 } from "../src/app/upload-plan.js";
@@ -28,7 +32,25 @@ const DEFAULT_TODAY = `${CURRENT_SEASON}-12-31`;
 /** Every reason a plan in this file has held something for, so the last test can say none of them is dead. */
 const seen = new Set<string>();
 
+/**
+ * A layout that reads every column that belongs to a unit. No file reads a sample's dates and method, its locality or
+ * coordinates today (the specimens file reads a specimen's two units), but the
+ * comparison's rules for them wait for the samples upload and are tested here, by giving the comparison a parsed
+ * upload that names them as read.
+ */
+const allRead: Layout = { recognise: [], read: UNIT_COLUMNS, headings: [], shaded: [] };
+
+/** The plan for a file's bytes, read as though every unit's columns were read from it. */
 async function plan(f: UploadFixture, bytes: Uint8Array, today = DEFAULT_TODAY): Promise<UploadPlan> {
+  const parsed = await parseUpload(bytes);
+  if (!parsed.ok) throw new Error(`refused: ${parsed.refusal}`);
+  const result = await comparePlan(f.db, { ...parsed.upload, layout: allRead }, { today });
+  for (const h of result.held) seen.add(h.reason);
+  return result;
+}
+
+/** The plan as the app makes it: the layout is the file's own. */
+async function planAsRead(f: UploadFixture, bytes: Uint8Array, today = DEFAULT_TODAY): Promise<UploadPlan> {
   const result = await planUpload(f.db, bytes, { today });
   if (!result.ok) throw new Error(`refused: ${result.refusal}`);
   for (const h of result.plan.held) seen.add(h.reason);
@@ -978,24 +1000,92 @@ describe("which sheet is read, and what else the workbook holds", () => {
     expect((await plan(f, await f.download())).otherSheets).toEqual([]);
   });
 
-  it("compares an unedited download with its four tabs of Beeline's own as no difference, and lists none of them as a tab that was not read", async () => {
+  it("compares an unedited specimens file with its tabs of Beeline's own as no difference, and lists none of them as a tab that was not read", async () => {
     const f = await uploadFixture();
-    const download = await f.download();
-    // The file as the app wrote it, untouched: the specimens tab and Beeline's own four.
+    const download = await f.file();
+    // The file as the app wrote it, untouched: the specimens tab and Beeline's three.
     const read = readXlsxHere(download);
-    expect(read.ok && read.otherSheets).toEqual(["names", "identifiers", "collectors", "about"]);
-    const p = await plan(f, download);
+    expect(read.ok && read.sheet.name).toBe("specimens");
+    expect(read.ok && read.otherSheets).toEqual(["names", "identifiers", "about"]);
+    const p = await planAsRead(f, download);
     nothingDiffers(p);
     expect(p.otherSheets).toEqual([]);
-    expect(p.counts.unchanged.active + p.counts.unchanged.settled).toBeGreaterThan(0);
+    expect(p.counts.unchanged.active + p.counts.unchanged.settled).toBe(4);
   });
 
   it("changing one of Beeline's own tabs changes nothing, and a tab of the person's own is still listed", async () => {
     const f = await uploadFixture();
-    const download = await f.download();
-    const p = await plan(f, edited(download, [], { sheets: { others: ["names", "identifiers", "collectors", "about", "my notes"] } }));
+    const p = await planAsRead(f, edited(await f.file(), [], { sheets: { others: ["names", "identifiers", "about", "my notes"] } }));
     nothingDiffers(p);
     expect(p.otherSheets).toEqual(["my notes"]);
+  });
+
+  it("reads the specimens file's identification and disposition columns as units", async () => {
+    const f = await uploadFixture();
+    const { a1, a2 } = f.ids;
+    const download = await f.file();
+    const p = await planAsRead(f, edited(download, [
+      { id: a1, set: { scientificName: "Bombus", identifiedBy: "A Person Beeline Has Never Seen" } },
+      // Pasted from another sheet: a real date cell, and a name for a specimen that had none.
+      { id: a2, set: { scientificName: "Bombus vosnesenskii", dateIdentified: { date: serialOf("2025-07-01") }, disposition: "missing", occurrenceRemarks: "Lost" } },
+    ]));
+    expect(p.differences.map((d) => [d.specimenId, d.unit, d.cells.filter((c) => c.differs).map((c) => c.column)])).toEqual([
+      [a1, "determination", ["scientificName", "identifiedBy"]],
+      [a2, "determination", ["scientificName", "dateIdentified"]],
+      [a2, "disposition", ["disposition", "occurrenceRemarks"]],
+    ]);
+    // An identifier Beeline has never seen is not a fault: nothing is held.
+    expect(p.held).toEqual([]);
+    // A disposition without its remark is held, as a unit.
+    const blank = await planAsRead(f, edited(download, [{ id: a1, set: { disposition: "missing" } }]));
+    expect(heldOf(blank, "remarks_blank")).toHaveLength(1);
+  });
+
+  it("reports an edit to a column that only helps recognise the bee as ignored, and makes no unit of it", async () => {
+    const f = await uploadFixture();
+    const { a1 } = f.ids;
+    const p = await planAsRead(f, edited(await f.file(), [{ id: a1, set: { eventDate: `${CURRENT_SEASON}-07-15`, locality: "Albany", recordedBy: "Somebody Else", fieldNumber: "OBA10001" } }]));
+    expect(p.differences).toEqual([]);
+    expect(p.sampleDifferences).toEqual([]);
+    expect(p.held).toEqual([]);
+    expect(p.notApplied.map((c) => c.column).sort()).toEqual(["eventDate", "locality", "recordedBy"]);
+    expect(p.notApplied.find((c) => c.column === "eventDate")).toMatchObject({ fileSays: `${CURRENT_SEASON}-07-15` });
+  });
+
+  it("still loads an older download with all the CSV's columns, and lists what differs in the columns it does not read", async () => {
+    const f = await uploadFixture();
+    const { a1 } = f.ids;
+    const p = await planAsRead(f, edited(await f.download(), [
+      { id: a1, set: { scientificName: "Bombus", locality: "Albany", decimalLatitude: "44.6", samplingProtocol: "blue vane trap", county: "Linn" } },
+    ]));
+    // The identification is a difference; the rest are columns this file does not read, and no sample unit is made of them.
+    expect(summary(p)).toEqual([["determination", "scientificName"]]);
+    expect(p.sampleDifferences).toEqual([]);
+    expect(p.held).toEqual([]);
+    expect(p.notApplied.map((c) => c.column).sort()).toEqual(["county", "decimalLatitude", "locality", "samplingProtocol"]);
+    nothingDiffers(await planAsRead(f, await f.download()));
+  });
+
+  it("holds a specimen's units whose specimenVersion is missing or no longer Beeline's, and needs no sampleVersion", async () => {
+    const f = await uploadFixture();
+    const { a1 } = f.ids;
+    const missing = await planAsRead(f, edited(await f.file(), [{ id: a1, set: { scientificName: "Bombus" } }], { dropColumns: ["specimenVersion"] }));
+    expect(heldOf(missing, "column_missing").map((h) => [h.unit, h.detail])).toEqual([["determination", "specimenVersion"]]);
+    const stale = await planAsRead(f, edited(await f.file(), [{ id: a1, set: { scientificName: "Bombus", specimenVersion: "old" } }]));
+    expect(heldOf(stale, "specimen_changed_since")).toHaveLength(1);
+    // The file has no sampleVersion, and nothing it reads needs one.
+    expect(matrixOf(await f.file())[0]).not.toContain("sampleVersion");
+    nothingDiffers(await planAsRead(f, await f.file()));
+  });
+
+  it("reaches each rule that waits for the samples upload through the comparison, given a file that names its columns as read", async () => {
+    const f = await uploadFixture();
+    const download = await f.download();
+    const sampleOnly = async (set: Record<string, TestCell>) => plan(f, edited(download, onSample(f, set)));
+    expect(summary(await sampleOnly({ samplingProtocol: "blue vane trap" }))).toEqual([["method_dates", "samplingProtocol"]]);
+    expect(summary(await sampleOnly({ eventDate: `${CURRENT_SEASON}-07-15` }))).toEqual([["method_dates", "eventDate"]]);
+    expect(summary(await sampleOnly({ locality: "Albany" }))).toEqual([["place", "locality"]]);
+    expect(summary(await sampleOnly({ decimalLatitude: "44.6", decimalLongitude: "-123.3" }))).toEqual([["coordinates", "decimalLatitude", "decimalLongitude"]]);
   });
 
   it("reads the only sheet whatever it is called", async () => {

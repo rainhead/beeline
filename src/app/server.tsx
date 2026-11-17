@@ -197,6 +197,8 @@ import {
   listSamples,
   listSpecimens,
   type Reader,
+  type Page,
+  type SpecimenRow,
   OUTSIDE,
   STAFF_READER,
   parseListingQuery,
@@ -1223,11 +1225,19 @@ export function createApp({
 
   // The file to edit and upload back (beeline-kgyd): every cell is text, so a
   // spreadsheet cannot reformat what it holds.
+  // The file for editing specimens, open to everyone since a later slice will let volunteers upload it. A few of the
+  // CSV's columns (SPECIMENS_LAYOUT); the samples will have a file of their own.
   app.get("/specimens.xlsx", async (c) => {
     const { fetch, timing } = await specimenDownload(c, "xlsx");
     // The tabs are read when the file is asked for; the CSV has none of this.
     const workbook = await specimenWorkbook(db, c.get("m"));
-    return c.body(xlsxStream("specimens", SPECIMEN_CSV_HEADER, fetch, specimenCsvRow, timing, workbook), 200, {
+    // The same values the CSV writes for the same headings, a few of its columns.
+    const at = workbook.header.map((h) => SPECIMEN_CSV_HEADER.indexOf(h as (typeof SPECIMEN_CSV_HEADER)[number]));
+    const toRow = (r: SpecimenRow, page: Page<SpecimenRow>) => {
+      const written = specimenCsvRow(r, page);
+      return at.map((i) => written[i]);
+    };
+    return c.body(xlsxStream("specimens", workbook.header, fetch, toRow, timing, workbook.options), 200, {
       "content-type": XLSX_CONTENT_TYPE,
       "content-disposition": `attachment; filename="${exportFilename("beeline-specimens", new Date(), "xlsx")}"`,
     });

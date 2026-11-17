@@ -2,14 +2,27 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { strToU8, unzipSync, zipSync } from "fflate";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
-import { MAX_FILE_BYTES } from "../src/app/upload-plan.js";
+import { MAX_FILE_BYTES, SPECIMENS_LAYOUT, UNIT_COLUMNS } from "../src/app/upload-plan.js";
 import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { rows } from "./helpers.js";
 import { CURRENT_SEASON } from "./helpers.js";
 import { bytesOf, edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 import { buildWorkbook, serialOf } from "./workbook.js";
+
+/**
+ * This file tests how the page shows every kind of unit, though the specimens file reads only a specimen's two: a
+ * sample's dates, place and coordinates wait for the samples upload (beeline-kgyd.4). So for the run of this file, and
+ * only this file, every column that belongs to a unit is named as read. The comparison's own tests do the same by
+ * giving it a parsed upload (test/upload-plan.test.ts); here it is the app's route that is given the wider layout.
+ */
+const narrow = SPECIMENS_LAYOUT.read;
+const readColumns = (read: readonly string[]) => {
+  (SPECIMENS_LAYOUT as { read: readonly string[] }).read = read;
+};
+beforeAll(() => readColumns(UNIT_COLUMNS));
+afterAll(() => readColumns(narrow));
 
 const ORIGIN = "http://localhost:3054";
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -53,7 +66,13 @@ describe("uploads: who may use them", () => {
     const page = await (await f.app.request("/specimens?scope=all")).text();
     expect(page).not.toContain(`href="/uploads"`);
     expect(page).toContain("/specimens.xlsx?");
-    expect((await f.app.request("/specimens.xlsx?scope=all")).status).toBe(200);
+    // The download is written from the layout the app has, so it gets the real one and not this file's wider one.
+    readColumns(narrow);
+    try {
+      expect((await f.app.request("/specimens.xlsx?scope=all")).status).toBe(200);
+    } finally {
+      readColumns(UNIT_COLUMNS);
+    }
   });
 
   it("refuses staff who are viewing Beeline as somebody else", async () => {
@@ -209,7 +228,7 @@ describe("the preview", () => {
     expect(body).toContain(esc(en.uploads.page.heldTodo.no_specimen!));
     expect(body).toContain("987654");
     // The columns Beeline does not read from a file come last, collapsed.
-    expect(body).toMatch(/<details>\s*<summary>[^<]*Differences in columns Beeline does not read from a file/);
+    expect(body).toMatch(/<details>\s*<summary>[^<]*Differences in columns Beeline does not read from this file/);
     expect(body.indexOf("<details>")).toBeGreaterThan(body.indexOf(en.uploads.page.heldHeading));
     expect(body).toContain("<q>Linn</q>");
     expect(body).toContain(en.uploads.page.colSettled);

@@ -4,6 +4,8 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { readXlsxHere, type ReadLimits } from "../src/app/xlsx-reader.js";
 import { buildWorkbook, type TestCell } from "./workbook.js";
+import { ALL, EMPTY_QUERY, SPECIMEN_CSV_HEADER, STAFF_READER, hostNamesOnce, listSpecimens, specimenCsvRow, textCell } from "../src/app/listings.js";
+import { writeXlsx } from "../src/app/xlsx.js";
 import { createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
@@ -17,8 +19,8 @@ const unusedInat: InatClient = {
  * one sample from the current season (`a1` with an expert's determination,
  * `a2` with none, `a3` with a volunteer's and no field number) and one of a
  * sample from a settled season (`b1`). The app answers as staff, or as a
- * volunteer when asked, and `download()` is its own specimens Excel file,
- * which the tests edit.
+ * volunteer when asked, and `file()` is the Excel file for editing
+ * specimens and `download()` every column of the CSV, which the tests edit.
  */
 export async function uploadFixture(
   signedInAs: "staffer" | "volunteer" = "staffer",
@@ -115,8 +117,23 @@ export async function uploadFixture(
     resolveSession: async () => ({ personId: resolved, login: signedInAs, iconUrl: null }),
   });
 
-  const download = async () => new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer());
-  return { instance, conn, db, app, paths, staffer, volunteer, ids, download };
+  /** The Excel file for editing specimens, as the staff member asked for it. */
+  const file = async () => new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer());
+  /**
+   * Every column of the CSV, in a workbook whose tab is the specimens file's, with the values the app writes: an
+   * older download. The comparison still holds rules for a sample's dates, place and coordinates, which no file reads
+   * today; the tests of those rules read this file with every such column named as read (`allRead`).
+   */
+  const download = async () => {
+    const page = await listSpecimens(db, { ...EMPTY_QUERY, scope: ALL }, 0, STAFF_READER, {
+      limit: 10_000,
+      offset: 0,
+      withTotal: false,
+      hostNames: await hostNamesOnce(db)(),
+    });
+    return writeXlsx({ sheetName: "specimens", header: SPECIMEN_CSV_HEADER }, page.rows.map((r) => specimenCsvRow(r, page).map(textCell)));
+  };
+  return { instance, conn, db, app, paths, staffer, volunteer, ids, download, file };
 }
 
 export type UploadFixture = Awaited<ReturnType<typeof uploadFixture>>;
@@ -149,6 +166,9 @@ export function edited(
   } = {},
 ): Uint8Array {
   const records = matrixOf(download);
+  // The tab keeps the name the download gave it, which says which file it is.
+  const tab = readXlsxHere(download);
+  const tabName = tab.ok ? tab.sheet.name : "specimens";
   const head = records[0]!;
   const idAt = head.indexOf("specimenId");
   const drop = new Set((options.dropColumns ?? []).map((c) => head.indexOf(c)));
@@ -168,7 +188,7 @@ export function edited(
       for (const [name, value] of Object.entries(options.addColumns ?? {})) cells.push(i === 0 ? name : value);
       return cells;
     });
-  return buildWorkbook(rows, options.sheets);
+  return buildWorkbook(rows, { name: tabName, ...options.sheets });
 }
 
 export const bytesOf = (text: string): Uint8Array => new TextEncoder().encode(text);

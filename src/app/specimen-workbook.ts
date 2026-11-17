@@ -2,20 +2,19 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { monthsBefore, oregonToday } from "../oregon-today.js";
 import type { Messages } from "./messages/en.js";
-import { BOLD_COLUMNS, LEAVE_ALONE_COLUMNS, READ_COLUMNS, SHADED_COLUMNS, SPECIMEN_CHOICES, columnRule } from "./upload-plan.js";
+import { SPECIMENS_LAYOUT, SPECIMEN_CHOICES, columnRule } from "./upload-plan.js";
 import type { ColumnChoices, ExtraSheet, XlsxWriterOptions } from "./xlsx.js";
 
 /**
  * What the specimens Excel download offers a person typing in it, beyond the
  * rows (beeline-kgyd.2): warnings on the columns with a fixed vocabulary,
  * tabs to look names up in, a tab that says what the file is, and a shade on
- * the columns Beeline does not read. Nothing in it is relied on: the upload
- * checks every cell again. It is built when the file is asked for and is not
- * part of the CSV.
+ * the columns Beeline does not read. The file is for editing specimens
+ * (`SPECIMENS_LAYOUT`, src/app/upload-plan.ts). Nothing in it is relied on: the upload checks every cell again. It is built
+ * when the file is asked for and is not part of the CSV.
  */
 
-/** Months back that a collector counts as active, and years back that an identifier does. */
-export const COLLECTOR_MONTHS = 24;
+/** Years back that an identifier counts as active. */
 export const IDENTIFIER_YEARS = 5;
 
 type Rows = Array<Array<string | null>>;
@@ -71,89 +70,70 @@ export async function identifierRows(db: Kysely<Database>, today: string): Promi
   return result.rows.map((r) => [r.name]);
 }
 
-/** People who collected a sample in the last 24 months, as the download's recordedBy writes one person: their display name. */
-export async function collectorRows(db: Kysely<Database>, today: string): Promise<Rows> {
-  const since = monthsBefore(today, COLLECTOR_MONTHS);
-  const result = await sql<{ name: string }>`
-    SELECT DISTINCT p.display_name AS name
-    FROM sample_collector c
-    JOIN person p ON p.entity_id = c.person_id
-    JOIN sample s ON s.entity_id = c.sample_id
-    WHERE s.date_end >= CAST(${since} AS DATE)
-    ORDER BY name`.execute(db);
-  return result.rows.map((r) => [r.name]);
-}
-
-/** The tabs' names and their one heading each, which is the main sheet's own column heading where a column takes suggestions from it. */
+/** The tabs' names. The headings of the lookup tabs are the main sheet's own column headings, where a column takes suggestions from one. */
 export const NAMES_TAB = "names";
 export const IDENTIFIERS_TAB = "identifiers";
-export const COLLECTORS_TAB = "collectors";
 export const ABOUT_TAB = "about";
 
-/** What the file says of each column Beeline reads, from the comparison's own rule for it and the words the upload page uses. */
+/** What the file says of each column Beeline reads from it, from the comparison's own rule for it and the words the upload page uses. */
 function aboutRows(m: Messages): Rows {
+  const layout = SPECIMENS_LAYOUT;
   const a = m.workbook.about;
   const p = m.uploads.page;
   const takes = (column: string): string => {
     if (column === "scientificName") return a.scientificName;
     if (column === "identifiedBy") return a.identifiedBy;
-    if (column === "fieldNumber") return a.fieldNumber;
-    if (column === "coordinateUncertaintyInMeters") return a.wholeNumber;
+    if (column === "occurrenceRemarks") return a.occurrenceRemarks;
     const words = (SPECIMEN_CHOICES as Record<string, readonly string[]>)[column];
-    if (words !== undefined) return a.oneOf(words);
+    if (words !== undefined) return a.oneOf(words.join(", "));
     switch (columnRule(column)?.reads) {
       case "number":
         return p.heldTodo.number_unreadable!;
-      case "days":
-        return a.dayRule;
       case "moment":
         return a.momentRule;
       default:
         return a.anyText;
     }
   };
-  const columns = READ_COLUMNS.filter((c) => !LEAVE_ALONE_COLUMNS.includes(c));
   return [
     [a.purposeTopic, a.purpose],
     [a.columnsTopic, a.columns],
     [a.leaveTopic, a.leave],
-    ...columns.map((c): Array<string | null> => [a.columnHeading(c), takes(c)]),
+    ...layout.read.map((c): Array<string | null> => [c, takes(c)]),
     [a.lookupTopic, a.lookup],
     [a.windowsTopic, a.windows],
   ];
 }
 
 export interface SpecimenWorkbook {
-  sheets: ExtraSheet[];
-  choices: Record<string, ColumnChoices>;
-  shadedColumns: readonly string[];
-  boldHeadings: readonly string[];
+  /** The headings of the main sheet, in order: a subset of the CSV's. */
+  header: readonly string[];
+  /** The writer's options for everything beyond the rows. */
+  options: Pick<XlsxWriterOptions, "sheets" | "choices" | "shadedColumns" | "boldHeadings">;
 }
 
-/** The extras of the specimens Excel download. `today` is a day in Oregon, which a test fixes. */
+/** The specimens file, beyond its rows. `today` is a day in Oregon, which a test fixes. */
 export async function specimenWorkbook(db: Kysely<Database>, m: Messages, today: string = oregonToday()): Promise<SpecimenWorkbook> {
-  const [names, identifiers, collectors] = await Promise.all([nameRows(db), identifierRows(db, today), collectorRows(db, today)]);
+  const layout = SPECIMENS_LAYOUT;
   const warn = (words: readonly string[], column: string): ColumnChoices => ({
     words,
     title: m.workbook.warning.title,
     message: m.workbook.warning.message(column),
   });
+  const sheets: ExtraSheet[] = [];
+  const choices: Record<string, ColumnChoices> = {};
+  // The four vocabularies warn on whichever file reads the column.
+  for (const [column, words] of Object.entries(SPECIMEN_CHOICES)) if (layout.read.includes(column)) choices[column] = warn(words, column);
+  const [names, identifiers] = await Promise.all([nameRows(db), identifierRows(db, today)]);
+  sheets.push(
+    { name: NAMES_TAB, header: ["scientificName", "taxonRank", "family"], rows: names },
+    { name: IDENTIFIERS_TAB, header: ["identifiedBy"], rows: identifiers },
+  );
+  choices.scientificName = { sheet: NAMES_TAB, column: "scientificName" };
+  choices.identifiedBy = { sheet: IDENTIFIERS_TAB, column: "identifiedBy" };
+  sheets.push({ name: ABOUT_TAB, header: [m.workbook.about.headingTopic, m.workbook.about.headingText], rows: aboutRows(m) });
   return {
-    sheets: [
-      { name: NAMES_TAB, header: ["scientificName", "taxonRank", "family"], rows: names },
-      { name: IDENTIFIERS_TAB, header: ["identifiedBy"], rows: identifiers },
-      { name: COLLECTORS_TAB, header: ["recordedBy"], rows: collectors },
-      { name: ABOUT_TAB, header: [m.workbook.about.headingTopic, m.workbook.about.headingText], rows: aboutRows(m) },
-    ],
-    choices: {
-      ...Object.fromEntries(Object.entries(SPECIMEN_CHOICES).map(([column, words]) => [column, warn(words, column)])),
-      scientificName: { sheet: NAMES_TAB, column: "scientificName" },
-      identifiedBy: { sheet: IDENTIFIERS_TAB, column: "identifiedBy" },
-    },
-    shadedColumns: SHADED_COLUMNS,
-    boldHeadings: BOLD_COLUMNS,
+    header: layout.headings,
+    options: { sheets, choices, shadedColumns: layout.shaded, boldHeadings: layout.read },
   };
 }
-
-/** For the writer. */
-export type SpecimenWorkbookOptions = Pick<XlsxWriterOptions, "sheets" | "choices" | "shadedColumns" | "boldHeadings">;

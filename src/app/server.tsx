@@ -1,4 +1,5 @@
-import { open, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -67,6 +68,8 @@ import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
+import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
+import { MAX_FILE_BYTES, comparePlan, parseUpload, safeBaseName } from "./upload-plan.js";
 import {
   listRuns,
   loadRun,
@@ -293,6 +296,8 @@ export interface AppDeps {
   derivePaths?: { demDir?: string; gazetteerPath?: string };
   /** Where rendered label sheets are kept (config.printRunsDir). */
   printRunsDir?: string;
+  /** Where uploaded files are kept (config.uploadsDir). */
+  uploadsDir?: string;
   /** The registry mark each print run raises (config.registryMarkPath, src/registry-mark.ts). */
   registryMarkPath?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -330,6 +335,7 @@ export function createApp({
   inatCheck,
   derivePaths,
   printRunsDir,
+  uploadsDir,
   registryMarkPath,
   programGovernance,
   programContactsPath,
@@ -341,6 +347,7 @@ export function createApp({
   // fails as it builds the app, whatever it goes on to request
   // (src/deployment-path.ts).
   const printRunsPath = printRunsDir ?? deploymentPath("data/print-runs");
+  const uploadsPath = uploadsDir ?? deploymentPath("data/uploads");
   const markPath = registryMarkPath ?? deploymentPath("data/registry-mark.json");
   const printWriter = printConn ?? conn;
   const corrections = correctionsPath ?? deploymentPath("data/corrections.csv");
@@ -2037,6 +2044,113 @@ export function createApp({
         />,
       ),
     );
+  });
+
+  // --- Comparing an edited copy of the specimens download (beeline-kgyd).
+  // Staff only, and refused while impersonating. The file is kept on disk
+  // under uploadsDir and compared with what Beeline says now; nothing is
+  // written to any record, and the page says so. ---
+  const uploadsGate = (c: Context<AppEnv>): Response | null => {
+    if (c.get("acting").impersonating) return c.text(c.get("m").errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    return null;
+  };
+  const uploadFolder = (id: number) => join(uploadsPath, String(id));
+  const uploadFile = (id: number, fileName: string) => join(uploadFolder(id), safeBaseName(fileName));
+  const ownUploads = (personId: number): Promise<UploadListRow[]> =>
+    db
+      .selectFrom("upload")
+      .select(["entity_id", "file_name", "uploaded_at", "row_count"])
+      .where("uploaded_by", "=", personId)
+      .orderBy("uploaded_at", "desc")
+      .orderBy("entity_id", "desc")
+      .execute();
+  const uploadForm = async (c: Context<AppEnv>, refusal: string | null, status: 200 | 400) => {
+    const m = c.get("m");
+    return c.html(
+      await page(c, m.uploads.title, <Uploads m={m} uploads={await ownUploads(c.get("session").personId)} refusal={refusal} />),
+      status,
+    );
+  };
+
+  app.get("/uploads", async (c) => uploadsGate(c) ?? uploadForm(c, null, 200));
+
+  app.post("/uploads", async (c) => {
+    const refused = uploadsGate(c);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    // A file far over the limit is refused on its declared size, before it is read.
+    if (Number(c.req.header("content-length") ?? 0) > MAX_FILE_BYTES + 1_000_000) {
+      return uploadForm(c, m.uploads.refused.too_large!, 400);
+    }
+    const form = await c.req.formData();
+    const file = form.get("file");
+    if (typeof file === "string" || file === null || file.size === 0) return uploadForm(c, m.uploads.refused.noFile!, 400);
+    const reference = String(form.get("reference") ?? "").trim() || null;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    // The bytes are on disk before anything reads them, in a folder named for
+    // the id the upload will have. A refused file takes its folder with it.
+    const id = Number(
+      (await sql<{ id: bigint }>`SELECT nextval('entity_id_seq') AS id`.execute(db)).rows[0]!.id,
+    );
+    const fileName = file.name === "" ? "upload.csv" : file.name;
+    await mkdir(uploadFolder(id), { recursive: true });
+    const keptAt = uploadFile(id, fileName);
+    try {
+      await writeFile(keptAt, bytes);
+      const parsed = parseUpload(new Uint8Array(await readFile(keptAt)));
+      if (!parsed.ok) {
+        await rm(uploadFolder(id), { recursive: true, force: true });
+        return uploadForm(c, m.uploads.refused[parsed.refusal] ?? parsed.refusal, 400);
+      }
+      await db
+        .insertInto("upload")
+        .values({
+          entity_id: id,
+          uploaded_by: c.get("session").personId,
+          uploaded_at: new Date().toISOString(),
+          file_name: fileName,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          byte_size: bytes.byteLength,
+          row_count: parsed.upload.rows.length,
+          reference,
+        })
+        .execute();
+    } catch (err) {
+      await rm(uploadFolder(id), { recursive: true, force: true });
+      throw err;
+    }
+    return c.redirect(uploadHref(id), 303);
+  });
+
+  app.get("/uploads/:id{[0-9]+}", async (c) => {
+    const refused = uploadsGate(c);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const row = await db
+      .selectFrom("upload as u")
+      .innerJoin("person as p", "p.entity_id", "u.uploaded_by")
+      .select(["u.entity_id", "u.file_name", "u.uploaded_at", "u.row_count", "u.reference", "p.display_name as uploader"])
+      .where("u.entity_id", "=", id)
+      .executeTakeFirst();
+    if (row === undefined) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(uploadFile(id, row.file_name));
+    } catch {
+      return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileMissing} />), 500);
+    }
+    const parsed = parseUpload(new Uint8Array(bytes));
+    if (!parsed.ok) {
+      return c.html(
+        await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.refused[parsed.refusal] ?? parsed.refusal} />),
+        500,
+      );
+    }
+    const plan = await comparePlan(db, parsed.upload);
+    const upload: UploadDetail = { ...row };
+    return c.html(await page(c, m.uploads.page.title(row.file_name), <UploadPreview m={m} upload={upload} plan={plan} />));
   });
 
   // One program-year's Darwin Core archive, as the dwc-archives job wrote

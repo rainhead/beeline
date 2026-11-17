@@ -639,6 +639,13 @@ export interface ListingPageOptions {
    * and, since beeline-rxn8, the season.
    */
   year?: number;
+  /**
+   * Only these specimens, by their entity ids. Not a listing filter either:
+   * loading an edited copy of the download asks what the download would say
+   * now about the specimens a file names (src/app/upload-plan.ts, beeline-kgyd).
+   * An empty list selects nothing.
+   */
+  ids?: readonly number[];
 }
 
 export interface Page<Row> {
@@ -1428,6 +1435,7 @@ async function filteredSpecimens(
   year?: number,
   exact: ExactLookup = {},
   rollup = true,
+  ids?: readonly number[],
 ) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   const place = placeColumns(reader);
@@ -1526,6 +1534,7 @@ async function filteredSpecimens(
   // link to /specimens?flag= must not name a filter it does not apply.
   if (query.flag !== "") base = base.where(flaggedWith(query.flag));
   if (year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", year);
+  if (ids !== undefined) base = base.where("sp.entity_id", "in", ids.length === 0 ? [-1] : [...ids]);
 
   return base;
 }
@@ -1539,7 +1548,7 @@ export async function listSpecimens(
 ): Promise<Page<SpecimenRow>> {
   const hidden = withheld(reader);
   const place = placeColumns(reader);
-  const base = await filteredSpecimens(db, query, personId, reader, opts.year, opts.exact);
+  const base = await filteredSpecimens(db, query, personId, reader, opts.year, opts.exact, true, opts.ids);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;

@@ -1133,6 +1133,18 @@ export interface WorksheetDeterminationTable {
   loaded_at: Timestamped;
 }
 
+/** A file somebody uploaded to be compared with what Beeline says (schema/047, beeline-kgyd). The bytes are on disk. */
+export interface UploadTable {
+  entity_id: Generated<number>;
+  uploaded_by: number;
+  uploaded_at: Timestamped;
+  file_name: string;
+  sha256: string;
+  byte_size: number;
+  row_count: number;
+  reference: string | null;
+}
+
 /** An old-Beeline record promotion set aside as a second print, tied to its specimen (beeline-iuva). */
 export interface LegacyDuplicateRecordTable {
   _id: string;
@@ -1776,6 +1788,7 @@ export interface Database {
   specimen_disposition: SpecimenDispositionTable;
   worksheet_determination: WorksheetDeterminationTable;
   legacy_duplicate_record: LegacyDuplicateRecordTable;
+  upload: UploadTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;
   determination_batch: DeterminationBatchTable;

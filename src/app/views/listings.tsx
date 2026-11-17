@@ -975,6 +975,7 @@ export function SpecimenListing(
       ) : (
         <ListingActions m={m} path={path} query={query} total={page.total}>
           {admin && <BulkActions m={m} path={path} query={query} />}
+          {admin && <a href="/uploads">{m.uploads.linkFromSpecimens}</a>}
         </ListingActions>
       )}
       {page.rows.length === 0 ? (

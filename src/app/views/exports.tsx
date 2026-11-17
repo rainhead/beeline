@@ -45,6 +45,8 @@ export function Exports({
         <a href="/exports/changes">{m.legacyChanges.linkFromExports}</a>
         <br />
         <a href="/exports/held-back">{m.heldBack.linkFromExports}</a>
+        <br />
+        <a href="/uploads">{m.uploads.linkFromExports}</a>
       </p>
       <h2>{e.occurrences}</h2>
       {occurrences === null ? (

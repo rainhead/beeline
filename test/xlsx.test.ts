@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
-import { MAX_CELL_CHARS, MAX_COLUMNS, MAX_SHEET_ROWS, columnIndex, columnName, escapeText, writeXlsx, xlsxWriter } from "../src/app/xlsx.js";
+import { MAX_CELL_CHARS, MAX_CHOICES_CHARS, MAX_COLUMNS, MAX_SHEET_ROWS, columnIndex, columnName, escapeText, writeXlsx, xlsxWriter } from "../src/app/xlsx.js";
 import type { XlsxCell, XlsxRead } from "../src/app/xlsx.js";
 import { readXlsx, readXlsxHere } from "../src/app/xlsx-reader.js";
 import { buildWorkbook, serialOf } from "./workbook.js";
@@ -113,6 +113,34 @@ describe("writing a workbook, and what SheetJS makes of it", () => {
     // Style 1 is the Text format, and every column has it, so a cell nobody wrote is text when somebody types in it.
     expect(new TextDecoder().decode(parts["xl/styles.xml"])).toContain(`<xf numFmtId="49"`);
     expect(sheet).toMatch(/<col min="1" max="3"[^>]*style="1"/);
+  });
+
+  it("offers a column's words as a dropdown below its heading, and keeps the cells text", () => {
+    const bytes = writeXlsx({ sheetName: "s", header: ["a", "sex", "state"], choices: { sex: ["female", "male"], state: ["in collection", "R&D <1>"] } }, [
+      ["1", "female", null],
+    ]);
+    const sheet = new TextDecoder().decode(unzipSync(bytes)["xl/worksheets/sheet1.xml"]);
+    // After the rows, where the format puts it, one list for each column, from row 2 to the sheet's last row.
+    expect(sheet).toMatch(/<\/sheetData><dataValidations count="2">.*<\/dataValidations><\/worksheet>$/);
+    expect(sheet).toContain(`<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="B2:B${MAX_SHEET_ROWS}"><formula1>"female,male"</formula1></dataValidation>`);
+    // The list is XML text like any other.
+    expect(sheet).toContain(`sqref="C2:C${MAX_SHEET_ROWS}"><formula1>"in collection,R&amp;D &lt;1&gt;"</formula1>`);
+    // The cells are what they were: text, in the Text format.
+    const read = readXlsxHere(bytes);
+    if (!read.ok) throw new Error(read.refusal);
+    for (const row of read.sheet.rows) for (const cell of row.cells.values()) expect(cell.type).toBe("text");
+    // No list, no element.
+    expect(new TextDecoder().decode(unzipSync(writeXlsx({ sheetName: "s", header: ["a"] }, []))["xl/worksheets/sheet1.xml"])).not.toContain("dataValidation");
+  });
+
+  it("refuses choices it cannot write as a list", () => {
+    const write = (choices: Record<string, string[]>) => () => writeXlsx({ sheetName: "s", header: ["a"], choices }, []);
+    expect(write({ b: ["x"] })).toThrow(/does not have: b/);
+    expect(write({ a: [] })).toThrow(/without commas or quotes/);
+    expect(write({ a: ["one, two"] })).toThrow(/without commas or quotes/);
+    expect(write({ a: ['say "x"'] })).toThrow(/without commas or quotes/);
+    expect(write({ a: ["x".repeat(MAX_CHOICES_CHARS + 1)] })).toThrow(/more than 255 characters/);
+    expect(write({ a: ["x".repeat(MAX_CHOICES_CHARS)] })).not.toThrow();
   });
 
   it("writes the same file whether it is given all at once or a page at a time", () => {

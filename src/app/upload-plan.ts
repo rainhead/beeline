@@ -18,6 +18,19 @@ import { columnName, type CellType, type XlsxCell, type XLSX_REFUSALS } from "./
 import { readXlsx, type ReadLimits } from "./xlsx-reader.js";
 
 /**
+ * The columns of the specimens download whose cells take one of a few words,
+ * with the words: the Excel download offers them as a dropdown, and they are
+ * the lists UNIT_RULES holds a cell to, so the file cannot offer a word the
+ * comparison would then hold.
+ */
+export const SPECIMEN_CHOICES = {
+  disposition: DISPOSITIONS,
+  identificationQualifier: DETERMINATION_QUALIFIERS,
+  sex: DETERMINATION_SEXES,
+  caste: DETERMINATION_CASTES,
+} as const;
+
+/**
  * Comparing an edited copy of the specimens download with what Beeline says
  * now (beeline-kgyd). Nothing here writes: the plan says what differs and what
  * is held, and a later slice applies it. See

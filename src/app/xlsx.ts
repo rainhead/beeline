@@ -84,11 +84,47 @@ export interface XlsxWriter {
  * call returns the bytes ready to send so far; together, in order, they are
  * the file.
  */
-export function xlsxWriter(opts: { sheetName: string; header: readonly string[]; maxRows?: number }): XlsxWriter {
+export interface XlsxWriterOptions {
+  sheetName: string;
+  header: readonly string[];
+  maxRows?: number;
+  /**
+   * The words a column's cells may hold, by the column's heading: the
+   * spreadsheet then offers them as a dropdown in every cell below the
+   * heading and refuses anything else typed there. A cell may still be left
+   * blank. The cells stay text.
+   */
+  choices?: Readonly<Record<string, readonly string[]>>;
+}
+
+/** The most characters a list of choices may come to, commas included: the limit of a list written into the sheet itself. */
+export const MAX_CHOICES_CHARS = 255;
+
+/** The dropdowns, as the sheet's data validations; nothing when no column has choices. */
+function choicesXml(header: readonly string[], choices: Readonly<Record<string, readonly string[]>>): string {
+  const lists = Object.entries(choices).map(([column, words]) => {
+    const at = header.indexOf(column);
+    if (at < 0) throw new Error(`choices for a column the sheet does not have: ${column}`);
+    // The list is written as one quoted, comma-separated string, so a word cannot hold either character.
+    if (words.length === 0 || words.some((w) => w === "" || /[",]/.test(w))) throw new Error(`choices for ${column} must be words without commas or quotes`);
+    const list = words.join(",");
+    if (list.length > MAX_CHOICES_CHARS) throw new Error(`choices for ${column} come to more than ${MAX_CHOICES_CHARS} characters`);
+    const letters = columnName(at);
+    return (
+      `<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="${letters}2:${letters}${MAX_SHEET_ROWS}">` +
+      `<formula1>${escapeText(`"${list}"`)}</formula1></dataValidation>`
+    );
+  });
+  return lists.length === 0 ? "" : `<dataValidations count="${lists.length}">${lists.join("")}</dataValidations>`;
+}
+
+export function xlsxWriter(opts: XlsxWriterOptions): XlsxWriter {
   const { sheetName, header } = opts;
   const maxRows = opts.maxRows ?? MAX_SHEET_ROWS;
   if (sheetName === "" || sheetName.length > 31 || /[[\]:*?/\\]/.test(sheetName)) throw new Error(`not a sheet name: ${sheetName}`);
   if (header.length === 0 || header.length > MAX_COLUMNS) throw new Error(`a sheet needs between 1 and ${MAX_COLUMNS} columns`);
+  // Worked out before anything is written, so a bad list fails the download at its start and not at its end.
+  const dropdowns = choicesXml(header, opts.choices ?? {});
   const out: Uint8Array[] = [];
   const zip = new Zip((err, chunk) => {
     if (err) throw err;
@@ -180,7 +216,7 @@ export function xlsxWriter(opts: { sheetName: string; header: readonly string[];
       return take();
     },
     tail() {
-      sheet.push(encoder.encode(`</sheetData></worksheet>`), true);
+      sheet.push(encoder.encode(`</sheetData>${dropdowns}</worksheet>`), true);
       zip.end();
       return take();
     },
@@ -188,7 +224,7 @@ export function xlsxWriter(opts: { sheetName: string; header: readonly string[];
 }
 
 /** A whole workbook in one piece, for tests and small files. */
-export function writeXlsx(opts: { sheetName: string; header: readonly string[]; maxRows?: number }, rows: ReadonlyArray<ReadonlyArray<string | null>>): Uint8Array {
+export function writeXlsx(opts: XlsxWriterOptions, rows: ReadonlyArray<ReadonlyArray<string | null>>): Uint8Array {
   const writer = xlsxWriter(opts);
   const chunks = [...writer.head(), ...writer.rows(rows), ...writer.tail()];
   const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));

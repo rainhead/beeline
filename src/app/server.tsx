@@ -70,7 +70,7 @@ import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
-import { MAX_FILE_BYTES, comparePlan, parseUpload, type Parsed } from "./upload-plan.js";
+import { MAX_FILE_BYTES, SPECIMEN_CHOICES, comparePlan, parseUpload, type Parsed } from "./upload-plan.js";
 import type { ReadLimits } from "./xlsx-reader.js";
 import {
   listRuns,
@@ -1224,7 +1224,7 @@ export function createApp({
   // spreadsheet cannot reformat what it holds.
   app.get("/specimens.xlsx", async (c) => {
     const { fetch, timing } = await specimenDownload(c, "xlsx");
-    return c.body(xlsxStream("specimens", SPECIMEN_CSV_HEADER, fetch, specimenCsvRow, timing), 200, {
+    return c.body(xlsxStream("specimens", SPECIMEN_CSV_HEADER, fetch, specimenCsvRow, timing, SPECIMEN_CHOICES), 200, {
       "content-type": XLSX_CONTENT_TYPE,
       "content-disposition": `attachment; filename="${exportFilename("beeline-specimens", new Date(), "xlsx")}"`,
     });

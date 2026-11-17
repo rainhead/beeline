@@ -1829,8 +1829,10 @@ export function xlsxStream<Row>(
   fetch: (limit: number, offset: number) => Promise<Page<Row>>,
   toRow: (row: Row, page: Page<Row>) => readonly unknown[],
   timing?: CsvTiming,
+  /** The words a column may hold, by its heading, offered as a dropdown (xlsxWriter's `choices`). */
+  choices?: Readonly<Record<string, readonly string[]>>,
 ): ReadableStream<Uint8Array> {
-  const writer = xlsxWriter({ sheetName, header });
+  const writer = xlsxWriter({ sheetName, header, choices });
   return pagedStream(
     header[0] ?? "xlsx",
     fetch,

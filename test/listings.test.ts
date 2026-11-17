@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { readXlsxHere as readXlsx } from "../src/app/xlsx-reader.js";
+import { columnIndex } from "../src/app/xlsx.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
 import { refreshPlantCommonNames } from "../src/plant-common-names.js";
@@ -1944,6 +1945,23 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     expect(xml).not.toContain("<f>");
     // Every cell has the Text format.
     for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toContain(`s="1"`);
+  });
+
+  it("offers the words Beeline takes for disposition, qualifier, sex and caste as dropdowns", async () => {
+    const { app } = await listingApp("staffer");
+    const bytes = new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer());
+    const xml = new TextDecoder().decode(unzipSync(bytes)["xl/worksheets/sheet1.xml"]);
+    const read = readXlsx(bytes);
+    if (!read.ok) throw new Error(read.refusal);
+    const head = [...read.sheet.rows[0]!.cells.values()].map((c) => c.text);
+    // Each list sits on its own column, whatever position the column has.
+    const lists = new Map([...xml.matchAll(/sqref="([A-Z]+)2:[A-Z]+\d+"><formula1>"([^"]*)"<\/formula1>/g)].map((m) => [head[columnIndex(m[1]!)!], m[2]]));
+    expect(Object.fromEntries(lists)).toEqual({
+      disposition: "in collection,missing",
+      identificationQualifier: "cf.,aff.,nr.",
+      sex: "female,male,gynandromorph",
+      caste: "gyne,worker,drone",
+    });
   });
 
   it("is stamped as an Excel file, and answers who may have it as the CSV does", async () => {

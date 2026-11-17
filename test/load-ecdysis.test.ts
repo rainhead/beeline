@@ -575,3 +575,80 @@ describe("the CLI's arguments", () => {
     expect(parseArgs(["--prefix", "OSAC_", "archive"])).toMatchObject({ path: "archive", catalogPrefix: "OSAC_" });
   });
 });
+
+describe("the archive a collection publishes", () => {
+  // British Columbia's published archive (content/dwca/NBSBC-BCBA_DwC-A.zip,
+  // 2026-11-03) has no identificationIsCurrent column. Its identifications
+  // file starts coreid,identifiedBy,dateIdentified,identificationQualifier,
+  // scientificName,…,recordID,modified, and its catalog numbers are BCBA_
+  // plus the field number. The rows below are synthetic, in that shape.
+  const IDS_HEADER = "coreid,identifiedBy,dateIdentified,identificationQualifier,scientificName,identificationRemarks,recordID,modified\n";
+  const OCC_HEADER = "id,catalogNumber,recordID,scientificName,identificationQualifier,identifiedBy,dateIdentified,identificationRemarks,modified\n";
+  const published = async (occurrences: string, identifications: string) => {
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-published-"));
+    await writeFile(join(dir, "occurrences.csv"), OCC_HEADER + occurrences);
+    await writeFile(join(dir, "identifications.csv"), IDS_HEADER + identifications);
+    return dir;
+  };
+  const events = () =>
+    rows(conn, `SELECT d.specimen_id, an.scientific_name FROM determination d JOIN animal an ON an.entity_id = d.animal_id
+                WHERE d.channel = 'ecdysis_import' ORDER BY d.specimen_id, d.recorded_at`);
+
+  test("the newest history row that says what the occurrence says is current, and is recorded once", async () => {
+    const dir = await published(
+      "200,BCBA_2303966,occ-a,Bombus vosnesenskii,,B. Zand,,,2025-09-25 16:10:48\n",
+      "200,B. Zand,,,Bombus,,id-a-old,2025-08-01 10:00:00\n" + "200,B. Zand,,,Bombus vosnesenskii,,id-a,2025-09-25 16:10:48\n",
+    );
+    const result = await loadEcdysis(conn, { path: dir, catalogPrefix: "BCBA_", determinerAliases: ALIASES });
+    expect(result.loaded).toBe(2);
+    expect(await events()).toEqual([
+      [a, "Bombus"],
+      [a, "Bombus vosnesenskii"],
+    ]);
+    expect((await record(a))?.[0]).toBe("Bombus vosnesenskii");
+    // The current identification keeps its own recordID; no occurrence row stands in for it.
+    expect(await rows(conn, `SELECT record_id FROM ecdysis_identification ORDER BY record_id`)).toEqual([["id-a"], ["id-a-old"]]);
+    // And loading it again records nothing.
+    expect((await loadEcdysis(conn, { path: dir, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).loaded).toBe(0);
+  });
+
+  test("where no history row says what the occurrence says, the occurrence is the current identification", async () => {
+    const dir = await published(
+      "200,BCBA_2303966,occ-a,Andrena sladeni,,B. Zand,,,2025-09-25 16:10:48\n",
+      "200,B. Zand,,,Bombus vosnesenskii,,id-a,2025-08-01 10:00:00\n",
+    );
+    await loadEcdysis(conn, { path: dir, catalogPrefix: "BCBA_", determinerAliases: ALIASES });
+    expect(await events()).toEqual([
+      [a, "Bombus vosnesenskii"],
+      [a, "Andrena sladeni"],
+    ]);
+    expect((await record(a))?.[0]).toBe("Andrena sladeni");
+  });
+
+  test("one collection's archive is not refused for being older than another collection's", async () => {
+    // Each atlas's archive is taken on its own schedule, so the order check
+    // compares an archive only with what its own collection already loaded.
+    const washington = await mkdtemp(join(tmpdir(), "ecdysis-wa-"));
+    await writeFile(
+      join(washington, "occurrences.csv"),
+      OCC_HEADER + "100,WSDA_2303966,occ-wa,Bombus vosnesenskii,,Ellen Expert,2026,,2026-11-10 13:01:00\n",
+    );
+    await writeFile(
+      join(washington, "identifications.csv"),
+      "coreid,identifiedBy,dateIdentified,identificationQualifier,scientificName,identificationIsCurrent,identificationRemarks,recordID,modified\n" +
+        "100,Ellen Expert,2026,,Bombus vosnesenskii,1,,id-wa,2026-11-10 13:01:00\n",
+    );
+    await loadEcdysis(conn, { path: washington, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    const bc = await published(
+      "201,BCBA_2303967,occ-bc,Andrena sladeni,,B. Zand,,,2025-10-13 18:35:00\n",
+      "201,B. Zand,,,Andrena sladeni,,id-bc,2025-10-13 18:35:00\n",
+    );
+    expect((await loadEcdysis(conn, { path: bc, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).loaded).toBe(1);
+    // An older export of the same collection is still refused.
+    const older = await published(
+      "201,BCBA_2303967,occ-bc,Andrena sladeni,,B. Zand,,,2025-01-01 00:00:00\n",
+      "201,B. Zand,,,Andrena sladeni,,id-bc-older,2025-01-01 00:00:00\n",
+    );
+    await expect(loadEcdysis(conn, { path: older, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).rejects.toThrow(/before the newest already loaded/);
+  });
+});

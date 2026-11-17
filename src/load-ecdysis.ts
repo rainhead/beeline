@@ -187,16 +187,41 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                 ${await occurrenceColumn("genus")} AS genus_text
          FROM read_csv(${sqlString(files.occurrences)}, header = true, all_varchar = true)`;
     if (files.input === "archive") {
+      const currentFlag = await optionalColumn(conn, files.identifications, "identificationIsCurrent");
       await conn.run(
         `CREATE OR REPLACE TEMP TABLE ecd_identification AS
          SELECT "coreid" AS occ_id, "recordID" AS record_id,
                 trim("identifiedBy") AS identified_by, trim("dateIdentified") AS date_identified,
                 trim("identificationQualifier") AS qualifier_text, trim("scientificName") AS scientific_name,
-                "identificationIsCurrent" = '1' AS is_current,
+                coalesce(${currentFlag} = '1', false) AS is_current,
                 trim("identificationRemarks") AS remarks, "modified" AS entered_text,
                 ${await optionalColumn(conn, files.identifications, "genus")} AS genus_text
          FROM read_csv(${sqlString(files.identifications)}, header = true, all_varchar = true)`,
       );
+      // The archive a collection publishes (content/dwca/<code>_DwC-A.zip,
+      // British Columbia's on 2026-11-03) leaves the current flag out
+      // altogether, unlike the one the signed-in download builds. There the
+      // current identification is the newest history row that says what the
+      // occurrence says, so it keeps its recordID. Adding the occurrence row
+      // beside it, as below, recorded the same identification twice on 8,998
+      // of BC's 9,374 specimens. An archive that has the column is left to
+      // its flags, so Washington's loads exactly as it did.
+      if (currentFlag === "CAST(NULL AS VARCHAR)") {
+        await conn.run(
+          `UPDATE ecd_identification SET is_current = true
+           WHERE record_id IN (
+             SELECT i.record_id
+             FROM ecd_identification i
+             JOIN (${occurrenceAsCurrent}) o ON o.occ_id = i.occ_id
+               AND i.scientific_name IS NOT DISTINCT FROM o.scientific_name
+               AND i.identified_by IS NOT DISTINCT FROM o.identified_by
+               AND i.qualifier_text IS NOT DISTINCT FROM o.qualifier_text
+               -- "s.d." (no date) in the history is a blank on the occurrence;
+               -- a date the occurrence has since corrected is a new statement.
+               AND coalesce(nullif(i.date_identified, 's.d.'), '') = coalesce(nullif(o.date_identified, 's.d.'), '')
+             QUALIFY row_number() OVER (PARTITION BY i.occ_id ORDER BY i.entered_text DESC, i.record_id DESC) = 1)`,
+        );
+      }
       // Symbiota keeps an occurrence's current determination on the
       // occurrence itself; the history's flag usually agrees, but not always.
       // 484 occurrences in Washington's 2026-09-24 archive flag nothing
@@ -479,8 +504,18 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       conn,
       // To the minute: a flat export stamps entries to the minute and the
       // archive to the second, and the same moment must not read as older.
+      // Against this collection's own identifications only, told apart by
+      // the catalog prefix: each atlas's archive is taken on its own
+      // schedule, so British Columbia's newest entry being older than
+      // Washington's says nothing about the order BC's exports were taken in.
       `SELECT date_trunc('minute', max(entered_at)),
-              (SELECT date_trunc('minute', max(entered_at)) FROM ecdysis_identification) FROM ecd_candidate`,
+              (SELECT date_trunc('minute', max(e.entered_at))
+                 FROM ecdysis_identification e
+                 JOIN determination d ON d.entity_id = e.determination_id
+                 JOIN specimen_catalog_number c ON c.specimen_id = d.specimen_id
+                WHERE left(c.catalog_number, length($1)) = $1)
+       FROM ecd_candidate`,
+      [prefix],
     )) as [[Date | null, Date | null]];
     if (!opts.force && newestInExport !== null && newestLoaded !== null && newestInExport < newestLoaded) {
       throw new Error(

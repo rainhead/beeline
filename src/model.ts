@@ -841,8 +841,8 @@ export interface SampleLocalitySuggestionCurrentView {
 }
 
 /**
- * schema/038: what kind of area (beeline-9jd4), in the order the Areas page
- * lists them. A county includes a BC regional district; an ecoregion is an
+ * schema/038: what kind of area (beeline-9jd4). The Areas page lists them by
+ * their headings, in alphabetical order, not in this order. A county includes a BC regional district; an ecoregion is an
  * EPA Level III one (beeline-l5so); a wildlife_area is a unit of a WDFW
  * wildlife area; a state_park includes BC's provincial parks and reserves; a
  * park is any other park or reserve OpenStreetMap outlines.

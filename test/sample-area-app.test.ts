@@ -203,6 +203,11 @@ describe("the Areas page (beeline-9jd4)", () => {
     expect(html).toContain(en.areas.kind.refuge);
     expect(html).toContain(`href="/samples?scope=all&amp;area=usfws%3A99001"`);
     expect(html).toContain("William L. Finley National Wildlife Refuge");
+    // The kinds come in alphabetical order of their headings (Peter, 2026-11-17).
+    const headings = [en.areas.kind.county, en.areas.kind.ecoregion, en.areas.kind.wilderness, en.areas.kind.refuge];
+    const at = headings.map((h) => html.indexOf(`>${h}</h2>`));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect(at).toEqual([...at].sort((x, y) => x - y));
     // No kind that nothing lies inside.
     expect(html).not.toContain(en.areas.kind.island);
   });

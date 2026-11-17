@@ -9,8 +9,11 @@ import { DataTable, EmptyState, PageHeader } from "./components/index.js";
  * Staff only (src/app/areas.ts says why), so an area's name links to the
  * Samples listing filtered to exactly that area, across every program.
  */
-export function AreaIndex({ m, groups }: { m: Messages; groups: AreaGroup[] }) {
+export function AreaIndex({ m, groups: unordered }: { m: Messages; groups: AreaGroup[] }) {
   const a = m.areas;
+  // The kinds in alphabetical order of their headings (Peter, 2026-11-17).
+  const collator = new Intl.Collator(m.locale, { sensitivity: "base" });
+  const groups = [...unordered].sort((x, y) => collator.compare(a.kind[x.kind], a.kind[y.kind]));
   return (
     <>
       <PageHeader title={a.title} lede={a.intro} />

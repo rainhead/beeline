@@ -35,7 +35,7 @@ export interface AreaGroup {
   areas: AreaSummary[];
 }
 
-/** Every kind that has an area with a sample inside, in AREA_KINDS' order, each kind's areas by name. */
+/** Every kind that has an area with a sample inside, each kind's areas by name. The page orders the kinds, by their headings. */
 export async function listAreas(db: Kysely<Database>): Promise<AreaGroup[]> {
   const { rows } = await sql<{ kind: AreaKind; source: string; source_id: string; name: string; active: number; settled: number }>`
     SELECT sac.kind, sac.source, sac.source_id, sac.name,

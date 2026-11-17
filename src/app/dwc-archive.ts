@@ -5,6 +5,7 @@ import {
   identifiedByID,
   OUTSIDE,
   pagedStream,
+  ROUND_TRIP_COLUMNS,
   SPECIMEN_DWC_COLUMNS,
   SPECIMEN_OWN_COLUMNS,
   specimenCsvRow,
@@ -18,9 +19,12 @@ import type { CsvTiming } from "./request-timing.js";
  * for people reading Beeline's own downloads; the archive is what goes to
  * Ecdysis and GBIF, and it carries scientific names only (Peter, 2026-11-14:
  * the listings CSV and the API carry the common name, the archive and labels
- * do not).
+ * do not). The columns that serve loading an edited download back into
+ * Beeline (beeline-kgyd) are Beeline's bookkeeping and mean nothing to a
+ * museum database. Caste is left out with them for now: whether the archive
+ * should publish it, and under which term, has not been decided.
  */
-const NOT_IN_ARCHIVE = new Set<string>(["hostCommonName"]);
+const NOT_IN_ARCHIVE = new Set<string>(["hostCommonName", "caste", ...ROUND_TRIP_COLUMNS]);
 const ARCHIVE_OWN_COLUMNS = SPECIMEN_OWN_COLUMNS.filter((c) => !NOT_IN_ARCHIVE.has(c));
 /** Where each column the archive keeps sits in a specimens CSV row. */
 const ARCHIVE_KEEP = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS]

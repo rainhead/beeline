@@ -125,6 +125,7 @@ export async function scratchPaths() {
     sampleStatePath: join(dir, "sample-state.csv"),
     programContactsPath: join(dir, "program-contacts.csv"),
     printRunsDir: join(dir, "print-runs"),
+    uploadsDir: join(dir, "uploads"),
     registryMarkPath: join(dir, "registry-mark.json"),
   };
 }

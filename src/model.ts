@@ -1094,7 +1094,12 @@ export type DeterminationChannel = "in_app" | "ecdysis_import" | "legacy_import"
 
 /** Open nomenclature: how sure the determiner was. Never sp./spp., which a
  * genus-rank determination already says. */
-export type DeterminationQualifier = "cf." | "aff." | "nr.";
+export const DETERMINATION_QUALIFIERS = ["cf.", "aff.", "nr."] as const;
+export type DeterminationQualifier = (typeof DETERMINATION_QUALIFIERS)[number];
+
+/** The words the CHECKs on determination.sex and determination.caste allow (schema/040); test/upload-plan.test.ts reads the schema to keep these in step. */
+export const DETERMINATION_SEXES = ["female", "male", "gynandromorph"] as const;
+export const DETERMINATION_CASTES = ["gyne", "worker", "drone"] as const;
 
 export interface DeterminationTable {
   entity_id: Generated<number>;
@@ -1154,6 +1159,18 @@ export interface WorksheetDeterminationTable {
   sheet: string;
   row_number: number;
   loaded_at: Timestamped;
+}
+
+/** A file somebody uploaded to be compared with what Beeline says (schema/047, beeline-kgyd). The bytes are on disk. */
+export interface UploadTable {
+  entity_id: Generated<number>;
+  uploaded_by: number;
+  uploaded_at: Timestamped;
+  file_name: string;
+  sha256: string;
+  byte_size: number;
+  row_count: number;
+  reference: string | null;
 }
 
 /** An old-Beeline record promotion set aside as a second print, tied to its specimen (beeline-iuva). */
@@ -1799,6 +1816,7 @@ export interface Database {
   specimen_disposition: SpecimenDispositionTable;
   worksheet_determination: WorksheetDeterminationTable;
   legacy_duplicate_record: LegacyDuplicateRecordTable;
+  upload: UploadTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;
   determination_batch: DeterminationBatchTable;

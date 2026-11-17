@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { sql, type Kysely, type RawBuilder, type SelectQueryBuilder } from "kysely";
 import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
 import { reportError } from "./error-reporting.js";
@@ -6,6 +7,7 @@ import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type Sa
 import { labelName } from "../person-name.js";
 import { orcidUrl } from "../orcid.js";
 import { plantRelationship } from "../trap-method.js";
+import { xlsxWriter } from "./xlsx.js";
 
 /**
  * Browsing the collection: the query layer behind /samples and /specimens.
@@ -558,6 +560,9 @@ export interface SpecimenRow {
   qualifier: DeterminationQualifier | null;
   verbatim_identification: string | null;
   sex: string | null;
+  caste: string | null;
+  /** The determination of record's own id; null for a specimen nobody has determined. */
+  determination_id: number | null;
   is_expert: boolean | null;
   determiner: string | null;
   /** The ORCID iD crediting the determiner, bare; null for one with none or known only by name. */
@@ -635,6 +640,13 @@ export interface ListingPageOptions {
    * and, since beeline-rxn8, the season.
    */
   year?: number;
+  /**
+   * Only these specimens, by their entity ids. Not a listing filter either:
+   * loading an edited copy of the download asks what the download would say
+   * now about the specimens a file names (src/app/upload-plan.ts, beeline-kgyd).
+   * An empty list selects nothing.
+   */
+  ids?: readonly number[];
 }
 
 export interface Page<Row> {
@@ -1424,6 +1436,7 @@ async function filteredSpecimens(
   year?: number,
   exact: ExactLookup = {},
   rollup = true,
+  ids?: readonly number[],
 ) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   const place = placeColumns(reader);
@@ -1522,6 +1535,7 @@ async function filteredSpecimens(
   // link to /specimens?flag= must not name a filter it does not apply.
   if (query.flag !== "") base = base.where(flaggedWith(query.flag));
   if (year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", year);
+  if (ids !== undefined) base = base.where("sp.entity_id", "in", ids.length === 0 ? [-1] : [...ids]);
 
   return base;
 }
@@ -1535,7 +1549,7 @@ export async function listSpecimens(
 ): Promise<Page<SpecimenRow>> {
   const hidden = withheld(reader);
   const place = placeColumns(reader);
-  const base = await filteredSpecimens(db, query, personId, reader, opts.year, opts.exact);
+  const base = await filteredSpecimens(db, query, personId, reader, opts.year, opts.exact, true, opts.ids);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1579,6 +1593,8 @@ export async function listSpecimens(
         "d.qualifier",
         "d.verbatim_identification",
         "d.sex",
+        "d.caste",
+        "d.entity_id as determination_id",
         "d.is_expert",
         "d.determined_on",
         "d.determined_on_precision",
@@ -1788,6 +1804,40 @@ export function csvStream<Row>(
       head: () => [encoder.encode(CSV_BOM + csvLine(header))],
       page: (page) => [encoder.encode(page.rows.map((r) => csvLine(toRow(r, page))).join(""))],
       tail: () => [],
+    },
+    timing,
+  );
+}
+
+/**
+ * A value as the text of a spreadsheet cell, or null for none. The same text
+ * the CSV writes, without its formula guard: a text cell is never evaluated,
+ * so a leading `=` is just a character, and the guard would change what the
+ * person sees and what the upload compares (docs/architecture/loading-an-edited-download.md).
+ */
+export function textCell(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return value instanceof Date ? isoDate(value) : String(value);
+}
+
+export const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+/** A listing as an Excel file, one sheet with the header in row 1 and every cell text: the same pages and rows as csvStream. */
+export function xlsxStream<Row>(
+  sheetName: string,
+  header: readonly string[],
+  fetch: (limit: number, offset: number) => Promise<Page<Row>>,
+  toRow: (row: Row, page: Page<Row>) => readonly unknown[],
+  timing?: CsvTiming,
+): ReadableStream<Uint8Array> {
+  const writer = xlsxWriter({ sheetName, header });
+  return pagedStream(
+    header[0] ?? "xlsx",
+    fetch,
+    {
+      head: () => writer.head(),
+      page: (page) => writer.rows(page.rows.map((r) => toRow(r, page).map(textCell))),
+      tail: () => writer.tail(),
     },
     timing,
   );
@@ -2069,7 +2119,105 @@ export const SPECIMEN_OWN_COLUMNS = [
   "hostCurrentName",
   "hostFamily",
   "hostCommonName",
+  // Added last again (beeline-kgyd): what loading an edited copy of this file
+  // back into Beeline reads. See ROUND_TRIP_COLUMNS.
+  "caste",
+  "specimenId",
+  "specimenVersion",
+  "sampleVersion",
 ] as const;
+
+/**
+ * The columns that exist so that an edited copy of the download can be loaded
+ * back (beeline-kgyd), and that say nothing about the bee to anyone else:
+ * - `specimenId` is Beeline's own id for the specimen. A field number is not
+ *   unique, may be absent, and is the cell a spreadsheet is likeliest to
+ *   damage (a dropped leading zero), so the row is found by this.
+ * - `specimenVersion` is a short name for what the specimen's own changeable
+ *   cells said when the row was written: see `specimenVersion`. If it is not
+ *   the specimen's now when the file comes back, the row was edited against
+ *   something Beeline no longer says.
+ * - `sampleVersion` does the same for the sample's cells that staff may
+ *   change: see `sampleVersion`.
+ */
+export const ROUND_TRIP_COLUMNS = ["specimenId", "specimenVersion", "sampleVersion"] as const;
+
+/**
+ * A short name for what the sample's changeable cells said when the row was
+ * written: the collecting dates, the method, the locality and the point, as
+ * this reader was given them. Two rows with the same version read the same
+ * values, so a file whose version is still the sample's was edited against
+ * what Beeline says now. Made from the reader's own values, so that where the
+ * location is withheld it says nothing about the true one. It starts with a
+ * letter because a spreadsheet reads a run of digits, or digits around an
+ * `e`, as a number and rewrites it.
+ */
+export const sampleVersion = (
+  r: Pick<SpecimenRow, "sample_id" | "date_start" | "date_end" | "protocol" | "locality" | "latitude" | "longitude" | "coordinate_uncertainty_m">,
+): string =>
+  `v${createHash("sha256")
+    .update(
+      JSON.stringify([
+        // The sample's own id, so two samples that say the same things do not share a version, and a file whose
+        // rows were shifted onto other samples is seen to be about the wrong ones.
+        r.sample_id,
+        eventDate(r.date_start, r.date_end),
+        r.protocol,
+        r.locality,
+        r.latitude,
+        r.longitude,
+        r.coordinate_uncertainty_m,
+      ]),
+    )
+    .digest("hex")
+    .slice(0, 12)}`;
+
+/**
+ * A short name for what the specimen's own changeable cells said when the row
+ * was written: its name, qualifier, sex, caste, determiner and date
+ * identified as the row writes them, its disposition and remarks, the id of
+ * the determination they were read from, and the specimen's own id (so two
+ * specimens that say the same things have different versions). It replaces the determination's
+ * id alone, which says nothing when a loader updates a determination in
+ * place or a person's or a taxon's name is corrected: the id stays and the
+ * cells change. The `s` is there for the reason `sampleVersion` starts with
+ * `v`.
+ */
+export const specimenVersion = (
+  r: Pick<
+    SpecimenRow,
+    | "specimen_id"
+    | "scientific_name"
+    | "qualifier"
+    | "sex"
+    | "caste"
+    | "determiner"
+    | "determined_on"
+    | "determined_on_precision"
+    | "disposition"
+    | "occurrence_remarks"
+    | "determination_id"
+  >,
+): string =>
+  `s${createHash("sha256")
+    .update(
+      JSON.stringify([
+        // The specimen's own id: two specimens with no determination and no disposition say the same things, and
+        // a file whose specimenId cells were shifted onto other rows must not look current.
+        r.specimen_id,
+        r.scientific_name,
+        r.qualifier,
+        r.sex,
+        r.caste,
+        r.determiner,
+        dateIdentified(r.determined_on, r.determined_on_precision),
+        r.disposition,
+        r.occurrence_remarks,
+        r.determination_id,
+      ]),
+    )
+    .digest("hex")
+    .slice(0, 12)}`;
 
 export const SPECIMEN_CSV_HEADER = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS] as const;
 
@@ -2119,4 +2267,8 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.host_current_name,
   r.host_family,
   r.host_common_name,
+  r.caste,
+  r.specimen_id,
+  specimenVersion(r),
+  sampleVersion(r),
 ];

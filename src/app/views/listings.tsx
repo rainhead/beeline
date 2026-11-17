@@ -446,6 +446,13 @@ function DownloadMenu({ m, path, query }: { m: Messages; path: string; query: Li
       <div class="menu-panel">
         <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{d.download}</a>
         <p class="meta download-note">{d.note}</p>
+        {/* The file to edit and upload back (beeline-kgyd): the specimens only, since only they have an upload. */}
+        {path === "/specimens" && (
+          <>
+            <a href={listingHref(`${path}.xlsx`, query, { page: 1 })}>{d.edit}</a>
+            <p class="meta download-note">{d.editNote}</p>
+          </>
+        )}
       </div>
     </details>
   );
@@ -975,6 +982,7 @@ export function SpecimenListing(
       ) : (
         <ListingActions m={m} path={path} query={query} total={page.total}>
           {admin && <BulkActions m={m} path={path} query={query} />}
+          {admin && <a href="/uploads">{m.uploads.linkFromSpecimens}</a>}
         </ListingActions>
       )}
       {page.rows.length === 0 ? (

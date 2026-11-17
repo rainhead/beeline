@@ -228,6 +228,7 @@ const app = createApp({
       : undefined,
   derivePaths: { demDir: DEM_DIR, gazetteerPath: GAZETTEER_PATH },
   printRunsDir: config.printRunsDir,
+  uploadsDir: config.uploadsDir,
   registryMarkPath: config.registryMarkPath,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

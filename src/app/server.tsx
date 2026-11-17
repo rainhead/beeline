@@ -1,4 +1,6 @@
-import { open, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { bodyLimit } from "hono/body-limit";
+import { mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -67,6 +69,9 @@ import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
+import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
+import { MAX_FILE_BYTES, comparePlan, parseUpload, type Parsed } from "./upload-plan.js";
+import type { ReadLimits } from "./xlsx-reader.js";
 import {
   listRuns,
   loadRun,
@@ -195,6 +200,8 @@ import {
   STAFF_READER,
   parseListingQuery,
   csvStream,
+  xlsxStream,
+  XLSX_CONTENT_TYPE,
   toCsv,
   SAMPLE_CSV_HEADER,
   sampleCsvRow,
@@ -293,6 +300,10 @@ export interface AppDeps {
   derivePaths?: { demDir?: string; gazetteerPath?: string };
   /** Where rendered label sheets are kept (config.printRunsDir). */
   printRunsDir?: string;
+  /** Where uploaded files are kept (config.uploadsDir). */
+  uploadsDir?: string;
+  /** The reader's time and memory limits for an upload, which a test sets small; the defaults are src/app/xlsx-reader.ts's. */
+  uploadReadLimits?: Partial<ReadLimits>;
   /** The registry mark each print run raises (config.registryMarkPath, src/registry-mark.ts). */
   registryMarkPath?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -330,6 +341,8 @@ export function createApp({
   inatCheck,
   derivePaths,
   printRunsDir,
+  uploadsDir,
+  uploadReadLimits,
   registryMarkPath,
   programGovernance,
   programContactsPath,
@@ -341,6 +354,7 @@ export function createApp({
   // fails as it builds the app, whatever it goes on to request
   // (src/deployment-path.ts).
   const printRunsPath = printRunsDir ?? deploymentPath("data/print-runs");
+  const uploadsPath = uploadsDir ?? deploymentPath("data/uploads");
   const markPath = registryMarkPath ?? deploymentPath("data/registry-mark.json");
   const printWriter = printConn ?? conn;
   const corrections = correctionsPath ?? deploymentPath("data/corrections.csv");
@@ -1188,17 +1202,32 @@ export function createApp({
     );
   });
 
-  app.get("/specimens.csv", async (c) => {
+  // The CSV and the Excel file are the same listing: the query, the reader,
+  // the paging and the host names are read once, here, so they cannot differ.
+  const specimenDownload = async (c: Context<AppEnv>, format: "csv" | "xlsx") => {
     const { personId, reader, query } = await listingRequest(c);
-    countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
+    countListingView(listingAttributes("specimens", format, query, viewer(c)));
     const hostNames = hostNamesOnce(db);
-    const body = csvStream(
-      SPECIMEN_CSV_HEADER,
-      async (limit, offset) => listSpecimens(db, query, personId, reader, { limit, offset, withTotal: false, hostNames: await hostNames() }),
-      specimenCsvRow,
-      csvGenerationTiming("specimens"),
-    );
-    return csv(c, body, "beeline-specimens");
+    return {
+      fetch: async (limit: number, offset: number) =>
+        listSpecimens(db, query, personId, reader, { limit, offset, withTotal: false, hostNames: await hostNames() }),
+      timing: csvGenerationTiming("specimens"),
+    };
+  };
+
+  app.get("/specimens.csv", async (c) => {
+    const { fetch, timing } = await specimenDownload(c, "csv");
+    return csv(c, csvStream(SPECIMEN_CSV_HEADER, fetch, specimenCsvRow, timing), "beeline-specimens");
+  });
+
+  // The file to edit and upload back (beeline-kgyd): every cell is text, so a
+  // spreadsheet cannot reformat what it holds.
+  app.get("/specimens.xlsx", async (c) => {
+    const { fetch, timing } = await specimenDownload(c, "xlsx");
+    return c.body(xlsxStream("specimens", SPECIMEN_CSV_HEADER, fetch, specimenCsvRow, timing), 200, {
+      "content-type": XLSX_CONTENT_TYPE,
+      "content-disposition": `attachment; filename="${exportFilename("beeline-specimens", new Date(), "xlsx")}"`,
+    });
   });
 
   // --- One record (beeline-2c3.34). The listings answer "what is there";
@@ -2037,6 +2066,138 @@ export function createApp({
         />,
       ),
     );
+  });
+
+  // --- Comparing an edited copy of the specimens download (beeline-kgyd).
+  // Staff only, and refused while impersonating. The file is kept on disk
+  // under uploadsDir and compared with what Beeline says now; nothing is
+  // written to any record, and the page says so. ---
+  const uploadsGate = (c: Context<AppEnv>): Response | null => {
+    if (c.get("acting").impersonating) return c.text(c.get("m").errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    return null;
+  };
+  const uploadFolder = (id: number) => join(uploadsPath, String(id));
+  // Always this name: what the person called the file is kept in the store and never reaches the file system.
+  const uploadFile = (id: number) => join(uploadFolder(id), "upload.xlsx");
+  const refusalText = (m: Messages, refused: Extract<Parsed, { ok: false }>) =>
+    refused.refusal === "repeated_column"
+      ? m.uploads.refusedRepeatedColumn(refused.detail ?? "")
+      : refused.refusal === "no_such_sheet"
+        ? m.uploads.refusedNoSuchSheet((JSON.parse(refused.detail ?? "[]") as string[]).join(", "))
+      : refused.refusal === "no_specimen_id_column" && refused.detail !== undefined
+        ? m.uploads.refusedNearMiss(refused.detail)
+        : (m.uploads.refused[refused.refusal] ?? refused.refusal);
+  const ownUploads = (personId: number): Promise<UploadListRow[]> =>
+    db
+      .selectFrom("upload")
+      .select(["entity_id", "file_name", "uploaded_at", "row_count"])
+      .where("uploaded_by", "=", personId)
+      .orderBy("uploaded_at", "desc")
+      .orderBy("entity_id", "desc")
+      .execute();
+  const uploadForm = async (c: Context<AppEnv>, refusal: string | null, status: 200 | 400) => {
+    const m = c.get("m");
+    return c.html(
+      await page(c, m.uploads.title, <Uploads m={m} uploads={await ownUploads(c.get("session").personId)} refusal={refusal} />),
+      status,
+    );
+  };
+
+  app.get("/uploads", async (c) => uploadsGate(c) ?? uploadForm(c, null, 200));
+
+  // The limit is enforced on the bytes actually read, not on a declared
+  // length: a body that lies about its size, or has none, is cut off at the
+  // limit (a little over the file's, for the form around it).
+  app.post(
+    "/uploads",
+    async (c, next) => uploadsGate(c) ?? next(),
+    bodyLimit({
+      maxSize: MAX_FILE_BYTES + 64 * 1024,
+      onError: (c) => uploadForm(c as Context<AppEnv>, (c as Context<AppEnv>).get("m").uploads.refused.too_large!, 400),
+    }),
+    async (c) => {
+    const m = c.get("m");
+    const form = await c.req.formData();
+    const file = form.get("file");
+    if (typeof file === "string" || file === null || file.size === 0) return uploadForm(c, m.uploads.refused.noFile!, 400);
+    const reference = String(form.get("reference") ?? "").trim() || null;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    // The bytes are on disk before anything reads them, in a folder named for
+    // the id the upload will have. A refused file takes its folder with it.
+    const id = Number(
+      (await sql<{ id: bigint }>`SELECT nextval('entity_id_seq') AS id`.execute(db)).rows[0]!.id,
+    );
+    const fileName = file.name === "" ? "upload.xlsx" : file.name;
+    // The parent may be new; the upload's own folder must be. A store put back
+    // to an earlier copy can draw an id that an earlier upload already used,
+    // and its kept file must never be overwritten: fail, writing nothing.
+    await mkdir(uploadsPath, { recursive: true });
+    try {
+      await mkdir(uploadFolder(id));
+    } catch (err) {
+      console.error(`upload ${id} refused: its folder ${uploadFolder(id)} cannot be made (${(err as Error).message})`);
+      return errorResponse(c, "failed", { err: err as Error });
+    }
+    const keptAt = uploadFile(id);
+    try {
+      await writeFile(keptAt, bytes);
+      const parsed = await parseUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits);
+      if (!parsed.ok) {
+        await rm(uploadFolder(id), { recursive: true, force: true });
+        return uploadForm(c, refusalText(m, parsed), 400);
+      }
+      await db
+        .insertInto("upload")
+        .values({
+          entity_id: id,
+          uploaded_by: c.get("session").personId,
+          uploaded_at: new Date().toISOString(),
+          file_name: fileName,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          byte_size: bytes.byteLength,
+          row_count: parsed.upload.rows.length,
+          reference,
+        })
+        .execute();
+    } catch (err) {
+      await rm(uploadFolder(id), { recursive: true, force: true });
+      throw err;
+    }
+    return c.redirect(uploadHref(id), 303);
+    },
+  );
+
+  app.get("/uploads/:id{[0-9]+}", async (c) => {
+    const refused = uploadsGate(c);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const row = await db
+      .selectFrom("upload as u")
+      .innerJoin("person as p", "p.entity_id", "u.uploaded_by")
+      .select(["u.entity_id", "u.file_name", "u.uploaded_at", "u.row_count", "u.reference", "u.sha256", "p.display_name as uploader"])
+      .where("u.entity_id", "=", id)
+      .executeTakeFirst();
+    if (row === undefined) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(uploadFile(id));
+    } catch {
+      return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileMissing} />), 500);
+    }
+    // The kept file must be the file that arrived.
+    if (createHash("sha256").update(bytes).digest("hex") !== row.sha256) {
+      return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileAltered} />), 500);
+    }
+    const parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits);
+    if (!parsed.ok) {
+      return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={refusalText(m, parsed)} />), 500);
+    }
+    const plan = await comparePlan(db, parsed.upload);
+    const { sha256: _kept, ...shown } = row;
+    const upload: UploadDetail = shown;
+    return c.html(await page(c, m.uploads.page.title(row.file_name), <UploadPreview m={m} upload={upload} plan={plan} />));
   });
 
   // One program-year's Darwin Core archive, as the dwc-archives job wrote

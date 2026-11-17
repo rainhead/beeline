@@ -118,6 +118,7 @@ export async function openBench(sourcePath: string): Promise<Bench> {
     sampleStatePath: paths.sampleState,
     conn: jobConn,
     printRunsDir: join(dir, "print-runs"),
+    uploadsDir: join(dir, "uploads"),
   });
 
   return {

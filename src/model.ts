@@ -840,8 +840,38 @@ export interface SampleLocalitySuggestionCurrentView {
   derived_at: Date;
 }
 
-/** schema/038: what kind of area (beeline-9jd4). A county includes a BC regional district; an ecoregion is an EPA Level III one (beeline-l5so). */
-export type AreaKind = "wilderness" | "county" | "ecoregion";
+/**
+ * schema/038: what kind of area (beeline-9jd4), in the order the Areas page
+ * lists them. A county includes a BC regional district; an ecoregion is an
+ * EPA Level III one (beeline-l5so); a wildlife_area is a unit of a WDFW
+ * wildlife area; a state_park includes BC's provincial parks and reserves; a
+ * park is any other park or reserve OpenStreetMap outlines.
+ */
+export const AREA_KINDS = [
+  "refuge",
+  "wildlife_area",
+  "nps_unit",
+  "state_park",
+  "park",
+  "island",
+  "wilderness",
+  "county",
+  "ecoregion",
+] as const;
+export type AreaKind = (typeof AREA_KINDS)[number];
+
+/** schema/038: whose layer an area's outline comes from. */
+export type AreaSource =
+  | "wilderness.net"
+  | "census"
+  | "bc-abms"
+  | "epa-cec"
+  | "usfws"
+  | "wdfw"
+  | "nps"
+  | "wa-parks"
+  | "bc-parks"
+  | "osm";
 
 /**
  * schema/038: a named place with an outline, keyed by its source's own id.
@@ -849,7 +879,7 @@ export type AreaKind = "wilderness" | "county" | "ecoregion";
  * reads it, and the driver has no type for it without the spatial extension.
  */
 export interface AreaTable {
-  source: "wilderness.net" | "census" | "bc-abms" | "epa-cec";
+  source: AreaSource;
   source_id: string;
   kind: AreaKind;
   name: string;

@@ -33,6 +33,8 @@ import { Glossary } from "./views/glossary.js";
 import { HowItWorks } from "./views/how-it-works.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { ProgramIndex, ProgramPage } from "./views/programs.js";
+import { AreaIndex } from "./views/areas.js";
+import { listAreas } from "./areas.js";
 import { listPrograms, loadProgram, programHref } from "./programs.js";
 import { readProgramContacts, recordProgramContact, programContactProblem } from "../program-contacts.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomyCsv, taxonomySummary } from "./taxonomy.js";
@@ -1773,6 +1775,14 @@ export function createApp({
   app.get("/programs", async (c) => {
     const m = c.get("m");
     return c.html(await page(c, m.programs.title, <ProgramIndex m={m} programs={await listPrograms(db)} admin={c.get("admin")} />));
+  });
+
+  // The areas, by kind (beeline-9jd4). Staff only: its counts are of every
+  // sample, whoever may see where it is (src/app/areas.ts).
+  app.get("/areas", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    return c.html(await page(c, m.areas.title, <AreaIndex m={m} groups={await listAreas(db)} />));
   });
 
   app.get("/programs/:code", async (c) => {

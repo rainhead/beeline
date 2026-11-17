@@ -2,7 +2,7 @@
 
 Part of Beeline's architecture notes; the index is [README.md](README.md).
 
-An area is a named place with an outline that a sample's true coordinates can lie inside (beeline-9jd4). There are three kinds so far: the federal wilderness, because collecting there needs a permit the program usually lacks (beeline-zdfz), and the county and the ecoregion, below. A sample inside a wilderness says so on its sample page and its specimens' pages, under the place, and the listings' place filter finds it by the wilderness's name (and by a county's or an ecoregion's: it reads every area's name, whatever its kind), so "wilderness" finds every sample inside one. **It is a note, not a flag** (Peter, 2026-10-26): the specimens exist either way, so nothing blocks their labels. Beeline does not track permits yet, so the note says that collecting there needs one, not whether the program had one; inside Olympic National Park it did. Wilderness study areas do not count.
+An area is a named place with an outline that a sample's true coordinates can lie inside (beeline-9jd4). The kinds are the federal wilderness, because collecting there needs a permit the program usually lacks (beeline-zdfz); the county and the ecoregion, below; and the places people collect in and name, which are refuges, wildlife area units, parks and islands ([below](#the-places-people-collect-in)). A sample inside a wilderness says so on its sample page and its specimens' pages, under the place, and the listings' place filter finds it by the wilderness's name (and by a county's, an ecoregion's, a refuge's, a park's or an island's: it reads every area's name, whatever its kind), so "wilderness" finds every sample inside one. **It is a note, not a flag** (Peter, 2026-10-26): the specimens exist either way, so nothing blocks their labels. Beeline does not track permits yet, so the note says that collecting there needs one, not whether the program had one; inside Olympic National Park it did. Wilderness study areas do not count.
 
 **The source is Wilderness.net's national layer** (Wilderness Connect), every agency's wildernesses, keyed by its `WID`, which is the id in Wilderness.net's own URLs and survives a rename: 428 is the Daniel J. Evans Wilderness, the Olympic Wilderness until 2017 (Peter, 2026-10-26). OpenStreetMap's outlines, which the locality step already had, missed 18% of the samples it finds on the sandbox store: Potrillo Mountains (designated in 2019), Colorado's (the gazetteer has no Colorado extract), and the edges of the Evans and Steens wildernesses. PAD-US remains the plan for the other US kinds; its live service drops wilderness altogether, and its download is a geodatabase DuckDB cannot read. `scripts/fetch-gazetteer.sh` fetches the layer in three pages, `ingest/gazetteer.sql` makes one row per wilderness of it (a wilderness two agencies manage arrives as two features with one `WID`), and the gazetteer carries it like every other source ([Localities from coordinates](localities-from-coordinates.md)).
 
@@ -45,4 +45,43 @@ Measured before Beeline wrote counties itself. So in the US the point and the st
 
 **Never a locality.** The locality step still leaves out every OpenStreetMap park named "… Wilderness". Judging a park by how much of it lies inside a Wilderness.net outline was measured and rejected: Olympic, North Cascades and Mount Rainier National Parks are 93–96% wilderness and would lose their names.
 
-To come, in later pull requests: refuges, wildlife area units, parks and islands as areas, mostly from PAD-US; the gazetteer keeping those sources' own ids, which it now drops; and pages listing the areas and the samples inside each.
+## The places people collect in
+
+Refuges, WDFW wildlife area units, National Park Service units, state and provincial parks, the other parks and reserves OpenStreetMap outlines, and islands are areas too (beeline-9jd4, 2026-11-17). A sample is in each one whose outline its point is inside, with no allowance at the edge: Peter ruled that for refuges on 2026-11-13 (beeline-vyfd), and the parks follow it. A point in a refuge that a wildlife area unit overlaps is in both.
+
+**They come from the layers the locality rule already reads, not from PAD-US.** Peter chose PAD-US as the US source for protected areas on 2026-10-26. This step did not take it up: the gazetteer already held the agencies' own layers, each agency publishes an id for its places, and reading the same outlines means the locality rule and the areas cannot disagree about whether a point is in Finley NWR. PAD-US's download is still a geodatabase DuckDB cannot read. Whether to move to it is open, and is Peter's to decide; the sources below become part of an area's key, so changing one later replaces those areas.
+
+| Kind (`area.kind`) | Source (`area.source`) | The source's id | Name as stored |
+| --- | --- | --- | --- |
+| `refuge` | `usfws`, the Fish and Wildlife Service's interest boundaries, conservation easements left out | `ORGCODE` (13588 is Ankeny) | ANKENY NATIONAL WILDLIFE REFUGE |
+| `wildlife_area` | `wdfw`, WDFW's wildlife area units | `SubUnitID` | Whiskey Dick Unit, L.T. Murray Wildlife Area |
+| `nps_unit` | `nps`, National Park Service unit boundaries, memorials left out | `UNIT_CODE` (OLYM) | Olympic National Park |
+| `state_park` | `wa-parks`, Washington State Parks, trails and unnamed properties left out | `ParkCode` | Alta Lake State Park |
+| `state_park` | `bc-parks`, BC's parks, protected areas, ecological reserves and recreation areas | the park's ORCS number (0237-00) | DISCOVERY ISLAND MARINE PARK |
+| `park` | `osm`, any other park or reserve OpenStreetMap outlines, national forests left out | the element (`relation/3745856`) | Cottonwood Canyon State Park |
+| `island` | `osm`, islands of 100 ha or more | the element | Vancouver Island |
+
+**In the gazetteer**, `named_area` holds the first five rows of that table, one row per id, made from the locality tables (`refuge`, `wildlife_area_unit`, `nps_unit`, `state_park`), which now keep their source's id. So what counts as a refuge or a park is said once. `scripts/fetch-gazetteer.sh` asks each service for the id, and fetches again a file that was downloaded without it. Outlines that share an id are one area: a refuge arrives as up to 65 features; WDFW's Jackman Creek unit arrives as nine subunits; Deception Pass and Hope Island (Skagit) share a park code; and eight National Park Service parks share a code with their preserves, all in Alaska and Colorado. OpenStreetMap's parks and islands are read from `osm_area`, which is now one row per element: a park on a state line is in both states' extracts, and 143 elements came two or three times (Chief Joseph Wildlife Area, Barnston Island). Two rows with one id would have broken the step that copies an area into the store, so a gazetteer built before `named_area` existed gives no refuge, park or island at all, and the other kinds as before. `AREA_RULE_VERSION` went to 2 with this, so every sample is tested again whichever of the code and the new gazetteer reaches the machine first.
+
+**OpenStreetMap repeats some of the agencies' places.** It is the only source here for Oregon's state parks, county and city parks and land trust preserves: on production's store of 2026-11-17, Cottonwood Canyon State Park holds 66 samples from the active seasons and 515 settled, and about 12,900 samples lie in an OpenStreetMap park and in no agency's area. But it also outlines refuges and national parks, so Hart Mountain National Antelope Refuge is listed under refuges (92 and 322) and again under other parks (92 and 323, from an outline that differs by one sample). The two are kept as they come. An OpenStreetMap park named "… Wilderness" is left out, as the locality step leaves it out, because Wilderness.net's outlines are the wildernesses.
+
+**An island is one the point is inside.** The locality rule gives a point the island within about 300 m, to name it. As an area that would be wrong more often than right: on the same store 29 samples from the active seasons and 66 settled were that near an island and not on it, and most were on a river bank across from an island in the river (Reed Island 17, Sundial Island 13), with 32 on Vancouver Island's shore. So a sample on a beach just outside an island's outline is not in the island's area, though its label may name the island.
+
+On that store the step finds, of 70,813 located samples:
+
+| Kind | Areas with a sample inside | Samples, active seasons | Samples, settled |
+| --- | ---: | ---: | ---: |
+| National wildlife refuge | 29 | 824 | 2,068 |
+| WDFW wildlife area unit | 53 | 509 | 1,226 |
+| National Park Service unit | 16 | 335 | 440 |
+| State or provincial park (WA, BC) | 46 | 276 | 315 |
+| Other park or reserve (OpenStreetMap) | 912 | 4,253 | 13,994 |
+| Island | 26 | 420 | 1,506 |
+
+A sample in two parks counts in both rows' areas, so the park row counts sample and area pairs. Testing every sample takes 16 seconds on a workstation, and 27 seconds with two threads and DuckDB held to 768 MB, half of production's limit; at 512 MB it ran out of memory.
+
+## The Areas page
+
+`/areas` (`src/app/areas.ts`, `src/app/views/areas.tsx`) lists every area a sample lies inside, a section per kind, with the samples inside each from the active seasons and from settled ones. An area's name links to the Samples listing filtered to exactly that area, through the listings' `area` filter (`area=usfws:13588`, the area's source and id), which the Specimens listing takes too and which no form offers. The filter goes through the location rule, as the place filter does: a reader who may not see where a sample is does not find it by an area. The counts do not go through it, which is why **the page is staff's alone**: a count of one in a small park would tell a volunteer that somebody collected there. Showing the page to anyone else needs the counts taken through the rule first. A name the source writes in capitals is shown in title case (`src/area-name.ts`); the store keeps it as written.
+
+Not built yet: a page per area with its outline drawn, the label name each area prints as and its curation file, the refuge program's link to its refuges and its archive (beeline-vyfd), and Oregon's and Idaho's wildlife areas.

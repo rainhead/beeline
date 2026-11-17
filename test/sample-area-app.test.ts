@@ -8,7 +8,9 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { en } from "../src/app/messages/en.js";
 import { deriveAreas } from "../src/derive-area.js";
-import { buildTestGazetteer, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
+import { SETTLED_SEASON, buildTestGazetteer, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
+import { areaDisplayName } from "../src/area-name.js";
+import { listAreas } from "../src/app/areas.js";
 
 /**
  * A sample collected inside a federal wilderness (beeline-zdfz): the sample
@@ -65,7 +67,7 @@ async function setup(geoprivacy: "NULL" | "'obscured'") {
       resolveSession: async () => ({ personId: ids[who], login: who, iconUrl: null }),
       conn,
     });
-  return { appFor, sampleId, specimenId: Number(specimenId), conn };
+  return { appFor, sampleId, specimenId: Number(specimenId), conn, ids, gazetteer, db: createKysely(instance) };
 }
 
 const ecoNote = en.record.sample.inEcoregion("Coast Range");
@@ -153,5 +155,104 @@ describe("a sample whose recorded state is not its point's (beeline-rax1)", () =
     const { appFor, sampleId, conn } = await disagreeing();
     await conn.run(`UPDATE sample SET state_province = 'OR' WHERE entity_id = ${sampleId}`);
     expect(await (await appFor("bob").request(`/samples/${sampleId}`)).text()).not.toContain("These coordinates are");
+  });
+});
+
+describe("the Areas page (beeline-9jd4)", () => {
+  // The test gazetteer's refuge is keyed usfws 99001; setup's second sample
+  // lies inside it, in an active season, and this adds a settled one.
+  const REFUGE_KEY = "usfws:99001";
+  const areaSearch = (path: string, key: string) => `${path}?scope=all&area=${encodeURIComponent(key)}`;
+
+  async function withSettledRefugeSample() {
+    const made = await setup("NULL");
+    const settledId = await insertCleanSample(
+      made.conn,
+      {
+        collector_id: String(made.ids.alice),
+        sample_number: "'3'",
+        locality: "'Muddy Creek'",
+        date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+        date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+      },
+      { latitude: "44.42", longitude: "-123.31" },
+    );
+    await deriveAreas(made.conn, made.gazetteer);
+    await made.conn.run(`INSERT INTO person_admin (person_id) VALUES (${made.ids.bob})`);
+    return { ...made, settledId };
+  }
+
+  it("lists every area a sample lies inside, by kind, with its samples split by season", async () => {
+    const { db } = await withSettledRefugeSample();
+    const groups = await listAreas(db);
+    expect(groups.map((g) => g.kind)).toEqual(["refuge", "wilderness", "county", "ecoregion"]);
+    expect(groups[0]!.areas).toEqual([
+      { key: REFUGE_KEY, name: "William L. Finley National Wildlife Refuge", active: 1, settled: 1 },
+    ]);
+    expect(groups.find((g) => g.kind === "county")!.areas).toEqual([
+      { key: "census:41003", name: "Benton County", active: 2, settled: 1 },
+    ]);
+  });
+
+  it("is staff's alone, and links each area to the samples inside it", async () => {
+    const { appFor } = await withSettledRefugeSample();
+    expect((await appFor("alice").request("/areas")).status).toBe(403);
+    const res = await appFor("bob").request("/areas");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(en.areas.kind.refuge);
+    expect(html).toContain(`href="/samples?scope=all&amp;area=usfws%3A99001"`);
+    expect(html).toContain("William L. Finley National Wildlife Refuge");
+    // No kind that nothing lies inside.
+    expect(html).not.toContain(en.areas.kind.island);
+  });
+
+  it("the area filter finds exactly the samples inside the area, on both listings, and names it in a pill", async () => {
+    const { appFor, sampleId, settledId } = await withSettledRefugeSample();
+    const bob = appFor("bob");
+    const html = await (await bob.request(areaSearch("/samples", REFUGE_KEY))).text();
+    expect(html).toContain(`/samples/${settledId}"`);
+    expect(html).toContain("Corvallis");
+    // The sample in the wilderness is in the same county and not in the refuge.
+    expect(html).not.toContain(`/samples/${sampleId}"`);
+    expect(html).toContain("William L. Finley National Wildlife Refuge");
+    expect(html).toContain(en.areas.filter);
+    // The specimens listing takes the same filter: the one specimen is the wilderness sample's.
+    const specimens = await (await bob.request(areaSearch("/specimens", "wilderness.net:9001"))).text();
+    expect(specimens).toContain(`/samples/${sampleId}"`);
+    expect(await (await bob.request(areaSearch("/specimens", REFUGE_KEY))).text()).not.toContain(`/samples/${sampleId}"`);
+  });
+
+  it("an area the store does not hold finds nothing, and says so", async () => {
+    const { appFor, sampleId, settledId } = await withSettledRefugeSample();
+    const html = await (await appFor("bob").request(areaSearch("/samples", "usfws:nowhere"))).text();
+    expect(html).not.toContain(`/samples/${sampleId}"`);
+    expect(html).not.toContain(`/samples/${settledId}"`);
+    expect(html).toContain(en.areas.filterUnknown);
+  });
+
+  it("keeps a sample from a reader who may not see where it is", async () => {
+    // Alice's sample in the wilderness is obscured, and Bob is not staff here.
+    const { appFor, sampleId } = await setup("'obscured'");
+    const key = "wilderness.net:9001";
+    expect(await (await appFor("bob").request(areaSearch("/samples", key))).text()).not.toContain(`/samples/${sampleId}"`);
+    expect(await (await appFor("bob").request(areaSearch("/specimens", key))).text()).not.toContain(`/samples/${sampleId}"`);
+    // Alice collected it, so she finds it.
+    expect(await (await appFor("alice").request(areaSearch("/samples", key))).text()).toContain(`/samples/${sampleId}"`);
+  });
+});
+
+describe("an area's name as a page shows it", () => {
+  // The first three are names as the sources write them; the last is synthetic.
+  it.each([
+    ["WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE", "William L. Finley National Wildlife Refuge"],
+    ["E.C. MANNING PARK", "E.C. Manning Park"],
+    ["MCNARY NATIONAL WILDLIFE REFUGE", "McNary National Wildlife Refuge"],
+    ["BOSQUE DEL APACHE NATIONAL WILDLIFE REFUGE", "Bosque del Apache National Wildlife Refuge"],
+    ["Cottonwood Canyon State Park", "Cottonwood Canyon State Park"],
+    ["Shumaker Unit, Chief Joseph Wildlife Area", "Shumaker Unit, Chief Joseph Wildlife Area"],
+    ["KETTLE RIVER/GRANBY PARK", "Kettle River/Granby Park"],
+  ])("%s", (written, shown) => {
+    expect(areaDisplayName(written)).toBe(shown);
   });
 });

@@ -1,5 +1,6 @@
 import type { Child } from "hono/jsx";
 import { PROGRAM_MEMBERSHIP } from "../../model.js";
+import { areaDisplayName } from "../../area-name.js";
 import {
   ALL,
   DEFAULT_SORT,
@@ -14,6 +15,7 @@ import {
   listingHref,
   listingParams,
   type AtlasOption,
+  type ListedArea,
   type ListedFlag,
   type ListingQuery,
   type Page,
@@ -182,6 +184,7 @@ const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir" | "act"
   from: null,
   to: null,
   place: "",
+  area: "",
   collector: "",
   member: MEMBER_ANY,
   taxon: "",
@@ -199,6 +202,7 @@ function activeFilters(
   query: ListingQuery,
   atlases: readonly AtlasOption[],
   homeAtlas: AtlasOption | null,
+  area: ListedArea | null | undefined,
 ): FilterPill[] {
   const f = m.listings.filters;
   const out: FilterPill[] = [];
@@ -218,6 +222,15 @@ function activeFilters(
   if (query.from !== null) out.push({ label: f.from, value: m.format.date(query.from), clearHref: clear({ from: null }) });
   if (query.to !== null) out.push({ label: f.to, value: m.format.date(query.to), clearHref: clear({ to: null }) });
   if (query.place !== "") out.push({ label: f.place, value: query.place, clearHref: clear({ place: "" }) });
+  // The one area the Areas page linked here by (beeline-9jd4), by its name;
+  // the filter has no box of its own.
+  if (query.area !== "") {
+    out.push({
+      label: m.areas.filter,
+      value: area == null ? m.areas.filterUnknown : areaDisplayName(area.name),
+      clearHref: clear({ area: "" }),
+    });
+  }
   if (query.collector !== "") {
     out.push({ label: f.collector, value: query.collector, clearHref: clear({ collector: "" }) });
   }
@@ -487,7 +500,7 @@ function Toolbar<Row>({
 }) {
   const { m, query, atlases, admin } = props;
   const homeAtlas = props.homeAtlas ?? null;
-  const filters = activeFilters(m, path, query, atlases, homeAtlas);
+  const filters = activeFilters(m, path, query, atlases, homeAtlas, props.page.area);
   return (
     <>
       <ScopeNote m={m} query={query} admin={admin} />

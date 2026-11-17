@@ -11,12 +11,16 @@ import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
  * (beeline-9jd4), into sample_area (schema/038), copying each area a sample
  * lands in from the gazetteer into the store. The nightly runs it before
  * naming localities; "Check iNaturalist now" runs it for the checked
- * person's samples; `pnpm area:derive` runs it by hand. Two kinds so far:
- * the federal wilderness (beeline-zdfz), and the county or BC regional
+ * person's samples; `pnpm area:derive` runs it by hand. The kinds:
+ * the federal wilderness (beeline-zdfz); the county or BC regional
  * district (beeline-313x), which is the one the point is in, or for a point
- * on the shore just outside every county, the nearest within 1 km; and the
+ * on the shore just outside every county, the nearest within 1 km; the
  * EPA Level III ecoregion (beeline-l5so), found the same way, with the same
- * allowance on the shore.
+ * allowance on the shore; and the places people collect in and name, which
+ * are the national wildlife refuge, the WDFW wildlife area unit, the National
+ * Park Service unit, the state or provincial park, any other park or reserve
+ * OpenStreetMap outlines, and the island. A point is in each of those whose
+ * outline it is inside, with no allowance.
  *
  * With `stampCounties`, it then writes the county of each sample still to
  * print from
@@ -75,9 +79,12 @@ export const COUNTY_EDGE_M = 100;
  * (sample_area_derivation.rule_version). Raise it when a change to the step
  * means every sample's areas must be found again, as a new gazetteer build
  * makes them. 1: the point's country and state, read from its county, are
- * recorded beside the areas (beeline-rax1).
+ * recorded beside the areas (beeline-rax1). 2: refuges, wildlife area units,
+ * National Park Service units, parks and islands are found too
+ * (beeline-9jd4); raised so that every sample is tested again whichever of
+ * this code and a gazetteer that holds them reaches the machine first.
  */
-export const AREA_RULE_VERSION = 1;
+export const AREA_RULE_VERSION = 2;
 
 export interface AreaResult {
   /** Null when there was no gazetteer to read. */
@@ -91,6 +98,8 @@ export interface AreaResult {
   inEcoregion: number;
   /** Of those, how many were outside every ecoregion and took the nearest within ECOREGION_SHORE_M. */
   ecoregionByShore: number;
+  /** Of the samples tested, how many lie inside a refuge, a wildlife area unit, a park of any kind or an island. */
+  inPlace: number;
   /** The gazetteer was built before it held any areas: nothing was tested. */
   outdated: boolean;
   /** Samples whose county was written from their coordinates (stampCounties). */
@@ -135,7 +144,7 @@ async function rows<T>(conn: Conn, sql: string, params?: unknown[]): Promise<T[]
 export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: DeriveAreaOptions = {}): Promise<AreaResult> {
   const result: AreaResult = {
     gazetteerBuild: null, pending: 0, inWilderness: 0, inCounty: 0, inEcoregion: 0, ecoregionByShore: 0,
-    outdated: false, countiesStamped: 0,
+    inPlace: 0, outdated: false, countiesStamped: 0,
   };
   try {
     await access(gazetteerPath);
@@ -161,7 +170,8 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
       `SELECT DISTINCT table_name || '.' || column_name AS t FROM duckdb_columns() WHERE database_name = $1
          AND ((table_name = 'wilderness' AND column_name = 'wid')
               OR (table_name = 'region' AND column_name = 'source_id')
-              OR (table_name = 'ecoregion' AND column_name = 'code'))`,
+              OR (table_name = 'ecoregion' AND column_name = 'code')
+              OR (table_name = 'named_area' AND column_name = 'source_id'))`,
       [G],
     );
     const has = new Set(present.map((r) => r.t));
@@ -170,6 +180,13 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
       return result;
     }
     const ecoregions = has.has("ecoregion.code");
+    // A gazetteer without named_area (beeline-9jd4) is likewise not
+    // outdated: no refuge, park or island is found until one built since
+    // arrives. OpenStreetMap's parks and islands wait for it too, although
+    // every gazetteer has them: before it, a park on a state line came once
+    // from each state's extract under one id, and an area is keyed by that.
+    const places = has.has("named_area.source_id");
+    const layers: Layers = { ecoregions, places };
     // Stamping named samples tests only them: whoever asks may not know
     // their collector's iNaturalist account, and may not have one to know.
     const narrowTo =
@@ -195,8 +212,9 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
     const size = opts.batchSize ?? 5000;
     for (let i = 0; i < pending.length; i += size) {
       opts.signal?.throwIfAborted();
-      const found = await testBatch(conn, pending.slice(i, i + size), G, build.build_id, ecoregions);
+      const found = await testBatch(conn, pending.slice(i, i + size), G, build.build_id, layers);
       result.inWilderness += found.wilderness;
+      result.inPlace += found.place;
       result.inCounty += found.county;
       result.inEcoregion += found.ecoregion;
       result.ecoregionByShore += found.ecoregionByShore;
@@ -217,13 +235,34 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
   }
 }
 
+/** Which of the layers a gazetteer may lack it has: one built before a kind was added is still read for the rest. */
+interface Layers {
+  ecoregions: boolean;
+  /** named_area, and with it OpenStreetMap's parks and islands under ids that are unique. */
+  places: boolean;
+}
+
+/**
+ * The OpenStreetMap parks that are areas: every named one but a federal
+ * wilderness, which Wilderness.net's outlines already are, more exactly. The
+ * pattern is the locality step's (src/derive-locality.ts), for its reasons.
+ */
+const OSM_PARK = (o: string) =>
+  `NOT ${o}.is_island AND ${o}.name IS NOT NULL
+   AND NOT regexp_matches(${o}.name, ' Wilderness( Area)?( - [^,]+ Unit)?$')`;
+
 /** Every area the gazetteer holds, in the store's terms. */
-const gazetteerAreas = (G: string, ecoregions: boolean) => `
+const gazetteerAreas = (G: string, { ecoregions, places }: Layers) => `
   SELECT 'wilderness.net' AS source, wid AS source_id, 'wilderness' AS kind, name, geom FROM ${G}.wilderness
   UNION ALL
   SELECT source, source_id, 'county' AS kind, name, geom FROM ${G}.region${ecoregions ? `
   UNION ALL
-  SELECT 'epa-cec' AS source, code AS source_id, 'ecoregion' AS kind, name, geom FROM ${G}.ecoregion` : ""}`;
+  SELECT 'epa-cec' AS source, code AS source_id, 'ecoregion' AS kind, name, geom FROM ${G}.ecoregion` : ""}${places ? `
+  UNION ALL
+  SELECT source, source_id, kind, name, geom FROM ${G}.named_area
+  UNION ALL
+  SELECT 'osm' AS source, o.osm_id AS source_id, CASE WHEN o.is_island THEN 'island' ELSE 'park' END AS kind, o.name, o.geom
+  FROM ${G}.osm_area o WHERE o.name IS NOT NULL` : ""}`;
 
 /** Replace one batch's areas; returns how many of its samples lie inside an area of each kind. */
 async function testBatch(
@@ -231,8 +270,9 @@ async function testBatch(
   batch: Array<{ sample_id: number; lat: number; lon: number }>,
   G: string,
   buildId: string,
-  ecoregions: boolean,
-): Promise<{ wilderness: number; county: number; ecoregion: number; ecoregionByShore: number }> {
+  layers: Layers,
+): Promise<{ wilderness: number; county: number; ecoregion: number; ecoregionByShore: number; place: number }> {
+  const { ecoregions, places } = layers;
   await conn.run(`CREATE OR REPLACE TEMP TABLE area_batch (sample_id INTEGER, lat DOUBLE, lon DOUBLE)`);
   const appender = await conn.createAppender("area_batch", "main", "temp");
   for (const p of batch) {
@@ -297,7 +337,23 @@ ${ecoregions ? `    UNION ALL
          LATERAL (SELECT 2 * 6371000 * asin(sqrt(pow(sin(radians(ST_Y(edge) - lat) / 2), 2)
                     + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2))) AS m)
     WHERE m <= ${ECOREGION_SHORE_M}
-    QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, code) = 1` : ""}`);
+    QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, code) = 1` : ""}
+${places ? `    UNION ALL
+    -- Every refuge, wildlife area unit, National Park Service unit and state
+    -- or provincial park the point is inside: inside the outline, with no
+    -- allowance (Peter, 2026-11-13, for refuges). A point in a refuge and in
+    -- a wildlife area unit is in both.
+    SELECT DISTINCT b.sample_id, n.source, n.source_id, n.kind, FALSE
+    FROM area_batch b JOIN ${G}.named_area n ON ST_Contains(n.geom, ST_Point(b.lon, b.lat))
+    UNION ALL
+    -- Every other park or reserve OpenStreetMap outlines that the point is
+    -- inside, and every island. Inside only: the locality rule gives a
+    -- point the island within 300 m of it, to name it, but on production
+    -- most of the 95 samples that near an island and not on one were on the
+    -- bank of a river across from an island in it (Reed Island, 17).
+    SELECT DISTINCT b.sample_id, 'osm', o.osm_id, CASE WHEN o.is_island THEN 'island' ELSE 'park' END, FALSE
+    FROM area_batch b JOIN ${G}.osm_area o ON ST_Contains(o.geom, ST_Point(b.lon, b.lat))
+    WHERE (o.is_island AND o.name IS NOT NULL) OR (${OSM_PARK("o")})` : ""}`);
   // Which points are at least COUNTY_EDGE_M inside a county: a square that
   // far each way from the point lies wholly inside the outline. A square and
   // not the distance to the edge, because the distance needs the outline's
@@ -338,7 +394,7 @@ ${ecoregions ? `    UNION ALL
     await conn.run(
       `INSERT INTO area (source, source_id, kind, name, geom, gazetteer_build)
        SELECT g.source, g.source_id, g.kind, g.name, g.geom, $1
-       FROM (${gazetteerAreas(G, ecoregions)}) g
+       FROM (${gazetteerAreas(G, layers)}) g
        WHERE EXISTS (SELECT 1 FROM area_batch_hit h WHERE h.source = g.source AND h.source_id = g.source_id)
          AND NOT EXISTS (SELECT 1 FROM area a
                          WHERE a.source = g.source AND a.source_id = g.source_id AND a.gazetteer_build = $1)
@@ -366,12 +422,13 @@ ${ecoregions ? `    UNION ALL
     await conn.run("ROLLBACK");
     throw err;
   }
-  const [found] = await rows<{ wilderness: number; county: number; ecoregion: number; shore: number }>(
+  const [found] = await rows<{ wilderness: number; county: number; ecoregion: number; shore: number; place: number }>(
     conn,
     `SELECT count(DISTINCT sample_id) FILTER (WHERE kind = 'wilderness')::INTEGER AS wilderness,
             count(DISTINCT sample_id) FILTER (WHERE kind = 'county')::INTEGER AS county,
             count(DISTINCT sample_id) FILTER (WHERE kind = 'ecoregion')::INTEGER AS ecoregion,
-            count(DISTINCT sample_id) FILTER (WHERE kind = 'ecoregion' AND by_shore)::INTEGER AS shore
+            count(DISTINCT sample_id) FILTER (WHERE kind = 'ecoregion' AND by_shore)::INTEGER AS shore,
+            count(DISTINCT sample_id) FILTER (WHERE kind NOT IN ('wilderness', 'county', 'ecoregion'))::INTEGER AS place
      FROM area_batch_hit`,
   );
   return {
@@ -379,6 +436,7 @@ ${ecoregions ? `    UNION ALL
     county: found?.county ?? 0,
     ecoregion: found?.ecoregion ?? 0,
     ecoregionByShore: found?.shore ?? 0,
+    place: found?.place ?? 0,
   };
 }
 
@@ -540,7 +598,7 @@ export function describeAreas(r: AreaResult): string | null {
   const stamped = r.countiesStamped > 0 ? `; ${r.countiesStamped} county(ies) written from the coordinates` : "";
   if (r.pending === 0) return stamped === "" ? null : `areas${stamped}`;
   const shore = r.ecoregionByShore > 0 ? ` (${r.ecoregionByShore} by the shore rule)` : "";
-  return `areas: ${r.pending} sample(s) tested, ${r.inWilderness} inside a wilderness, ${r.inCounty} in a county, ${r.inEcoregion} in an ecoregion${shore}${stamped}`;
+  return `areas: ${r.pending} sample(s) tested, ${r.inWilderness} inside a wilderness, ${r.inCounty} in a county, ${r.inEcoregion} in an ecoregion${shore}, ${r.inPlace} in a refuge, park or island${stamped}`;
 }
 
 // CLI: pnpm area:derive [db] [gazetteer]

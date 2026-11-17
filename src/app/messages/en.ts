@@ -8,7 +8,7 @@
 import type { Child } from "hono/jsx";
 import type { TaxonQualifier } from "../views/components/taxon.js";
 import type { LocalityBasis } from "../../locality-rule.js";
-import type { OutOfDateField } from "../../model.js";
+import type { AreaKind, OutOfDateField } from "../../model.js";
 import { OLD_BEELINE_ORIGIN } from "../old-beeline.js";
 
 /** An outside data source the site footer credits, with the licence or terms it asks credit under, where it names some. */
@@ -282,6 +282,7 @@ export const en = {
       jobs: "Jobs",
       taxonomy: "Taxonomy",
       programs: "Programs",
+      areas: "Areas",
       printRuns: "Print runs",
       exports: "Exports",
       identify: "Identify specimens",
@@ -777,7 +778,7 @@ export const en = {
       from: "Collected from",
       to: "Collected to",
       place: "Place",
-      placeHint: "Locality, county, state, country, wilderness, or ecoregion",
+      placeHint: "Locality, county, state, country, refuge, park, island, wilderness, or ecoregion",
       collector: "Collector",
       collectorHint: "Name or iNaturalist login — anyone on the sample",
       /**
@@ -1894,6 +1895,45 @@ export const en = {
    * everyone signed in. The counts link into the listings for staff only,
    * since a volunteer's listings hold only their own records.
    */
+  /** The Areas page (beeline-9jd4), which staff read. */
+  areas: {
+    title: "Areas",
+    intro:
+      "Every refuge, park, island, wilderness, county and ecoregion that at least one sample was collected in, by its true coordinates. A sample is in every area its point lies inside, so one sample can count in a refuge, a county and an ecoregion at once.",
+    none: "No sample has been placed in an area yet. The nightly run places them, once the gazetteer is on the machine.",
+    kindsLabel: "Kinds of area",
+    /** A link to a kind's section: "Islands (26)". */
+    kindCount: (kind: string, count: number) => `${kind} (${n(count)})`,
+    colArea: "Area",
+    colActive: "Samples, active seasons",
+    colSettled: "Samples, settled seasons",
+    /** The pill of the listings' area filter. */
+    filter: "Area",
+    filterUnknown: "an area Beeline does not hold",
+    kind: {
+      refuge: "National wildlife refuges",
+      wildlife_area: "WDFW wildlife area units",
+      nps_unit: "National Park Service units",
+      state_park: "State and provincial parks",
+      park: "Other parks and reserves",
+      island: "Islands",
+      wilderness: "Federal wildernesses",
+      county: "Counties and regional districts",
+      ecoregion: "Ecoregions",
+    } satisfies Record<AreaKind, string>,
+    /** What a reader needs to know about a kind before reading its counts. */
+    kindNote: {
+      refuge:
+        "From the Fish and Wildlife Service's boundaries, conservation easements left out. A sample counts only if its point is inside the outline.",
+      state_park:
+        "Washington's state parks and British Columbia's provincial parks, protected areas and ecological reserves. Oregon's state parks are under Other parks and reserves.",
+      park:
+        "Every other park or reserve that OpenStreetMap outlines: Oregon's state parks, county and city parks, land trust preserves. Some refuges and parks listed above appear here again, under OpenStreetMap's name for them.",
+      island: "Islands of 100 hectares or more, from OpenStreetMap.",
+      wilderness: "A sample counts only if its point is more than 100 m inside the outline.",
+    } as Partial<Record<AreaKind, string>>,
+  },
+
   programs: {
     title: "Programs",
     intro:

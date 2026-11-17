@@ -491,13 +491,17 @@ lies inside ([Areas](../architecture/areas.md)). Until a gazetteer is there,
 the nightly's detail reads "localities: no gazetteer on this machine" and
 nothing else changes; a gazetteer built before the wildernesses were added
 still names localities, and the detail reads "areas: the gazetteer predates
-them; rebuild it" until it is replaced. To see the names straight away, run
+them; rebuild it" until it is replaced. One built before refuges, parks and
+islands became areas (2026-11-17, beeline-9jd4) finds wildernesses, counties
+and ecoregions as before and none of those, so `/areas` lists no refuge until
+a gazetteer built since is uploaded. To see the names straight away, run
 `pnpm area:derive data/beeline.duckdb` and `pnpm locality:derive
 data/beeline.duckdb` in maintenance mode, as for any CLI that writes the
 store. Rebuild when a
 source changes enough to matter: a new Census vintage, BC's boundaries, a
 refuge added. Delete the files in `data/gazetteer-sources/` to fetch them
-again.
+again; `pnpm locality:fetch` itself replaces a boundary file that was
+downloaded before its source's id was asked for.
 
 ## The pre-migrate copy
 

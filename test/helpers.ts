@@ -236,6 +236,10 @@ export async function buildTestGazetteer(path: string, buildId: string): Promise
     CREATE TABLE region AS SELECT 'US-OR-41003' AS region_id, 'USA' AS country, 'OR' AS state, 'Benton' AS county,
       'census' AS source, '41003' AS source_id, 'Benton County' AS name, ${box(-124, 44, -122, 45)} AS geom;
     CREATE TABLE refuge AS SELECT 'WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE' AS name, ${box(-123.35, 44.38, -123.25, 44.45)} AS geom;
+    -- The same refuge as an area, keyed by an id of its own (beeline-9jd4):
+    -- made up, as the outline is.
+    CREATE TABLE named_area AS SELECT 'usfws' AS source, '99001' AS source_id, 'refuge' AS kind,
+      'WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE' AS name, ${box(-123.35, 44.38, -123.25, 44.45)} AS geom;
     CREATE TABLE wildlife_area_unit (unit TEXT, area TEXT, geom GEOMETRY);
     CREATE TABLE nps_unit (unit TEXT, geom GEOMETRY);
     CREATE TABLE state_park (park TEXT, suffix TEXT, geom GEOMETRY);

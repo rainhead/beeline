@@ -2,7 +2,7 @@ import { sql, type Kysely, type RawBuilder, type SelectQueryBuilder } from "kyse
 import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
 import { reportError } from "./error-reporting.js";
 import type { CsvTiming } from "./request-timing.js";
-import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
+import { PROGRAM_MEMBERSHIP, type AreaKind, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
 import { labelName } from "../person-name.js";
 import { orcidUrl } from "../orcid.js";
 import { plantRelationship } from "../trap-method.js";
@@ -225,6 +225,12 @@ export interface ListingQuery {
   /** Matches any of locality, county, state/province, country, or an area the point lies inside (a wilderness, county or ecoregion). */
   place: string;
   /**
+   * One area the sample's point lies inside, as `<source>:<source_id>`
+   * (areaKey): what the Areas page links a count by (beeline-9jd4). Exact,
+   * where the place filter matches words. "" for none.
+   */
+  area: string;
+  /**
    * A collector's name or iNat login. Matches anyone on the sample, not just
    * its primary (beeline-77j).
    */
@@ -265,6 +271,7 @@ export const EMPTY_QUERY: ListingQuery = {
   from: null,
   to: null,
   place: "",
+  area: "",
   collector: "",
   member: MEMBER_ANY,
   taxon: "",
@@ -324,6 +331,7 @@ export function parseListingQuery(
     from: isoDay(from),
     to: isoDay(to),
     place: text(params.get("place")),
+    area: parseAreaKey(text(params.get("area"))) === null ? "" : text(params.get("area")),
     collector: text(params.get("collector")),
     member: memberPermitted ? member : MEMBER_ANY,
     taxon: text(params.get("taxon")),
@@ -367,6 +375,7 @@ export function listingParams(query: ListingQuery, overrides: Partial<ListingQue
   if (merged.from !== null) params.set("from", merged.from);
   if (merged.to !== null) params.set("to", merged.to);
   if (merged.place !== "") params.set("place", merged.place);
+  if (merged.area !== "") params.set("area", merged.area);
   if (merged.collector !== "") params.set("collector", merged.collector);
   if (merged.member !== MEMBER_ANY) params.set("member", merged.member);
   if (merged.taxon !== "") params.set("taxon", merged.taxon);
@@ -398,6 +407,7 @@ export const isFiltered = (q: ListingQuery) =>
   q.from !== null ||
   q.to !== null ||
   q.place !== "" ||
+  q.area !== "" ||
   q.collector !== "" ||
   q.member !== MEMBER_ANY ||
   q.taxon !== "" ||
@@ -645,6 +655,35 @@ export interface Page<Row> {
   collectors: Map<number, ListedCollector[]>;
   /** sample_id → its flags, for the samples listing's Flags column; absent on specimens. */
   findings?: Map<number, ListedFlag[]>;
+  /** The area the `area` filter names, for its pill; null where the store holds no such area, absent with no filter. */
+  area?: ListedArea | null;
+}
+
+/** An area as a listing names it in a filter's pill. */
+export interface ListedArea {
+  kind: AreaKind;
+  /** As the source writes it; a page shows it through areaDisplayName. */
+  name: string;
+}
+
+/** How the `area` filter names an area: its source and the source's own id, which is the area's key (schema/038). */
+export const areaKey = (source: string, sourceId: string) => `${source}:${sourceId}`;
+
+/** The two halves of an area key, or null where the text is not one. A source has no colon; an id may. */
+export function parseAreaKey(key: string): { source: string; sourceId: string } | null {
+  const at = key.indexOf(":");
+  if (at <= 0 || at === key.length - 1) return null;
+  return { source: key.slice(0, at), sourceId: key.slice(at + 1) };
+}
+
+/** The area an `area` filter names, if the store holds it. */
+async function listedArea(db: Kysely<Database>, key: string): Promise<ListedArea | null | undefined> {
+  if (key === "") return undefined;
+  const parsed = parseAreaKey(key);
+  if (parsed === null) return null;
+  const { rows } = await sql<ListedArea>`
+    SELECT kind, name FROM area WHERE source = ${parsed.source} AND source_id = ${parsed.sourceId}`.execute(db);
+  return rows[0] ?? null;
 }
 
 const like = (term: string) => `%${term.toLowerCase()}%`;
@@ -1105,6 +1144,19 @@ function placeMatches(term: string, p: PlaceColumns) {
   )})`;
 }
 
+/**
+ * The sample (alias `s`) lies inside this one area, for a reader who may see
+ * where it is: an area says where the point is, as its name in the place
+ * filter does, so a sample whose location is withheld is never found by it.
+ */
+function insideArea(key: string, reader: Reader) {
+  const parsed = parseAreaKey(key);
+  if (parsed === null) return sql<boolean>`FALSE`;
+  return sql<boolean>`(NOT ${withheld(reader)} AND EXISTS (
+    SELECT 1 FROM sample_area_current sac
+    WHERE sac.sample_id = s.entity_id AND sac.source = ${parsed.source} AND sac.source_id = ${parsed.sourceId}))`;
+}
+
 const blockingCount = sql<number>`coalesce(qc.blocking, 0)`;
 const warningCount = sql<number>`coalesce(qc.warning, 0)`;
 
@@ -1211,6 +1263,7 @@ async function filteredSamples(
   if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
   if (query.place !== "") base = base.where(placeMatches(query.place, place));
+  if (query.area !== "") base = base.where(insideArea(query.area, reader));
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {
@@ -1401,6 +1454,7 @@ export async function listSamples(
     total: Number(count?.n ?? 0),
     collectors,
     findings,
+    area: await listedArea(db, query.area),
   };
 }
 
@@ -1481,6 +1535,7 @@ async function filteredSpecimens(
   if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
   if (query.place !== "") base = base.where(placeMatches(query.place, place));
+  if (query.area !== "") base = base.where(insideArea(query.area, reader));
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {
@@ -1608,6 +1663,7 @@ export async function listSpecimens(
     rows: specimenRows,
     total: Number(count?.n ?? 0),
     collectors: await collectorsOf(db, specimenRows.map((r) => r.sample_id)),
+    area: await listedArea(db, query.area),
   };
 }
 

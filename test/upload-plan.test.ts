@@ -1084,3 +1084,34 @@ describe("the reasons", () => {
     expect([...HOLD_REASONS].filter((r) => !seen.has(r))).toEqual([]);
   });
 });
+
+describe("coordinates: the bounds of the store's column, and Beeline's own small numbers", () => {
+  it("holds an uncertainty past what a 32-bit INTEGER column holds", async () => {
+    const f = await uploadFixture();
+    const download = await f.download();
+    const unc = (value: TestCell) => plan(f, edited(download, onSample(f, { coordinateUncertaintyInMeters: value })));
+    expect(summary(await unc("2147483647"))).toEqual([["coordinates", "coordinateUncertaintyInMeters"]]);
+    const over = await unc("2147483648");
+    expect(heldOf(over, "uncertainty_invalid")).toHaveLength(3);
+    expect(over.sampleDifferences).toEqual([]);
+    expect(heldOf(await unc("99999999999"), "uncertainty_invalid")).toHaveLength(3);
+  });
+
+  it("reads Beeline's own number 1e-7 as a number, so a point there is a number and not a text", async () => {
+    const f = await uploadFixture();
+    await f.conn.run(`UPDATE sample_location SET latitude = 0.0000001 WHERE sample_id = ${f.ids.sampleA}`);
+    const download = await f.download();
+    expect(matrixOf(download)[1]![matrixOf(download)[0]!.indexOf("decimalLatitude")]).toBe("1e-7");
+    nothingDiffers(await plan(f, download));
+    // The same number as a person or a spreadsheet writes it.
+    nothingDiffers(await plan(f, edited(download, onSample(f, { decimalLatitude: "0.0000001" }))));
+    nothingDiffers(await plan(f, edited(download, onSample(f, { decimalLatitude: { number: "1E-07" } }))));
+    // A difference carries Beeline's own cells as numbers.
+    const p = await plan(f, edited(download, onSample(f, { decimalLongitude: "-122" })));
+    const cells = p.sampleDifferences[0]!.cells;
+    expect(cells.find((c) => c.column === "decimalLatitude")).toMatchObject({ was: "1e-7", differs: false, value: { kind: "number", number: 1e-7 } });
+    expect(cells.find((c) => c.column === "decimalLongitude")).toMatchObject({ differs: true, value: { kind: "number", number: -122 } });
+    // And moving it is seen.
+    expect(summary(await plan(f, edited(download, onSample(f, { decimalLatitude: "0.0000002" }))))).toEqual([["coordinates", "decimalLatitude"]]);
+  });
+});

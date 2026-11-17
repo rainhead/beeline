@@ -615,3 +615,76 @@ describe("what the writer will not write", () => {
     expect(sheetOf(readXlsx(writeXlsx({ sheetName: "s", header: ["a"], maxRows: 3 }, [["1"], ["2"]]))).rows).toHaveLength(3);
   });
 });
+
+describe("the zip's checksum", () => {
+  const book = (compress: boolean) =>
+    zipSync({
+      "xl/workbook.xml": strToU8(`<workbook xmlns="${MAIN}" xmlns:r="${REL}"><sheets><sheet name="a" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": [strToU8(`<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>kept</t></is></c></row></sheetData></worksheet>`), { level: compress ? 6 : 0 }],
+    });
+
+  it("refuses a stored sheet with one byte changed and its sizes unchanged", () => {
+    const zip = book(false);
+    expect(at(readXlsx(zip), "A1")?.text).toBe("kept");
+    // The sheet is stored, so its text is in the file as it is. "kept" becomes "kepx": the same XML, the same sizes.
+    const text = new TextEncoder().encode("<t>kept</t>");
+    let from = -1;
+    for (let i = 0; i + text.length <= zip.length && from === -1; i++) if (text.every((b, k) => zip[i + k] === b)) from = i;
+    expect(from).toBeGreaterThan(0);
+    const altered = new Uint8Array(zip);
+    altered[from + 6] = "x".charCodeAt(0);
+    expect(new TextDecoder().decode(altered)).toContain("kepx");
+    expect(readXlsx(altered)).toEqual({ ok: false, refusal: "unreadable" });
+  });
+
+  it("compares the directory's checksum with the bytes unpacked, for a stored part and a deflated one", () => {
+    for (const compress of [false, true]) {
+      const zip = book(compress);
+      expect(readXlsx(zip).ok, `compress ${compress}`).toBe(true);
+      // A directory that says the bytes sum to something else.
+      const wrong = new Uint8Array(zip);
+      const view = new DataView(wrong.buffer);
+      let end = wrong.length - 22;
+      while (view.getUint32(end, true) !== 0x06054b50) end--;
+      let at2 = view.getUint32(end + 16, true);
+      for (let i = 0, count = view.getUint16(end + 10, true); i < count; i++) {
+        const nameLength = view.getUint16(at2 + 28, true);
+        if (new TextDecoder().decode(wrong.subarray(at2 + 46, at2 + 46 + nameLength)) === "xl/worksheets/sheet1.xml") view.setUint32(at2 + 16, view.getUint32(at2 + 16, true) ^ 1, true);
+        at2 += 46 + nameLength + view.getUint16(at2 + 30, true) + view.getUint16(at2 + 32, true);
+      }
+      expect(readXlsx(wrong), `compress ${compress}`).toEqual({ ok: false, refusal: "unreadable" });
+    }
+  });
+});
+
+describe("cells inside a formula's range", () => {
+  it("marks the cells an array formula covers, which hold only their results", () => {
+    const read = readXlsx(
+      workbook({
+        sheet:
+          `<row r="1"><c r="E1"><v>9</v></c></row>` +
+          `<row r="2"><c r="E2"><f t="array" ref="E2:E3">A1:A2*2</f><v>3</v></c><c r="F2"><v>7</v></c></row>` +
+          `<row r="3"><c r="E3"><v>4</v></c></row>` +
+          `<row r="4"><c r="E4"><v>5</v></c></row>`,
+      }),
+    );
+    expect(["E1", "E2", "E3", "E4", "F2"].map((r) => at(read, r)?.type)).toEqual(["number", "formula", "formula", "number", "number"]);
+    expect(at(read, "E3")?.text).toBe("4");
+  });
+
+  it("marks the cells a shared formula covers, across rows and columns, and not the ones past it", () => {
+    const read = readXlsx(
+      workbook({
+        sheet:
+          `<row r="1"><c r="B1"><f t="shared" ref="B1:C2" si="0">A1*2</f><v>2</v></c><c r="C1"><v>3</v></c><c r="D1"><v>8</v></c></row>` +
+          `<row r="2"><c r="B2"><v>4</v></c><c r="C2"><v>5</v></c></row>` +
+          `<row r="3"><c r="B3"><v>6</v></c></row>`,
+      }),
+    );
+    expect(["B1", "C1", "D1", "B2", "C2", "B3"].map((r) => at(read, r)?.type)).toEqual(["formula", "formula", "number", "formula", "formula", "number"]);
+    // A single cell given as its own range.
+    const single = readXlsx(workbook({ sheet: `<row r="1"><c r="A1"><f t="array" ref="A1">1+1</f><v>2</v></c><c r="B1"><v>2</v></c></row>` }));
+    expect([at(single, "A1")?.type, at(single, "B1")?.type]).toEqual(["formula", "number"]);
+  });
+});

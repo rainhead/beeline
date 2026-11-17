@@ -393,6 +393,20 @@ function validDay(text: string): string | null {
   return text;
 }
 
+/**
+ * Beeline's own value for a cell, from the text the download writes. The number a download wrote as `1e-7` is that
+ * number, which is not a thing a person would type and so not a thing the strict reading of a person's text takes.
+ * What the text of a number is, is the number: `String(n)` and `Number(text)` are each other's inverse.
+ */
+function readOwn(reads: Reads, text: string): CellValue {
+  if (reads === "number" && text !== "") {
+    const number = Number(text);
+    if (Number.isFinite(number)) return { kind: "number", number };
+  }
+  const read = readText(reads, text, "text");
+  return isProblem(read) ? { kind: "text", text } : read;
+}
+
 /** What a cell of this text says, or the problem if it says nothing the column can use. `type` allows an exponent only on a number. */
 function readText(reads: Reads, text: string, type: CellType): CellValue | CellProblem {
   if (text === "") return BLANK;
@@ -461,10 +475,8 @@ function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): 
   const fileText = foldBreaks(cell?.text ?? "").trim();
   const type: CellType = cell?.type ?? "text";
   const was = foldBreaks(nowText).trim();
-  const lenient = (): CellValue => {
-    const read = readText(reads, fileText, "text");
-    return isProblem(read) ? { kind: "text", text: fileText } : read;
-  };
+  // The file's text is Beeline's text here, so the value is Beeline's.
+  const lenient = (): CellValue => readOwn(reads, fileText);
   if (fileText === was) return { column, nowText: was, fileText, value: lenient(), differs: false, problem: null };
   // A number the spreadsheet stored, which it keeps to 15 digits: it is Beeline's number where that is Beeline's number to 15 digits.
   // A text cell is not rounded, so a person who types fewer digits is still seen to have changed them.
@@ -475,8 +487,7 @@ function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): 
   if (kind === "not_applied") {
     const read = readText(reads, fileText, "text");
     const value = isProblem(read) ? ({ kind: "text", text: fileText } as const) : read;
-    const nowRead = readText(reads, was, "text");
-    return { column, nowText: was, fileText, value, differs: isProblem(nowRead) || !sameValue(value, nowRead), problem: null };
+    return { column, nowText: was, fileText, value, differs: !sameValue(value, readOwn(reads, was)), problem: null };
   }
   const convertedTo = PROBLEM_OF_TYPE[type];
   if (convertedTo !== undefined) {
@@ -484,15 +495,13 @@ function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): 
   }
   const read = readText(reads, fileText, type);
   if (isProblem(read)) return { column, nowText: was, fileText, value: { kind: "text", text: fileText }, differs: true, problem: read };
-  const nowRead = readText(reads, was, "text");
-  return { column, nowText: was, fileText, value: read, differs: isProblem(nowRead) || !sameValue(read, nowRead), problem: null };
+  return { column, nowText: was, fileText, value: read, differs: !sameValue(read, readOwn(reads, was)), problem: null };
 }
 
 /** A cell the file does not have, as Beeline's own: what a unit is completed with when the file leaves its column out. */
 function fromBeeline(column: string, nowText: string): Evaluated {
   const was = foldBreaks(nowText).trim();
-  const read = readText(RULES.get(column)!.reads, was, "text");
-  return { column, nowText: was, fileText: was, value: isProblem(read) ? { kind: "text", text: was } : read, differs: false, problem: null };
+  return { column, nowText: was, fileText: was, value: readOwn(RULES.get(column)!.reads, was), differs: false, problem: null };
 }
 
 // --- When a unit is complete ---
@@ -502,6 +511,8 @@ interface Incomplete {
   reason: HoldReason;
   column: string;
 }
+
+const MAX_INTEGER = 2_147_483_647;
 
 /** A day, `YYYY-MM-DD`, as Oregon reads today. */
 export const oregonToday = (now: Date = new Date()): string => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(now);
@@ -566,8 +577,8 @@ const UNIT_RULES: Record<Unit, (cells: UnitCells, today: string) => Incomplete |
     }
     if (latitude!.kind === "number" && Math.abs(latitude!.number) > 90) return { reason: "latitude_range", column: "decimalLatitude" };
     if (longitude!.kind === "number" && Math.abs(longitude!.number) > 180) return { reason: "longitude_range", column: "decimalLongitude" };
-    // The CHECK: positive, and the column is an INTEGER.
-    if (uncertainty!.kind === "number" && !(Number.isInteger(uncertainty!.number) && uncertainty!.number > 0)) {
+    // The CHECK is positive, and the column is a 32-bit INTEGER (schema/030, sample_location).
+    if (uncertainty!.kind === "number" && !(Number.isInteger(uncertainty!.number) && uncertainty!.number > 0 && uncertainty!.number <= MAX_INTEGER)) {
       return { reason: "uncertainty_invalid", column: "coordinateUncertaintyInMeters" };
     }
     return null;

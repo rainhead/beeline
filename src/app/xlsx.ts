@@ -1,3 +1,4 @@
+import { crc32 } from "node:zlib";
 import { Inflate, Zip, ZipDeflate, strToU8 } from "fflate";
 
 /**
@@ -458,6 +459,7 @@ function serialToText(serial: string, date1904: boolean): string {
 }
 
 const CELL_REF = /^([A-Za-z]+)(\d+)$/;
+const RANGE_REF = /^([A-Za-z]+)(\d+)(?::([A-Za-z]+)(\d+))?$/;
 
 function readSheet(xml: string, strings: string[], dateStyles: boolean[], date1904: boolean, maxRows: number, maxCellsPerRow: number): XlsxRow[] {
   const rows: XlsxRow[] = [];
@@ -474,12 +476,16 @@ function readSheet(xml: string, strings: string[], dateStyles: boolean[], date19
   let capture: "v" | "t" | null = null;
   let inInline = false;
   let phonetic = 0;
+  // Ranges an array formula or a shared formula covers: only its first cell holds the formula, and the rest hold results.
+  let ranges: Array<{ r1: number; c1: number; r2: number; c2: number }> = [];
 
   scan(xml, {
     open(name, attrs) {
       switch (name) {
         case "row":
           rowNumber = attrs.r !== undefined && /^\d+$/.test(attrs.r) ? Number(attrs.r) : rowNumber + 1;
+          // Rows come in order, so a range that has ended can be forgotten.
+          ranges = ranges.filter((range) => range.r2 >= rowNumber);
           cells = new Map();
           column = -1;
           break;
@@ -499,7 +505,14 @@ function readSheet(xml: string, strings: string[], dateStyles: boolean[], date19
           if (inCell) capture = "v";
           break;
         case "f":
-          if (inCell) formula = true;
+          if (inCell) {
+            formula = true;
+            const range = (attrs.t === "array" || attrs.t === "shared") && attrs.ref !== undefined ? RANGE_REF.exec(attrs.ref) : null;
+            if (range !== null) {
+              const [c1, c2] = [columnIndex(range[1]!), columnIndex(range[3] ?? range[1]!)];
+              if (c1 !== null && c2 !== null) ranges.push({ r1: Number(range[2]), c1, r2: Number(range[4] ?? range[2]), c2 });
+            }
+          }
           break;
         case "is":
           if (inCell) inInline = true;
@@ -526,6 +539,7 @@ function readSheet(xml: string, strings: string[], dateStyles: boolean[], date19
           break;
         case "c": {
           inCell = false;
+          if (!formula && ranges.some((r) => rowNumber >= r.r1 && rowNumber <= r.r2 && column >= r.c1 && column <= r.c2)) formula = true;
           const cell = finish();
           if (cell !== null) {
             if (cells.size >= maxCellsPerRow) throw new TooWide();
@@ -626,6 +640,8 @@ interface Entry {
   method: number;
   compressed: number;
   size: number;
+  /** The CRC-32 the directory gives the part's bytes. */
+  crc: number;
   /** Where the entry's data begins in the file. */
   start: number;
 }
@@ -668,7 +684,7 @@ function readDirectory(bytes: Uint8Array, maxEntries: number): Map<string, Entry
     if (start + compressed > bytes.length) throw new NotAZip("entry runs past the end of the file");
     // Two entries of one name: which is meant cannot be told.
     if (entries.has(name)) throw new NotAZip("an entry twice");
-    entries.set(name, { name, method: view.getUint16(at + 10, true), compressed, size, start });
+    entries.set(name, { name, method: view.getUint16(at + 10, true), compressed, size, crc: view.getUint32(at + 16, true), start });
     at += 46 + skip;
   }
   return entries;
@@ -687,6 +703,8 @@ function unpack(bytes: Uint8Array, entry: Entry, budget: Budget): Uint8Array {
   if (entry.method === 0) {
     if (entry.compressed !== entry.size) throw new Unreadable("a stored part whose sizes disagree");
     budget.left -= entry.size;
+    // What the directory says the bytes sum to: a part altered in transit with its sizes unchanged is not the part.
+    if (crc32(data) !== entry.crc) throw new Unreadable("a part whose bytes are not the bytes the zip checksums");
     return data;
   }
   if (entry.method !== 8) throw new Unreadable("a compression method that is not deflate");
@@ -715,6 +733,7 @@ function unpack(bytes: Uint8Array, entry: Entry, budget: Budget): Uint8Array {
     out.set(chunk, offset);
     offset += chunk.length;
   }
+  if (crc32(out) !== entry.crc) throw new Unreadable("a part whose bytes are not the bytes the zip checksums");
   return out;
 }
 

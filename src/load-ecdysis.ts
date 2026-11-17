@@ -134,15 +134,6 @@ async function optionalColumn(conn: DuckDBConnection, file: string, column: stri
   return names.has(column) ? `trim("${column}")` : "CAST(NULL AS VARCHAR)";
 }
 
-/**
- * When an identification was entered in Ecdysis, from its `modified` text:
- * archives write it to the second, flat exports as month/day/year to the
- * minute. Compared as text the two orders disagree, so anything that orders
- * identifications parses them first.
- */
-const ENTERED_AT = `coalesce(try_strptime(entered_text, '%Y-%m-%d %H:%M:%S'), try_strptime(entered_text, '%m/%d/%Y %H:%M'),
-                         try_strptime(entered_text, '%Y-%m-%d'))`;
-
 /** The archive's two files, or the one flat CSV. */
 function locate(path: string): { input: "archive"; occurrences: string; identifications: string } | { input: "flat"; occurrences: string } {
   if (statSync(path).isDirectory()) {
@@ -196,65 +187,16 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                 ${await occurrenceColumn("genus")} AS genus_text
          FROM read_csv(${sqlString(files.occurrences)}, header = true, all_varchar = true)`;
     if (files.input === "archive") {
-      const currentFlag = await optionalColumn(conn, files.identifications, "identificationIsCurrent");
       await conn.run(
         `CREATE OR REPLACE TEMP TABLE ecd_identification AS
          SELECT "coreid" AS occ_id, "recordID" AS record_id,
                 trim("identifiedBy") AS identified_by, trim("dateIdentified") AS date_identified,
                 trim("identificationQualifier") AS qualifier_text, trim("scientificName") AS scientific_name,
-                coalesce(${currentFlag} = '1', false) AS is_current,
+                "identificationIsCurrent" = '1' AS is_current,
                 trim("identificationRemarks") AS remarks, "modified" AS entered_text,
                 ${await optionalColumn(conn, files.identifications, "genus")} AS genus_text
          FROM read_csv(${sqlString(files.identifications)}, header = true, all_varchar = true)`,
       );
-      // The archive a collection publishes (content/dwca/<code>_DwC-A.zip,
-      // British Columbia's on 2026-11-03) leaves the current flag out
-      // altogether, unlike the one the signed-in download builds. There the
-      // current identification is the newest history row that says what the
-      // occurrence says, so it keeps its recordID. Adding the occurrence row
-      // beside it, as below, recorded the same identification twice on 8,998
-      // of BC's 9,374 specimens. An archive that has the column is left to
-      // its flags, so Washington's loads exactly as it did.
-      if (currentFlag === "CAST(NULL AS VARCHAR)") {
-        // Which row is current is inferred here, not read, and the inference
-        // holds only for a first load. Loaded again, a row recorded as history
-        // that the occurrence has gone back to is skipped as already loaded,
-        // and an occurrence row standing in for a current one Beeline has
-        // since superseded is recorded anew and undoes that (CodeRabbit on
-        // this branch). So a published archive bridges a collection in once,
-        // and the signed-in download, which says which row is current, keeps
-        // it current after that.
-        const loadedBefore = await scalar(
-          conn,
-          `SELECT count(*) FROM ecdysis_identification e
-           JOIN determination d ON d.entity_id = e.determination_id
-           JOIN specimen_catalog_number c ON c.specimen_id = d.specimen_id
-           WHERE starts_with(c.catalog_number, $1)`,
-          [prefix],
-        );
-        if (loadedBefore > 0 && !opts.force) {
-          throw new Error(
-            `${opts.path}: this archive does not say which identification is current, so it loads only into a collection with nothing from Ecdysis yet, ` +
-              `and ${loadedBefore} ${prefix} identifications are already loaded; load the signed-in download instead, or pass force`,
-          );
-        }
-        await conn.run(
-          `UPDATE ecd_identification SET is_current = true
-           WHERE record_id IN (
-             SELECT i.record_id
-             FROM ecd_identification i
-             JOIN (${occurrenceAsCurrent}) o ON o.occ_id = i.occ_id
-               AND i.scientific_name IS NOT DISTINCT FROM o.scientific_name
-               AND i.identified_by IS NOT DISTINCT FROM o.identified_by
-               AND i.qualifier_text IS NOT DISTINCT FROM o.qualifier_text
-               -- "s.d." (no date) in the history is a blank on the occurrence;
-               -- a date the occurrence has since corrected is a new statement.
-               AND coalesce(nullif(i.date_identified, 's.d.'), '') = coalesce(nullif(o.date_identified, 's.d.'), '')
-             QUALIFY row_number() OVER (
-               PARTITION BY i.occ_id
-               ORDER BY ${ENTERED_AT.replaceAll("entered_text", "i.entered_text")} DESC NULLS LAST, i.record_id DESC) = 1)`,
-        );
-      }
       // Symbiota keeps an occurrence's current determination on the
       // occurrence itself; the history's flag usually agrees, but not always.
       // 484 occurrences in Washington's 2026-09-24 archive flag nothing
@@ -454,7 +396,8 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                      WHEN regexp_matches(date_identified, '^\\d{4}-\\d{2}-\\d{2}$') THEN try_cast(date_identified AS DATE) END AS determined_on,
                 CASE WHEN regexp_matches(date_identified, '^\\d{4}$') THEN 'year'
                      WHEN regexp_matches(date_identified, '^\\d{4}-\\d{2}$') THEN 'month' END AS precision,
-                ${ENTERED_AT} AS entered_at,
+                coalesce(try_strptime(entered_text, '%Y-%m-%d %H:%M:%S'), try_strptime(entered_text, '%m/%d/%Y %H:%M'),
+                         try_strptime(entered_text, '%Y-%m-%d')) AS entered_at,
                 (SELECT min(p.entity_id) FROM ecd_alias al JOIN person p ON p.display_name = al.person
                   WHERE al.alias = ident.identified_by) AS determiner_id
          FROM ident
@@ -540,6 +483,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       // the catalog prefix: each atlas's archive is taken on its own
       // schedule, so British Columbia's newest entry being older than
       // Washington's says nothing about the order BC's exports were taken in.
+      // Compared across collections, one atlas would be refused every night.
       `SELECT date_trunc('minute', max(entered_at)),
               (SELECT date_trunc('minute', max(e.entered_at))
                  FROM ecdysis_identification e

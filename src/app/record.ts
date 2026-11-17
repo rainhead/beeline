@@ -211,6 +211,13 @@ export interface SampleDetail {
    * the wilderness is: the name says where the point is.
    */
   ecoregion: string | null;
+  /**
+   * Where the record's state or country is not what its point says
+   * (sample_place_disagreement, beeline-rax1): the point's, and whether the
+   * point is inside that county or only nearest it on the shore. Null
+   * otherwise, and where the location is withheld: it says where the point is.
+   */
+  place_disagreement: PlaceDisagreement | null;
   /** Everyone who collected it, in recordedBy order (beeline-77j). */
   collectors: RecordCollector[];
 }
@@ -226,6 +233,12 @@ export interface LocationOverride {
   reason: string | null;
   /** Where the observation now puts it, when that is neither the base nor the override. */
   observation_now: { latitude: number; longitude: number } | null;
+}
+
+export interface PlaceDisagreement {
+  point_country: string | null;
+  point_state_province: string;
+  county_inside: boolean;
 }
 
 export interface LabelDiverged {
@@ -442,6 +455,7 @@ type RawSample = Omit<
   | "locality_alternatives"
   | "wildernesses"
   | "ecoregion"
+  | "place_disagreement"
 > & {
   suggested_locality: string | null;
   alternative_localities: string | null;
@@ -494,6 +508,15 @@ async function labelDiverged(db: Kysely<Database>, sampleId: number): Promise<La
     ...place,
     distance_m: Number(d.distance_m),
   };
+}
+
+/** What the point says the place is, where the record says otherwise. */
+async function placeDisagreement(db: Kysely<Database>, sampleId: number): Promise<PlaceDisagreement | null> {
+  const found = await sql<PlaceDisagreement>`
+    SELECT point_country, point_state_province, county_inside
+    FROM sample_place_disagreement WHERE sample_id = ${sampleId}`.execute(db);
+  const d = found.rows[0];
+  return d === undefined ? null : { ...d, county_inside: Boolean(d.county_inside) };
 }
 
 /** The country, state and county iNaturalist gives this sample's observation now; nulls where it gives none. */
@@ -565,6 +588,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
             observation_now: await localityObservationNow(db, Number(row.sample_id)),
           },
     label_diverged: hidden || !row.printed ? null : await labelDiverged(db, Number(row.sample_id)),
+    place_disagreement: hidden ? null : await placeDisagreement(db, Number(row.sample_id)),
     printed: Boolean(row.printed),
     from_old_records: await fromOldRecords(db, Number(row.sample_id)),
     sample_id: Number(row.sample_id),

@@ -862,6 +862,16 @@ export interface SampleAreaDerivationTable {
   latitude: number;
   longitude: number;
   gazetteer_build: string;
+  /** AREA_RULE_VERSION in src/derive-area.ts when the areas were found. */
+  rule_version: number;
+  /** What the point says the country is, from its one county (beeline-rax1); null in no county or two. */
+  country: string | null;
+  /** What the point says the state or province is, from the same county. */
+  state_province: string | null;
+  /** True inside the county's outline; false where it took the nearest on the shore; null with no county. */
+  county_inside: boolean | null;
+  /** True where the point is at least 100 m inside that county (a 200 m square around it lies inside). */
+  county_inside_100m: boolean | null;
   derived_at: Date;
 }
 
@@ -875,6 +885,19 @@ export interface SampleAreaTable {
 /** schema/173: a located sample no ecoregion was found for; settled says its season has settled (schema/102). */
 export interface SampleEcoregionMissingView {
   sample_id: number;
+  settled: boolean;
+}
+
+/** schema/173: a sample whose recorded state or country is not what its point says (beeline-rax1). */
+export interface SamplePlaceDisagreementView {
+  sample_id: number;
+  country: string | null;
+  state_province: string | null;
+  point_country: string | null;
+  point_state_province: string;
+  county_inside: boolean;
+  county_inside_100m: boolean;
+  printed: boolean;
   settled: boolean;
 }
 
@@ -1839,6 +1862,7 @@ export interface Database {
   sample_locality_suggestion_current: SampleLocalitySuggestionCurrentView;
   sample_area_current: SampleAreaCurrentView;
   sample_ecoregion_missing: SampleEcoregionMissingView;
+  sample_place_disagreement: SamplePlaceDisagreementView;
   printable_sample: PrintableSampleView;
   pending_print_sample: PendingPrintSampleView;
   print_run: PrintRunTable;

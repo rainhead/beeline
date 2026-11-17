@@ -534,6 +534,20 @@ export function WhereCollected({
         </Callout>
       ) : null}
       {admin && sample.label_diverged !== null ? <TakeObservationLocation m={m} sample={sample} /> : null}
+      {/* The record's state is not its point's (beeline-rax1). Staff only,
+          as only staff correct a printed place; not beside placePending,
+          which already asks for the county and state to be checked. */}
+      {admin && !placePending && sample.place_disagreement !== null ? (
+        <Callout tone="warning">
+          <p>
+            {m.record.sample.placeDisagrees(
+              m.format.place([sample.place_disagreement.point_state_province, sample.place_disagreement.point_country]),
+              m.format.place([sample.state_province, sample.country]) || null,
+              sample.place_disagreement.county_inside,
+            )}
+          </p>
+        </Callout>
+      ) : null}
     </>
   );
 }

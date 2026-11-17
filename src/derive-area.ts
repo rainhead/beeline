@@ -62,6 +62,23 @@ export const COUNTY_SHORE_M = 1000;
  */
 export const ECOREGION_SHORE_M = COUNTY_SHORE_M;
 
+/**
+ * How far inside its county a point must be before the state it says
+ * counts against the record's (sample_area_derivation.county_inside_100m,
+ * beeline-rax1): the program's 100 m allowance for GPS error, as for a
+ * wilderness. The column's name carries the number, so change both.
+ */
+export const COUNTY_EDGE_M = 100;
+
+/**
+ * The version of what the step records for each sample
+ * (sample_area_derivation.rule_version). Raise it when a change to the step
+ * means every sample's areas must be found again, as a new gazetteer build
+ * makes them. 1: the point's country and state, read from its county, are
+ * recorded beside the areas (beeline-rax1).
+ */
+export const AREA_RULE_VERSION = 1;
+
 export interface AreaResult {
   /** Null when there was no gazetteer to read. */
   gazetteerBuild: string | null;
@@ -164,7 +181,7 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
       `SELECT l.sample_id, l.latitude AS lat, l.longitude AS lon
          FROM sample_location l
          LEFT JOIN sample_area_derivation d ON d.sample_id = l.sample_id
-        WHERE (d.sample_id IS NULL OR d.gazetteer_build <> $1
+        WHERE (d.sample_id IS NULL OR d.gazetteer_build <> $1 OR d.rule_version <> $3
                OR abs(d.latitude - l.latitude) > 5e-5 OR abs(d.longitude - l.longitude) > 5e-5)
           AND ($2::BIGINT IS NULL OR l.sample_id IN (
                 SELECT sc.sample_id FROM sample_collector sc
@@ -172,7 +189,7 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
                 WHERE a.inat_user_id = $2::BIGINT))
           ${narrowTo}
         ORDER BY l.sample_id`,
-      [build.build_id, opts.observerUserId ?? null],
+      [build.build_id, opts.observerUserId ?? null, AREA_RULE_VERSION],
     );
     result.pending = pending.length;
     const size = opts.batchSize ?? 5000;
@@ -281,6 +298,37 @@ ${ecoregions ? `    UNION ALL
                     + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2))) AS m)
     WHERE m <= ${ECOREGION_SHORE_M}
     QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, code) = 1` : ""}`);
+  // Which points are at least COUNTY_EDGE_M inside a county: a square that
+  // far each way from the point lies wholly inside the outline. A square and
+  // not the distance to the edge, because the distance needs the outline's
+  // boundary built afresh on every sample's row: 5,000 points in the
+  // Stikine Region, the largest outline, ran out of 512 MB that way, the
+  // trap of beeline-6cur again, where this is a spatial join that reads each
+  // outline in place and fits in 128 MB. Its corners reach about 141 m, so
+  // a point between 100 and 141 m from the edge may count as near it.
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE area_batch_clear AS
+    SELECT DISTINCT b.sample_id, r.source, r.source_id
+    FROM area_batch b JOIN ${G}.region r ON ST_Contains(r.geom, ST_MakeEnvelope(
+      b.lon - ${COUNTY_EDGE_M} / (111320 * cos(radians(b.lat))), b.lat - ${COUNTY_EDGE_M} / 111320.0,
+      b.lon + ${COUNTY_EDGE_M} / (111320 * cos(radians(b.lat))), b.lat + ${COUNTY_EDGE_M} / 111320.0))`);
+  // What each point says the sample's country and state are: those of its
+  // one county, whether the point is inside it or took it by the shore
+  // allowance, which county_inside tells apart (beeline-rax1). None for a
+  // point in no county or in two. Joined to the regions by their keys, with
+  // no outline in the projection, for beeline-6cur's reason (stampCounties).
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE area_batch_place AS
+    SELECT h.sample_id, any_value(r.country) AS country, any_value(r.state) AS state_province,
+           any_value(NOT h.by_shore) AS county_inside,
+           bool_or(c.sample_id IS NOT NULL) AS county_inside_100m
+    FROM area_batch_hit h
+    JOIN (SELECT source, source_id, state, country FROM ${G}.region) r
+      ON r.source = h.source AND r.source_id = h.source_id
+    LEFT JOIN area_batch_clear c
+      ON c.sample_id = h.sample_id AND c.source = h.source AND c.source_id = h.source_id
+    WHERE h.kind = 'county'
+    GROUP BY h.sample_id HAVING count(*) = 1`);
   const now = new Date().toISOString();
   await conn.run("BEGIN TRANSACTION");
   try {
@@ -301,9 +349,13 @@ ${ecoregions ? `    UNION ALL
     await conn.run(`DELETE FROM sample_area WHERE sample_id IN (SELECT sample_id FROM area_batch)`);
     await conn.run(`DELETE FROM sample_area_derivation WHERE sample_id IN (SELECT sample_id FROM area_batch)`);
     await conn.run(
-      `INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, derived_at)
-       SELECT sample_id, lat, lon, $1, $2::TIMESTAMP FROM area_batch`,
-      [buildId, now],
+      `INSERT INTO sample_area_derivation
+         (sample_id, latitude, longitude, gazetteer_build, rule_version, country, state_province, county_inside,
+          county_inside_100m, derived_at)
+       SELECT b.sample_id, b.lat, b.lon, $1, $3, p.country, p.state_province, p.county_inside, p.county_inside_100m,
+              $2::TIMESTAMP
+       FROM area_batch b LEFT JOIN area_batch_place p ON p.sample_id = b.sample_id`,
+      [buildId, now, AREA_RULE_VERSION],
     );
     await conn.run(
       `INSERT INTO sample_area (sample_id, area_source, area_source_id)
@@ -399,30 +451,30 @@ async function stampCountiesUnlocked(conn: Conn, G: string, sampleIds?: readonly
   const only = sampleIds === undefined ? "" : `AND s.entity_id IN (${sampleIds.map((id) => Number(id)).join(", ")})`;
   const onlyThese = (column: string) =>
     sampleIds === undefined ? "" : `AND ${column} IN (${sampleIds.map((id) => Number(id)).join(", ")})`;
-  // Each located sample's one county, with whether the point is inside it
-  // rather than taken by the shore allowance.
+  // Each located sample's one county, with the country and state its point
+  // says and whether the point is inside the county rather than taken by the
+  // shore allowance, as the areas step recorded them (sample_area_derivation,
+  // beeline-rax1). sample_area_current is current only where the derivation
+  // is about the point the sample has now, so the derivation joined here is
+  // too. The county's own name comes from the gazetteer by its keys, with no
+  // outline in the projection.
   //
-  // The county's names are joined by its keys, without its outline, and
-  // "inside" comes from a join on the outline alone, which DuckDB runs as a
-  // spatial join that reads each outline once. Joining the outline by the
-  // keys and testing it in the SELECT list, as this did at first, put a copy
-  // of the outline on every sample's row: 70,654 samples against outlines of
-  // up to 1 MB needed more than production's 1.5 GB, and the step failed
-  // every night from 11 to 14 November 2026 (beeline-6cur). Written this way
-  // the same store gives the same rows at 400 MB.
+  // This used to test "inside" itself, with a spatial join of every located
+  // sample against the outlines. Written at first with the outline on every
+  // sample's row, it needed more than production's 1.5 GB and the step
+  // failed every night from 11 to 14 November 2026 (beeline-6cur). Reading
+  // the derivation needs no outline at all, and gives one answer to "inside"
+  // where there were two: a point exactly on a county line, which the areas
+  // step's ST_Contains gives to neither county, is now not inside either,
+  // where the stamp's ST_Intersects had called it inside one.
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE county_point AS
-    SELECT a.sample_id, any_value(r.county) AS county, any_value(r.state) AS state,
-           any_value(r.country) AS country,
-           bool_or(i.sample_id IS NOT NULL) AS inside
+    SELECT a.sample_id, any_value(r.county) AS county, any_value(d.state_province) AS state,
+           any_value(d.country) AS country, coalesce(any_value(d.county_inside), FALSE) AS inside
     FROM sample_area_current a
-    JOIN (SELECT source, source_id, county, state, country FROM ${G}.region) r
+    JOIN sample_area_derivation d ON d.sample_id = a.sample_id
+    JOIN (SELECT source, source_id, county FROM ${G}.region) r
       ON r.source = a.source AND r.source_id = a.source_id
-    LEFT JOIN (SELECT l.sample_id, ri.source, ri.source_id
-               FROM sample_location l
-               JOIN ${G}.region ri ON ST_Intersects(ri.geom, ST_Point(l.longitude, l.latitude))
-               WHERE TRUE ${onlyThese("l.sample_id")}) i
-      ON i.sample_id = a.sample_id AND i.source = a.source AND i.source_id = a.source_id
     WHERE a.kind = 'county' ${onlyThese("a.sample_id")}
     GROUP BY a.sample_id HAVING count(*) = 1`);
   await conn.run(`

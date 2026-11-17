@@ -41,15 +41,34 @@ COMMENT ON COLUMN area.gazetteer_build IS 'The gazetteer_build.build_id the row 
 -- Which samples have had their areas worked out, at which point and from which
 -- gazetteer. A sample inside no area has a row here and none in sample_area,
 -- which is what tells "inside nothing" from "not yet looked at".
+--
+-- It also records what the point says about the sample's state or province
+-- and country, read from the one county it lies in (beeline-rax1). That is a
+-- statement about this sample's point, made at the point and build it was
+-- made for, and not an attribute of the county: nothing records that a county
+-- lies inside a state (above). sample.state_province is a different fact,
+-- what the record and its labels say; the county stamp (src/derive-area.ts)
+-- writes the one from the other where a sample still follows its point, and
+-- sample_place_disagreement (schema/173) shows where they differ.
 CREATE TABLE sample_area_derivation (
   sample_id       INTEGER PRIMARY KEY REFERENCES sample(entity_id),
   latitude        DOUBLE NOT NULL,
   longitude       DOUBLE NOT NULL,
   gazetteer_build TEXT NOT NULL,
+  rule_version    INTEGER NOT NULL,
+  country         TEXT,
+  state_province  TEXT,
+  county_inside   BOOLEAN,
+  county_inside_100m BOOLEAN,
   derived_at      TIMESTAMP NOT NULL
 );
-COMMENT ON TABLE sample_area_derivation IS 'The point and gazetteer build a sample''s areas (sample_area) were worked out at, as sample_locality_suggestion records them for a name: a moved point or a new build is tested again.';
+COMMENT ON TABLE sample_area_derivation IS 'The point and gazetteer build a sample''s areas (sample_area) were worked out at, as sample_locality_suggestion records them for a name: a moved point, a new build or a new rule is tested again. Also what that point says the sample''s country and state or province are.';
 COMMENT ON COLUMN sample_area_derivation.latitude IS 'With longitude: the believed-true point the areas were found for. sample_area_current shows them only while the sample is still there.';
+COMMENT ON COLUMN sample_area_derivation.rule_version IS 'AREA_RULE_VERSION in src/derive-area.ts when the areas were found. Raising that constant tests every sample again, as a new gazetteer build does.';
+COMMENT ON COLUMN sample_area_derivation.country IS 'What the point says the country is: that of the one county or BC regional district it was found in (USA, CAN), however it was reached. NULL where it is in no county, or in two.';
+COMMENT ON COLUMN sample_area_derivation.state_province IS 'What the point says the state or province is (OR, BC), from the same county as country. Not an attribute of the county: a statement about this sample''s point, which the sample''s own state_province may contradict.';
+COMMENT ON COLUMN sample_area_derivation.county_inside IS 'TRUE where the point lies inside that county''s outline; FALSE where it lies outside every county and took the nearest within 1 km, on the shore (COUNTY_SHORE_M), which near a land border can be across it. NULL where there is no county.';
+COMMENT ON COLUMN sample_area_derivation.county_inside_100m IS 'TRUE where the point is at least 100 m inside that county: a square 200 m across, centred on it, lies wholly inside the outline. FALSE nearer the edge, and on the shore. 100 m is the program''s allowance for GPS error, so a point nearer may be in the next county or state; sample_place_disagreement leaves those out. The square''s corners reach about 141 m.';
 
 -- No foreign key to area: DuckDB updates a referenced row as a delete and an
 -- insert, and refuses the delete, so one would stop a new gazetteer build from

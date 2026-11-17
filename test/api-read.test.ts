@@ -159,7 +159,7 @@ async function world({ extras = false }: { extras?: boolean } = {}) {
          ('wilderness.net', '1', 'wilderness', 'Hidden Wilderness', ST_GeomFromText('POINT(-122.5 48.7)'), 'test'),
          ('epa-cec', '2.3', 'ecoregion', 'Hidden Ecoregion', ST_GeomFromText('POINT(-122.5 48.7)'), 'test')`,
     );
-    await conn.run(`INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, derived_at) VALUES (${extra.b4}, 48.7001, -122.5002, 'test', current_timestamp)`);
+    await conn.run(`INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, rule_version, derived_at) VALUES (${extra.b4}, 48.7001, -122.5002, 'test', 1, current_timestamp)`);
     await conn.run(
       `INSERT INTO sample_area (sample_id, area_source, area_source_id) VALUES (${extra.b4}, 'wilderness.net', '1'), (${extra.b4}, 'epa-cec', '2.3')`,
     );
@@ -769,7 +769,7 @@ describe("what the API publishes of a record, field by field", () => {
         "elevation_file", "elevation_m", "elevation_source", "elevation_stale", "from_old_records", "geoprivacy", "host_common_name",
         "host_current_name", "host_family", "host_inat_taxon_id", "host_name_as_observed", "host_rank", "id", "inat_observation_id", "kind", "label_diverged", "latitude", "locality",
         "locality_alternatives", "locality_override", "locality_suggestion", "location_override", "location_source",
-        "location_withheld", "longitude", "mine", "observation_gone_since", "observation_notes", "observation_place_guess", "printed",
+        "location_withheld", "longitude", "mine", "observation_gone_since", "observation_notes", "observation_place_guess", "place_disagreement", "printed",
         "program_code", "program_name", "protocol", "sample_id", "sample_number", "sampling_effort", "specimen_count", "state_province",
         "taxon_geoprivacy", "url", "wildernesses",
       ].sort(),

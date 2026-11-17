@@ -1098,6 +1098,17 @@ export const en = {
       inWilderness: (names: string) => `Inside the ${names}. Collecting in a federal wilderness needs a permit.`,
       /** The EPA Level III ecoregion the coordinates lie in (beeline-l5so): a fact, not a note. */
       inEcoregion: (name: string) => `${name} ecoregion`,
+      /**
+       * Staff only: the state or country the record says is not the one its
+       * coordinates are in (beeline-rax1). Beeline leaves a printed or
+       * settled sample's place as its labels say, so a person decides which
+       * is wrong. `point` and `recorded` are already formatted places
+       * ("OR, USA"); `recorded` is null where the record names neither.
+       * `inside` is false for a point on the shore just outside every county,
+       * which took the nearest one.
+       */
+      placeDisagrees: (point: string, recorded: string | null, inside: boolean) =>
+        `${inside ? `These coordinates are in ${point}` : `These coordinates are just off the shore, nearest ${point}`}, but this record says ${recorded ?? "no state or country"}.`,
       /** The program the sample was collected for (beeline-8w8n): its atlas, else Master Melittology itself. */
       program: "Program",
       host: "Floral host",

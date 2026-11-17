@@ -3,7 +3,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveAreas, describeAreas } from "../src/derive-area.js";
+import { AREA_RULE_VERSION, deriveAreas, describeAreas } from "../src/derive-area.js";
 import { loadSpatial, openDuckDb } from "../src/db.js";
 import { SETTLED_SEASON, buildTestGazetteer, createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
@@ -429,6 +429,100 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
     const id = await insertCleanSample(conn, { inat_observation_id: "1001" }, ALSEA);
     expect((await deriveAreas(conn, path)).countiesStamped).toBe(0);
     expect(await countyOf(conn, id)).toBe("BentonCo");
+  });
+});
+
+describe("what the point says the state and country are (beeline-rax1)", () => {
+  const place = (conn: DuckDBConnection) =>
+    rows(conn, `SELECT sample_id, country, state_province, county_inside, rule_version FROM sample_area_derivation ORDER BY 1`);
+  const disagreements = (conn: DuckDBConnection) =>
+    rows(
+      conn,
+      `SELECT sample_id, country, state_province, point_country, point_state_province, county_inside, printed, settled
+       FROM sample_place_disagreement ORDER BY 1`,
+    );
+
+  test("is recorded with the areas: inside the county, by the shore, or in none", async () => {
+    const path = join(dir, "place.duckdb");
+    await buildTestGazetteer(path, "build-place");
+    const conn = await storeWithPerson();
+    const inside = await insertCleanSample(conn, {}, ALSEA);
+    // About 550 m north of the county's edge: the nearest county, not inside it.
+    const shore = await insertCleanSample(conn, { sample_number: "'2'" }, { latitude: "45.005", longitude: "-123.60" });
+    const nowhere = await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "46.50", longitude: "-123.60" });
+    await deriveAreas(conn, path);
+    expect(await place(conn)).toEqual([
+      [inside, "USA", "OR", true, AREA_RULE_VERSION],
+      [shore, "USA", "OR", false, AREA_RULE_VERSION],
+      [nowhere, null, null, null, AREA_RULE_VERSION],
+    ]);
+  });
+
+  test("a sample the stamp leaves alone says so when its state is not its point's, split by season", async () => {
+    const path = join(dir, "disagree.duckdb");
+    await buildTestGazetteer(path, "build-disagree");
+    const conn = await storeWithPerson();
+    // Printed in Washington, with its point in Oregon: its labels say WA.
+    const printed = await insertCleanSample(conn, { inat_observation_id: "5001", state_province: "'WA'" }, ALSEA);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1)`);
+    const settled = await insertCleanSample(
+      conn,
+      {
+        inat_observation_id: "5002", sample_number: "'2'", state_province: "'ID'",
+        date_start: `DATE '${SETTLED_SEASON}-07-14'`, date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+      },
+      ALSEA,
+    );
+    // On the shore just outside the county: the stamp keeps WA, and the view
+    // says the point is only near an Oregon county.
+    const shore = await insertCleanSample(
+      conn,
+      { inat_observation_id: "5003", sample_number: "'3'", state_province: "'WA'" },
+      { latitude: "45.005", longitude: "-123.60" },
+    );
+    // Still to print: the stamp makes it Oregon, so it is not in the view.
+    const follows = await insertCleanSample(conn, { inat_observation_id: "5004", sample_number: "'4'", state_province: "'WA'" }, ALSEA);
+    const agrees = await insertCleanSample(conn, { inat_observation_id: "5005", sample_number: "'5'" }, ALSEA);
+    await deriveAreas(conn, path, { stampCounties: true });
+    expect(await disagreements(conn)).toEqual([
+      [printed, "USA", "WA", "USA", "OR", true, true, false],
+      [settled, "USA", "ID", "USA", "OR", true, false, true],
+      [shore, "USA", "WA", "USA", "OR", false, false, false],
+    ]);
+    expect(await rows(conn, `SELECT state_province FROM sample WHERE entity_id IN (${follows}, ${agrees})`)).toEqual([["OR"], ["OR"]]);
+    // A point that moves takes its sample out until it is tested again.
+    await conn.run(`UPDATE sample_location SET latitude = 44.6 WHERE sample_id = ${printed}`);
+    expect((await disagreements(conn)).map((r) => r[0])).not.toContain(printed);
+  });
+
+  test("a derivation from an earlier version of the step is tested again", async () => {
+    const path = join(dir, "version.duckdb");
+    await buildTestGazetteer(path, "build-version");
+    const conn = await storeWithPerson();
+    const id = await insertCleanSample(conn, {}, ALSEA);
+    await deriveAreas(conn, path);
+    // As migration 0101 leaves every row: version 0, with no place.
+    await conn.run(`UPDATE sample_area_derivation SET rule_version = 0, country = NULL, state_province = NULL, county_inside = NULL`);
+    expect((await deriveAreas(conn, path)).pending).toBe(1);
+    expect(await place(conn)).toEqual([[id, "USA", "OR", true, AREA_RULE_VERSION]]);
+    expect((await deriveAreas(conn, path)).pending).toBe(0);
+  });
+
+  test("a point exactly on a county's edge is not inside it, so it does not move the state", async () => {
+    // ST_Contains gives a point on the line to no county; the shore allowance
+    // then finds it at no distance. The stamp used to test "inside" with
+    // ST_Intersects, which says yes, and would have moved this sample to OR.
+    const path = join(dir, "edge.duckdb");
+    await buildTestGazetteer(path, "build-edge");
+    const conn = await storeWithPerson();
+    const id = await insertCleanSample(
+      conn,
+      { inat_observation_id: "6001", state_province: "'WA'", county: "'Klickitat'" },
+      { latitude: "45.0", longitude: "-123.60" },
+    );
+    await deriveAreas(conn, path, { stampCounties: true });
+    expect(await place(conn)).toEqual([[id, "USA", "OR", false, AREA_RULE_VERSION]]);
+    expect(await rows(conn, `SELECT state_province, county FROM sample WHERE entity_id = ${id}`)).toEqual([["WA", "Klickitat"]]);
   });
 });
 

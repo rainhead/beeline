@@ -205,7 +205,7 @@ export function ProgramPage({ m, program, admin }: { m: Messages; program: Progr
         <>
           <h2>{p.ecdysis}</h2>
           {program.ecdysis.map((c) => (
-            <p>{p.ecdysisDataset(c.datasetId)}</p>
+            <p>{p.ecdysisDataset(c)}</p>
           ))}
         </>
       )}

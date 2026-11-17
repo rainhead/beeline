@@ -793,16 +793,28 @@ export function buildJobs(
       window: "night",
       async run(ctx) {
         if (!config.ecdysis) return "no Ecdysis login (ECDYSIS_USERNAME / ECDYSIS_PASSWORD) — nothing to fetch";
+        // Each collection is fetched and loaded on its own, so one atlas's
+        // failure neither stops the next nor hides what the others did: the
+        // run fails, naming each that failed, after every collection has had
+        // its turn.
         const parts: string[] = [];
+        let failed = false;
         for (const collection of ECDYSIS_COLLECTIONS) {
-          const r = await fetchEcdysis(ctx.conn, collection, {
-            dir: config.ecdysisDir ?? deploymentPath("data/ecdysis"),
-            credentials: config.ecdysis,
-            signal: ctx.signal,
-            step: ctx.step,
-          });
-          parts.push(describeFetch(r));
+          try {
+            const r = await fetchEcdysis(ctx.conn, collection, {
+              dir: config.ecdysisDir ?? deploymentPath("data/ecdysis"),
+              credentials: config.ecdysis,
+              signal: ctx.signal,
+              step: ctx.step,
+            });
+            parts.push(describeFetch(r));
+          } catch (err) {
+            if (ctx.signal?.aborted) throw err;
+            failed = true;
+            parts.push(`${collection.program} failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
+        if (failed) throw new Error(parts.join("; "));
         return parts.join("; ");
       },
     },

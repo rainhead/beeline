@@ -479,8 +479,18 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       conn,
       // To the minute: a flat export stamps entries to the minute and the
       // archive to the second, and the same moment must not read as older.
+      // Against what was loaded for this export's own occurrences only: each
+      // atlas's archive is taken on its own schedule, so British Columbia's
+      // newest entry being older than Washington's says nothing about the
+      // order BC's exports were taken in, and compared across collections one
+      // atlas would be refused every night. The occurrence's recordID, not
+      // the catalog number, says which: a museum can renumber an occurrence,
+      // and the number is replaced above, before this runs.
       `SELECT date_trunc('minute', max(entered_at)),
-              (SELECT date_trunc('minute', max(entered_at)) FROM ecdysis_identification) FROM ecd_candidate`,
+              (SELECT date_trunc('minute', max(e.entered_at))
+                 FROM ecdysis_identification e
+                WHERE e.occurrence_id IN (SELECT occurrence_record_id FROM ecd_occurrence))
+       FROM ecd_candidate`,
     )) as [[Date | null, Date | null]];
     if (!opts.force && newestInExport !== null && newestLoaded !== null && newestInExport < newestLoaded) {
       throw new Error(

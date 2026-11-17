@@ -92,9 +92,10 @@ seconds.
 
 ## Open
 
-- **Dataset ids for the other atlases.** Washington is dataset 44 within WSUC's
-  collection 164. Which collections and datasets BC and the others keep, and what
-  prefix their catalog numbers carry, is a question for their staff.
+- **Collections for the other atlases.** Washington is dataset 44 within WSUC's
+  collection 164. BC is answered: collection 196, prefix `BCBA_`, no public
+  dataset, so it is fetched by collection (beeline-dd8). Which collections the
+  other atlases keep is still a question for their staff.
 - **Credentials.** The archive download is authenticated; beeatlas holds a login for it.
   A Beeline job would need one of its own, kept in the private store's secrets.
 - **The direction out.** Beeline exports nothing to Ecdysis automatically today

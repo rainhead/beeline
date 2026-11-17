@@ -575,3 +575,39 @@ describe("the CLI's arguments", () => {
     expect(parseArgs(["--prefix", "OSAC_", "archive"])).toMatchObject({ path: "archive", catalogPrefix: "OSAC_" });
   });
 });
+
+describe("two collections", () => {
+  // Each atlas's archive is taken on its own schedule, so the order check
+  // compares an archive only with what its own collection already loaded.
+  const archive = async (occurrence: string, identification: string) => {
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-two-"));
+    await writeFile(
+      join(dir, "occurrences.csv"),
+      "id,catalogNumber,recordID,scientificName,identificationQualifier,identifiedBy,dateIdentified,identificationRemarks,modified\n" + occurrence,
+    );
+    await writeFile(
+      join(dir, "identifications.csv"),
+      "coreid,identifiedBy,dateIdentified,identificationQualifier,scientificName,identificationIsCurrent,identificationRemarks,recordID,modified\n" + identification,
+    );
+    return dir;
+  };
+
+  test("one collection's archive is not refused for being older than another collection's", async () => {
+    const washington = await archive(
+      "100,WSDA_2303966,occ-wa,Bombus vosnesenskii,,Ellen Expert,2026,,2026-11-10 13:01:00\n",
+      "100,Ellen Expert,2026,,Bombus vosnesenskii,1,,id-wa,2026-11-10 13:01:00\n",
+    );
+    await loadEcdysis(conn, { path: washington, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    const bc = await archive(
+      "201,BCBA_2303967,occ-bc,Andrena sladeni,,B. Zand,,,2025-10-13 18:35:00\n",
+      "201,B. Zand,,,Andrena sladeni,1,,id-bc,2025-10-13 18:35:00\n",
+    );
+    expect((await loadEcdysis(conn, { path: bc, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).loaded).toBe(1);
+    // An older export of the same collection is still refused.
+    const older = await archive(
+      "201,BCBA_2303967,occ-bc,Andrena sladeni,,B. Zand,,,2025-01-01 00:00:00\n",
+      "201,B. Zand,,,Andrena sladeni,1,,id-bc-older,2025-01-01 00:00:00\n",
+    );
+    await expect(loadEcdysis(conn, { path: older, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).rejects.toThrow(/before the newest already loaded/);
+  });
+});

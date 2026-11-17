@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { sql, type Kysely, type RawBuilder, type SelectQueryBuilder } from "kysely";
 import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
 import { reportError } from "./error-reporting.js";
@@ -558,6 +559,9 @@ export interface SpecimenRow {
   qualifier: DeterminationQualifier | null;
   verbatim_identification: string | null;
   sex: string | null;
+  caste: string | null;
+  /** The determination of record's own id; null for a specimen nobody has determined. */
+  determination_id: number | null;
   is_expert: boolean | null;
   determiner: string | null;
   /** The ORCID iD crediting the determiner, bare; null for one with none or known only by name. */
@@ -1579,6 +1583,8 @@ export async function listSpecimens(
         "d.qualifier",
         "d.verbatim_identification",
         "d.sex",
+        "d.caste",
+        "d.entity_id as determination_id",
         "d.is_expert",
         "d.determined_on",
         "d.determined_on_precision",
@@ -2069,7 +2075,55 @@ export const SPECIMEN_OWN_COLUMNS = [
   "hostCurrentName",
   "hostFamily",
   "hostCommonName",
+  // Added last again (beeline-kgyd): what loading an edited copy of this file
+  // back into Beeline reads. See ROUND_TRIP_COLUMNS.
+  "caste",
+  "specimenId",
+  "determinationId",
+  "sampleVersion",
 ] as const;
+
+/**
+ * The columns that exist so that an edited copy of the download can be loaded
+ * back (beeline-kgyd), and that say nothing about the bee to anyone else:
+ * - `specimenId` is Beeline's own id for the specimen. A field number is not
+ *   unique, may be absent, and is the cell a spreadsheet is likeliest to
+ *   damage (a dropped leading zero), so the row is found by this.
+ * - `determinationId` is the determination the row's name, sex and determiner
+ *   were read from. If another determination is the record by the time the
+ *   file comes back, the row was edited against something Beeline no longer
+ *   says.
+ * - `sampleVersion` does the same for the sample's cells that staff may
+ *   change: see `sampleVersion`.
+ */
+export const ROUND_TRIP_COLUMNS = ["specimenId", "determinationId", "sampleVersion"] as const;
+
+/**
+ * A short name for what the sample's changeable cells said when the row was
+ * written: the collecting dates, the method, the locality and the point, as
+ * this reader was given them. Two rows with the same version read the same
+ * values, so a file whose version is still the sample's was edited against
+ * what Beeline says now. Made from the reader's own values, so that where the
+ * location is withheld it says nothing about the true one. It starts with a
+ * letter because a spreadsheet reads a run of digits, or digits around an
+ * `e`, as a number and rewrites it.
+ */
+export const sampleVersion = (
+  r: Pick<SpecimenRow, "date_start" | "date_end" | "protocol" | "locality" | "latitude" | "longitude" | "coordinate_uncertainty_m">,
+): string =>
+  `v${createHash("sha256")
+    .update(
+      JSON.stringify([
+        eventDate(r.date_start, r.date_end),
+        r.protocol,
+        r.locality,
+        r.latitude,
+        r.longitude,
+        r.coordinate_uncertainty_m,
+      ]),
+    )
+    .digest("hex")
+    .slice(0, 12)}`;
 
 export const SPECIMEN_CSV_HEADER = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS] as const;
 
@@ -2119,4 +2173,8 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.host_current_name,
   r.host_family,
   r.host_common_name,
+  r.caste,
+  r.specimen_id,
+  r.determination_id,
+  sampleVersion(r),
 ];

@@ -893,6 +893,7 @@ describe("a sample's difference counted once", () => {
         sample: expect.objectContaining({ id: sampleA, number: "UP-1", collectors: ["V. Volunteer"] }),
         cells: [{ column: "locality", was: "Corvallis", fileSays: "Elsewhere", value: { kind: "text", text: "Elsewhere" }, differs: true }],
         rows: [2, 3],
+        moreRows: 0,
         specimensInFile: 2,
         specimensInSample: 3,
         // Specimens with no label row at all are imported ones, whose labels are on pins.
@@ -986,6 +987,11 @@ describe("numbers a spreadsheet keeps to 15 digits", () => {
     // A number that differs inside the 15 digits is a change, and so is one cut shorter.
     expect(summary(await lng({ number: "-123.278915405274" }))).toEqual([["coordinates", "decimalLongitude"]]);
     expect(summary(await lng({ number: "-123.2789154053" }))).toEqual([["coordinates", "decimalLongitude"]]);
+    // Unchanged by rounding, the cell carries Beeline's own number and not the file's rounded one; the cell that changed carries the file's.
+    const mixed = await plan(f, edited(download, onSample(f, { decimalLongitude: { number: "-123.278915405273" }, decimalLatitude: "44.7" })));
+    const cells = mixed.sampleDifferences[0]!.cells;
+    expect(cells.find((c) => c.column === "decimalLongitude")).toMatchObject({ differs: false, fileSays: "-123.278915405273", value: { kind: "number", number: -123.27891540527344 } });
+    expect(cells.find((c) => c.column === "decimalLatitude")).toMatchObject({ differs: true, value: { kind: "number", number: 44.7 } });
     // A number cell is shown as the number it is: its digits in the file are 44.564599999999999.
     nothingDiffers(await plan(f, edited(download, onSample(f, { decimalLatitude: { number: "44.564599999999999" } }))));
     const moved = await plan(f, edited(download, onSample(f, { decimalLatitude: { number: "44.664599999999999" } })));
@@ -1063,8 +1069,8 @@ describe("a held sample shows the row that failed", () => {
     const held = heldOf(p, "rows_disagree");
     expect(held).toHaveLength(1);
     expect(held[0]!.cells).toEqual([
-      { column: "locality", was: "Corvallis", fileSays: "X", rows: [2, 4] },
-      { column: "locality", was: "Corvallis", fileSays: "Y", rows: [3] },
+      { column: "locality", was: "Corvallis", fileSays: "X", rows: [2, 4], moreRows: 0 },
+      { column: "locality", was: "Corvallis", fileSays: "Y", rows: [3], moreRows: 0 },
     ]);
   });
 });
@@ -1113,5 +1119,23 @@ describe("coordinates: the bounds of the store's column, and Beeline's own small
     expect(cells.find((c) => c.column === "decimalLongitude")).toMatchObject({ differs: true, value: { kind: "number", number: -122 } });
     // And moving it is seen.
     expect(summary(await plan(f, edited(download, onSample(f, { decimalLatitude: "0.0000002" }))))).toEqual([["coordinates", "decimalLatitude"]]);
+  });
+});
+
+describe("a sample of many rows names a few of them", () => {
+  it("names the first ROWS_NAMED rows of a group and counts the rest", async () => {
+    const f = await uploadFixture();
+    await f.conn.run(`INSERT INTO specimen (sample_id, specimen_number) SELECT ${f.ids.sampleA}, 100 + i FROM range(0, 1500) t(i)`);
+    const download = await f.download();
+    // One row of the sample's 1,503 edited and the rest left alone: they disagree.
+    const p = await plan(f, edited(download, [{ id: f.ids.a1, set: { locality: "Elsewhere" } }]));
+    const held = heldOf(p, "rows_disagree");
+    expect(held).toHaveLength(1);
+    expect(held[0]!.rows).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(held[0]!.moreRows).toBe(1503 - 10);
+    expect(held[0]!.cells.map((c) => [c.fileSays, c.rows!.length, c.moreRows])).toEqual([
+      ["Elsewhere", 1, 0],
+      ["Corvallis", 10, 1492],
+    ]);
   });
 });

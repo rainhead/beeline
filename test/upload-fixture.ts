@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
-import { readXlsx } from "../src/app/xlsx.js";
+import { readXlsxHere, type ReadLimits } from "../src/app/xlsx-reader.js";
 import { buildWorkbook, type TestCell } from "./workbook.js";
 import { createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
 
@@ -23,7 +23,7 @@ const unusedInat: InatClient = {
 export async function uploadFixture(
   signedInAs: "staffer" | "volunteer" = "staffer",
   /** `unprinted` adds a sample (UP-3) whose one specimen is in a print run that has not printed. */
-  options: { unprinted?: boolean } = {},
+  options: { unprinted?: boolean; readLimits?: Partial<ReadLimits> } = {},
 ) {
   const { instance, conn } = await createMemoryDb();
   const person = async (name: string) => {
@@ -111,6 +111,7 @@ export async function uploadFixture(
     // Sandbox, not development: development makes everyone an admin (beeline-6va).
     config: { environment: "sandbox" as const, origin: "http://localhost:3054", exportsDir: join(dirname(paths.uploadsDir), "exports") },
     inat: unusedInat,
+    uploadReadLimits: options.readLimits,
     resolveSession: async () => ({ personId: resolved, login: signedInAs, iconUrl: null }),
   });
 
@@ -122,7 +123,7 @@ export type UploadFixture = Awaited<ReturnType<typeof uploadFixture>>;
 
 /** A file's cells as text, header first; an absent cell is "". */
 export function matrixOf(workbook: Uint8Array): string[][] {
-  const read = readXlsx(workbook);
+  const read = readXlsxHere(workbook);
   if (!read.ok) throw new Error(`not readable: ${read.refusal}`);
   const width = Math.max(...read.sheet.rows.flatMap((r) => [...r.cells.keys()])) + 1;
   return read.sheet.rows.map((r) => Array.from({ length: width }, (_, at) => r.cells.get(at)?.text ?? ""));

@@ -14,7 +14,8 @@ import {
   textCell,
   type SpecimenRow,
 } from "./listings.js";
-import { columnName, readXlsx, type CellType, type XlsxCell, type XLSX_REFUSALS } from "./xlsx.js";
+import { columnName, type CellType, type XlsxCell, type XLSX_REFUSALS } from "./xlsx.js";
+import { readXlsx, type ReadLimits } from "./xlsx-reader.js";
 
 /**
  * Comparing an edited copy of the specimens download with what Beeline says
@@ -41,6 +42,7 @@ import { columnName, readXlsx, type CellType, type XlsxCell, type XLSX_REFUSALS 
 export const REFUSALS = [
   "too_large",
   "too_large_unpacked",
+  "took_too_long",
   "too_many_rows",
   "not_a_zip",
   "protected_file",
@@ -152,6 +154,10 @@ rule("occurrenceRemarks", "disposition", "text");
 // Beeline writes this as true or false; a spreadsheet may write TRUE. Never applied.
 rule("identifiedByExpert", "not_applied", "word");
 
+/** The most row numbers an item names; a count says how many more there are. A file of thousands of rows of one sample must not print them all. */
+export const ROWS_NAMED = 10;
+const firstRows = (rows: readonly number[]): { rows: number[]; moreRows: number } => ({ rows: rows.slice(0, ROWS_NAMED), moreRows: Math.max(0, rows.length - ROWS_NAMED) });
+
 /** The columns of the download a plan can say something about, in the download's order. */
 export const COMPARED_COLUMNS: readonly string[] = SPECIMEN_CSV_HEADER.filter((c) => RULES.has(c));
 const columnsOfUnit = (unit: ChangeKind): string[] => COMPARED_COLUMNS.filter((c) => RULES.get(c)!.kind === unit);
@@ -222,8 +228,10 @@ export interface SampleDifference {
   sampleNumber: string;
   sample: SampleLabel;
   cells: UnitCell[];
-  /** The rows of the sample that the file holds, the header being row 1. */
+  /** The first rows of the sample that the file holds (at most ROWS_NAMED), the header being row 1. */
   rows: number[];
+  /** How many more rows of the sample the file holds. */
+  moreRows: number;
   specimensInFile: number;
   specimensInSample: number;
   /** Whether any label of the sample is on paper (the printed_sample view). */
@@ -251,8 +259,10 @@ export interface SampleLabel {
 }
 
 export interface HeldCell {
-  /** Set where rows of a sample say different things: the rows that say this. */
+  /** Set where rows of a sample say different things: the first rows that say this (at most ROWS_NAMED). */
   rows?: number[];
+  /** How many more rows say it. */
+  moreRows?: number;
   column: string;
   was: string;
   fileSays: string;
@@ -262,8 +272,10 @@ export interface HeldItem {
   reason: HoldReason;
   /** The first row concerned, the header being row 1. */
   row: number;
-  /** Every row concerned, where more than one is. */
+  /** The first rows concerned, where more than one is (at most ROWS_NAMED). */
   rows: number[];
+  /** How many more rows are concerned. */
+  moreRows: number;
   specimenId: number | null;
   fieldNumber: string | null;
   sampleNumber: string | null;
@@ -322,9 +334,9 @@ export type PlanResult = { ok: true; plan: UploadPlan; rowCount: number } | { ok
 const squashed = (header: string) => header.replace(/\s+/g, "").toLowerCase();
 
 /** Whether a file can be read at all, and if so its columns and rows. */
-export function parseUpload(bytes: Uint8Array): Parsed {
+export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits> = {}): Promise<Parsed> {
   // The sheet the download names, which is the one the person edits; a workbook with only one sheet is read whatever it is called.
-  const read = readXlsx(bytes, { maxBytes: MAX_FILE_BYTES, maxRows: MAX_ROWS + 1, sheetName: SHEET_NAME });
+  const read = await readXlsx(bytes, { maxBytes: MAX_FILE_BYTES, maxRows: MAX_ROWS + 1, sheetName: SHEET_NAME, ...limits });
   if (!read.ok) return { ok: false, refusal: read.refusal, ...(read.sheets === undefined ? {} : { detail: JSON.stringify(read.sheets) }) };
   const [head, ...body] = read.sheet.rows;
   const known = new Set<string>(SPECIMEN_CSV_HEADER);
@@ -480,8 +492,9 @@ function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): 
   if (fileText === was) return { column, nowText: was, fileText, value: lenient(), differs: false, problem: null };
   // A number the spreadsheet stored, which it keeps to 15 digits: it is Beeline's number where that is Beeline's number to 15 digits.
   // A text cell is not rounded, so a person who types fewer digits is still seen to have changed them.
+  // Unchanged, so the value is Beeline's own and not the file's rounded one.
   if (type === "number" && reads === "number" && roundedTo15(was) === Number(fileText) && roundedTo15(was) !== null) {
-    return { column, nowText: was, fileText, value: lenient(), differs: false, problem: null };
+    return { column, nowText: was, fileText, value: readOwn(reads, was), differs: false, problem: null };
   }
   // A column Beeline never reads from a file has no unit to hold: a difference is listed, whatever the cell is.
   if (kind === "not_applied") {
@@ -682,8 +695,8 @@ interface MatchedRow {
 }
 
 /** The plan for a file's bytes: refused, or what differs and what is held. Writes nothing. */
-export async function planUpload(db: Kysely<Database>, bytes: Uint8Array, options: { today?: string } = {}): Promise<PlanResult> {
-  const parsed = parseUpload(bytes);
+export async function planUpload(db: Kysely<Database>, bytes: Uint8Array, options: { today?: string; limits?: Partial<ReadLimits> } = {}): Promise<PlanResult> {
+  const parsed = await parseUpload(bytes, options.limits);
   if (!parsed.ok) return parsed;
   const plan = await comparePlan(db, parsed.upload, options);
   return { ok: true, plan, rowCount: parsed.upload.rows.length };
@@ -722,7 +735,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
   const hold = (
     item: Pick<HeldItem, "reason" | "row" | "specimenId" | "fieldNumber" | "detail"> &
       Partial<Pick<HeldItem, "rows" | "sampleNumber" | "sample" | "unit" | "column" | "columns" | "cells">>,
-  ) => plan.held.push({ rows: [item.row], sampleNumber: null, sample: null, unit: null, column: null, columns: [], cells: [], ...item });
+  ) => plan.held.push({ sampleNumber: null, sample: null, unit: null, column: null, columns: [], cells: [], ...item, ...firstRows(item.rows ?? [item.row]) });
 
   const bySample = new Map<number, MatchedRow[]>();
   const touchedRows: Array<{ sampleId: number; touched: boolean }> = [];
@@ -855,7 +868,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
         hold({
           reason,
           row: rowsConcerned[0]!.row,
-          rows: rowsConcerned.map((r) => r.row),
+          rows: rowsConcerned.map((r) => r.row), // cut to ROWS_NAMED by hold()
           specimenId: rowsConcerned.length === 1 && reason !== "rows_disagree" ? rowsConcerned[0]!.specimenId : null,
           fieldNumber: rowsConcerned.length === 1 && reason !== "rows_disagree" ? rowsConcerned[0]!.fieldNumber : null,
           sampleNumber,
@@ -897,7 +910,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
           column: disagreeing,
           was: sampleRows[0]!.results.get(disagreeing)!.nowText,
           fileSays,
-          rows: rowsSaying,
+          ...firstRows(rowsSaying),
         }));
         heldAs("rows_disagree", sampleRows, disagreeing, said.join(" | "), [], first, each);
         continue;
@@ -919,7 +932,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
           const r = first.results.get(c)!;
           return { column: c, was: r.nowText, fileSays: r.fileText, value: r.value, differs: differing.includes(c) };
         }),
-        rows: sampleRows.map((r) => r.row),
+        ...firstRows(sampleRows.map((r) => r.row)),
         specimensInFile: sampleRows.length,
         specimensInSample: facts.specimens.get(sampleId) ?? 0,
         printed: facts.printed.has(sampleId),

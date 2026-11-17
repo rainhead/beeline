@@ -2049,7 +2049,7 @@ export const en = {
       noFile: "Choose a file to upload.",
       too_large: "That file is larger than 20 MB, so Beeline did not read it. Download fewer specimens and edit that.",
       too_large_unpacked:
-        "That file is far larger once it is opened than its size suggests, so Beeline did not read it. Download the Excel file from Specimens again and edit that.",
+        "That file needs far more memory to open than its size suggests, so Beeline did not read it. Download the Excel file from Specimens again and edit that.",
       not_a_zip:
         "Beeline reads only the Excel file from Specimens, and this is not an Excel file. Download the Excel file from Specimens, edit that, and upload it. A CSV file, or an older .xls file, is not read.",
       not_a_workbook:
@@ -2059,6 +2059,8 @@ export const en = {
       no_specimen_id_column:
         "This file has no specimenId column, so Beeline cannot tell which specimen each row is about. Download the Excel file from Specimens again and edit the new file, leaving that column in.",
       too_many_rows: "That file has more than 20,000 rows, so Beeline did not read it. Split it into smaller files.",
+      took_too_long:
+        "Beeline took too long to read that file, so it stopped. Download the Excel file from Specimens again and edit that, or upload fewer rows.",
       too_wide: "A row of that file has far more cells than the download has columns, so Beeline did not read it. Download the Excel file from Specimens again and edit that.",
       protected_file:
         "This file is protected, with a password or a sensitivity label, or it is an older .xls file, so Beeline cannot read it. Save an unprotected copy as an Excel workbook (.xlsx) and upload that.",
@@ -2128,7 +2130,8 @@ export const en = {
       specimen: (id: number) => `specimen ${id}`,
       sampleSpecimens: (inFile: number, inSample: number) =>
         `${n(inFile)} of its ${n(inSample)} ${inSample === 1 ? "specimen" : "specimens"} ${inFile === 1 ? "is" : "are"} in the file`,
-      heldRows: (rows: string) => `rows ${rows}`,
+      /** The first rows, and how many more there are. */
+      heldRows: (rows: string, more: number) => `rows ${rows}${more > 0 ? ` and ${n(more)} more` : ""}`,
       printed: "labels printed",
       notPrinted: "labels not printed",
       heldHeading: "Held",

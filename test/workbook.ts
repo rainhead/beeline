@@ -57,10 +57,18 @@ export function buildWorkbook(
   );
   const relationships =
     `<Relationship Id="rId1" Type="${rel}/worksheet" Target="worksheets/sheet1.xml"/>` +
-    others.map((_, i) => `<Relationship Id="rId${i + 2}" Type="${rel}/worksheet" Target="worksheets/sheet${i + 2}.xml"/>`).join("");
+    others.map((_, i) => `<Relationship Id="rId${i + 2}" Type="${rel}/worksheet" Target="worksheets/sheet${i + 2}.xml"/>`).join("") +
+    // Without this relationship a reader never looks at the styles, and a date is a number.
+    `<Relationship Id="rId99" Type="${rel}/styles" Target="styles.xml"/>`;
   return zipSync({
     ...extra,
-    "[Content_Types].xml": strToU8(`<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>`),
+    "[Content_Types].xml": strToU8(
+      `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+        `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+        `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
+        [1, ...others.map((_, i) => i + 2)].map((n) => `<Override PartName="/xl/worksheets/sheet${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("") +
+        `</Types>`,
+    ),
     "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="${main}" xmlns:r="${rel}"><sheets>${tabs}</sheets></workbook>`),
     "xl/_rels/workbook.xml.rels": strToU8(
       `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}</Relationships>`,

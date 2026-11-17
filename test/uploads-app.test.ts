@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { strToU8, zipSync } from "fflate";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
 import { MAX_FILE_BYTES } from "../src/app/upload-plan.js";
@@ -102,7 +102,7 @@ describe("uploading a file", () => {
     await refused(buildWorkbook([["specimenId", "locality", "locality"], ["1", "a", "b"]]), en.uploads.refusedRepeatedColumn("locality"));
     await refused(buildWorkbook([["specimenId", "locality"]]), en.uploads.refused.no_rows!);
     await refused(buildWorkbook([["specimen Id", "locality"], ["1", "a"]]), en.uploads.refusedNearMiss("specimenId"));
-    await refused(zipSync({ "hello.txt": strToU8("hi") }), en.uploads.refused.not_a_workbook!);
+    await refused(zipSync({ "hello.txt": strToU8("hi") }), en.uploads.refused.unreadable!);
     // An encrypted or labelled workbook is an old Office file, not a zip.
     await refused(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]), en.uploads.refused.protected_file!);
     // Several tabs, none of them specimens: they are named, and the person is told what to do.
@@ -478,4 +478,54 @@ describe("the preview", () => {
     expect(body).toContain("Nothing in the file differs from what Beeline says.");
     expect(body).toContain(en.uploads.page.noHeld);
   });
+});
+
+describe("reading an upload in a worker", () => {
+  const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+  it("shows two previews of one upload at once", async () => {
+    const f = await uploadFixture();
+    const res = await upload(f, edited(await f.download(), [{ id: f.ids.a1, set: { disposition: "missing", occurrenceRemarks: "Lost" } }]));
+    const location = res.headers.get("location")!;
+    const pages = await Promise.all([f.app.request(location), f.app.request(location), f.app.request(location)]);
+    expect(pages.map((p) => p.status)).toEqual([200, 200, 200]);
+    for (const p of pages) expect(await p.text()).toContain("<q>missing</q>");
+  });
+
+  it("refuses a file that takes longer than the limit, says so in plain words, and stores nothing", async () => {
+    const f = await uploadFixture("staffer", { readLimits: { timeMs: 1 } });
+    const res = await upload(f, await f.download());
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain(esc(en.uploads.refused.took_too_long!));
+    expect(await uploadCount(f)).toBe(0);
+    expect(await kept(f)).toEqual([]);
+  });
+
+  it("refuses a workbook that needs more memory than the reader has, and the app goes on answering", async () => {
+    const f = await uploadFixture("staffer", { readLimits: { memoryMb: 24 } });
+    const rows = Array.from({ length: 50_000 }, (_, i) => `<row r="${i + 1}"><c r="A${i + 1}" t="inlineStr"><is><t>${"x".repeat(400)}</t></is></c></row>`).join("");
+    const bomb = zipSync({ ...unzipSync(buildWorkbook([["specimenId"]])), "xl/worksheets/sheet1.xml": strToU8(`<worksheet xmlns="${MAIN}"><sheetData>${rows}</sheetData></worksheet>`) });
+    const res = await upload(f, bomb);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain(esc(en.uploads.refused.too_large_unpacked!));
+    expect(await uploadCount(f)).toBe(0);
+    expect((await f.app.request("/uploads")).status).toBe(200);
+    expect((await f.app.request("/specimens?scope=all")).status).toBe(200);
+  }, 60_000);
+
+  it("keeps the page small for a file of thousands of rows of one specimen, and for a sample of thousands of specimens", async () => {
+    const f = await uploadFixture();
+    const matrix = matrixOf(await f.download());
+    const row = matrix.find((r) => r.includes("OBA10001"))!;
+    const repeated = await pageOf(f, buildWorkbook([matrix[0]!, ...Array.from({ length: 5_000 }, () => row)]));
+    expect(repeated).toContain(en.uploads.page.more(4_800));
+    expect(repeated.length).toBeLessThan(200_000);
+    // A sample with 1,500 more specimens, one row of it edited: one held item that names ten rows and counts the rest.
+    await f.conn.run(`INSERT INTO specimen (sample_id, specimen_number) SELECT ${f.ids.sampleA}, 100 + i FROM range(0, 1500) t(i)`);
+    const big = await pageOf(f, edited(await f.download(), [{ id: f.ids.a1, set: { locality: "Elsewhere" } }]));
+    expect(big).toContain(en.uploads.page.heldRows("2, 3, 4, 5, 6, 7, 8, 9, 10, 11", 1_493));
+    expect(big.length).toBeLessThan(60_000);
+  }, 90_000);
+
+  const pageOf = async (f: UploadFixture, bytes: Uint8Array) => (await f.app.request((await upload(f, bytes)).headers.get("location")!)).text();
 });

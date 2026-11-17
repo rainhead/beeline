@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
-import { readXlsx } from "../src/app/xlsx.js";
+import { readXlsxHere as readXlsx } from "../src/app/xlsx-reader.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
 import { refreshPlantCommonNames } from "../src/plant-common-names.js";

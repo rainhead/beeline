@@ -110,7 +110,7 @@ function Capped<T>({ m, items, line }: { m: Messages; items: readonly T[]; line:
 const Col = ({ name }: { name: string }) => <code>{name}</code>;
 
 /** `column: was X, file says Y`, one for each cell, with the cells' own words. */
-function Cells({ m, cells }: { m: Messages; cells: ReadonlyArray<{ column: string; was: string; fileSays: string; rows?: number[] }> }) {
+function Cells({ m, cells }: { m: Messages; cells: ReadonlyArray<{ column: string; was: string; fileSays: string; rows?: number[]; moreRows?: number }> }) {
   const p = m.uploads.page;
   return (
     <>
@@ -118,7 +118,7 @@ function Cells({ m, cells }: { m: Messages; cells: ReadonlyArray<{ column: strin
         <>
           {i > 0 && "; "}
           <Col name={c.column} />: {p.was} <Said m={m} value={c.was} />, {p.fileSays} <Said m={m} value={c.fileSays} />
-          {c.rows !== undefined && <> <Meta>({p.heldRows(c.rows.join(", "))})</Meta></>}
+          {c.rows !== undefined && <> <Meta>({p.heldRows(c.rows.join(", "), c.moreRows ?? 0)})</Meta></>}
         </>
       ))}
     </>
@@ -181,7 +181,7 @@ function HeldLine({ m, h }: { m: Messages; h: HeldItem }) {
     <>
       {h.specimenId !== null && <SpecimenLink m={m} id={h.specimenId} fieldNumber={h.fieldNumber} />}
       {h.specimenId === null && h.sample !== null && <SampleName m={m} sample={h.sample} />}{" "}
-      <Meta>{h.rows.length > 1 ? h.rows.map(p.row).join(", ") : p.row(h.row)}</Meta>
+      <Meta>{h.rows.length > 1 || h.moreRows > 0 ? p.heldRows(h.rows.join(", "), h.moreRows) : p.row(h.row)}</Meta>
       {h.cells.length > 0 && (
         <>
           {" "}

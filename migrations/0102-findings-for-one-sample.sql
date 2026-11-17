@@ -1,5 +1,5 @@
--- Migration for schema/108_views_minting.sql, schema/120_views_qc_rules.sql
--- and schema/130_view_qc_finding.sql: one sample's QC findings without
+-- Migration for schema/108_views_minting.sql, schema/120_views_qc_rules.sql,
+-- schema/130_view_qc_finding.sql and schema/140_views_printability.sql: one sample's QC findings without
 -- computing every sample's, and the findings' text for every sample with
 -- less work (beeline-poon).
 --
@@ -74,7 +74,7 @@ JOIN (SELECT pc.person_id, s.date_start, s.sample_number
   ON same.person_id = s.person_id
  AND same.date_start = s.date_start
  AND same.sample_number = s.sample_number
-GROUP BY s.sample_id, s.sample_number, s.date_start
+GROUP BY s.sample_id, s.person_id, s.sample_number, s.date_start
 HAVING count(*) > 1
 UNION ALL
 SELECT s.entity_id,
@@ -140,6 +140,11 @@ WHERE NOT EXISTS (
     AND w.rule_name = f.rule_name
     AND w.in_force
     AND NOT EXISTS (SELECT 1 FROM qc_rule_unwaivable u WHERE u.name = w.rule_name));
+
+CREATE OR REPLACE VIEW blocking_sample AS
+SELECT DISTINCT f.sample_id AS sample_id
+FROM sample_qc_finding f
+JOIN qc_rule r ON r.name = f.rule_name AND r.severity = 'blocking';
 
 COMMENT ON VIEW sample_claiming_observation IS 'Each iNaturalist observation that claims a sample: its collector''s observations carrying its number on its dates now, and those its legacy records came from (sample_legacy_observation). A cited observation since renumbered claims it no longer.';
 COMMENT ON VIEW sample_several_observations IS 'A sample more than one observation claims: a collector error (Peter, 2026-10-04), and one of the two shapes of sample_number_conflict (schema/120).';

@@ -100,7 +100,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
   // Each question is asked of the store once. The page took 2.9 s on the
   // sandbox (beeline-m8qa) because it asked the flag views three or four
   // times — sample_qc_finding is a union over every QC rule, computed whole
-  // whichever samples are asked about, and pending_print_sample computes it
+  // for a person's samples as for everyone's, and pending_print_sample computes it
   // again through printable_sample — and because the locality and place of
   // every observation in the store were derived to label the few that were
   // this person's. So the findings come back once, settled seasons included,

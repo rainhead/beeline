@@ -289,7 +289,9 @@ WHERE NOT (loc.latitude BETWEEN 14 AND 84 AND loc.longitude BETWEEN -172 AND -50
 -- among them, and counts them. Counting every key first and joining the
 -- counts back gives the same rows, but counts all 70,000 samples to answer
 -- for one (beeline-poon); this way the one sample is looked up and its key
--- matched.
+-- matched. The collector is grouped on as well as the sample, so that a
+-- sample with two collectors at position 1, which the engine cannot prevent
+-- (schema/116), is counted once under each and not as a duplicate of itself.
 CREATE VIEW sample_number_conflict AS
 SELECT s.sample_id,
        concat('sample number ', s.sample_number, ' used ', count(*), ' times on ', s.date_start) AS details
@@ -302,7 +304,7 @@ JOIN (SELECT pc.person_id, s.date_start, s.sample_number
   ON same.person_id = s.person_id
  AND same.date_start = s.date_start
  AND same.sample_number = s.sample_number
-GROUP BY s.sample_id, s.sample_number, s.date_start
+GROUP BY s.sample_id, s.person_id, s.sample_number, s.date_start
 HAVING count(*) > 1
 UNION ALL
 SELECT s.entity_id,

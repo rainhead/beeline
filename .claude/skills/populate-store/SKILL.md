@@ -30,8 +30,6 @@ pnpm taxon:apply [db]                        # replay ingest/taxon-curation.csv 
 pnpm received:store <file> --from "<who>" --sent <instant>  # any file someone sends, kept as sent on the shared drive, as the backup's service account (key in data/secrets/drive-key.json); prints its Drive id
 pnpm received:fetch <drive-id>                # → data/received/<id>/, the file and file.json, which the loaders below read
 pnpm determinations:load data/received/<id> [db] [--dry-run]  # an expert's own sheet of determinations (Darwin Core headers) → expert determinations; what it cannot place goes to held.csv beside it
-pnpm archive:fetch <gbif-dataset-key> [--version v]  # the Darwin Core archive a museum publishes to GBIF, from the publisher (OSAC's Oregon Bee Atlas: 1fa69ff3-3e40-465f-927f-12b1484d3731) → data/archives/<key>/<version>/
-pnpm archive:load data/archives/<key>/<version> [db] [--dry-run]  # what the archive says about each specimen, kept and shown on its page; an expert determination only where the specimen has none; held.csv beside the archive
 pnpm disposition:load <file> [db] --by <name> --on <date> [--replace]  # a staff inventory's remark on each specimen (Andony's 2025 master file) → specimen_disposition; what it cannot place goes to <file>.held.csv
 pnpm legacy:export [db] [out.csv]            # every specimen as the legacy occurrences file (the app writes it nightly)
 pnpm legacy:compare-export [db] [export.csv] # how far that file is from the staged legacy records, by kind and by column, in records split by season with a few examples each, less what ingest/legacy-export-rulings.csv explains

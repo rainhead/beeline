@@ -1258,7 +1258,7 @@ export function createApp({
     const m = c.get("m");
     const record = await gatherSpecimen({ db, changesPath: samplePaths.log }, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (record === null) return errorResponse(c, "notFound");
-    const { specimen, events, published, findings, labels, reprint } = record;
+    const { specimen, events, findings, labels, reprint } = record;
     const title =
       specimen.field_number === null
         ? m.record.specimen.titleUnnumbered(specimen.specimen_number, specimen.sample.sample_number)
@@ -1267,7 +1267,7 @@ export function createApp({
       await page(
         c,
         title,
-        <SpecimenPage m={m} specimen={specimen} events={events} published={published} findings={findings}
+        <SpecimenPage m={m} specimen={specimen} events={events} findings={findings}
           labels={labels} reprint={reprint} admin={c.get("admin")} />,
       ),
     );

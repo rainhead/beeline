@@ -590,8 +590,8 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
                       OR (d.exported = concat(upper(left(trim(p.given_name), 1)), '.')
                           AND d.legacy = split_part(trim(p.label_name), ' ', 1))))`);
   // An identification the legacy system never received: the specimen's
-  // newest expert determination came from Ecdysis, an expert's sheet or a
-  // museum's published archive (src/load-archive.ts), or was made in Beeline.
+  // newest expert determination came from Ecdysis or an expert's sheet, or
+  // was made in Beeline.
   // Only where the values alone said nothing more particular: a genus written
   // with its subgenus, an authorship or a capital is that, newer or not
   // (the audit of 2026-11-15, beeline-eznn).

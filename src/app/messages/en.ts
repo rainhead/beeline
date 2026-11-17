@@ -1909,7 +1909,8 @@ export const en = {
     colSettled: "Samples, settled seasons",
     /** The pill of the listings' area filter. */
     filter: "Area",
-    filterUnknown: "an area Beeline does not hold",
+    /** In place of a name: the store holds no such area, or nothing in it that this reader may see. */
+    filterUnknown: "an area with nothing to show",
     kind: {
       refuge: "National wildlife refuges",
       wildlife_area: "WDFW wildlife area units",

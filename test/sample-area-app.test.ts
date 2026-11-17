@@ -235,8 +235,15 @@ describe("the Areas page (beeline-9jd4)", () => {
     // Alice's sample in the wilderness is obscured, and Bob is not staff here.
     const { appFor, sampleId } = await setup("'obscured'");
     const key = "wilderness.net:9001";
-    expect(await (await appFor("bob").request(areaSearch("/samples", key))).text()).not.toContain(`/samples/${sampleId}"`);
-    expect(await (await appFor("bob").request(areaSearch("/specimens", key))).text()).not.toContain(`/samples/${sampleId}"`);
+    const bobs = await (await appFor("bob").request(areaSearch("/samples", key))).text();
+    expect(bobs).not.toContain(`/samples/${sampleId}"`);
+    // Nor is he told the area's name: the store holds an area only once a
+    // sample lies inside it, so the name alone would say one does.
+    expect(bobs).not.toContain("Alsea Wilderness");
+    expect(bobs).toContain(en.areas.filterUnknown);
+    const bobsSpecimens = await (await appFor("bob").request(areaSearch("/specimens", key))).text();
+    expect(bobsSpecimens).not.toContain(`/samples/${sampleId}"`);
+    expect(bobsSpecimens).not.toContain("Alsea Wilderness");
     // Alice collected it, so she finds it.
     expect(await (await appFor("alice").request(areaSearch("/samples", key))).text()).toContain(`/samples/${sampleId}"`);
   });

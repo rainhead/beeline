@@ -43,6 +43,7 @@ export function listingAttributes(
     from: q.from !== null,
     to: q.to !== null,
     place: q.place !== "",
+    area: q.area !== "",
     collector: q.collector !== "",
     member: q.member !== MEMBER_ANY,
     taxon: q.taxon !== "",

@@ -655,7 +655,7 @@ export interface Page<Row> {
   collectors: Map<number, ListedCollector[]>;
   /** sample_id → its flags, for the samples listing's Flags column; absent on specimens. */
   findings?: Map<number, ListedFlag[]>;
-  /** The area the `area` filter names, for its pill; null where the store holds no such area, absent with no filter. */
+  /** The area the `area` filter names, for its pill; null where the reader is shown nothing in it or the store holds no such area, absent with no filter. */
   area?: ListedArea | null;
 }
 
@@ -676,11 +676,25 @@ export function parseAreaKey(key: string): { source: string; sourceId: string } 
   return { source: key.slice(0, at), sourceId: key.slice(at + 1) };
 }
 
-/** The area an `area` filter names, if the store holds it. */
-async function listedArea(db: Kysely<Database>, key: string): Promise<ListedArea | null | undefined> {
+/**
+ * The area an `area` filter names, for its pill, where the reader may be
+ * told the store holds it. The store holds an area only once a sample lies
+ * inside it, so naming one says that somebody collected there. Staff are
+ * told; anyone else is told only when the filter showed them a sample
+ * there, which already says so. Otherwise a volunteer could ask about any
+ * park by its public id and learn of a sample whose location is withheld
+ * from them (Fable's review of beeline-9jd4).
+ */
+async function listedArea(
+  db: Kysely<Database>,
+  key: string,
+  reader: Reader,
+  found: number,
+): Promise<ListedArea | null | undefined> {
   if (key === "") return undefined;
   const parsed = parseAreaKey(key);
   if (parsed === null) return null;
+  if (!reader.staff && found === 0) return null;
   const { rows } = await sql<ListedArea>`
     SELECT kind, name FROM area WHERE source = ${parsed.source} AND source_id = ${parsed.sourceId}`.execute(db);
   return rows[0] ?? null;
@@ -1454,7 +1468,7 @@ export async function listSamples(
     total: Number(count?.n ?? 0),
     collectors,
     findings,
-    area: await listedArea(db, query.area),
+    area: await listedArea(db, query.area, reader, Math.max(sampleRows.length, Number(count?.n ?? 0))),
   };
 }
 
@@ -1663,7 +1677,7 @@ export async function listSpecimens(
     rows: specimenRows,
     total: Number(count?.n ?? 0),
     collectors: await collectorsOf(db, specimenRows.map((r) => r.sample_id)),
-    area: await listedArea(db, query.area),
+    area: await listedArea(db, query.area, reader, Math.max(specimenRows.length, Number(count?.n ?? 0))),
   };
 }
 

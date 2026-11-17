@@ -8,7 +8,7 @@
 -- version rises with this change (AREA_RULE_VERSION 2), so the next nightly
 -- tests every sample again; the new kinds are found once a gazetteer built
 -- from this commit's ingest/gazetteer.sql is on the machine, and until then
--- only OpenStreetMap's parks and islands are, which the old gazetteer holds.
+-- none of them is: wildernesses, counties and ecoregions as before.
 
 DROP VIEW sample_ecoregion_missing;
 DROP VIEW sample_area_current;

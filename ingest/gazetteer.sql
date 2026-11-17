@@ -188,7 +188,9 @@ WHERE ADMIN_AREA_NAME NOT LIKE '%Northern Rockies%';
 -- park or island on a state line is in both states' extracts, sometimes as a
 -- part in each: 143 ids came twice or three times in October 2026 (Chief
 -- Joseph Wildlife Area, Barnston Island). Their outlines are joined, and the
--- size is the larger part's, as near as the parts tell.
+-- size is the larger part's, which understates a park cut in two; the size
+-- only orders the parks a point is inside, smallest first. The 100 ha test
+-- is still each part's own, as it was.
 CREATE TABLE osm_area AS
 SELECT osm_id, min(name) AS name, max(area_ha) AS area_ha, bool_or(is_island) AS is_island,
        ST_MakeValid(ST_Union_Agg(ST_MakeValid(ST_GeomFromWKB(wkb)))) AS geom

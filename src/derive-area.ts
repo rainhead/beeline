@@ -259,7 +259,7 @@ const gazetteerAreas = (G: string, { ecoregions, places }: Layers) => `
   UNION ALL
   SELECT 'epa-cec' AS source, code AS source_id, 'ecoregion' AS kind, name, geom FROM ${G}.ecoregion` : ""}${places ? `
   UNION ALL
-  SELECT source, source_id, kind, name, geom FROM ${G}.named_area
+  SELECT source, source_id, kind, name, geom FROM ${G}.named_area WHERE name IS NOT NULL
   UNION ALL
   SELECT 'osm' AS source, o.osm_id AS source_id, CASE WHEN o.is_island THEN 'island' ELSE 'park' END AS kind, o.name, o.geom
   FROM ${G}.osm_area o WHERE o.name IS NOT NULL` : ""}`;
@@ -345,6 +345,10 @@ ${places ? `    UNION ALL
     -- a wildlife area unit is in both.
     SELECT DISTINCT b.sample_id, n.source, n.source_id, n.kind, FALSE
     FROM area_batch b JOIN ${G}.named_area n ON ST_Contains(n.geom, ST_Point(b.lon, b.lat))
+    -- An area needs a name (schema/038). No source leaves one out today; if
+    -- one did, that place would be no area, where it would otherwise stop
+    -- the whole batch every night.
+    WHERE n.name IS NOT NULL
     UNION ALL
     -- Every other park or reserve OpenStreetMap outlines that the point is
     -- inside, and every island. Inside only: the locality rule gives a
@@ -399,7 +403,8 @@ ${places ? `    UNION ALL
          AND NOT EXISTS (SELECT 1 FROM area a
                          WHERE a.source = g.source AND a.source_id = g.source_id AND a.gazetteer_build = $1)
        ON CONFLICT (source, source_id) DO UPDATE
-         SET name = excluded.name, geom = excluded.geom, gazetteer_build = excluded.gazetteer_build`,
+         SET kind = excluded.kind, name = excluded.name, geom = excluded.geom,
+             gazetteer_build = excluded.gazetteer_build`,
       [buildId],
     );
     await conn.run(`DELETE FROM sample_area WHERE sample_id IN (SELECT sample_id FROM area_batch)`);

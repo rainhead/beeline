@@ -375,14 +375,16 @@ describe("sample listing", () => {
   });
 
   // Every rule view emits NULL as specimen_id today, so nothing in the model
-  // exercises the other route a finding can take. Standing in a specimen-keyed
-  // definition for one rule is the cheapest way to prove the roll-up before a
-  // real specimen-level rule lands (beeline-2c3.29) — qc_finding unions the
-  // rule views by name, so replacing one is enough.
+  // exercises a finding about one specimen. Standing in a definition that
+  // names a specimen for one rule is the cheapest way to prove such a finding
+  // counts against its sample before a real specimen-level rule lands
+  // (beeline-2c3.29) — qc_finding unions the rule views by name, so replacing
+  // one is enough. It names the sample too, as every finding must
+  // (schema/130, beeline-poon).
   async function flagSpecimen(conn: Awaited<ReturnType<typeof listingApp>>["conn"], catalog: string) {
     await conn.run(
       `CREATE OR REPLACE VIEW qc_rule_observation_missing_upstream AS
-       SELECT CAST(NULL AS INTEGER) AS sample_id,
+       SELECT sp.sample_id,
               sp.entity_id AS specimen_id,
               'observation_missing_upstream' AS rule_name,
               'stood in for a specimen-level rule' AS details

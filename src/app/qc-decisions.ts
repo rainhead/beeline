@@ -48,8 +48,7 @@ export async function findingText(conn: DuckDBConnection, sampleId: number, rule
     conn,
     `SELECT concat_ws(' ', f.details, f.detail_taxon_name)
      FROM qc_finding f
-     LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id
-     WHERE coalesce(f.sample_id, sp.sample_id) = $1 AND f.rule_name = $2`,
+     WHERE f.sample_id = $1 AND f.rule_name = $2`,
     [sampleId, ruleName],
   );
   const v = found[0]?.[0];

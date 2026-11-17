@@ -30,14 +30,24 @@ FROM (
 ) prose
 UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host;
 
--- The same findings, keyed to the sample each one belongs to, by both routes a
--- finding can take: keyed to the sample itself, or to one of its specimens.
--- Everything that asks "what is wrong with this sample" — printability
--- (schema/140) and the listings' flag chips (src/app/listings.ts) — reads this,
--- so there is one definition of the roll-up rather than one per caller
--- (beeline-2c3.29). The LEFT JOIN, rather than a UNION of the two routes,
--- scans the qc_finding union once instead of twice: half the work of the shape
--- it replaces, on a view that already costs most of a second (beeline-2c3.23).
+-- Every finding names its sample. One that is about a single specimen names
+-- the specimen as well, in specimen_id, and its sample beside it: a rule
+-- written over `specimen` has sample_id to hand. No rule is about a specimen
+-- yet.
+--
+-- The findings that count against a sample: all of them, less the ones staff
+-- have waived. Everything that asks "what is wrong with this sample" —
+-- printability (schema/140), the listings' flag chips (src/app/listings.ts)
+-- and the sample page (src/app/record.ts) — reads this, so there is one
+-- definition rather than one per caller (beeline-2c3.29).
+--
+-- Until beeline-poon a finding about a specimen left sample_id NULL, and this
+-- view found the sample through the specimen: coalesce(f.sample_id,
+-- sp.sample_id). A filter on that expression cannot be handed down to the
+-- rules, so a sample page asking for one sample's findings worked out every
+-- sample's: 177 ms against 23 on production's store of 2026-11-17, and most
+-- of the 23 is planning a query this wide, not running it. With the sample
+-- on every finding, the filter reaches each rule's own tables.
 --
 -- A finding staff have waived is not here (beeline-1kb.9, schema/050): not
 -- on the front page, not in a listing's chips, and not blocking printing.
@@ -47,17 +57,16 @@ UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host;
 -- pays for a finding's text. The waiver itself is shown on the sample page,
 -- read from sample_qc_waiver.
 CREATE VIEW sample_qc_finding AS
-SELECT coalesce(f.sample_id, sp.sample_id) AS sample_id,
+SELECT f.sample_id,
        f.specimen_id,
        f.rule_name,
        f.details,
        f.detail_taxon_name,
        f.detail_taxon_rank
 FROM qc_finding f
-LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id
 WHERE NOT EXISTS (
   SELECT 1 FROM sample_qc_waiver w
-  WHERE w.sample_id = coalesce(f.sample_id, sp.sample_id)
+  WHERE w.sample_id = f.sample_id
     AND w.rule_name = f.rule_name
     AND w.in_force
     AND NOT EXISTS (SELECT 1 FROM qc_rule_unwaivable u WHERE u.name = w.rule_name));

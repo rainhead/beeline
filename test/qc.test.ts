@@ -492,6 +492,22 @@ describe("QC findings and printability", () => {
     expect(await isPrintable(a)).toBe(false);
   });
 
+  test("a sample with two collectors at position 1 is not a duplicate of itself", async () => {
+    // The engine cannot prevent two heads (schema/116). The conflict is
+    // counted per collector, so a sample alone on its number and day stays
+    // clean, and one that shares them with another is counted once per head.
+    const alone = await insertCleanSample(conn, { sample_number: "'7'" });
+    await conn.run("INSERT INTO person (display_name) VALUES ('Second Head')");
+    const second = (await rows(conn, "SELECT max(entity_id) FROM person"))[0]![0];
+    await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${alone}, ${second}, 1)`);
+    expect(await rows(conn, `SELECT details FROM sample_number_conflict WHERE sample_id = ${alone}`)).toEqual([]);
+
+    await insertCleanSample(conn, { sample_number: "'7'" });
+    expect(await rows(conn, `SELECT details FROM sample_number_conflict WHERE sample_id = ${alone}`)).toEqual([
+      [expect.stringContaining("sample number 7 used 2 times")],
+    ]);
+  });
+
   test("a printed sample whose number its collector used twice is named, and flagged nowhere", async () => {
     // Peter, 2026-10-04 (beeline-0199): the pins carry the number for good and
     // there is nothing left for anyone to do. Both shapes: a legacy sample

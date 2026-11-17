@@ -57,17 +57,14 @@ import { specimenLabels, specimenReprint, type SpecimenLabelRow, type SpecimenRe
  * is therefore stable only until the next rebuild, and permanently from
  * cutover, which is also when the numbers it names stop moving.
  *
- * Cost. `recordFindings` reads `sample_qc_finding`, whose filter does not
- * push through the union underneath it, so a record page scans the whole
- * thing whatever the sample, every finding's details included. That was ~25
- * ms on the dev store once the observation projection was stored
- * (beeline-2c3.36) and the locality rule stopped being nineteen LIKE passes
- * (beeline-2c3.37); on the sandbox's store in October 2026 it is ~240 ms at
- * the sandbox's two threads, after migrations/0056 took two rules from 125 ms
- * to 30. That is the same scan the QC home and both listings already pay per
- * page, and reading anything else would be a second definition of "what is
- * wrong with this sample", which is exactly what beeline-2c3.29 collapsed
- * into one.
+ * Cost. `recordFindings` reads `sample_qc_finding` for one sample, and the
+ * filter on the sample is handed down to each rule's own tables, so the page
+ * pays for its sample's findings and not every sample's: 23 ms on
+ * production's store of 2026-11-17 at two threads, most of it planning. It
+ * was 177 ms until beeline-poon, while the view found a finding's sample
+ * through its specimen and the filter stopped there (schema/130). Reading
+ * anything other than this view would be a second definition of "what is
+ * wrong with this sample", which is what beeline-2c3.29 collapsed into one.
  */
 
 /** Rows of the sample page's specimen list. The largest trap sample in the

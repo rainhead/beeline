@@ -1,22 +1,21 @@
 -- Printability, over samples: the sketch's conjunction collapses into the QC
 -- layer — required fields and obscured-without-true-coordinates are themselves
 -- blocking rules, so printable = a positive count and no blocking finding on
--- the sample or its specimens. A print run freezes printable samples into
+-- the sample, a finding about one of its specimens included. A print run freezes printable samples into
 -- specimens.
 -- Taxon-obscured records with true coordinates print only where their atlas
 -- has said they may (atlas_taxon_obscured_printing, schema/010); elsewhere
 -- qc_rule_taxon_obscured_awaiting_atlas blocks them like any other finding.
 
--- Which samples a blocking finding lands on. Both routes a finding can take
--- are already resolved by sample_qc_finding (schema/130), so this is one key
+-- Which samples a blocking finding lands on. Every finding names its sample
+-- (sample_qc_finding, schema/130), so this is one key
 -- the planner can hash-anti-join against — the point of beeline-2c3.22, where
 -- an OR over two different keys inside printability's NOT EXISTS refused to
 -- decorrelate and cost eleven seconds on the flagship page.
 CREATE VIEW blocking_sample AS
 SELECT DISTINCT f.sample_id AS sample_id
 FROM sample_qc_finding f
-JOIN qc_rule r ON r.name = f.rule_name AND r.severity = 'blocking'
-WHERE f.sample_id IS NOT NULL;
+JOIN qc_rule r ON r.name = f.rule_name AND r.severity = 'blocking';
 
 CREATE VIEW printable_sample AS
 SELECT s.entity_id AS sample_id

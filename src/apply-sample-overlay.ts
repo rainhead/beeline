@@ -345,8 +345,7 @@ export async function refreshWaivers(conn: DuckDBConnection): Promise<void> {
     `UPDATE sample_qc_waiver SET in_force = checked.in_force
      FROM (SELECT w.sample_id, w.rule_name,
                   EXISTS (SELECT 1 FROM qc_finding f
-                          LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id
-                          WHERE coalesce(f.sample_id, sp.sample_id) = w.sample_id
+                          WHERE f.sample_id = w.sample_id
                             AND f.rule_name = w.rule_name
                             AND concat_ws(' ', f.details, f.detail_taxon_name) = w.finding) AS in_force
            FROM sample_qc_waiver w) checked

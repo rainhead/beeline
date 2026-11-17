@@ -520,27 +520,55 @@ COMMENT ON VIEW sample_multi_observation IS 'A sample more than one observation 
 -- is the identity: a household sharing one login, or a trap whose range
 -- takes in another day's same-numbered net sample, are two samples, not one
 -- claimed twice (Fable's review of beeline-0199).
+--
+-- The two shapes of sample are matched apart for speed: the QC findings read
+-- this on every sample, specimen and listing page (qc_rule_sample_number,
+-- schema/120; beeline-poon). A sample collected on one day, which is all but
+-- 980 of 70,818 on production's store of 2026-11-17, matches its observations
+-- on the date itself. Matched on a range, as a trap's must be, a prolific
+-- collector's observation numbered "1" met every sample that collector ever
+-- numbered "1" before the dates were compared: 38 ms for the whole view
+-- against 22.
 CREATE VIEW sample_claiming_observation AS
-SELECT s.entity_id AS sample_id, c.inat_id
-FROM sample s
-JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
-JOIN inat_account a ON a.person_id = pc.person_id
-JOIN observation_sample_candidate c ON c.user_id = a.inat_user_id
-                                   AND c.sample_number = s.sample_number
-                                   AND c.observed_on BETWEEN s.date_start AND s.date_end
+SELECT now_claims.sample_id, now_claims.inat_id
+FROM (
+  SELECT s.entity_id AS sample_id, c.inat_id
+  FROM sample s
+  JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+  JOIN inat_account a ON a.person_id = pc.person_id
+  JOIN observation_sample_candidate c ON c.user_id = a.inat_user_id
+                                     AND c.sample_number = s.sample_number
+                                     AND c.observed_on = s.date_start
+  WHERE s.date_end = s.date_start
+  UNION ALL
+  SELECT s.entity_id AS sample_id, c.inat_id
+  FROM sample s
+  JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+  JOIN inat_account a ON a.person_id = pc.person_id
+  JOIN observation_sample_candidate c ON c.user_id = a.inat_user_id
+                                     AND c.sample_number = s.sample_number
+                                     AND c.observed_on BETWEEN s.date_start AND s.date_end
+  WHERE s.date_end > s.date_start
+) now_claims
 WHERE NOT EXISTS (SELECT 1 FROM sample other
-                  WHERE other.inat_observation_id = c.inat_id AND other.entity_id <> s.entity_id)
+                  WHERE other.inat_observation_id = now_claims.inat_id
+                    AND other.entity_id <> now_claims.sample_id)
 UNION
 SELECT sample_id, inat_observation_id FROM sample_legacy_observation;
 COMMENT ON VIEW sample_claiming_observation IS 'Each iNaturalist observation that claims a sample: its collector''s observations carrying its number on its dates now, and those its legacy records came from (sample_legacy_observation). A cited observation since renumbered claims it no longer.';
 
+-- The claims are counted before they are listed. Listing them in order for
+-- every sample, and then keeping the 216 with more than one, sorted 64,000
+-- lists of one: 57 ms for this view against 25 on production's store of
+-- 2026-11-17, the claims' own saving included (beeline-poon).
 CREATE VIEW sample_several_observations AS
 SELECT sample_id,
        CAST(count(*) AS INTEGER) AS observations,
        string_agg(CAST(inat_id AS TEXT), ', ' ORDER BY inat_id) AS inat_ids
-FROM sample_claiming_observation
-GROUP BY sample_id
-HAVING count(*) > 1;
+FROM (SELECT sample_id, inat_id, count(*) OVER (PARTITION BY sample_id) AS claims
+      FROM sample_claiming_observation) claim
+WHERE claims > 1
+GROUP BY sample_id;
 COMMENT ON VIEW sample_several_observations IS 'A sample more than one observation claims: a collector error (Peter, 2026-10-04), and one of the two shapes of sample_number_conflict (schema/120).';
 
 -- The other direction, and not an expected one: one observation cited by

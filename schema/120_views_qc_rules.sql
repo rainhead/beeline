@@ -202,15 +202,25 @@ COMMENT ON VIEW coordinate_precision_rule IS 'One row: the coordinate uncertaint
 -- mostly long since handed the bees over. Of the unprinted samples in the
 -- 100-250 m band on that morning's backup, 4 were in active seasons (3 of
 -- them, 10 labels, in that day's run) and 38 settled.
+--
+-- Printed and settled are LEFT JOINs that found nothing, where they were NOT
+-- EXISTS inside the CASE. It is one of three shapes changed together so that
+-- a sample page, asking for one sample's findings, does not work out which
+-- of all 70,000 samples have printed (beeline-poon; the others are in
+-- sample_number_conflict and qc_rule_sample_number below). Together they
+-- took one sample's findings from 35 ms to 23 on production's store of
+-- 2026-11-17. Each of the two views has at most one row per sample, so the
+-- joins add no rows.
 CREATE VIEW sample_coordinate_limit AS
 SELECT s.entity_id AS sample_id,
        CASE WHEN s.date_end >= r.effective_from
-              OR (NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id)
-                  AND NOT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id))
+              OR (p.sample_id IS NULL AND st.sample_id IS NULL)
             THEN r.uncertainty_m
             ELSE r.grandfathered_uncertainty_m END AS uncertainty_m
 FROM sample s
-CROSS JOIN coordinate_precision_rule r;
+CROSS JOIN coordinate_precision_rule r
+LEFT JOIN printed_sample p ON p.sample_id = s.entity_id
+LEFT JOIN settled_sample st ON st.sample_id = s.entity_id;
 COMMENT ON VIEW sample_coordinate_limit IS 'Per sample: the coordinate uncertainty above which it cannot be printed. 100 m, except 250 m for a sample collected before 2 September 2026 that has printed or is in a settled season.';
 
 CREATE VIEW qc_rule_coordinate_uncertainty AS
@@ -274,20 +284,26 @@ WHERE NOT (loc.latitude BETWEEN 14 AND 84 AND loc.longitude BETWEEN -172 AND -50
 -- sample number is collector error. So a conflict is either shape: two
 -- samples sharing the key, or one sample several observations claim
 -- (sample_several_observations, schema/108).
+--
+-- The first shape joins each sample to the samples that share its key, itself
+-- among them, and counts them. Counting every key first and joining the
+-- counts back gives the same rows, but counts all 70,000 samples to answer
+-- for one (beeline-poon); this way the one sample is looked up and its key
+-- matched.
 CREATE VIEW sample_number_conflict AS
-SELECT s.entity_id AS sample_id,
-       concat('sample number ', s.sample_number, ' used ', dup.n, ' times on ', s.date_start) AS details
-FROM sample s
-JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
-JOIN (
-  SELECT pc.person_id, s.date_start, s.sample_number, count(*) AS n
-  FROM sample s
-  JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
-  GROUP BY pc.person_id, s.date_start, s.sample_number
-  HAVING count(*) > 1
-) dup ON dup.person_id = pc.person_id
-     AND dup.date_start = s.date_start
-     AND dup.sample_number = s.sample_number
+SELECT s.sample_id,
+       concat('sample number ', s.sample_number, ' used ', count(*), ' times on ', s.date_start) AS details
+FROM (SELECT s.entity_id AS sample_id, pc.person_id, s.date_start, s.sample_number
+      FROM sample s
+      JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id) s
+JOIN (SELECT pc.person_id, s.date_start, s.sample_number
+      FROM sample s
+      JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id) same
+  ON same.person_id = s.person_id
+ AND same.date_start = s.date_start
+ AND same.sample_number = s.sample_number
+GROUP BY s.sample_id, s.sample_number, s.date_start
+HAVING count(*) > 1
 UNION ALL
 SELECT s.entity_id,
        concat('sample number ', s.sample_number, ' is on ', o.observations, ' observations: ', o.inat_ids)
@@ -306,13 +322,17 @@ COMMENT ON VIEW sample_number_conflict IS 'A sample whose number its collector u
 -- One finding per sample, its two cases joined: a waiver names a flag by its
 -- sample and rule (schema/050), and two findings under one rule would let a
 -- waiver on one hide the other.
+--
+-- Not printed is "no specimen of it is on paper", which is printed_sample's
+-- own test (schema/101) without the pass that reduces 400,000 specimens to
+-- one row per sample, which this has no use for.
 CREATE VIEW qc_rule_sample_number AS
 SELECT c.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'duplicate_sample_number' AS rule_name,
        string_agg(c.details, '; ' ORDER BY c.details) AS details
 FROM sample_number_conflict c
-WHERE NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = c.sample_id)
+WHERE NOT EXISTS (SELECT 1 FROM specimen_on_paper p WHERE p.sample_id = c.sample_id)
 GROUP BY c.sample_id;
 
 -- The evidencing observation's taxon is the floral host in this protocol,
@@ -380,45 +400,47 @@ WHERE nullif(trim(f.specimen_count_raw), '') IS NOT NULL
 -- again clears the finding by advancing last_seen_at.
 --
 -- Every condition on the run is in the one join, so a pair of observation and
--- run is judged once. Joined in stages, as this was until migrations/0056,
--- each observation met every covering run of its source before its date was
--- known: 858,688 pairs on the sandbox's store, nearly all of them an old
--- observation against a weekly sweep whose year-long window never reached
--- it, carried through two more joins before the window threw them out. That
--- was 91 ms of every listing page; this is 21.
+-- run is judged once, and everything the join needs about the observation is
+-- in one row before it, so the planner cannot take the conditions apart. It
+-- did: written as three WITH steps (migrations/0056), DuckDB 1.5 judged a
+-- pair once, and DuckDB 2.0 first paired each observation with every run
+-- that started after it was last seen, two million pairs on production's
+-- store of 2026-11-17, nearly all of them an old observation against a
+-- weekly sweep whose year-long window never reached it, and only then looked
+-- at the window. Asked on its own, or for its text as a sample page asks,
+-- that took 78 ms; inside a listing's count of flags the planner happened to
+-- choose well and it took about 15. This takes 29 however it is asked
+-- (beeline-poon).
+--
+-- It starts from the sample so that a page asking about one sample reads
+-- that sample's sightings and no others. What it cannot avoid, asked about
+-- every sample, is reading all of observation_seen, which gains a row for
+-- every observation each weekly sweep returns and is never pruned.
 CREATE VIEW qc_rule_observation_missing_upstream AS
-WITH seen AS (
-  -- When each observation was last returned, by each source that returned it.
-  SELECT sn.inat_id, r.source, max(r.started_at) AS last_seen_at
-  FROM observation_seen sn
-  JOIN sync_run r ON r.entity_id = sn.sync_run_id
-  GROUP BY sn.inat_id, r.source
-), last_seen AS (
-  SELECT inat_id, max(last_seen_at) AS last_seen_at FROM seen GROUP BY inat_id
-), linked AS (
-  -- A sample's observation, once per source that has returned it, with the
-  -- last time any source did.
-  SELECT s.entity_id AS sample_id, s.inat_observation_id, f.user_id, f.observed_on,
-         ss.source, ls.last_seen_at
-  FROM sample s
-  JOIN observation_field f ON f.inat_id = s.inat_observation_id
-  JOIN last_seen ls ON ls.inat_id = f.inat_id
-  JOIN seen ss ON ss.inat_id = f.inat_id
-)
-SELECT l.sample_id,
+SELECT o.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'observation_missing_upstream' AS rule_name,
        -- Says when the observation was last returned, which stays put until
        -- a sync returns it again and the flag clears: a waiver is tied to
        -- what the flag says (schema/050), and a count of the runs that
        -- missed it changed with every sync.
-       concat('observation ', l.inat_observation_id, ' not returned by a sync since ',
-              CAST(CAST(max(l.last_seen_at) AS DATE) AS VARCHAR)) AS details
-FROM linked l
+       concat('observation ', o.inat_observation_id, ' not returned by a sync since ',
+              CAST(CAST(o.last_seen_at AS DATE) AS VARCHAR)) AS details
+FROM (
+  -- A sample's observation, once per source that has returned it, with the
+  -- last time any source did.
+  SELECT s.entity_id AS sample_id, s.inat_observation_id, f.user_id, f.observed_on, seen_by.source,
+         max(max(seen_by.started_at)) OVER (PARTITION BY s.entity_id) AS last_seen_at
+  FROM sample s
+  JOIN observation_field f ON f.inat_id = s.inat_observation_id
+  JOIN observation_seen sn ON sn.inat_id = s.inat_observation_id
+  JOIN sync_run seen_by ON seen_by.entity_id = sn.sync_run_id
+  GROUP BY s.entity_id, s.inat_observation_id, f.user_id, f.observed_on, seen_by.source
+) o
 JOIN sync_run r
-  ON r.source = l.source
+  ON r.source = o.source
  AND r.completed_at IS NOT NULL
- AND r.started_at > l.last_seen_at
+ AND r.started_at > o.last_seen_at
  -- Incremental (updated_since) runs fetch only the changed subset: they can
  -- never prove an observation gone, so they are not covering runs.
  AND r.updated_since IS NULL
@@ -426,13 +448,13 @@ JOIN sync_run r
  -- "Check iNaturalist now", beeline-yso) proves absence for that observer
  -- only: it covers everyone else's observations no more than an
  -- incremental run does.
- AND (r.observer_user_id IS NULL OR r.observer_user_id = l.user_id)
+ AND (r.observer_user_id IS NULL OR r.observer_user_id = o.user_id)
  -- A run that asked for particular observations by id (beeline-7vsw) is
  -- silent about every observation it did not ask for.
  AND NOT coalesce(r.fetched_by_id, false)
- AND (r.window_start IS NULL OR l.observed_on >= r.window_start)
- AND (r.window_end IS NULL OR l.observed_on <= r.window_end)
-GROUP BY l.sample_id, l.inat_observation_id
+ AND (r.window_start IS NULL OR o.observed_on >= r.window_start)
+ AND (r.window_end IS NULL OR o.observed_on <= r.window_end)
+GROUP BY o.sample_id, o.inat_observation_id, o.last_seen_at
 -- And the observation no sync ever returned, which iNaturalist answered
 -- without when asked for it by id (schema/060 observation_absent,
 -- beeline-wcc6): the legacy records cite hundreds deleted before the first

@@ -140,9 +140,9 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
         AND (st.sample_id IS NULL OR lp.sample_id IS NOT NULL)
       ORDER BY s.date_start DESC, length(s.sample_number) DESC, s.sample_number DESC, s.entity_id`.execute(db),
     // The findings the page shows, on every sample of theirs, settled or not:
-    // a settled sample's are counted rather than shown (beeline-2c3.24). The
-    // roll-up (sample_qc_finding), not qc_finding: a finding on one of a
-    // sample's specimens is something to fix about that sample (beeline-2c3.29).
+    // a settled sample's are counted rather than shown (beeline-2c3.24). Read
+    // from sample_qc_finding, not qc_finding, as the listings and
+    // printability do (beeline-2c3.29): it leaves out what staff have waived.
     sql<Finding & { sample_id: number; settled: boolean }>`
       SELECT f.sample_id, f.rule_name, f.details, f.detail_taxon_name, f.detail_taxon_rank, r.severity,
              EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = f.sample_id) AS settled

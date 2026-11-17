@@ -138,7 +138,14 @@ export function matrixOf(workbook: Uint8Array): string[][] {
 export function edited(
   download: Uint8Array,
   edits: Array<{ id: number; set: Record<string, TestCell> }> = [],
-  options: { dropColumns?: string[]; renameColumns?: Record<string, string>; addColumns?: Record<string, string>; dropRows?: number[] } = {},
+  options: {
+    dropColumns?: string[];
+    renameColumns?: Record<string, string>;
+    addColumns?: Record<string, string>;
+    dropRows?: number[];
+    /** The sheet's name, and other sheets of the workbook (see buildWorkbook). */
+    sheets?: { name?: string; others?: string[]; before?: boolean };
+  } = {},
 ): Uint8Array {
   const records = matrixOf(download);
   const head = records[0]!;
@@ -160,7 +167,7 @@ export function edited(
       for (const [name, value] of Object.entries(options.addColumns ?? {})) cells.push(i === 0 ? name : value);
       return cells;
     });
-  return buildWorkbook(rows);
+  return buildWorkbook(rows, options.sheets);
 }
 
 export const bytesOf = (text: string): Uint8Array => new TextEncoder().encode(text);

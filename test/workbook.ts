@@ -24,7 +24,13 @@ const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").
  * cells, the other kinds as a spreadsheet stores them. Not the app's writer,
  * so a test of the app does not rest on it.
  */
-export function buildWorkbook(rows: ReadonlyArray<ReadonlyArray<TestCell>>): Uint8Array {
+export function buildWorkbook(
+  rows: ReadonlyArray<ReadonlyArray<TestCell>>,
+  /** `name` is the sheet's name; `others` are the names of more sheets, each with one cell, put `before` the sheet or after it. */
+  options: { name?: string; others?: string[]; before?: boolean } = {},
+): Uint8Array {
+  const name = options.name ?? "specimens";
+  const others = options.others ?? [];
   const cell = (value: TestCell, ref: string): string => {
     if (value === null) return "";
     if (typeof value === "string") return `<c r="${ref}" s="1" t="inlineStr"><is><t xml:space="preserve">${esc(value)}</t></is></c>`;
@@ -40,11 +46,24 @@ export function buildWorkbook(rows: ReadonlyArray<ReadonlyArray<TestCell>>): Uin
     `</sheetData></worksheet>`;
   const main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
   const rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const own = `<sheet name="${esc(name)}" sheetId="1" r:id="rId1"/>`;
+  const more = others.map((n, i) => `<sheet name="${esc(n)}" sheetId="${i + 2}" r:id="rId${i + 2}"/>`).join("");
+  const tabs = options.before === true ? more + own : own + more;
+  const extra = Object.fromEntries(
+    others.map((n, i) => [
+      `xl/worksheets/sheet${i + 2}.xml`,
+      strToU8(`<?xml version="1.0"?><worksheet xmlns="${main}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>${esc(n)}</t></is></c></row></sheetData></worksheet>`),
+    ]),
+  );
+  const relationships =
+    `<Relationship Id="rId1" Type="${rel}/worksheet" Target="worksheets/sheet1.xml"/>` +
+    others.map((_, i) => `<Relationship Id="rId${i + 2}" Type="${rel}/worksheet" Target="worksheets/sheet${i + 2}.xml"/>`).join("");
   return zipSync({
+    ...extra,
     "[Content_Types].xml": strToU8(`<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>`),
-    "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="${main}" xmlns:r="${rel}"><sheets><sheet name="specimens" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+    "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="${main}" xmlns:r="${rel}"><sheets>${tabs}</sheets></workbook>`),
     "xl/_rels/workbook.xml.rels": strToU8(
-      `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${rel}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+      `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}</Relationships>`,
     ),
     // 0 General, 1 Text, 2 a date (built-in format 14).
     "xl/styles.xml": strToU8(

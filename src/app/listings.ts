@@ -2153,11 +2153,14 @@ export const ROUND_TRIP_COLUMNS = ["specimenId", "specimenVersion", "sampleVersi
  * `e`, as a number and rewrites it.
  */
 export const sampleVersion = (
-  r: Pick<SpecimenRow, "date_start" | "date_end" | "protocol" | "locality" | "latitude" | "longitude" | "coordinate_uncertainty_m">,
+  r: Pick<SpecimenRow, "sample_id" | "date_start" | "date_end" | "protocol" | "locality" | "latitude" | "longitude" | "coordinate_uncertainty_m">,
 ): string =>
   `v${createHash("sha256")
     .update(
       JSON.stringify([
+        // The sample's own id, so two samples that say the same things do not share a version, and a file whose
+        // rows were shifted onto other samples is seen to be about the wrong ones.
+        r.sample_id,
         eventDate(r.date_start, r.date_end),
         r.protocol,
         r.locality,
@@ -2172,8 +2175,9 @@ export const sampleVersion = (
 /**
  * A short name for what the specimen's own changeable cells said when the row
  * was written: its name, qualifier, sex, caste, determiner and date
- * identified as the row writes them, its disposition and remarks, and the id
- * of the determination they were read from. It replaces the determination's
+ * identified as the row writes them, its disposition and remarks, the id of
+ * the determination they were read from, and the specimen's own id (so two
+ * specimens that say the same things have different versions). It replaces the determination's
  * id alone, which says nothing when a loader updates a determination in
  * place or a person's or a taxon's name is corrected: the id stays and the
  * cells change. The `s` is there for the reason `sampleVersion` starts with
@@ -2182,6 +2186,7 @@ export const sampleVersion = (
 export const specimenVersion = (
   r: Pick<
     SpecimenRow,
+    | "specimen_id"
     | "scientific_name"
     | "qualifier"
     | "sex"
@@ -2197,6 +2202,9 @@ export const specimenVersion = (
   `s${createHash("sha256")
     .update(
       JSON.stringify([
+        // The specimen's own id: two specimens with no determination and no disposition say the same things, and
+        // a file whose specimenId cells were shifted onto other rows must not look current.
+        r.specimen_id,
         r.scientific_name,
         r.qualifier,
         r.sex,

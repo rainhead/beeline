@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
-import { columnIndex, columnName, escapeText, readXlsx, writeXlsx, xlsxWriter, type XlsxCell, type XlsxRead } from "../src/app/xlsx.js";
+import { MAX_CELL_CHARS, MAX_SHEET_ROWS, columnIndex, columnName, escapeText, readXlsx, writeXlsx, xlsxWriter, type XlsxCell, type XlsxRead } from "../src/app/xlsx.js";
+import { buildWorkbook } from "./workbook.js";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -102,11 +103,11 @@ describe("writing a workbook and reading it back", () => {
     const parts = unzipSync(writeXlsx({ sheetName: "s", header: ["a", "b", "c"] }, [["1", null, "=2"]]));
     const sheet = new TextDecoder().decode(parts["xl/worksheets/sheet1.xml"]);
     const cells = [...sheet.matchAll(/<c [^>]*>/g)].map((m) => m[0]);
-    expect(cells.length).toBe(5);
-    for (const c of cells) {
-      expect(c).toContain(`s="1"`);
-      expect(c).toContain(`t="inlineStr"`);
-    }
+    expect(cells.length).toBe(6);
+    for (const c of cells) expect(c).toContain(`s="1"`);
+    // Five hold text; the sixth, the null, is an empty cell that carries the Text style of its own, so a program that ignores the column's style still types text there.
+    expect(cells.filter((c) => c.includes(`t="inlineStr"`))).toHaveLength(5);
+    expect(sheet).toContain(`<c r="B2" s="1"/>`);
     // No formula element anywhere: a leading = is a character.
     expect(sheet).not.toContain("<f");
     // Style 1 is the Text format, and every column has it, so a cell nobody wrote is text when somebody types in it.
@@ -298,13 +299,29 @@ describe("refusing a file", () => {
     expect(readXlsx(new Uint8Array(0))).toEqual({ ok: false, refusal: "not_a_zip" });
     // A zip's first bytes and nothing after them.
     expect(readXlsx(Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]))).toEqual({ ok: false, refusal: "not_a_zip" });
-    // An older .xls, which is neither.
-    expect(readXlsx(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))).toEqual({ ok: false, refusal: "not_a_zip" });
+    // An older .xls, or a workbook that is encrypted or carries a sensitivity label: an OLE file, which is neither.
+    expect(readXlsx(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0]))).toEqual({ ok: false, refusal: "protected_file" });
   });
 
-  it("refuses a truncated file", () => {
+  it("refuses a file cut off in the middle", () => {
     const whole = workbook({ sheet });
     expect(readXlsx(whole.subarray(0, Math.floor(whole.length / 2))).ok).toBe(false);
+  });
+
+  it("refuses a sheet whose XML is cut short, instead of reading the rows before the cut", () => {
+    // A well-formed zip, with its own sizes right, around a sheet that stops in the middle of a row.
+    const cut = zipSync({
+      "xl/workbook.xml": strToU8(`<workbook xmlns="${MAIN}" xmlns:r="${REL}"><sheets><sheet name="a" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(`<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>kept?</t></is></c></row><row r="2"><c r="A2" t="inl`),
+    });
+    expect(readXlsx(cut)).toEqual({ ok: false, refusal: "unreadable" });
+    const closed = zipSync({
+      "xl/workbook.xml": strToU8(`<workbook xmlns="${MAIN}" xmlns:r="${REL}"><sheets><sheet name="a" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(`<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>kept</t></is></c></row><row r="2">`),
+    });
+    expect(readXlsx(closed)).toEqual({ ok: false, refusal: "unreadable" });
   });
 
   it("refuses a zip that is not a workbook", () => {
@@ -329,23 +346,96 @@ describe("refusing a file", () => {
     expect(readXlsx(workbook({ sheet: rows(10) }), { maxRows: 10 }).ok).toBe(true);
   });
 
-  it("refuses a small file that unpacks to far more than it should, without unpacking it", () => {
+  const minimal = (sheetXml: Uint8Array | string) => ({
+    "xl/workbook.xml": strToU8(`<workbook xmlns="${MAIN}" xmlns:r="${REL}"><sheets><sheet name="a" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+    "xl/_rels/workbook.xml.rels": strToU8(`<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`),
+    "xl/worksheets/sheet1.xml": typeof sheetXml === "string" ? strToU8(sheetXml) : sheetXml,
+  });
+
+  /** A zip with one entry's directory record changed. */
+  const patchEntry = (zip: Uint8Array, name: string, patch: (view: DataView, at: number) => void): Uint8Array => {
+    const out = new Uint8Array(zip);
+    const view = new DataView(out.buffer);
+    let end = out.length - 22;
+    while (view.getUint32(end, true) !== 0x06054b50) end--;
+    let at = view.getUint32(end + 16, true);
+    for (let i = 0, count = view.getUint16(end + 10, true); i < count; i++) {
+      const nameLength = view.getUint16(at + 28, true);
+      if (new TextDecoder().decode(out.subarray(at + 46, at + 46 + nameLength)) === name) patch(view, at);
+      at += 46 + nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+    }
+    return out;
+  };
+
+  it("refuses a small file that declares far more than it should, before inflating anything", () => {
     // 6 MB of one byte compresses to a few kilobytes.
-    const bomb = zipSync({
-      "xl/workbook.xml": strToU8(`<workbook xmlns="${MAIN}" xmlns:r="${REL}"><sheets><sheet name="a" sheetId="1" r:id="rId1"/></sheets></workbook>`),
-      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`),
-      "xl/worksheets/sheet1.xml": new Uint8Array(6_000_000).fill(32),
-    });
+    const bomb = zipSync(minimal(new Uint8Array(6_000_000).fill(32)));
     expect(bomb.length).toBeLessThan(20_000);
     expect(readXlsx(bomb, { maxInflatedBytes: 1_000_000 })).toEqual({ ok: false, refusal: "too_large_unpacked" });
+    // The size is judged on the zip's own word, before a byte is inflated: a small, valid sheet that declares a
+    // big size is refused as too big, where inflating it would have found the sizes disagree (unreadable).
+    const small = zipSync(minimal(`<worksheet><sheetData/></worksheet>`));
+    expect(readXlsx(small, { maxInflatedBytes: 1_000_000 }).ok).toBe(true);
+    const declaresBig = patchEntry(small, "xl/worksheets/sheet1.xml", (v, at) => v.setUint32(at + 24, 6_000_000, true));
+    expect(readXlsx(declaresBig, { maxInflatedBytes: 1_000_000 })).toEqual({ ok: false, refusal: "too_large_unpacked" });
     // The cap is on what the parts add up to, not on one of them.
-    const two = zipSync({
-      "xl/workbook.xml": new Uint8Array(600_000).fill(32),
-      "xl/styles.xml": new Uint8Array(600_000).fill(32),
-    });
+    const two = zipSync({ "xl/workbook.xml": new Uint8Array(600_000).fill(32), "xl/_rels/workbook.xml.rels": new Uint8Array(600_000).fill(32) });
     expect(readXlsx(two, { maxInflatedBytes: 1_000_000 })).toEqual({ ok: false, refusal: "too_large_unpacked" });
     // And the default allows a real file.
     expect(readXlsx(workbook({ sheet })).ok).toBe(true);
+  });
+
+  it("stops inflating when the output passes the cap, whatever size the zip declares", () => {
+    const bomb = zipSync(minimal(new Uint8Array(6_000_000).fill(32)));
+    // The directory says the sheet is ten bytes. It is six million: the inflate is cut off at the cap, not trusted.
+    const lies = patchEntry(bomb, "xl/worksheets/sheet1.xml", (v, at) => v.setUint32(at + 24, 10, true));
+    expect(readXlsx(lies, { maxInflatedBytes: 1_000_000 })).toEqual({ ok: false, refusal: "too_large_unpacked" });
+    // Under the cap, a size that is not the size is a file that cannot be trusted.
+    const small = zipSync(minimal(`<worksheet><sheetData/></worksheet>`));
+    const wrong = patchEntry(small, "xl/worksheets/sheet1.xml", (v, at) => v.setUint32(at + 24, 5, true));
+    expect(readXlsx(wrong)).toEqual({ ok: false, refusal: "unreadable" });
+  });
+
+  it("reads only the parts it needs: one sheet, not every sheet, and not what else the zip holds", () => {
+    // Another sheet that would be refused as too big if it were read.
+    const zip = zipSync({ ...minimal(`<worksheet><sheetData/></worksheet>`), "xl/worksheets/sheet2.xml": new Uint8Array(6_000_000).fill(32) });
+    expect(readXlsx(zip, { maxInflatedBytes: 1_000_000 }).ok).toBe(true);
+  });
+
+  it("refuses entries that share one payload, and is not troubled by ones it never reads", () => {
+    const zip = zipSync(minimal(`<worksheet><sheetData/></worksheet>`));
+    let workbookAt = 0;
+    patchEntry(zip, "xl/workbook.xml", (v, at) => {
+      workbookAt = v.getUint32(at + 42, true);
+    });
+    // The sheet's entry pointing at the workbook's bytes: two parts, one payload.
+    const shared = patchEntry(zip, "xl/worksheets/sheet1.xml", (v, at) => v.setUint32(at + 42, workbookAt, true));
+    expect(readXlsx(shared)).toEqual({ ok: false, refusal: "unreadable" });
+    // A hundred entries that all point at one payload and declare one byte, none of them a part that is read.
+    const many = zipSync({ ...minimal(`<worksheet><sheetData/></worksheet>`), ...Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`junk/${i}`, new Uint8Array(1)])) });
+    let junkAt = 0;
+    patchEntry(many, "junk/0", (v, at) => {
+      junkAt = v.getUint32(at + 42, true);
+    });
+    const aliased = new Uint8Array(many);
+    for (let i = 1; i < 100; i++) {
+      const next = patchEntry(aliased, `junk/${i}`, (v, at) => v.setUint32(at + 42, junkAt, true));
+      aliased.set(next);
+    }
+    expect(readXlsx(aliased).ok).toBe(true);
+  });
+
+  it("refuses a zip with more entries than a workbook has, and one with an entry twice", () => {
+    const many = zipSync({ ...minimal(`<worksheet><sheetData/></worksheet>`), ...Object.fromEntries(Array.from({ length: 2_001 }, (_, i) => [`x/${i}`, new Uint8Array(1)])) });
+    expect(readXlsx(many)).toEqual({ ok: false, refusal: "too_large_unpacked" });
+    expect(readXlsx(many, { maxEntries: 5_000 }).ok).toBe(true);
+  });
+
+  it("refuses a row with more cells than a download has columns", () => {
+    const cells = (n: number) => Array.from({ length: n }, (_, i) => `<c r="${columnName(i)}1" t="inlineStr"><is><t>x</t></is></c>`).join("");
+    expect(readXlsx(workbook({ sheet: `<row r="1">${cells(501)}</row>` }))).toEqual({ ok: false, refusal: "too_wide" });
+    expect(readXlsx(workbook({ sheet: `<row r="1">${cells(500)}</row>` })).ok).toBe(true);
+    expect(readXlsx(workbook({ sheet: `<row r="1">${cells(6)}</row>` }), { maxCellsPerRow: 5 })).toEqual({ ok: false, refusal: "too_wide" });
   });
 
   it("refuses XML it cannot read, and a document type, without throwing", () => {
@@ -364,23 +454,28 @@ describe("refusing a file", () => {
 });
 
 /**
- * A workbook laid out the way Excel lays one out, built by hand for this test
- * and not written by Excel, LibreOffice or Google Sheets: its shared strings
- * with rich text and a phonetic guide, a custom date format, formulas with
- * their cached values, a boolean, an error, a gap, a second sheet, and the
- * parts around them that the reader must step over.
+ * A workbook that Beeline's writer made and openpyxl, a second program, opened and saved again after somebody
+ * typed over one cell and into one empty cell (test/fixtures/make-openpyxl-resaved.py). openpyxl rewrote the
+ * whole package (its own theme, document properties, styles and sheet XML) and kept the strings inline. It was NOT
+ * written by Excel, LibreOffice Calc or Google Sheets, which have not been tried; shared strings are read in the
+ * tests above from XML written by hand.
  */
-describe("a workbook in the layout Excel writes", () => {
-  it("reads every cell as written", async () => {
-    const read = readXlsx(new Uint8Array(await readFile(join(import.meta.dirname, "fixtures", "excel-layout.xlsx"))));
-    const sheet = sheetOf(read);
+describe("a workbook Beeline wrote and openpyxl saved again", () => {
+  it("reads every cell as text, and what was typed in is there", async () => {
+    const bytes = new Uint8Array(await readFile(join(import.meta.dirname, "fixtures", "openpyxl-resaved.xlsx")));
+    // The package is openpyxl's, not Beeline's writer's.
+    const parts = unzipSync(bytes);
+    expect(Object.keys(parts)).toContain("xl/theme/theme1.xml");
+    expect(new TextDecoder().decode(parts["xl/worksheets/sheet1.xml"])).toContain("<sheetPr>");
+    const sheet = sheetOf(readXlsx(bytes));
     expect(sheet.name).toBe("specimens");
-    const rows = sheet.rows.map((r) => [r.row, Object.fromEntries([...r.cells.entries()].map(([c, v]) => [columnName(c), `${v.type}:${v.text}`]))]);
+    const rows = sheet.rows.map((r) => [r.row, [...r.cells.entries()].map(([c, v]) => `${columnName(c)}:${v.type}:${v.text}`)]);
     expect(rows).toEqual([
-      [1, { A: "text:specimenId", B: "text:locality", C: "text:eventDate", D: "text:decimalLongitude", E: "text:note" }],
-      [2, { A: "text:1001", B: "text:Corvallis, rich text", C: "text:2026-07-14", D: "text:-123.45678901234567", E: "text:漢字" }],
-      [3, { A: "text:1002", B: "text:Albany", C: "date:2026-07-14", D: "number:-123.4567890123", E: "formula:cached" }],
-      [4, { A: "boolean:TRUE", C: "error:#N/A", D: "text:00123" }],
+      [1, ["A:text:specimenId", "B:text:locality", "C:text:eventDate", "D:text:decimalLongitude", "E:text:note"]],
+      // The cell that began with = is still a string: openpyxl kept it as one.
+      [2, ["A:text:1001", "B:text:Corvallis", "C:text:2026-07-14", "D:text:-123.45678901234567", "E:text:=1+1"]],
+      // Typed over, and typed into an empty cell.
+      [3, ["A:text:1002", "B:text:Philomath", "C:text:2026-07-14", "D:text:-123.45678901234567", "E:text:a note"]],
     ]);
   });
 });
@@ -427,4 +522,96 @@ describe("a round trip through a spreadsheet program", () => {
     },
     150_000,
   );
+});
+
+describe("which sheet is read", () => {
+  const book = (rows: string[][], options?: { name?: string; others?: string[]; before?: boolean }) => buildWorkbook(rows, options);
+  const rows = [["h"], ["v"]];
+
+  it("reads the sheet named, whatever its place, and lists the others as not read", () => {
+    const read = readXlsx(book(rows, { others: ["notes", "specimens (2)"], before: true }), { sheetName: "specimens" });
+    expect(sheetOf(read).name).toBe("specimens");
+    expect(at(read, "A2")?.text).toBe("v");
+    expect(read.ok && read.otherSheets).toEqual(["notes", "specimens (2)"]);
+  });
+
+  it("reads the only sheet when it has another name, and says there were no others", () => {
+    const read = readXlsx(book(rows, { name: "Sheet1" }), { sheetName: "specimens" });
+    expect(sheetOf(read).name).toBe("Sheet1");
+    expect(read.ok && read.otherSheets).toEqual([]);
+  });
+
+  it("refuses several sheets none of which is the one named, naming them", () => {
+    expect(readXlsx(book(rows, { name: "a", others: ["b"] }), { sheetName: "specimens" })).toEqual({ ok: false, refusal: "no_such_sheet", sheets: ["a", "b"] });
+  });
+
+  it("reads the first sheet when none is asked for", () => {
+    expect(sheetOf(readXlsx(book(rows, { name: "a", others: ["b"], before: true }))).name).toBe("b");
+  });
+});
+
+describe("reading the values a spreadsheet stores", () => {
+  it("gives a number as the number it is, not the digits it is stored in", () => {
+    const read = readXlsx(workbook({ sheet: `<row r="1"><c r="A1"><v>44.564599999999999</v></c><c r="B1"><v>4.45646E1</v></c><c r="C1"><v>-123.278915405273</v></c></row>` }));
+    expect(["A1", "B1", "C1"].map((r) => at(read, r))).toEqual([
+      { text: "44.5646", type: "number" },
+      { text: "44.5646", type: "number" },
+      { text: "-123.278915405273", type: "number" },
+    ]);
+  });
+
+  it("reads an empty shared-string cell as no cell, not as the first string", () => {
+    const read = readXlsx(workbook({ shared: `<si><t>first</t></si>`, sheet: `<row r="1"><c r="A1" t="s"/><c r="B1" t="s"><v></v></c><c r="C1" t="s"><v>0</v></c></row>` }));
+    expect(at(read, "A1")).toBeUndefined();
+    expect(at(read, "B1")).toBeUndefined();
+    expect(at(read, "C1")?.text).toBe("first");
+    // A string that does not exist is not the first one either.
+    expect(readXlsx(workbook({ shared: `<si><t>first</t></si>`, sheet: `<row r="1"><c r="A1" t="s"><v>1</v></c></row>` }))).toEqual({ ok: false, refusal: "unreadable" });
+    expect(readXlsx(workbook({ shared: `<si><t>first</t></si>`, sheet: `<row r="1"><c r="A1" t="s"><v>0x</v></c></row>` }))).toEqual({ ok: false, refusal: "unreadable" });
+  });
+
+  it("counts dates from 1900 or from 1904, as the workbook says", () => {
+    const styles = `<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs>`;
+    const cell = `<row r="1"><c r="A1" s="1"><v>45852</v></c><c r="B1" s="1"><v>44390</v></c><c r="C1" s="1"><v>0</v></c></row>`;
+    const make = (workbookPr: string) =>
+      zipSync({
+        "xl/workbook.xml": strToU8(`<workbook xmlns="${MAIN}" xmlns:r="${REL}">${workbookPr}<sheets><sheet name="a" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+        "xl/_rels/workbook.xml.rels": strToU8(`<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`),
+        "xl/styles.xml": strToU8(`<styleSheet xmlns="${MAIN}">${styles}</styleSheet>`),
+        "xl/worksheets/sheet1.xml": strToU8(`<worksheet><sheetData>${cell}</sheetData></worksheet>`),
+      });
+    const system1900 = readXlsx(make(`<workbookPr defaultThemeVersion="1"/>`));
+    expect([at(system1900, "A1")?.text, at(system1900, "B1")?.text]).toEqual(["2025-07-14", "2021-07-13"]);
+    // Zero is no day in the 1900 system.
+    expect(at(system1900, "C1")?.text).toBe("0");
+    for (const flag of ["1", "true"]) {
+      const system1904 = readXlsx(make(`<workbookPr date1904="${flag}"/>`));
+      // The same day is 1462 days fewer, and zero is 1 January 1904.
+      expect([at(system1904, "A1")?.text, at(system1904, "B1")?.text, at(system1904, "C1")?.text]).toEqual(["2029-07-15", "2025-07-14", "1904-01-01"]);
+    }
+  });
+
+  it("does not take padding, fill, quoted or bracketed letters of a number format for a date", () => {
+    const formats = ["0_D", "0*m", "0.00_M", "0\\d", '0"day"', "[Red]0", "#,##0.00_);[Red](#,##0.00)", "yyyy*-mm", "mm/dd/yy", "[h]:mm", "d_D"];
+    const expected = ["number", "number", "number", "number", "number", "number", "number", "date", "date", "date", "date"];
+    const xfs = formats.map((_, i) => `<xf numFmtId="${200 + i}"/>`).join("");
+    const codes = formats.map((f, i) => `<numFmt numFmtId="${200 + i}" formatCode="${f.replace(/"/g, "&quot;")}"/>`).join("");
+    const cells = formats.map((_, i) => `<c r="${columnName(i)}1" s="${i}"><v>45852</v></c>`).join("");
+    const read = readXlsx(workbook({ styles: `<numFmts count="${formats.length}">${codes}</numFmts><cellXfs count="${formats.length}">${xfs}</cellXfs>`, sheet: `<row r="1">${cells}</row>` }));
+    expect(formats.map((f, i) => [f, at(read, `${columnName(i)}1`)!.type])).toEqual(formats.map((f, i) => [f, expected[i]]));
+  });
+});
+
+describe("what the writer will not write", () => {
+  it("refuses a cell over 32,767 characters, and takes one at the limit", () => {
+    expect(() => writeXlsx({ sheetName: "s", header: ["a"] }, [["x".repeat(MAX_CELL_CHARS + 1)]])).toThrow(/32767 characters/);
+    expect(sheetOf(readXlsx(writeXlsx({ sheetName: "s", header: ["a"] }, [["x".repeat(MAX_CELL_CHARS)]]))).rows[1]!.cells.get(0)!.text).toHaveLength(MAX_CELL_CHARS);
+  });
+
+  it("refuses a sheet past its last row, and takes one that ends there", () => {
+    // The limit is Excel's 1,048,576, the header counted; a smaller one is used here so the test does not write a million rows.
+    expect(MAX_SHEET_ROWS).toBe(1_048_576);
+    expect(() => writeXlsx({ sheetName: "s", header: ["a"], maxRows: 3 }, [["1"], ["2"], ["3"]])).toThrow(/at most 3 rows/);
+    expect(sheetOf(readXlsx(writeXlsx({ sheetName: "s", header: ["a"], maxRows: 3 }, [["1"], ["2"]]))).rows).toHaveLength(3);
+  });
 });

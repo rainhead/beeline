@@ -103,6 +103,12 @@ describe("uploading a file", () => {
     await refused(buildWorkbook([["specimenId", "locality"]]), en.uploads.refused.no_rows!);
     await refused(buildWorkbook([["specimen Id", "locality"], ["1", "a"]]), en.uploads.refusedNearMiss("specimenId"));
     await refused(zipSync({ "hello.txt": strToU8("hi") }), en.uploads.refused.not_a_workbook!);
+    // An encrypted or labelled workbook is an old Office file, not a zip.
+    await refused(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]), en.uploads.refused.protected_file!);
+    // Several tabs, none of them specimens: they are named, and the person is told what to do.
+    const tabs = edited(await f.download(), [], { sheets: { name: "Sheet1", others: ["Notes"] } });
+    await refused(tabs, en.uploads.refusedNoSuchSheet("Sheet1, Notes"));
+    expect(en.uploads.refusedNoSuchSheet("Sheet1, Notes")).toMatch(/Keep the edited rows on a tab named specimens/);
     expect(await uploadCount(f)).toBe(0);
     expect(await kept(f)).toEqual([]);
     const none = await f.app.request("/uploads", { method: "POST", headers: { origin: ORIGIN }, body: new FormData() });
@@ -181,7 +187,8 @@ describe("the preview", () => {
     const body = await page.text();
     expect(body).toContain(esc(en.uploads.page.notChanged));
     // The page says what is not checked yet, in one sentence, and says "differs", never "offered".
-    expect(en.uploads.page.notChanged).toContain("does not yet check that a name is in the taxonomy or that a determiner is someone it knows");
+    expect(en.uploads.page.notChanged).toContain("it will check each change against its own rules");
+    expect(en.uploads.page.notChanged).toContain("None of those checks is made on this page.");
     expect(body).not.toMatch(/offered/i);
     // A specimen's own difference, with its field number linked to its page.
     expect(body).toContain(en.uploads.page.kind.disposition);
@@ -229,6 +236,51 @@ describe("the preview", () => {
     expect(renamed.indexOf(en.uploads.page.unrecognisedHeading)).toBeLessThan(renamed.indexOf(en.uploads.page.countsHeading));
     // A file with every column as downloaded has no such section.
     expect(await pageOf(f, edited(await f.download()))).not.toContain(en.uploads.page.unrecognisedHeading);
+  });
+
+  it("says which tabs were not read", async () => {
+    const f = await uploadFixture();
+    const body = await pageOf(f, edited(await f.download(), [{ id: f.ids.a1, set: { county: "Linn" } }], { sheets: { others: ["Notes", "specimens (2)"], before: true } }));
+    expect(body).toContain(en.uploads.page.otherSheetsHeading);
+    expect(body).toContain(en.uploads.page.otherSheetsNote);
+    expect(body).toContain("<code>Notes</code>");
+    expect(body).toContain("<code>specimens (2)</code>");
+    expect(body.indexOf(en.uploads.page.otherSheetsHeading)).toBeLessThan(body.indexOf(en.uploads.page.countsHeading));
+    expect(await pageOf(f, edited(await f.download()))).not.toContain(en.uploads.page.otherSheetsHeading);
+  });
+
+  it("does not link a row for a specimen Beeline does not have", async () => {
+    const f = await uploadFixture();
+    const body = await pageOf(f, edited(await f.download(), [{ id: f.ids.a1, set: { specimenId: "987654" } }]));
+    expect(body).toContain(esc(en.uploads.page.held.no_specimen!));
+    expect(body).toContain("987654");
+    expect(body).not.toContain("/specimens/987654");
+  });
+
+  it("says how many of a sample's specimens are in the file, in the singular and the plural", () => {
+    expect(en.uploads.page.sampleSpecimens(1, 3)).toBe("1 of its 3 specimens is in the file");
+    expect(en.uploads.page.sampleSpecimens(2, 3)).toBe("2 of its 3 specimens are in the file");
+    expect(en.uploads.page.sampleSpecimens(1, 1)).toBe("1 of its 1 specimen is in the file");
+  });
+
+  it("tells the reader what to do about a number, which has a minus sign where an Oregon longitude has one", () => {
+    expect(en.uploads.page.heldTodo.number_unreadable).toMatch(/minus sign/);
+    expect(en.uploads.page.heldTodo.number_unreadable).not.toMatch(/digits and a decimal point only/);
+  });
+
+  it("holds a sample for either reason its details may not match, and says both", async () => {
+    const f = await uploadFixture();
+    const download = await f.download();
+    await f.conn.run(`UPDATE sample SET protocol = 'blue vane trap' WHERE entity_id = ${f.ids.sampleA}`);
+    const body = await pageOf(f, edited(download, onSample(f, { locality: "Elsewhere" })));
+    expect(body).toContain(esc(en.uploads.page.held.sample_changed_since!));
+    expect(body).toContain(esc(en.uploads.page.heldTodo.sample_changed_since!));
+    expect(en.uploads.page.heldTodo.sample_changed_since).toMatch(/changed in Beeline since the file was downloaded, or the file was downloaded by someone who is not shown locations/);
+  });
+
+  it("says what a blank locality does, for a sample with an observation and for one without", () => {
+    expect(en.uploads.page.unitNote.place).toMatch(/has an iNaturalist observation follow that observation's locality again/);
+    expect(en.uploads.page.unitNote.place).toMatch(/no observation, a blank changes nothing/);
   });
 
   it("shows a date the spreadsheet converted, held with the new name, with what to do", async () => {

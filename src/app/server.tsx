@@ -2079,6 +2079,8 @@ export function createApp({
   const refusalText = (m: Messages, refused: Extract<Parsed, { ok: false }>) =>
     refused.refusal === "repeated_column"
       ? m.uploads.refusedRepeatedColumn(refused.detail ?? "")
+      : refused.refusal === "no_such_sheet"
+        ? m.uploads.refusedNoSuchSheet((JSON.parse(refused.detail ?? "[]") as string[]).join(", "))
       : refused.refusal === "no_specimen_id_column" && refused.detail !== undefined
         ? m.uploads.refusedNearMiss(refused.detail)
         : (m.uploads.refused[refused.refusal] ?? refused.refusal);

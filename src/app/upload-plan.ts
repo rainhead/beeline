@@ -43,7 +43,10 @@ export const REFUSALS = [
   "too_large_unpacked",
   "too_many_rows",
   "not_a_zip",
+  "protected_file",
   "not_a_workbook",
+  "no_such_sheet",
+  "too_wide",
   "unreadable",
   "no_specimen_id_column",
   "repeated_column",
@@ -53,6 +56,9 @@ export type Refusal = (typeof REFUSALS)[number];
 // The reader's refusals are all refusals here.
 const _readerRefusalsAreRefusals: (typeof XLSX_REFUSALS)[number] extends Refusal ? true : never = true;
 void _readerRefusalsAreRefusals;
+
+/** The sheet of the download, and so the sheet that is read. */
+export const SHEET_NAME = "specimens";
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_ROWS = 20_000;
@@ -245,6 +251,8 @@ export interface SampleLabel {
 }
 
 export interface HeldCell {
+  /** Set where rows of a sample say different things: the rows that say this. */
+  rows?: number[];
   column: string;
   was: string;
   fileSays: string;
@@ -285,6 +293,8 @@ export interface UploadPlan {
   counts: PlanCounts;
   /** Columns of the file that were not read. */
   unrecognised: UnrecognisedColumn[];
+  /** Sheets of the workbook that were not read. */
+  otherSheets: string[];
   /** A specimen's identification or disposition that differs and is complete. */
   differences: SpecimenDifference[];
   /** A sample's dates and method, locality or coordinates that differ and are complete. */
@@ -298,6 +308,8 @@ export interface ParsedUpload {
   /** Column name to its position in a row. */
   columns: Map<string, number>;
   unrecognised: UnrecognisedColumn[];
+  /** The names of the workbook's other sheets, which were not read. */
+  otherSheets: string[];
   /** Data rows with their row number in the sheet (the header is the first). Rows with nothing in them are left out. */
   rows: Array<{ row: number; cells: Map<number, XlsxCell> }>;
 }
@@ -311,8 +323,9 @@ const squashed = (header: string) => header.replace(/\s+/g, "").toLowerCase();
 
 /** Whether a file can be read at all, and if so its columns and rows. */
 export function parseUpload(bytes: Uint8Array): Parsed {
-  const read = readXlsx(bytes, { maxBytes: MAX_FILE_BYTES, maxRows: MAX_ROWS + 1 });
-  if (!read.ok) return { ok: false, refusal: read.refusal };
+  // The sheet the download names, which is the one the person edits; a workbook with only one sheet is read whatever it is called.
+  const read = readXlsx(bytes, { maxBytes: MAX_FILE_BYTES, maxRows: MAX_ROWS + 1, sheetName: SHEET_NAME });
+  if (!read.ok) return { ok: false, refusal: read.refusal, ...(read.sheets === undefined ? {} : { detail: JSON.stringify(read.sheets) }) };
   const [head, ...body] = read.sheet.rows;
   const known = new Set<string>(SPECIMEN_CSV_HEADER);
   const columns = new Map<string, number>();
@@ -337,7 +350,7 @@ export function parseUpload(bytes: Uint8Array): Parsed {
   const rows = body.filter((r) => [...r.cells.values()].some((c) => c.text.trim() !== ""));
   if (rows.length > MAX_ROWS) return { ok: false, refusal: "too_many_rows" };
   if (rows.length === 0) return { ok: false, refusal: "no_rows" };
-  return { ok: true, upload: { columns, unrecognised, rows } };
+  return { ok: true, upload: { columns, unrecognised, otherSheets: read.otherSheets, rows } };
 }
 
 // --- Reading a cell ---
@@ -357,6 +370,15 @@ interface Evaluated {
 }
 
 const BLANK: CellValue = { kind: "blank" };
+
+/** A line break inside a cell, however the spreadsheet saved it, as a line feed. */
+const foldBreaks = (text: string): string => text.replace(/\r\n?/g, "\n");
+
+/** Excel keeps a number to 15 significant digits, so a longer one a person converts or pastes comes back rounded. */
+const roundedTo15 = (text: string): number | null => {
+  const n = Number(text);
+  return PLAIN_NUMBER.test(text) && Number.isFinite(n) ? Number(n.toPrecision(15)) : null;
+};
 
 const PLAIN_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)$/;
 const NUMBER_WITH_EXPONENT = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
@@ -436,14 +458,19 @@ const PROBLEM_OF_TYPE: Partial<Record<CellType, CellProblem>> = {
  */
 function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): Evaluated {
   const { reads, kind } = RULES.get(column)!;
-  const fileText = (cell?.text ?? "").trim();
+  const fileText = foldBreaks(cell?.text ?? "").trim();
   const type: CellType = cell?.type ?? "text";
-  const was = nowText.trim();
+  const was = foldBreaks(nowText).trim();
   const lenient = (): CellValue => {
     const read = readText(reads, fileText, "text");
     return isProblem(read) ? { kind: "text", text: fileText } : read;
   };
   if (fileText === was) return { column, nowText: was, fileText, value: lenient(), differs: false, problem: null };
+  // A number the spreadsheet stored, which it keeps to 15 digits: it is Beeline's number where that is Beeline's number to 15 digits.
+  // A text cell is not rounded, so a person who types fewer digits is still seen to have changed them.
+  if (type === "number" && reads === "number" && roundedTo15(was) === Number(fileText) && roundedTo15(was) !== null) {
+    return { column, nowText: was, fileText, value: lenient(), differs: false, problem: null };
+  }
   // A column Beeline never reads from a file has no unit to hold: a difference is listed, whatever the cell is.
   if (kind === "not_applied") {
     const read = readText(reads, fileText, "text");
@@ -463,7 +490,7 @@ function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): 
 
 /** A cell the file does not have, as Beeline's own: what a unit is completed with when the file leaves its column out. */
 function fromBeeline(column: string, nowText: string): Evaluated {
-  const was = nowText.trim();
+  const was = foldBreaks(nowText).trim();
   const read = readText(RULES.get(column)!.reads, was, "text");
   return { column, nowText: was, fileText: was, value: isProblem(read) ? { kind: "text", text: was } : read, differs: false, problem: null };
 }
@@ -679,7 +706,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
   const counts: PlanCounts = { rows: emptySplit(), unchanged: emptySplit(), withDifferences: emptySplit(), held: emptySplit() };
   const season = (sampleId: number | null): keyof SeasonSplit =>
     sampleId === null ? "unplaced" : facts.settled.has(sampleId) ? "settled" : "active";
-  const plan: UploadPlan = { counts, unrecognised: upload.unrecognised, differences: [], sampleDifferences: [], held: [], notApplied: [] };
+  const plan: UploadPlan = { counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, differences: [], sampleDifferences: [], held: [], notApplied: [] };
 
   const hold = (
     item: Pick<HeldItem, "reason" | "row" | "specimenId" | "fieldNumber" | "detail"> &
@@ -716,7 +743,8 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
     }
     if (reason !== null) {
       counts.held[season(sampleId)]++;
-      hold({ reason, row, specimenId: id, fieldNumber, sampleNumber: known?.row.sample_number ?? null, sample: known?.sample ?? null, detail });
+      // A specimen Beeline does not have has no page to link to; the id is in the detail.
+      hold({ reason, row, specimenId: known === undefined ? null : id, fieldNumber, sampleNumber: known?.row.sample_number ?? null, sample: known?.sample ?? null, detail });
       return;
     }
     const specimen = known!;
@@ -810,7 +838,8 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
       const touchedCells = own.filter((c) => touchedBy(c).length > 0);
       if (touchedCells.length === 0) continue;
       const first = touchedBy(touchedCells[0]!)[0]!;
-      const heldAs = (reason: HoldReason, rowsConcerned: MatchedRow[], column: string, detail: string, extra: string[] = []) => {
+      /** `shownFrom` is the row whose cells are shown: the one that failed, and by default the first that says something. */
+      const heldAs = (reason: HoldReason, rowsConcerned: MatchedRow[], column: string, detail: string, extra: string[] = [], shownFrom: MatchedRow = first, override?: HeldCell[]) => {
         const columnsHeld = [...new Set([...touchedCells, ...extra])];
         hold({
           reason,
@@ -823,8 +852,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
           unit,
           column,
           columns: columnsHeld,
-          // As the first row that says so gives them.
-          cells: heldCells(first.full, columnsHeld),
+          cells: override ?? heldCells(shownFrom.full, columnsHeld),
           detail,
         });
       };
@@ -840,7 +868,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
         const wrong = incomplete(unit, sr.full, today);
         if (wrong !== null) {
           bad = true;
-          heldAs(wrong.reason, [sr], wrong.column, sr.full.get(wrong.column)!.fileText, [wrong.column]);
+          heldAs(wrong.reason, [sr], wrong.column, sr.full.get(wrong.column)!.fileText, [wrong.column], sr);
         }
       }
       if (bad) continue;
@@ -848,7 +876,19 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
       const disagreeing = differing.find((c) => !sampleRows.every((sr) => sameValue(sr.results.get(c)!.value, sampleRows[0]!.results.get(c)!.value)));
       if (disagreeing !== undefined) {
         const said = [...new Set(sampleRows.map((sr) => sr.results.get(disagreeing)!.fileText))].map((t) => (t === "" ? "(blank)" : t));
-        heldAs("rows_disagree", sampleRows, disagreeing, said.join(" | "));
+        // What each row says, so the person can see which rows differ: one entry for each thing said, with its rows.
+        const byText = new Map<string, number[]>();
+        for (const sr of sampleRows) {
+          const t = sr.results.get(disagreeing)!.fileText;
+          byText.set(t, [...(byText.get(t) ?? []), sr.row]);
+        }
+        const each: HeldCell[] = [...byText].map(([fileSays, rowsSaying]) => ({
+          column: disagreeing,
+          was: sampleRows[0]!.results.get(disagreeing)!.nowText,
+          fileSays,
+          rows: rowsSaying,
+        }));
+        heldAs("rows_disagree", sampleRows, disagreeing, said.join(" | "), [], first, each);
         continue;
       }
       if (!columns.has("sampleVersion")) {

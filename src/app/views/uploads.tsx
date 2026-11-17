@@ -110,7 +110,7 @@ function Capped<T>({ m, items, line }: { m: Messages; items: readonly T[]; line:
 const Col = ({ name }: { name: string }) => <code>{name}</code>;
 
 /** `column: was X, file says Y`, one for each cell, with the cells' own words. */
-function Cells({ m, cells }: { m: Messages; cells: ReadonlyArray<{ column: string; was: string; fileSays: string }> }) {
+function Cells({ m, cells }: { m: Messages; cells: ReadonlyArray<{ column: string; was: string; fileSays: string; rows?: number[] }> }) {
   const p = m.uploads.page;
   return (
     <>
@@ -118,6 +118,7 @@ function Cells({ m, cells }: { m: Messages; cells: ReadonlyArray<{ column: strin
         <>
           {i > 0 && "; "}
           <Col name={c.column} />: {p.was} <Said m={m} value={c.was} />, {p.fileSays} <Said m={m} value={c.fileSays} />
+          {c.rows !== undefined && <> <Meta>({p.heldRows(c.rows.join(", "))})</Meta></>}
         </>
       ))}
     </>
@@ -245,6 +246,19 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
       {upload.reference !== null && <Meta block>{p.reference(upload.reference)}</Meta>}
       <Callout>{p.notChanged}</Callout>
       {plan.unrecognised.length > 0 && <Unrecognised m={m} columns={plan.unrecognised} />}
+      {plan.otherSheets.length > 0 && (
+        <section>
+          <h2>{p.otherSheetsHeading}</h2>
+          <p>{p.otherSheetsNote}</p>
+          <ul>
+            {plan.otherSheets.map((name) => (
+              <li>
+                <Col name={name} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <h2>{p.countsHeading}</h2>
       <DataTable columns={["", p.colActive, p.colSettled, p.colUnplaced, p.colCount]}>

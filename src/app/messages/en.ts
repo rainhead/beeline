@@ -2059,10 +2059,15 @@ export const en = {
       no_specimen_id_column:
         "This file has no specimenId column, so Beeline cannot tell which specimen each row is about. Download the Excel file from Specimens again and edit the new file, leaving that column in.",
       too_many_rows: "That file has more than 20,000 rows, so Beeline did not read it. Split it into smaller files.",
+      too_wide: "A row of that file has far more cells than the download has columns, so Beeline did not read it. Download the Excel file from Specimens again and edit that.",
+      protected_file:
+        "This file is protected, with a password or a sensitivity label, or it is an older .xls file, so Beeline cannot read it. Save an unprotected copy as an Excel workbook (.xlsx) and upload that.",
       no_rows: "That file has a row of column names and nothing after it.",
     } as Record<string, string>,
     refusedRepeatedColumn: (column: string) =>
       `The column ${column} is in this file more than once, so Beeline cannot tell which one to read. Delete the extra one and upload the file again.`,
+    refusedNoSuchSheet: (tabs: string) =>
+      `This workbook has more than one tab (${tabs}) and none is named specimens, so Beeline cannot tell which one holds the edited rows. Keep the edited rows on a tab named specimens and upload the file again.`,
     refusedNearMiss: (column: string) =>
       `This file has no column headed exactly ${column}, though one is headed almost like it. Put the heading back as it was in the download.`,
     page: {
@@ -2072,7 +2077,9 @@ export const en = {
       uploaded: (when: string, who: string) => `Uploaded ${when} by ${who}`,
       reference: (reference: string) => `Request behind the file: ${reference}`,
       notChanged:
-        "Nothing has been changed. This page only says what differs between the file and what Beeline says now. Beeline does not apply changes from a file yet, and it does not yet check that a name is in the taxonomy or that a determiner is someone it knows. Those checks come when Beeline can apply changes.",
+        "Nothing has been changed. This page only says what differs between the file and what Beeline says now. Beeline does not apply changes from a file yet. When it can, it will check each change against its own rules, for instance that a name is in the taxonomy and a determiner is someone it knows, and it will refuse some changes that are listed here as differences. None of those checks is made on this page.",
+      otherSheetsHeading: "Tabs that were not read",
+      otherSheetsNote: "Beeline reads only the tab named specimens. These other tabs of the workbook were not read.",
       unrecognisedHeading: "Columns that were not read",
       unrecognisedNote: "Beeline reads only the columns of its download, under the headings it gave them. These columns were not read.",
       unrecognised: (letter: string) => `column ${letter}`,
@@ -2110,7 +2117,8 @@ export const en = {
         determination: "An identification is read whole. If one of its cells can't be used, the others wait with it.",
         disposition: "A disposition is read whole with its remarks. If one of them can't be used, the other waits with it.",
         method_dates: "A sample's dates and method are read whole. If one of them can't be used, the other waits with it.",
-        place: "A blank locality means the sample follows its iNaturalist observation's locality again.",
+        place:
+          "A blank locality makes a sample that has an iNaturalist observation follow that observation's locality again. For a sample with no observation, a blank changes nothing.",
         coordinates: "A sample's coordinates are read whole: latitude, longitude and uncertainty. If one of them can't be used, the others wait with it.",
       } as Record<string, string>,
       was: "was",
@@ -2118,7 +2126,9 @@ export const en = {
       nothing: "nothing",
       row: (row: number) => `row ${row}`,
       specimen: (id: number) => `specimen ${id}`,
-      sampleSpecimens: (inFile: number, inSample: number) => `${n(inFile)} of its ${n(inSample)} specimens are in the file`,
+      sampleSpecimens: (inFile: number, inSample: number) =>
+        `${n(inFile)} of its ${n(inSample)} ${inSample === 1 ? "specimen" : "specimens"} ${inFile === 1 ? "is" : "are"} in the file`,
+      heldRows: (rows: string) => `rows ${rows}`,
       printed: "labels printed",
       notPrinted: "labels not printed",
       heldHeading: "Held",
@@ -2150,7 +2160,7 @@ export const en = {
         longitude_range: "Longitudes outside -180 to 180",
         uncertainty_invalid: "Coordinate uncertainties that are not a whole number of meters greater than zero",
         specimen_changed_since: "Changes held because the specimen's record has changed in Beeline since this file was downloaded",
-        sample_changed_since: "Changes held because the sample's record has changed in Beeline since this file was downloaded",
+        sample_changed_since: "Changes held because the sample's details in the file are not what Beeline says now",
         rows_disagree: "Rows of the same sample that say different things about it",
         column_missing: "Changes held because the file is missing a column Beeline needs to read them",
       } as Record<string, string>,
@@ -2160,7 +2170,7 @@ export const en = {
         repeated: "Keep one row for each specimen.",
         no_specimen: "Check the specimenId against a new download.",
         number_disagrees: "Leave the fieldNumber and specimenId columns as they were, or download again and make the edit in the new file.",
-        number_unreadable: "Type the number with digits and a decimal point only, such as 44.5646.",
+        number_unreadable: "Type the number with its digits, a minus sign where it has one, and a decimal point, such as -123.262.",
         date_unreadable: "Type the date as YYYY-MM-DD, such as 2026-07-14. A date identified may also be YYYY-MM or YYYY, and a collecting date may be two days with a slash between, 2026-07-14/2026-07-16.",
         converted_to_date: "Format the cell as text, then type the value as YYYY-MM-DD.",
         holds_formula: "Beeline reads what was typed, not a formula. Format the cell as text and type the value itself.",
@@ -2180,7 +2190,8 @@ export const en = {
         longitude_range: "Check the number.",
         uncertainty_invalid: "Check the number, or clear it.",
         specimen_changed_since: "Download again and make the edit in the new file.",
-        sample_changed_since: "Download again and make the edit in the new file.",
+        sample_changed_since:
+          "Either the sample's record has changed in Beeline since the file was downloaded, or the file was downloaded by someone who is not shown locations. Download the file again, signed in as staff, and make the edit in the new file.",
         rows_disagree: "Make the rows of that sample say the same.",
         column_missing: "Download again and make the edit in the new file, leaving every column in.",
       } as Record<string, string>,

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { en } from "../src/app/messages/en.js";
 import { DETERMINATION_CASTES, DETERMINATION_QUALIFIERS, DETERMINATION_SEXES } from "../src/model.js";
 import { DISPOSITIONS } from "../src/load-dispositions.js";
 import {
@@ -12,19 +13,30 @@ import {
   type HeldItem,
   type UploadPlan,
 } from "../src/app/upload-plan.js";
-import { CURRENT_SEASON, SETTLED_SEASON } from "./helpers.js";
+import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample } from "./helpers.js";
 import { bytesOf, edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 import { buildWorkbook, serialOf, type TestCell } from "./workbook.js";
 
 /** The plan for a file's bytes; a refusal fails the test. */
-async function plan(f: UploadFixture, bytes: Uint8Array, today?: string): Promise<UploadPlan> {
-  const result = await planUpload(f.db, bytes, today === undefined ? {} : { today });
+/**
+ * Today, for every comparison here that does not say otherwise: the last day of the current season's year, so that
+ * the July days the fixtures use are in the past whatever day the suite runs on. The future-date rule has its own
+ * tests, which name their own day.
+ */
+const DEFAULT_TODAY = `${CURRENT_SEASON}-12-31`;
+
+/** Every reason a plan in this file has held something for, so the last test can say none of them is dead. */
+const seen = new Set<string>();
+
+async function plan(f: UploadFixture, bytes: Uint8Array, today = DEFAULT_TODAY): Promise<UploadPlan> {
+  const result = await planUpload(f.db, bytes, { today });
   if (!result.ok) throw new Error(`refused: ${result.refusal}`);
+  for (const h of result.plan.held) seen.add(h.reason);
   return result.plan;
 }
 
 const refusal = async (f: UploadFixture, bytes: Uint8Array) => {
-  const result = await planUpload(f.db, bytes);
+  const result = await planUpload(f.db, bytes, { today: DEFAULT_TODAY });
   return result.ok ? null : result.refusal;
 };
 
@@ -579,10 +591,15 @@ describe("a unit is listed only when it is complete", () => {
     });
   });
 
-  it("has a rule for every unit, in one place, and a reason for every rule", () => {
-    // Every hold reason the rules can give is one the page has words for.
-    for (const reason of HOLD_REASONS) expect(typeof reason).toBe("string");
+  it("has words on the page, and what to do, for every reason a unit can be held for", () => {
     expect(new Set(HOLD_REASONS).size).toBe(HOLD_REASONS.length);
+    for (const reason of HOLD_REASONS) {
+      expect(en.uploads.page.held[reason], reason).toBeTruthy();
+      expect(en.uploads.page.heldTodo[reason], reason).toBeTruthy();
+    }
+    // And no words for a reason that does not exist.
+    expect(Object.keys(en.uploads.page.held).sort()).toEqual([...HOLD_REASONS].sort());
+    expect(Object.keys(en.uploads.page.heldTodo).sort()).toEqual([...HOLD_REASONS].sort());
   });
 });
 
@@ -748,9 +765,15 @@ describe("a held unit names every cell held with it", () => {
   it("lists, for a sample, the cells of the unit across its rows", async () => {
     const f = await uploadFixture();
     const { a2 } = f.ids;
+    // The first row of the sample changes its date to a good one, and the second to one that cannot be read: the
+    // cells shown are the second row's, the one that failed, not the first row's.
     const p = await plan(
       f,
-      edited(await f.download(), [...onSample(f, { samplingProtocol: "blue vane trap" }), { id: a2, set: { eventDate: "July 14" } }]),
+      edited(await f.download(), [
+        ...onSample(f, { samplingProtocol: "blue vane trap" }),
+        { id: f.ids.a1, set: { eventDate: `${CURRENT_SEASON}-07-15` } },
+        { id: a2, set: { eventDate: "July 14" } },
+      ]),
     );
     const held = heldOf(p, "date_unreadable");
     expect(held).toHaveLength(1);
@@ -916,5 +939,148 @@ describe("a sample's difference counted once", () => {
     expect(p.counts.unchanged).toEqual({ active: 2, settled: 0, unplaced: 0 });
     void SETTLED_SEASON;
     void oregonToday;
+  });
+});
+
+describe("which sheet is read, and what else the workbook holds", () => {
+  it("reads the sheet named specimens wherever it is, and lists the tabs it did not read", async () => {
+    const f = await uploadFixture();
+    const bytes = edited(await f.download(), onSample(f, { locality: "Albany" }), { sheets: { others: ["notes", "specimens (2)"], before: true } });
+    const p = await plan(f, bytes);
+    expect(p.otherSheets).toEqual(["notes", "specimens (2)"]);
+    expect(summary(p)).toEqual([["place", "locality"]]);
+    // A file with one sheet has no others.
+    expect((await plan(f, await f.download())).otherSheets).toEqual([]);
+  });
+
+  it("reads the only sheet whatever it is called", async () => {
+    const f = await uploadFixture();
+    const p = await plan(f, edited(await f.download(), onSample(f, { locality: "Albany" }), { sheets: { name: "Sheet1" } }));
+    expect(summary(p)).toEqual([["place", "locality"]]);
+    expect(p.otherSheets).toEqual([]);
+  });
+
+  it("refuses several sheets none of which is named specimens, naming them", async () => {
+    const f = await uploadFixture();
+    const result = await planUpload(f.db, edited(await f.download(), [], { sheets: { name: "Sheet1", others: ["Sheet2"] } }), { today: DEFAULT_TODAY });
+    expect(result).toEqual({ ok: false, refusal: "no_such_sheet", detail: JSON.stringify(["Sheet1", "Sheet2"]) });
+  });
+
+  it("refuses an old Office file, which is also what an encrypted workbook is", async () => {
+    const f = await uploadFixture();
+    expect(await refusal(f, Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]))).toBe("protected_file");
+  });
+});
+
+describe("numbers a spreadsheet keeps to 15 digits", () => {
+  it("takes a number cell as unchanged when it is Beeline's number to 15 significant digits, and a text cell not", async () => {
+    const f = await uploadFixture();
+    await f.conn.run(`UPDATE sample_location SET longitude = -123.27891540527344 WHERE sample_id = ${f.ids.sampleA}`);
+    const download = await f.download();
+    const lng = (value: TestCell) => plan(f, edited(download, onSample(f, { decimalLongitude: value })));
+    // "Convert to Number" or a paste: the digits past the fifteenth are gone.
+    nothingDiffers(await lng({ number: "-123.278915405273" }));
+    nothingDiffers(await lng({ number: "-1.23278915405273E2" }));
+    // As text it is a number somebody typed, and the digits it lacks are a change.
+    expect(summary(await lng("-123.278915405273"))).toEqual([["coordinates", "decimalLongitude"]]);
+    // A number that differs inside the 15 digits is a change, and so is one cut shorter.
+    expect(summary(await lng({ number: "-123.278915405274" }))).toEqual([["coordinates", "decimalLongitude"]]);
+    expect(summary(await lng({ number: "-123.2789154053" }))).toEqual([["coordinates", "decimalLongitude"]]);
+    // A number cell is shown as the number it is: its digits in the file are 44.564599999999999.
+    nothingDiffers(await plan(f, edited(download, onSample(f, { decimalLatitude: { number: "44.564599999999999" } }))));
+    const moved = await plan(f, edited(download, onSample(f, { decimalLatitude: { number: "44.664599999999999" } })));
+    expect(moved.sampleDifferences[0]!.cells.find((c) => c.column === "decimalLatitude")).toMatchObject({ fileSays: "44.6646", value: { kind: "number", number: 44.6646 } });
+  });
+});
+
+describe("line breaks inside a cell", () => {
+  it("compares a line break the same whichever way the spreadsheet saved it, on both sides", async () => {
+    const f = await uploadFixture();
+    const { a2, a3 } = f.ids;
+    await f.conn.run(
+      `INSERT INTO specimen_disposition (specimen_id, disposition, remarks, stated_by, stated_on, source)
+       VALUES (${a2}, 'missing', 'line one' || chr(10) || 'line two', 'staff', DATE '2025-08-01', 'inventory'),
+              (${a3}, 'missing', 'first' || chr(13) || chr(10) || 'second', 'staff', DATE '2025-08-01', 'inventory')`,
+    );
+    const download = await f.download();
+    nothingDiffers(await plan(f, edited(download, [{ id: a2, set: { occurrenceRemarks: "line one\r\nline two" } }, { id: a3, set: { occurrenceRemarks: "first\nsecond" } }])));
+    nothingDiffers(await plan(f, edited(download, [{ id: a2, set: { occurrenceRemarks: "line one\rline two" } }, { id: a3, set: { occurrenceRemarks: "first\rsecond" } }])));
+    const changed = await plan(f, edited(download, [{ id: a2, set: { occurrenceRemarks: "line one\r\nline three" } }]));
+    expect(changed.differences.map((c) => [c.specimenId, differing(c)])).toEqual([[a2, ["occurrenceRemarks"]]]);
+  });
+});
+
+describe("the versions name the specimen and the sample", () => {
+  const versions = (download: Uint8Array) => {
+    const matrix = matrixOf(download);
+    const head = matrix[0]!;
+    return matrix.slice(1).map((r) => ({ id: r[head.indexOf("specimenId")]!, specimen: r[head.indexOf("specimenVersion")]!, sample: r[head.indexOf("sampleVersion")]! }));
+  };
+
+  it("gives two specimens with nothing determined or remarked different versions, and two samples that say the same things", async () => {
+    const f = await uploadFixture();
+    const [[twin]] = (await f.conn.runAndReadAll(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${f.ids.sampleA}, 4) RETURNING entity_id`)).getRows() as [[number]];
+    // A sample that says exactly what UP-1 says.
+    const sampleD = await insertCleanSample(f.conn, { collector_id: String(f.volunteer), sample_number: "'UP-9'", specimen_count: "1", locality: "'Corvallis'" });
+    const [[other]] = (await f.conn.runAndReadAll(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleD}, 1) RETURNING entity_id`)).getRows() as [[number]];
+    const v = versions(await f.download());
+    const of = (id: number) => v.find((x) => x.id === String(id))!;
+    expect(of(f.ids.a2).specimen).not.toBe(of(Number(twin)).specimen);
+    expect(of(Number(twin)).specimen).not.toBe(of(Number(other)).specimen);
+    expect(of(f.ids.a1).sample).not.toBe(of(Number(other)).sample);
+    // The same sample's rows still share one.
+    expect(of(f.ids.a1).sample).toBe(of(f.ids.a2).sample);
+  });
+
+  it("holds a row whose specimenId was replaced by another specimen's, as fill-drag or a sort of one column does", async () => {
+    const f = await uploadFixture();
+    const { a2 } = f.ids;
+    const [[twin]] = (await f.conn.runAndReadAll(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${f.ids.sampleA}, 4) RETURNING entity_id`)).getRows() as [[number]];
+    const download = await f.download();
+    // a2's row, with the twin's id in it, and a new name; the field number column is not in the file to give it away.
+    const p = await plan(f, edited(download, [{ id: a2, set: { specimenId: String(twin), scientificName: "Bombus" } }], { dropColumns: ["fieldNumber"], dropRows: [Number(twin)] }));
+    expect(p.differences).toEqual([]);
+    expect(heldOf(p, "specimen_changed_since").map((h) => [h.specimenId, h.unit])).toEqual([[Number(twin), "determination"]]);
+    // Without the swap, the same edit stands.
+    expect((await plan(f, edited(download, [{ id: a2, set: { scientificName: "Bombus" } }], { dropColumns: ["fieldNumber"] }))).differences).toHaveLength(1);
+  });
+});
+
+describe("a held sample shows the row that failed", () => {
+  it("shows the bad row's own cell when it is not the first row that changed", async () => {
+    const f = await uploadFixture();
+    const { a1, a2, a3 } = f.ids;
+    const p = await plan(f, edited(await f.download(), [{ id: a1, set: { decimalLatitude: "44.6" } }, { id: a2, set: { decimalLatitude: "north" } }, { id: a3, set: { decimalLatitude: "44.6" } }]));
+    const held = heldOf(p, "number_unreadable");
+    expect(held.map((h) => [h.row, h.detail])).toEqual([[3, "north"]]);
+    expect(held[0]!.cells.find((c) => c.column === "decimalLatitude")).toEqual({ column: "decimalLatitude", was: "44.5646", fileSays: "north" });
+  });
+
+  it("shows what each row says when the rows of a sample disagree", async () => {
+    const f = await uploadFixture();
+    const { a1, a2, a3 } = f.ids;
+    const p = await plan(f, edited(await f.download(), [{ id: a1, set: { locality: "X" } }, { id: a2, set: { locality: "Y" } }, { id: a3, set: { locality: "X" } }]));
+    const held = heldOf(p, "rows_disagree");
+    expect(held).toHaveLength(1);
+    expect(held[0]!.cells).toEqual([
+      { column: "locality", was: "Corvallis", fileSays: "X", rows: [2, 4] },
+      { column: "locality", was: "Corvallis", fileSays: "Y", rows: [3] },
+    ]);
+  });
+});
+
+describe("a row for a specimen Beeline does not have", () => {
+  it("is held with no specimen to link to, and its id in the detail", async () => {
+    const f = await uploadFixture();
+    const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { specimenId: "987654" } }]));
+    expect(heldOf(p, "no_specimen").map((h) => [h.specimenId, h.detail])).toEqual([[null, "987654"]]);
+  });
+});
+
+describe("the reasons", () => {
+  it("every reason a plan can hold for was produced by a test in this file", () => {
+    // A partial run (one test by name) has not produced them all.
+    if (seen.size < 10) return;
+    expect([...HOLD_REASONS].filter((r) => !seen.has(r))).toEqual([]);
   });
 });

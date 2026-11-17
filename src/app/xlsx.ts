@@ -1,4 +1,4 @@
-import { Zip, ZipDeflate, strToU8, unzipSync } from "fflate";
+import { Inflate, Zip, ZipDeflate, strToU8 } from "fflate";
 
 /**
  * A minimal .xlsx writer and reader, with nothing of Beeline's in it
@@ -66,6 +66,10 @@ export function escapeText(text: string): string {
 
 const attr = (text: string): string => escapeText(text).replace(/"/g, "&quot;");
 
+/** What a cell and a sheet may hold in Excel; a file past either is refused when written, not truncated. */
+export const MAX_CELL_CHARS = 32_767;
+export const MAX_SHEET_ROWS = 1_048_576;
+
 export interface XlsxWriter {
   /** The start of the file: everything before the first data row. */
   head(): Uint8Array[];
@@ -80,8 +84,9 @@ export interface XlsxWriter {
  * call returns the bytes ready to send so far; together, in order, they are
  * the file.
  */
-export function xlsxWriter(opts: { sheetName: string; header: readonly string[] }): XlsxWriter {
+export function xlsxWriter(opts: { sheetName: string; header: readonly string[]; maxRows?: number }): XlsxWriter {
   const { sheetName, header } = opts;
+  const maxRows = opts.maxRows ?? MAX_SHEET_ROWS;
   if (sheetName === "" || sheetName.length > 31 || /[[\]:*?/\\]/.test(sheetName)) throw new Error(`not a sheet name: ${sheetName}`);
   if (header.length === 0 || header.length > 16384) throw new Error("a sheet needs between 1 and 16384 columns");
   const out: Uint8Array[] = [];
@@ -99,10 +104,18 @@ export function xlsxWriter(opts: { sheetName: string; header: readonly string[] 
   let next = 1;
 
   const row = (cells: ReadonlyArray<string | null>): string => {
+    // Excel's own limits: a file past them cannot be opened by the program it is meant for.
+    if (next > maxRows) throw new Error(`a sheet holds at most ${maxRows} rows`);
     const r = next++;
     let xml = `<row r="${r}">`;
     cells.forEach((value, at) => {
-      if (value === null) return;
+      // A cell that was left out still carries the Text style, so a program that ignores the column's default
+      // style still treats what a person types there as text.
+      if (value === null) {
+        xml += `<c r="${columnName(at)}${r}" s="1"/>`;
+        return;
+      }
+      if (value.length > MAX_CELL_CHARS) throw new Error(`a cell holds at most ${MAX_CELL_CHARS} characters; row ${r}, column ${at + 1} has ${value.length}`);
       xml += `<c r="${columnName(at)}${r}" s="1" t="inlineStr"><is><t xml:space="preserve">${escapeText(value)}</t></is></c>`;
     });
     return `${xml}</row>`;
@@ -174,7 +187,7 @@ export function xlsxWriter(opts: { sheetName: string; header: readonly string[] 
 }
 
 /** A whole workbook in one piece, for tests and small files. */
-export function writeXlsx(opts: { sheetName: string; header: readonly string[] }, rows: ReadonlyArray<ReadonlyArray<string | null>>): Uint8Array {
+export function writeXlsx(opts: { sheetName: string; header: readonly string[]; maxRows?: number }, rows: ReadonlyArray<ReadonlyArray<string | null>>): Uint8Array {
   const writer = xlsxWriter(opts);
   const chunks = [...writer.head(), ...writer.rows(rows), ...writer.tail()];
   const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
@@ -210,28 +223,74 @@ export interface XlsxSheet {
   rows: XlsxRow[];
 }
 
-export const XLSX_REFUSALS = ["not_a_zip", "not_a_workbook", "too_large", "too_large_unpacked", "unreadable", "too_many_rows"] as const;
+export const XLSX_REFUSALS = [
+  "not_a_zip",
+  /** An old Office file, which is also what an encrypted or sensitivity-labelled workbook is. */
+  "protected_file",
+  "not_a_workbook",
+  /** Several sheets, none of them the one asked for. */
+  "no_such_sheet",
+  "too_large",
+  "too_large_unpacked",
+  "unreadable",
+  "too_many_rows",
+  "too_wide",
+] as const;
 export type XlsxRefusal = (typeof XLSX_REFUSALS)[number];
-export type XlsxRead = { ok: true; sheet: XlsxSheet } | { ok: false; refusal: XlsxRefusal };
+export type XlsxRead =
+  | {
+      ok: true;
+      sheet: XlsxSheet;
+      /** The names of the other sheets, which were not read. */
+      otherSheets: string[];
+    }
+  | {
+      ok: false;
+      refusal: XlsxRefusal;
+      /** For `no_such_sheet`: the names of the sheets the workbook has. */
+      sheets?: string[];
+    };
 
 export interface XlsxLimits {
   /** The file itself. */
   maxBytes: number;
   /**
-   * What the parts Beeline reads may add up to once unpacked. A zip can be
-   * a thousand times smaller than what it holds, and a small file that
-   * unpacks to gigabytes is an attack, not a spreadsheet.
+   * What the parts that are read may add up to once unpacked, declared and
+   * actual. A zip can be a thousand times smaller than what it holds, and a
+   * small file that unpacks to gigabytes is an attack, not a spreadsheet. The
+   * default is what a workbook of the largest size Beeline accepts needs: the
+   * download is under 60 columns and the upload takes 20,000 rows, so about
+   * 1.2 million cells, which Excel writes in some 35 bytes of XML each, 40 MB
+   * with room for long remarks and shared strings.
    */
   maxInflatedBytes: number;
   /** Rows with a cell in them, the header included. */
   maxRows: number;
+  /** Cells in one row. The download has under 60 columns. */
+  maxCellsPerRow: number;
+  /** Entries in the zip. A workbook has a dozen. */
+  maxEntries: number;
+  /**
+   * The sheet to read, by name. Where there is no sheet of that name and the
+   * workbook has exactly one, that one; otherwise the file is refused
+   * (`no_such_sheet`). Left out, the first sheet is read.
+   */
+  sheetName?: string;
 }
 
-export const DEFAULT_LIMITS: XlsxLimits = { maxBytes: 20 * 1024 * 1024, maxInflatedBytes: 192 * 1024 * 1024, maxRows: 100_000 };
+export const DEFAULT_LIMITS: XlsxLimits = {
+  maxBytes: 20 * 1024 * 1024,
+  maxInflatedBytes: 64 * 1024 * 1024,
+  maxRows: 100_000,
+  maxCellsPerRow: 500,
+  maxEntries: 2_000,
+};
 
 /** A thing wrong with the XML or the workbook's structure, as opposed to a limit. */
 class Unreadable extends Error {}
 class TooManyRows extends Error {}
+class TooWide extends Error {}
+class TooBigUnpacked extends Error {}
 
 const ENTITY = /&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos);/g;
 const unentity = (text: string): string =>
@@ -357,8 +416,13 @@ function readSharedStrings(xml: string): string[] {
 /** Built-in number formats that show a date or a time. */
 const DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58]);
 
-/** Whether a custom format code shows a date or a time: a day, month, year, hour or second outside quotes and brackets. */
-const showsDate = (code: string): boolean => /[ymdhs]/i.test(code.replace(/"[^"]*"/g, "").replace(/\[[^\]]*\]/g, "").replace(/\\./g, ""));
+/**
+ * Whether a custom format code shows a date or a time: a day, month, year,
+ * hour or second that is not in quotes or brackets, not escaped, and not the
+ * character a padding (`_D`) or fill (`*d`) token names.
+ */
+const showsDate = (code: string): boolean =>
+  /[ymdhs]/i.test(code.replace(/"[^"]*"/g, "").replace(/\[[^\]]*\]/g, "").replace(/\\./g, "").replace(/[_*]./g, ""));
 
 /** For each cell style (its `s`), whether a number in it is shown as a date. */
 function readDateStyles(xml: string): boolean[] {
@@ -383,18 +447,19 @@ function readDateStyles(xml: string): boolean[] {
 }
 
 /** A spreadsheet's serial day as `YYYY-MM-DD` (with the time when there is one), or the serial as written when it is not a date. */
-function serialToText(serial: string): string {
+function serialToText(serial: string, date1904: boolean): string {
   const n = Number(serial);
-  // Serials before 61 straddle Excel's invented 29 February 1900.
-  if (!Number.isFinite(n) || n < 61 || n > 2_958_465) return serial;
-  const ms = Math.round((n - 25569) * 86_400_000);
+  // The 1900 system counts from 30 December 1899 and has an invented 29 February 1900, so serials before 61 are
+  // not days; the 1904 system counts from 1 January 1904, 1462 days later.
+  if (!Number.isFinite(n) || n < (date1904 ? 0 : 61) || n > 2_958_465) return serial;
+  const ms = Math.round((n - (date1904 ? 25569 - 1462 : 25569)) * 86_400_000);
   const iso = new Date(ms).toISOString();
   return Number.isInteger(n) ? iso.slice(0, 10) : `${iso.slice(0, 10)} ${iso.slice(11, 19)}`;
 }
 
 const CELL_REF = /^([A-Za-z]+)(\d+)$/;
 
-function readSheet(xml: string, strings: string[], dateStyles: boolean[], maxRows: number): XlsxRow[] {
+function readSheet(xml: string, strings: string[], dateStyles: boolean[], date1904: boolean, maxRows: number, maxCellsPerRow: number): XlsxRow[] {
   const rows: XlsxRow[] = [];
   let rowNumber = 0;
   let cells = new Map<number, XlsxCell>();
@@ -462,7 +527,10 @@ function readSheet(xml: string, strings: string[], dateStyles: boolean[], maxRow
         case "c": {
           inCell = false;
           const cell = finish();
-          if (cell !== null) cells.set(column, cell);
+          if (cell !== null) {
+            if (cells.size >= maxCellsPerRow) throw new TooWide();
+            cells.set(column, cell);
+          }
           break;
         }
         case "row":
@@ -483,8 +551,10 @@ function readSheet(xml: string, strings: string[], dateStyles: boolean[], maxRow
   function finish(): XlsxCell | null {
     const raw = type === "inlineStr" ? unx(inline) : value;
     if (type === "s") {
-      const at = Number(value.trim());
-      const found = Number.isInteger(at) ? strings[at] : undefined;
+      // An empty cell of this type has no index, and Number("") is 0, which is the first string.
+      const index = value.trim();
+      if (index === "") return null;
+      const found = /^\d+$/.test(index) ? strings[Number(index)] : undefined;
       if (found === undefined) throw new Unreadable("a shared string that does not exist");
       return { text: found, type: formula ? "formula" : "text" };
     }
@@ -497,90 +567,212 @@ function readSheet(xml: string, strings: string[], dateStyles: boolean[], maxRow
     const number = raw.trim();
     if (number === "") return formula ? { text: "", type: "formula" } : null;
     if (formula) return { text: number, type: "formula" };
-    if (dateStyles[style] === true) return { text: serialToText(number), type: "date" };
-    return { text: number, type: "number" };
+    if (dateStyles[style] === true) return { text: serialToText(number, date1904), type: "date" };
+    // The value, not the digits the file stores it in: 44.564599999999999 is the number 44.5646.
+    const n = Number(number);
+    return { text: Number.isFinite(n) ? String(n) : number, type: "number" };
   }
   return rows;
 }
 
-/** Where the first sheet of a workbook is, as a path in the zip. */
-function firstSheetPath(workbook: string, rels: string): { name: string; path: string } {
-  let sheet: { name: string; id: string } | null = null;
-  scan(workbook, {
+interface SheetRef {
+  name: string;
+  id: string;
+}
+
+/** The sheets of a workbook in the order it lists them, and whether it counts its dates from 1904. */
+function readWorkbook(xml: string): { sheets: SheetRef[]; date1904: boolean } {
+  const sheets: SheetRef[] = [];
+  let date1904 = false;
+  scan(xml, {
     open(name, attrs) {
-      if (name === "sheet" && sheet === null) sheet = { name: attrs.name ?? "", id: attrs.id ?? "" };
+      if (name === "sheet") sheets.push({ name: attrs.name ?? "", id: attrs.id ?? "" });
+      else if (name === "workbookPr") date1904 = attrs.date1904 === "1" || attrs.date1904 === "true";
     },
     close() {},
     text() {},
   });
-  if (sheet === null) throw new Unreadable("no sheet");
-  const found: { name: string; id: string } = sheet;
+  if (sheets.length === 0) throw new Unreadable("no sheet");
+  return { sheets, date1904 };
+}
+
+/** Where a sheet is, as a path in the zip, from the workbook's relationships. */
+function sheetPath(rels: string, id: string): string {
   let target: string | null = null;
   scan(rels, {
     open(name, attrs) {
-      if (name === "Relationship" && attrs.Id === found.id) target = attrs.Target ?? null;
+      if (name === "Relationship" && attrs.Id === id) target = attrs.Target ?? null;
     },
     close() {},
     text() {},
   });
   if (target === null) throw new Unreadable("the sheet has no part");
   const t: string = target;
-  const parts = (t.startsWith("/") ? t.slice(1) : `xl/${t}`).split("/");
   const path: string[] = [];
-  for (const p of parts) {
+  for (const p of (t.startsWith("/") ? t.slice(1) : `xl/${t}`).split("/")) {
     if (p === "..") path.pop();
     else if (p !== "." && p !== "") path.push(p);
   }
-  return { name: found.name, path: path.join("/") };
+  return path.join("/");
 }
 
-const WANTED = /^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/[^/]+\.xml)$/;
+// --- The zip ---
+
+/** Not a zip, or a zip too damaged to find its parts in. */
+class NotAZip extends Error {}
+
+interface Entry {
+  name: string;
+  method: number;
+  compressed: number;
+  size: number;
+  /** Where the entry's data begins in the file. */
+  start: number;
+}
 
 /**
- * The first sheet of a workbook, or why it cannot be read. Never throws: a
- * file that is not a workbook, a limit passed or broken XML is a named
- * refusal.
+ * The entries of a zip, from its central directory, without unpacking any.
+ * The directory is what says how big each part is and where it is, and it is
+ * read here so that nothing is inflated before the numbers have been judged.
+ */
+function readDirectory(bytes: Uint8Array, maxEntries: number): Map<string, Entry> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let end = -1;
+  for (let at = bytes.length - 22; at >= Math.max(0, bytes.length - 22 - 0xffff); at--) {
+    if (view.getUint32(at, true) === 0x06054b50) {
+      end = at;
+      break;
+    }
+  }
+  if (end === -1) throw new NotAZip("no end of central directory");
+  const count = view.getUint16(end + 10, true);
+  const directoryAt = view.getUint32(end + 16, true);
+  // Zip64 puts these in another record; a workbook of a size Beeline accepts needs none.
+  if (count === 0xffff || directoryAt === 0xffffffff) throw new NotAZip("zip64");
+  // A workbook has about a dozen entries; thousands are not a spreadsheet.
+  if (count > maxEntries) throw new TooBigUnpacked();
+  const entries = new Map<string, Entry>();
+  let at = directoryAt;
+  for (let i = 0; i < count; i++) {
+    if (at + 46 > bytes.length || view.getUint32(at, true) !== 0x02014b50) throw new NotAZip("directory entry");
+    const nameLength = view.getUint16(at + 28, true);
+    const skip = nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+    if (at + 46 + skip > bytes.length) throw new NotAZip("directory entry");
+    const name = new TextDecoder().decode(bytes.subarray(at + 46, at + 46 + nameLength));
+    const size = view.getUint32(at + 24, true);
+    const compressed = view.getUint32(at + 20, true);
+    const local = view.getUint32(at + 42, true);
+    if (size === 0xffffffff || compressed === 0xffffffff) throw new NotAZip("zip64");
+    if (local + 30 > bytes.length || view.getUint32(local, true) !== 0x04034b50) throw new NotAZip("local header");
+    const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+    if (start + compressed > bytes.length) throw new NotAZip("entry runs past the end of the file");
+    // Two entries of one name: which is meant cannot be told.
+    if (entries.has(name)) throw new NotAZip("an entry twice");
+    entries.set(name, { name, method: view.getUint16(at + 10, true), compressed, size, start });
+    at += 46 + skip;
+  }
+  return entries;
+}
+
+/** How much more may be unpacked, shared by every part read from one file. */
+interface Budget {
+  left: number;
+}
+
+/** A part's bytes. The output is counted as it appears, and the moment it passes the budget nothing more is inflated. */
+function unpack(bytes: Uint8Array, entry: Entry, budget: Budget): Uint8Array {
+  // A size that is too big on its face is refused before anything is inflated.
+  if (entry.size > budget.left) throw new TooBigUnpacked();
+  const data = bytes.subarray(entry.start, entry.start + entry.compressed);
+  if (entry.method === 0) {
+    if (entry.compressed !== entry.size) throw new Unreadable("a stored part whose sizes disagree");
+    budget.left -= entry.size;
+    return data;
+  }
+  if (entry.method !== 8) throw new Unreadable("a compression method that is not deflate");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const inflate = new Inflate((chunk) => {
+    total += chunk.length;
+    budget.left -= chunk.length;
+    if (budget.left < 0) throw new TooBigUnpacked();
+    chunks.push(chunk);
+  });
+  // A few kilobytes of input at a time, since deflate expands at most a thousandfold: the output never gets far past the budget before it is noticed.
+  const SLICE = 4096;
+  try {
+    if (data.length === 0) inflate.push(data, true);
+    for (let at = 0; at < data.length; at += SLICE) inflate.push(data.subarray(at, at + SLICE), at + SLICE >= data.length);
+  } catch (err) {
+    if (err instanceof TooBigUnpacked) throw err;
+    throw new Unreadable("a part that does not inflate");
+  }
+  // What the zip says the part is, and what it was, are one number.
+  if (total !== entry.size) throw new Unreadable("a part whose size is not the size the zip declares");
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+/** The OLE2 header: an old .xls, and also what Excel makes of a workbook that is encrypted or carries a sensitivity label. */
+const OLE_HEADER = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+
+/**
+ * The sheet of a workbook asked for (see XlsxLimits.sheetName), or why it
+ * cannot be read. Never throws: a file that is not a workbook, a limit passed
+ * or broken XML is a named refusal. Only the parts that are read are
+ * unpacked: the workbook, its relationships, its styles and shared strings,
+ * and the one sheet, each once, and no two of them may share bytes of the
+ * file.
  */
 export function readXlsx(bytes: Uint8Array, limits: Partial<XlsxLimits> = {}): XlsxRead {
-  const { maxBytes, maxInflatedBytes, maxRows } = { ...DEFAULT_LIMITS, ...limits };
+  const { maxBytes, maxInflatedBytes, maxRows, maxCellsPerRow, maxEntries, sheetName } = { ...DEFAULT_LIMITS, ...limits };
   if (bytes.byteLength > maxBytes) return { ok: false, refusal: "too_large" };
+  if (bytes.byteLength >= OLE_HEADER.length && OLE_HEADER.every((b, i) => bytes[i] === b)) return { ok: false, refusal: "protected_file" };
   // A zip begins with a local file header, or is empty and begins with its end record.
   if (bytes.byteLength < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) return { ok: false, refusal: "not_a_zip" };
-  let inflated = 0;
-  let tooBig = false;
-  let parts: Record<string, Uint8Array>;
-  try {
-    // Parts are unpacked into a buffer of the size the zip declares, so a zip
-    // that lies about it is cut short, and one that declares a lot is refused here.
-    parts = unzipSync(bytes, {
-      filter: (file) => {
-        if (!WANTED.test(file.name)) return false;
-        inflated += file.originalSize;
-        if (inflated > maxInflatedBytes) tooBig = true;
-        return !tooBig;
-      },
-    });
-  } catch {
-    return { ok: false, refusal: "not_a_zip" };
-  }
-  if (tooBig) return { ok: false, refusal: "too_large_unpacked" };
   const decoder = new TextDecoder("utf-8");
-  const text = (name: string): string | null => (parts[name] === undefined ? null : decoder.decode(parts[name]));
   try {
-    const workbook = text("xl/workbook.xml");
-    const rels = text("xl/_rels/workbook.xml.rels");
+    const entries = readDirectory(bytes, maxEntries);
+    const budget: Budget = { left: maxInflatedBytes };
+    const used: Entry[] = [];
+    const part = (name: string): string | null => {
+      const entry = entries.get(name);
+      if (entry === undefined) return null;
+      // Entries that share bytes of the file would let one payload be unpacked as many parts.
+      if (used.some((u) => entry.start < u.start + u.compressed && u.start < entry.start + entry.compressed && entry.compressed > 0 && u.compressed > 0) || used.includes(entry)) {
+        throw new Unreadable("parts that overlap");
+      }
+      used.push(entry);
+      return decoder.decode(unpack(bytes, entry, budget));
+    };
+    const workbook = part("xl/workbook.xml");
+    const rels = part("xl/_rels/workbook.xml.rels");
     if (workbook === null || rels === null) return { ok: false, refusal: "not_a_workbook" };
-    const { name, path } = firstSheetPath(workbook, rels);
-    const sheet = text(path);
+    const { sheets, date1904 } = readWorkbook(workbook);
+    const chosen = sheetName === undefined ? sheets[0] : (sheets.find((s) => s.name === sheetName) ?? (sheets.length === 1 ? sheets[0] : undefined));
+    if (chosen === undefined) return { ok: false, refusal: "no_such_sheet", sheets: sheets.map((s) => s.name) };
+    const sheet = part(sheetPath(rels, chosen.id));
     if (sheet === null) return { ok: false, refusal: "not_a_workbook" };
-    const shared = text("xl/sharedStrings.xml");
-    const styles = text("xl/styles.xml");
+    const shared = part("xl/sharedStrings.xml");
+    const styles = part("xl/styles.xml");
     return {
       ok: true,
-      sheet: { name, rows: readSheet(sheet, shared === null ? [] : readSharedStrings(shared), styles === null ? [] : readDateStyles(styles), maxRows) },
+      sheet: {
+        name: chosen.name,
+        rows: readSheet(sheet, shared === null ? [] : readSharedStrings(shared), styles === null ? [] : readDateStyles(styles), date1904, maxRows, maxCellsPerRow),
+      },
+      otherSheets: sheets.filter((s) => s !== chosen).map((s) => s.name),
     };
   } catch (err) {
     if (err instanceof TooManyRows) return { ok: false, refusal: "too_many_rows" };
+    if (err instanceof TooWide) return { ok: false, refusal: "too_wide" };
+    if (err instanceof TooBigUnpacked) return { ok: false, refusal: "too_large_unpacked" };
+    if (err instanceof NotAZip) return { ok: false, refusal: "not_a_zip" };
     return { ok: false, refusal: "unreadable" };
   }
 }

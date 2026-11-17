@@ -8,6 +8,8 @@ import {
   type HeldItem,
   type SampleChange,
   type SeasonSplit,
+  type SpecimenChange,
+  type UnitCell,
   type UploadPlan,
 } from "../upload-plan.js";
 import { Absent, Button, Callout, Card, DataTable, EmptyState, Field, Meta, PageHeader, TextField } from "./components/index.js";
@@ -103,6 +105,21 @@ function Capped<T>({ m, items, line }: { m: Messages; items: readonly T[]; line:
   );
 }
 
+function Cells({ m, cells }: { m: Messages; cells: UnitCell[] }) {
+  const p = m.uploads.page;
+  const differing = cells.filter((c) => c.differs);
+  return (
+    <>
+      {differing.map((c, i) => (
+        <>
+          {i > 0 && "; "}
+          {c.column}: {p.was} <Said m={m} value={c.was} />, {p.fileSays} <Said m={m} value={c.fileSays} />
+        </>
+      ))}
+    </>
+  );
+}
+
 function CellLine({ m, c }: { m: Messages; c: CellChange }) {
   const p = m.uploads.page;
   return (
@@ -113,12 +130,20 @@ function CellLine({ m, c }: { m: Messages; c: CellChange }) {
   );
 }
 
+function SpecimenLine({ m, c }: { m: Messages; c: SpecimenChange }) {
+  const p = m.uploads.page;
+  return (
+    <>
+      <SpecimenLink m={m} id={c.specimenId} fieldNumber={c.fieldNumber} /> <Meta>{p.row(c.row)}</Meta> <Cells m={m} cells={c.cells} />
+    </>
+  );
+}
+
 function SampleLine({ m, c }: { m: Messages; c: SampleChange }) {
   const p = m.uploads.page;
   return (
     <>
-      <a href={sampleHref(c.sampleId)}>{c.sampleNumber}</a> <Meta>{p.row(c.rows[0]!)}</Meta> {c.column}: {p.was}{" "}
-      <Said m={m} value={c.was} />, {p.fileSays} <Said m={m} value={c.fileSays} />{" "}
+      <a href={sampleHref(c.sampleId)}>{c.sampleNumber}</a> <Meta>{p.row(c.rows[0]!)}</Meta> <Cells m={m} cells={c.cells} />{" "}
       <Meta>
         {p.sampleSpecimens(c.specimensInFile, c.specimensInSample)}; {c.printed ? p.printed : p.notPrinted}
       </Meta>
@@ -128,11 +153,13 @@ function SampleLine({ m, c }: { m: Messages; c: SampleChange }) {
 
 function HeldLine({ m, h }: { m: Messages; h: HeldItem }) {
   const p = m.uploads.page;
+  const others = h.columns.filter((c) => c !== h.column);
   return (
     <>
       {h.specimenId !== null && <SpecimenLink m={m} id={h.specimenId} fieldNumber={h.fieldNumber} />}
       {h.specimenId === null && h.sampleNumber !== null && <>{h.sampleNumber}</>} <Meta>{h.rows.length > 1 ? h.rows.map(p.row).join(", ") : p.row(h.row)}</Meta>
       {h.column !== null && <> {h.column}</>}: {p.heldDetail[h.reason] ?? ""} {h.detail === "" ? <Absent label={p.nothing} spelled /> : <q>{h.detail}</q>}
+      {others.length > 0 && <> <Meta>({p.heldWith(others.join(", "))})</Meta></>}
     </>
   );
 }
@@ -147,8 +174,8 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
     [p.rowsChanged, plan.counts.withChanges],
     [p.rowsHeld, plan.counts.held],
   ];
-  const sampleChangesOf = (kind: string) => plan.sampleChanges.filter((c) => c.kind === kind);
-  const changesOf = (kind: string) => plan.changes.filter((c) => c.kind === kind);
+  const sampleChangesOf = (kind: string) => plan.sampleChanges.filter((c) => c.unit === kind);
+  const changesOf = (kind: string) => plan.changes.filter((c) => c.unit === kind);
   const kinds = CHANGE_KINDS.filter((k) => k !== "not_applied");
   const anyChange = plan.changes.length > 0 || plan.sampleChanges.length > 0;
   const heldBy = (reason: string) => plan.held.filter((h) => h.reason === reason);
@@ -185,9 +212,9 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
             <h3>
               {p.kind[kind]} <Meta>{m.format.number(own.length + samples.length)}</Meta>
             </h3>
-            {samples.length > 0 && <Meta block>{p.sampleNote}</Meta>}
+            <Meta block>{samples.length > 0 ? `${p.sampleNote} ${p.unitNote}` : p.unitNote}</Meta>
             <Capped m={m} items={samples} line={(c) => <SampleLine m={m} c={c} />} />
-            <Capped m={m} items={own} line={(c) => <CellLine m={m} c={c} />} />
+            <Capped m={m} items={own} line={(c) => <SpecimenLine m={m} c={c} />} />
           </section>
         );
       })}

@@ -783,7 +783,7 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(spec[shead.indexOf("hostFamily")]).toBe("Familia alpha");
   });
 
-  it("ends the specimens CSV with what loading an edited copy back needs: caste, the specimen, its determination, the sample's version (beeline-kgyd)", async () => {
+  it("ends the specimens CSV with what loading an edited copy back needs: caste, the specimen, its version, the sample's version (beeline-kgyd)", async () => {
     const { app, conn } = await hostApp();
     const read = async () => {
       const csv = parseCsv(await (await app.request("/specimens.csv?scope=all")).text());
@@ -793,11 +793,14 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     };
     const before = await read();
     // After every column that was there before, as the host columns were.
-    expect(before.head.slice(-4)).toEqual(["caste", "specimenId", "determinationId", "sampleVersion"]);
+    expect(before.head.slice(-4)).toEqual(["caste", "specimenId", "specimenVersion", "sampleVersion"]);
+    // The determination's id is not a column: it does not change when a row is updated in place.
+    expect(before.head).not.toContain("determinationId");
     const ids = (await (await conn.run(`SELECT entity_id, sample_id FROM specimen WHERE field_number = 'OBA00001'`)).getRows())[0]!;
     expect(before.cell("specimenId")).toBe(String(ids[0]));
     // A code a spreadsheet will not take for a number.
     expect(before.cell("sampleVersion")).toMatch(/^v[0-9a-f]{12}$/);
+    expect(before.cell("specimenVersion")).toMatch(/^s[0-9a-f]{12}$/);
     // Every specimen of a sample says the same, and another sample says something else.
     const versions = new Map<string, Set<string>>();
     for (const l of before.csv.slice(1)) {
@@ -807,16 +810,22 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     for (const seen of versions.values()) expect(seen.size).toBe(1);
     expect(new Set([...versions.values()].map((v) => [...v][0])).size).toBeGreaterThan(1);
 
-    // A new determination of record changes the determination's id, and nothing about the sample.
+    // A determination updated in place keeps its id and changes the specimen's version.
+    await conn.run(`UPDATE determination SET sex = 'male' WHERE specimen_id = ${ids[0]}`);
+    const updated = await read();
+    expect(updated.cell("sex")).toBe("male");
+    expect(updated.cell("specimenVersion")).not.toBe(before.cell("specimenVersion"));
+    await conn.run(`UPDATE determination SET sex = NULL WHERE specimen_id = ${ids[0]}`);
+    expect((await read()).cell("specimenVersion")).toBe(before.cell("specimenVersion"));
+
+    // A new determination of record changes the specimen's version, and nothing about the sample.
     const animal = Number((await (await conn.run(`SELECT min(entity_id) FROM animal`)).getRows())[0]![0]);
     await conn.run(
       `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name, verbatim_identification, sex, caste)
        VALUES (${ids[0]}, ${animal}, true, 'worksheet_import', 'A. Determiner', 'A name', 'female', 'worker')`,
     );
     const determined = await read();
-    const made = Number((await (await conn.run(`SELECT max(entity_id) FROM determination WHERE specimen_id = ${ids[0]}`)).getRows())[0]![0]);
-    expect(determined.cell("determinationId")).toBe(String(made));
-    expect(determined.cell("determinationId")).not.toBe(before.cell("determinationId"));
+    expect(determined.cell("specimenVersion")).not.toBe(before.cell("specimenVersion"));
     expect(determined.cell("caste")).toBe("worker");
     expect(determined.cell("sampleVersion")).toBe(before.cell("sampleVersion"));
 

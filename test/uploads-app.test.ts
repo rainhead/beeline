@@ -1,7 +1,9 @@
-import { readFile, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
+import { MAX_FILE_BYTES } from "../src/app/upload-plan.js";
 import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { rows } from "./helpers.js";
 import { bytesOf, edited, uploadFixture, type UploadFixture } from "./upload-fixture.js";
@@ -81,6 +83,10 @@ describe("uploading a file", () => {
     const res = await upload(f, "fieldNumber,locality\nOBA10001,Corvallis\n");
     expect(res.status).toBe(400);
     expect(await res.text()).toContain(en.uploads.refused.no_specimen_id_column);
+    // A file with a column twice is refused with its name.
+    const twice = await upload(f, "specimenId,locality,locality\n1,a,b\n");
+    expect(twice.status).toBe(400);
+    expect(await twice.text()).toContain(en.uploads.refusedRepeatedColumn("locality"));
     expect(await uploadCount(f)).toBe(0);
     expect(await kept(f)).toEqual([]);
     const none = await f.app.request("/uploads", { method: "POST", headers: { origin: ORIGIN }, body: new FormData() });
@@ -101,14 +107,30 @@ describe("uploading a file", () => {
     expect(name).toBe("C:\\Users\\x\\my edited file.csv");
     expect(count).toBe(4);
     expect(size).toBe(bytesOf(text).byteLength);
-    expect(sha).toMatch(/^[0-9a-f]{64}$/);
+    expect(sha).toBe(createHash("sha256").update(bytesOf(text)).digest("hex"));
     expect(reference).toBe("https://github.com/example/example/issues/7");
     // On disk under the upload's id, with a safe name, byte for byte.
     expect(await kept(f)).toEqual([String(id)]);
-    expect(await readdir(join(f.paths.uploadsDir, String(id)))).toEqual(["my_edited_file.csv"]);
-    expect(await readFile(join(f.paths.uploadsDir, String(id), "my_edited_file.csv"), "utf8")).toBe(text);
+    // Under a fixed name: the person's own never reaches the file system.
+    expect(await readdir(join(f.paths.uploadsDir, String(id)))).toEqual(["upload.csv"]);
+    expect(await readFile(join(f.paths.uploadsDir, String(id), "upload.csv"), "utf8")).toBe(text);
     // And in the person's list, as a link.
     expect(await (await f.app.request("/uploads")).text()).toContain(`<a href="/uploads/${id}">C:\\Users\\x\\my edited file.csv</a>`);
+  });
+});
+
+describe("the upload table", () => {
+  it("refuses an empty file, a file with no rows and a hash that is not 64 characters, since a deployed store cannot gain a CHECK later", async () => {
+    const f = await uploadFixture();
+    const insert = (sha: string, size: number, count: number) =>
+      f.conn.run(
+        `INSERT INTO upload (uploaded_by, uploaded_at, file_name, sha256, byte_size, row_count) VALUES (${f.staffer}, now(), 'x.csv', '${sha}', ${size}, ${count})`,
+      );
+    const good = "a".repeat(64);
+    await expect(insert(good, 0, 1)).rejects.toThrow();
+    await expect(insert(good, 1, 0)).rejects.toThrow();
+    await expect(insert("abc", 1, 1)).rejects.toThrow();
+    await insert(good, 1, 1);
   });
 });
 
@@ -154,18 +176,77 @@ describe("the preview", () => {
     expect(await uploadCount(f)).toBe(1);
   });
 
-  it("shows an upload that is somebody else's to an admin, and says when the kept file is gone", async () => {
+  it("shows another person's upload, with its plan, to an admin", async () => {
     const f = await uploadFixture();
+    const text = edited(await f.download(), [{ id: f.ids.a1, set: { disposition: "missing" } }]);
+    const bytes = bytesOf(text);
     await f.conn.run(
       `INSERT INTO upload (uploaded_by, uploaded_at, file_name, sha256, byte_size, row_count)
-       VALUES (${f.volunteer}, now(), 'theirs.csv', 'abc', 10, 1)`,
+       VALUES (${f.volunteer}, now(), 'theirs.csv', '${createHash("sha256").update(bytes).digest("hex")}', ${bytes.byteLength}, 4)`,
     );
     const id = (await rows(f.conn, `SELECT entity_id FROM upload`))[0]![0];
+    await mkdir(join(f.paths.uploadsDir, String(id)), { recursive: true });
+    await writeFile(join(f.paths.uploadsDir, String(id), "upload.csv"), bytes);
     const res = await f.app.request(`/uploads/${id}`);
-    // Not the signed-in person's own, and the file is not there.
-    expect(res.status).toBe(500);
-    expect(await res.text()).toContain(en.uploads.page.fileMissing);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Vera Volunteer");
+    expect(body).toContain(en.uploads.page.kind.disposition);
+    expect(body).toContain("<q>missing</q>");
+    // Not in the staff member's own list.
+    expect(await (await f.app.request("/uploads")).text()).not.toContain("theirs.csv");
+  });
+
+  it("says when the kept file is gone, and refuses one whose bytes are not what arrived", async () => {
+    const f = await uploadFixture();
+    const text = edited(await f.download());
+    const res = await upload(f, text);
+    const location = res.headers.get("location")!;
+    const id = location.split("/").pop()!;
+    const kept = join(f.paths.uploadsDir, id, "upload.csv");
+    expect((await f.app.request(location)).status).toBe(200);
+    // Altered after it arrived, even by a letter.
+    await writeFile(kept, text.replace("Corvallis", "Corvalliz"));
+    const altered = await f.app.request(location);
+    expect(altered.status).toBe(500);
+    expect(await altered.text()).toContain(en.uploads.page.fileAltered);
+    // Gone.
+    await rm(join(f.paths.uploadsDir, id), { recursive: true });
+    const gone = await f.app.request(location);
+    expect(gone.status).toBe(500);
+    expect(await gone.text()).toContain(en.uploads.page.fileMissing);
     expect((await f.app.request("/uploads/999999")).status).toBe(404);
+  });
+
+  it("refuses a body over the limit however it is sent, and stores nothing", async () => {
+    const f = await uploadFixture();
+    const big = `specimenId\n${"1\n".repeat(MAX_FILE_BYTES / 2 + 40_000)}`;
+    expect(big.length).toBeGreaterThan(MAX_FILE_BYTES + 64 * 1024);
+    // A body with no declared length: a stream, which is what a lying or chunked client sends.
+    const form = new FormData();
+    form.set("file", new File([big], "big.csv", { type: "text/csv" }));
+    const encoded = new Response(form);
+    const contentType = encoded.headers.get("content-type")!;
+    const asBytes = new Uint8Array(await encoded.arrayBuffer());
+    const streamed = await f.app.request("/uploads", {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": contentType },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(asBytes);
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+    expect(streamed.status).toBe(400);
+    expect(await streamed.text()).toContain(en.uploads.refused.too_large);
+    // And one that does declare its length.
+    const declared = await upload(f, big);
+    expect(declared.status).toBe(400);
+    expect(await declared.text()).toContain(en.uploads.refused.too_large);
+    expect(await uploadCount(f)).toBe(0);
+    expect(await kept(f)).toEqual([]);
   });
 
   it("caps a list at 200 lines and counts the rest", async () => {

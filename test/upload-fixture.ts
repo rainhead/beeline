@@ -20,7 +20,11 @@ const unusedInat: InatClient = {
  * volunteer when asked, and `download()` is its own specimens CSV, which the
  * tests edit.
  */
-export async function uploadFixture(signedInAs: "staffer" | "volunteer" = "staffer") {
+export async function uploadFixture(
+  signedInAs: "staffer" | "volunteer" = "staffer",
+  /** `unprinted` adds a sample (UP-3) whose one specimen is in a print run that has not printed. */
+  options: { unprinted?: boolean } = {},
+) {
   const { instance, conn } = await createMemoryDb();
   const person = async (name: string) => {
     const [given, family] = name.split(" ");
@@ -70,7 +74,33 @@ export async function uploadFixture(signedInAs: "staffer" | "volunteer" = "staff
   await determine(a3, false, "A Volunteer");
   await determine(b1, false, "A Volunteer");
 
-  const ids = { a1, a2, a3, b1, sampleA, sampleB };
+  const ids: { a1: number; a2: number; a3: number; b1: number; sampleA: number; sampleB: number; c1?: number; sampleC?: number } = {
+    a1,
+    a2,
+    a3,
+    b1,
+    sampleA,
+    sampleB,
+  };
+  if (options.unprinted) {
+    // A label in a run that has not printed, with its number minted by that run: not on paper (schema/101).
+    const sampleC = await insertCleanSample(conn, { collector_id: String(volunteer), sample_number: "'UP-3'", specimen_count: "1", locality: "'Albany'" });
+    const c1 = await specimen(sampleC, 1, "OBA10005");
+    await conn.run(`INSERT INTO print_run (prepared_by) VALUES (${staffer})`);
+    await conn.run(
+      `INSERT INTO minted_field_number (field_number, print_run_id, specimen_id)
+       SELECT 'OBA10005', max(entity_id), ${c1} FROM print_run`,
+    );
+    await conn.run(
+      `INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text,
+                                  collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
+       SELECT (SELECT max(entity_id) FROM print_run), ${c1}, 1, 0, 'USA:OR:BentonCo', '44.5 -123.6', 'd', 'c', 'net', 'OBA10005',
+              44.5, -123.6, s.date_start, s.date_end
+       FROM sample s WHERE s.entity_id = ${sampleC}`,
+    );
+    ids.c1 = c1;
+    ids.sampleC = sampleC;
+  }
   const resolved = signedInAs === "staffer" ? staffer : volunteer;
   const db = createKysely(instance);
   const paths = await scratchPaths();

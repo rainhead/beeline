@@ -2088,7 +2088,7 @@ export const SPECIMEN_OWN_COLUMNS = [
   // back into Beeline reads. See ROUND_TRIP_COLUMNS.
   "caste",
   "specimenId",
-  "determinationId",
+  "specimenVersion",
   "sampleVersion",
 ] as const;
 
@@ -2098,14 +2098,14 @@ export const SPECIMEN_OWN_COLUMNS = [
  * - `specimenId` is Beeline's own id for the specimen. A field number is not
  *   unique, may be absent, and is the cell a spreadsheet is likeliest to
  *   damage (a dropped leading zero), so the row is found by this.
- * - `determinationId` is the determination the row's name, sex and determiner
- *   were read from. If another determination is the record by the time the
- *   file comes back, the row was edited against something Beeline no longer
- *   says.
+ * - `specimenVersion` is a short name for what the specimen's own changeable
+ *   cells said when the row was written: see `specimenVersion`. If it is not
+ *   the specimen's now when the file comes back, the row was edited against
+ *   something Beeline no longer says.
  * - `sampleVersion` does the same for the sample's cells that staff may
  *   change: see `sampleVersion`.
  */
-export const ROUND_TRIP_COLUMNS = ["specimenId", "determinationId", "sampleVersion"] as const;
+export const ROUND_TRIP_COLUMNS = ["specimenId", "specimenVersion", "sampleVersion"] as const;
 
 /**
  * A short name for what the sample's changeable cells said when the row was
@@ -2129,6 +2129,48 @@ export const sampleVersion = (
         r.latitude,
         r.longitude,
         r.coordinate_uncertainty_m,
+      ]),
+    )
+    .digest("hex")
+    .slice(0, 12)}`;
+
+/**
+ * A short name for what the specimen's own changeable cells said when the row
+ * was written: its name, qualifier, sex, caste, determiner and date
+ * identified as the row writes them, its disposition and remarks, and the id
+ * of the determination they were read from. It replaces the determination's
+ * id alone, which says nothing when a loader updates a determination in
+ * place or a person's or a taxon's name is corrected: the id stays and the
+ * cells change. The `s` is there for the reason `sampleVersion` starts with
+ * `v`.
+ */
+export const specimenVersion = (
+  r: Pick<
+    SpecimenRow,
+    | "scientific_name"
+    | "qualifier"
+    | "sex"
+    | "caste"
+    | "determiner"
+    | "determined_on"
+    | "determined_on_precision"
+    | "disposition"
+    | "occurrence_remarks"
+    | "determination_id"
+  >,
+): string =>
+  `s${createHash("sha256")
+    .update(
+      JSON.stringify([
+        r.scientific_name,
+        r.qualifier,
+        r.sex,
+        r.caste,
+        r.determiner,
+        dateIdentified(r.determined_on, r.determined_on_precision),
+        r.disposition,
+        r.occurrence_remarks,
+        r.determination_id,
       ]),
     )
     .digest("hex")
@@ -2184,6 +2226,6 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.host_common_name,
   r.caste,
   r.specimen_id,
-  r.determination_id,
+  specimenVersion(r),
   sampleVersion(r),
 ];

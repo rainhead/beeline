@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { bodyLimit } from "hono/body-limit";
 import { mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -69,7 +70,7 @@ import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
-import { MAX_FILE_BYTES, comparePlan, parseUpload, safeBaseName } from "./upload-plan.js";
+import { MAX_FILE_BYTES, comparePlan, parseUpload, type Parsed } from "./upload-plan.js";
 import {
   listRuns,
   loadRun,
@@ -2056,7 +2057,12 @@ export function createApp({
     return null;
   };
   const uploadFolder = (id: number) => join(uploadsPath, String(id));
-  const uploadFile = (id: number, fileName: string) => join(uploadFolder(id), safeBaseName(fileName));
+  // Always this name: what the person called the file is kept in the store and never reaches the file system.
+  const uploadFile = (id: number) => join(uploadFolder(id), "upload.csv");
+  const refusalText = (m: Messages, refused: Extract<Parsed, { ok: false }>) =>
+    refused.refusal === "repeated_column"
+      ? m.uploads.refusedRepeatedColumn(refused.detail ?? "")
+      : (m.uploads.refused[refused.refusal] ?? refused.refusal);
   const ownUploads = (personId: number): Promise<UploadListRow[]> =>
     db
       .selectFrom("upload")
@@ -2075,14 +2081,18 @@ export function createApp({
 
   app.get("/uploads", async (c) => uploadsGate(c) ?? uploadForm(c, null, 200));
 
-  app.post("/uploads", async (c) => {
-    const refused = uploadsGate(c);
-    if (refused !== null) return refused;
+  // The limit is enforced on the bytes actually read, not on a declared
+  // length: a body that lies about its size, or has none, is cut off at the
+  // limit (a little over the file's, for the form around it).
+  app.post(
+    "/uploads",
+    async (c, next) => uploadsGate(c) ?? next(),
+    bodyLimit({
+      maxSize: MAX_FILE_BYTES + 64 * 1024,
+      onError: (c) => uploadForm(c as Context<AppEnv>, (c as Context<AppEnv>).get("m").uploads.refused.too_large!, 400),
+    }),
+    async (c) => {
     const m = c.get("m");
-    // A file far over the limit is refused on its declared size, before it is read.
-    if (Number(c.req.header("content-length") ?? 0) > MAX_FILE_BYTES + 1_000_000) {
-      return uploadForm(c, m.uploads.refused.too_large!, 400);
-    }
     const form = await c.req.formData();
     const file = form.get("file");
     if (typeof file === "string" || file === null || file.size === 0) return uploadForm(c, m.uploads.refused.noFile!, 400);
@@ -2095,13 +2105,13 @@ export function createApp({
     );
     const fileName = file.name === "" ? "upload.csv" : file.name;
     await mkdir(uploadFolder(id), { recursive: true });
-    const keptAt = uploadFile(id, fileName);
+    const keptAt = uploadFile(id);
     try {
       await writeFile(keptAt, bytes);
       const parsed = parseUpload(new Uint8Array(await readFile(keptAt)));
       if (!parsed.ok) {
         await rm(uploadFolder(id), { recursive: true, force: true });
-        return uploadForm(c, m.uploads.refused[parsed.refusal] ?? parsed.refusal, 400);
+        return uploadForm(c, refusalText(m, parsed), 400);
       }
       await db
         .insertInto("upload")
@@ -2121,7 +2131,8 @@ export function createApp({
       throw err;
     }
     return c.redirect(uploadHref(id), 303);
-  });
+    },
+  );
 
   app.get("/uploads/:id{[0-9]+}", async (c) => {
     const refused = uploadsGate(c);
@@ -2131,25 +2142,27 @@ export function createApp({
     const row = await db
       .selectFrom("upload as u")
       .innerJoin("person as p", "p.entity_id", "u.uploaded_by")
-      .select(["u.entity_id", "u.file_name", "u.uploaded_at", "u.row_count", "u.reference", "p.display_name as uploader"])
+      .select(["u.entity_id", "u.file_name", "u.uploaded_at", "u.row_count", "u.reference", "u.sha256", "p.display_name as uploader"])
       .where("u.entity_id", "=", id)
       .executeTakeFirst();
     if (row === undefined) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
     let bytes: Buffer;
     try {
-      bytes = await readFile(uploadFile(id, row.file_name));
+      bytes = await readFile(uploadFile(id));
     } catch {
       return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileMissing} />), 500);
     }
+    // The kept file must be the file that arrived.
+    if (createHash("sha256").update(bytes).digest("hex") !== row.sha256) {
+      return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileAltered} />), 500);
+    }
     const parsed = parseUpload(new Uint8Array(bytes));
     if (!parsed.ok) {
-      return c.html(
-        await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.refused[parsed.refusal] ?? parsed.refusal} />),
-        500,
-      );
+      return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={refusalText(m, parsed)} />), 500);
     }
     const plan = await comparePlan(db, parsed.upload);
-    const upload: UploadDetail = { ...row };
+    const { sha256: _kept, ...shown } = row;
+    const upload: UploadDetail = shown;
     return c.html(await page(c, m.uploads.page.title(row.file_name), <UploadPreview m={m} upload={upload} plan={plan} />));
   });
 

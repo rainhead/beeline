@@ -73,7 +73,7 @@ const COLUMN_MEANING: Record<(typeof SAMPLE_CSV_HEADER)[number] | (typeof SPECIM
   hostCommonName: "The common name of the host as iNaturalist now has it (the current taxon, which is the stored one unless iNaturalist has replaced it). It is the plant list's name for that taxon where the list has one, else iNaturalist's name for Oregon, else the name of the nearest coarser entry in the list. Empty where there is none, and, as for hostCurrentName, for a split, retired, pending or absent host and one Beeline has not yet read.",
   caste: "The caste the determination of record gives a social bee: gyne, worker or drone; empty where it gives none.",
   specimenId: "Beeline's own id for the specimen, the same number as in the address of its page. It is what a row is found by when an edited copy of the download is loaded back into Beeline.",
-  determinationId: "Beeline's id for the determination of record, which the row's name, sex and determiner were read from; empty for a specimen nobody has determined. It changes when a newer determination becomes the record.",
+  specimenVersion: "A short code that changes whenever the specimen's name, qualifier, sex, caste, determiner, date identified, disposition or remarks do, or another determination becomes the record. Two rows with the same code were read from the same values.",
   sampleVersion: "A short code that changes whenever the sample's collecting dates, method, locality or coordinates do, as this reader sees them. Two rows with the same code were read from the same values.",
   atlas: "The code of the atlas the sample was collected in; empty outside every atlas.",
   locationSource: "Where the coordinates came from. Empty where the location is withheld.",

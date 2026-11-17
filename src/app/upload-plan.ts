@@ -161,6 +161,7 @@ export interface SampleChange {
   unit: SampleUnit;
   sampleId: number;
   sampleNumber: string;
+  sample: SampleLabel;
   cells: UnitCell[];
   /** The rows of the sample that the file holds, the header being row 1. */
   rows: number[];
@@ -180,6 +181,16 @@ export interface CellChange {
   fileSays: string;
 }
 
+/** A sample as the listings name it: its number, who collected it and when. */
+export interface SampleLabel {
+  id: number;
+  number: string;
+  /** Everyone who collected it, in the label form the listings use. */
+  collectors: string[];
+  dateStart: Date;
+  dateEnd: Date;
+}
+
 export interface HeldCell {
   column: string;
   was: string;
@@ -195,6 +206,7 @@ export interface HeldItem {
   specimenId: number | null;
   fieldNumber: string | null;
   sampleNumber: string | null;
+  sample: SampleLabel | null;
   /** The unit held, where a unit is. */
   unit: ChangeKind | null;
   /** The cell that caused the hold, or the first differing cell of the unit. */
@@ -459,6 +471,7 @@ interface Now {
   cells: Map<string, string>;
   specimenVersion: string;
   sampleVersion: string;
+  sample: SampleLabel;
 }
 
 const CHUNK = 500;
@@ -480,7 +493,19 @@ async function readNow(db: Kysely<Database>, ids: number[]): Promise<Map<number,
       const written = specimenCsvRow(row, page);
       const cells = new Map<string, string>();
       SPECIMEN_CSV_HEADER.forEach((name, j) => cells.set(name, textOf(written[j])));
-      now.set(row.specimen_id, { row, cells, specimenVersion: specimenVersion(row), sampleVersion: sampleVersion(row) });
+      now.set(row.specimen_id, {
+        row,
+        cells,
+        specimenVersion: specimenVersion(row),
+        sampleVersion: sampleVersion(row),
+        sample: {
+          id: row.sample_id,
+          number: row.sample_number,
+          collectors: (page.collectors.get(row.sample_id) ?? []).map((c) => c.label),
+          dateStart: row.date_start,
+          dateEnd: row.date_end,
+        },
+      });
     }
   }
   return now;
@@ -544,7 +569,6 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
     const at = columns.get(column);
     return at === undefined ? null : (cells[at] ?? null);
   };
-  const hasColumn = (column: string) => columns.has(column);
 
   // Which specimen each row names.
   const idOf = rows.map(({ cells }) => {
@@ -564,8 +588,8 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
 
   const hold = (
     item: Pick<HeldItem, "reason" | "row" | "specimenId" | "fieldNumber" | "detail"> &
-      Partial<Pick<HeldItem, "rows" | "sampleNumber" | "unit" | "column" | "columns" | "cells">>,
-  ) => plan.held.push({ rows: [item.row], sampleNumber: null, unit: null, column: null, columns: [], cells: [], ...item });
+      Partial<Pick<HeldItem, "rows" | "sampleNumber" | "sample" | "unit" | "column" | "columns" | "cells">>,
+  ) => plan.held.push({ rows: [item.row], sampleNumber: null, sample: null, unit: null, column: null, columns: [], cells: [], ...item });
 
   const bySample = new Map<number, SampleRow[]>();
   const touchedRows: Array<{ sampleId: number; touched: boolean }> = [];
@@ -596,7 +620,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
     }
     if (reason !== null) {
       counts.held[season(sampleId)]++;
-      hold({ reason, row, specimenId: id, fieldNumber, sampleNumber: known?.row.sample_number ?? null, detail });
+      hold({ reason, row, specimenId: id, fieldNumber, sampleNumber: known?.row.sample_number ?? null, sample: known?.sample ?? null, detail });
       return;
     }
     const specimen = known!;
@@ -641,21 +665,23 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
         const r = results.get(column)!;
         if (!r.norm.ok) {
           held = true;
-          hold({ reason: r.norm.reason, row, specimenId, fieldNumber, sampleNumber, unit, column, columns: heldColumns, cells: heldCells, detail: r.fileText });
+          hold({ reason: r.norm.reason, row, specimenId, fieldNumber, sampleNumber, sample: specimen.sample, unit, column, columns: heldColumns, cells: heldCells, detail: r.fileText });
         }
       }
       if (held || differing.length === 0) continue;
       let why: HoldReason | null = null;
       let detail = "";
-      if (!hasColumn("specimenVersion")) {
+      // The row's own cell: a short row that stops before it cannot say what it was edited against.
+      const rawVersion = cell(cells, "specimenVersion");
+      if (rawVersion === null) {
         why = "column_missing";
         detail = "specimenVersion";
-      } else if (cellText(cell(cells, "specimenVersion") ?? "") !== specimen.specimenVersion) {
+      } else if (cellText(rawVersion) !== specimen.specimenVersion) {
         why = "specimen_changed_since";
-        detail = cellText(cell(cells, "specimenVersion") ?? "");
+        detail = cellText(rawVersion);
       }
       if (why !== null) {
-        hold({ reason: why, row, specimenId, fieldNumber, sampleNumber, unit, column: differing[0]!, columns: heldColumns, cells: heldCells, detail });
+        hold({ reason: why, row, specimenId, fieldNumber, sampleNumber, sample: specimen.sample, unit, column: differing[0]!, columns: heldColumns, cells: heldCells, detail });
         continue;
       }
       plan.changes.push({
@@ -672,7 +698,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
       specimenId,
       fieldNumber,
       results,
-      versionCell: hasColumn("sampleVersion") ? cellText(cell(cells, "sampleVersion") ?? "") : null,
+      versionCell: cell(cells, "sampleVersion") === null ? null : cellText(cell(cells, "sampleVersion")!),
     });
     touchedRows.push({ sampleId: sample, touched });
   });
@@ -710,6 +736,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
           specimenId: null,
           fieldNumber: null,
           sampleNumber,
+          sample: sampleNow.sample,
           unit,
           column,
           columns: cellsHeld().map((x) => x.column),
@@ -730,6 +757,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
               specimenId: sr.specimenId,
               fieldNumber: sr.fieldNumber,
               sampleNumber,
+              sample: sampleNow.sample,
               unit,
               column,
               columns: cellsHeld().map((x) => x.column),
@@ -744,9 +772,13 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
       if (differing.length === 0) continue;
       const first = sampleRows.find((sr) => sr.results.get(differing[0]!)?.differs) ?? sampleRows[0]!;
 
-      // Coordinates travel as a pair: a latitude without its longitude is not a point.
-      if (unit === "coordinates" && (!hasColumn("decimalLatitude") || !hasColumn("decimalLongitude"))) {
-        held("column_missing", sampleRows, differing[0]!, differing, hasColumn("decimalLatitude") ? "decimalLongitude" : "decimalLatitude");
+      // A unit is offered only when every row of the sample in the file has every cell it needs. Coordinates
+      // travel as a pair, so a latitude without its longitude is not a point; elsewhere a row that stops
+      // before a column the other rows have says nothing about it.
+      const needed = unit === "coordinates" ? ["decimalLatitude", "decimalLongitude"] : present;
+      const missing = needed.filter((c) => sampleRows.some((sr) => !sr.results.has(c)));
+      if (missing.length > 0) {
+        held("column_missing", sampleRows, differing[0]!, differing, missing.join(", "));
         continue;
       }
       const disagreeing = differing.find((c) => {
@@ -758,7 +790,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
         held("rows_disagree", sampleRows, disagreeing, differing, said.join(" | "));
         continue;
       }
-      if (!hasColumn("sampleVersion")) {
+      if (sampleRows.some((sr) => sr.versionCell === null)) {
         held("column_missing", sampleRows, differing[0]!, differing, "sampleVersion");
         continue;
       }
@@ -770,6 +802,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
         unit,
         sampleId,
         sampleNumber,
+        sample: sampleNow.sample,
         cells: present.map((c) => {
           const r = (first.results.get(c) ?? sampleRows.find((sr) => sr.results.has(c))?.results.get(c))!;
           return { column: c, was: r.nowText, fileSays: r.fileText, differs: differing.includes(c) };

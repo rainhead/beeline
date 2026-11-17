@@ -2057,7 +2057,8 @@ export const en = {
     refusedRepeatedColumn: (column: string) =>
       `The column ${column} is in this file more than once, so Beeline cannot tell which one to read. Delete the extra one and upload the file again.`,
     page: {
-      title: (fileName: string) => `Edited download ${fileName}`,
+      title: (fileName: string) => fileName,
+      uploadedCopy: "An uploaded copy of the specimens download.",
       back: "All uploads",
       uploaded: (when: string, who: string) => `Uploaded ${when} by ${who}`,
       reference: (reference: string) => `Request behind the file: ${reference}`,
@@ -2071,9 +2072,19 @@ export const en = {
       rowsTotal: "In the file",
       rowsUnchanged: "With nothing different",
       rowsChanged: "With something different",
-      rowsHeld: "Held, not compared",
+      rowsHeld: "Not matched to a specimen",
       changesHeading: "What differs",
-      noChanges: "Nothing in the file differs from what Beeline says, apart from what is held below.",
+      /** Nothing in the file is a change Beeline would make: whether anything is held, and whether other columns differ, says what else the page lists. */
+      nothingOffered: (held: boolean, other: boolean) =>
+        !held && !other
+          ? "Nothing in the file differs from what Beeline says."
+          : `Beeline would change nothing from this file. ${
+              held && other
+                ? "The changes it would not make, and the differences in other columns, are listed below."
+                : held
+                  ? "The changes it would not make are listed below."
+                  : "The differences in other columns are listed below."
+            }`,
       kind: {
         determination: "Identifications",
         method_dates: "Collecting dates and methods",
@@ -2083,7 +2094,12 @@ export const en = {
         not_applied: "Other columns",
       } as Record<string, string>,
       sampleNote: "A sample's change is listed once, however many of its specimens the file holds.",
-      unitNote: "The cells of one group are offered together or held together, never half of them.",
+      unitNote: {
+        determination: "An identification is taken whole. If one of its cells can't be used, the others wait with it.",
+        disposition: "A disposition is taken whole with its remarks. If one of them can't be used, the other waits with it.",
+        method_dates: "A sample's dates and method are taken whole. If one of them can't be used, the other waits with it.",
+        coordinates: "A sample's coordinates are taken whole: latitude, longitude and uncertainty. If one of them can't be used, the others wait with it.",
+      } as Record<string, string>,
       was: "was",
       fileSays: "file says",
       nothing: "nothing",
@@ -2093,8 +2109,8 @@ export const en = {
       printed: "labels printed",
       notPrinted: "labels not printed",
       heldHeading: "Held",
+      heldIntro: "Each item here is a change Beeline would not make from this file, and the reason why.",
       noHeld: "Nothing is held.",
-      heldWith: "Held with it, because the cells go together:",
       held: {
         no_id: "Rows where the specimenId is blank or is not a number",
         repeated: "Rows whose specimenId is on another row too",

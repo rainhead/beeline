@@ -161,6 +161,38 @@ describe("a short row, and a file that is not whole", () => {
     expect(q.changes.map((c) => [c.unit, c.cells.map((x) => x.column)])).toEqual([["determination", ["scientificName"]]]);
   });
 
+  it("holds a latitude whose longitude cell the row does not reach, though the header has both", async () => {
+    const f = await uploadFixture();
+    const { a1, a2, a3 } = f.ids;
+    const records = readRecords(await f.download());
+    const head = records[0]!;
+    const rowOf = (id: number) => records.find((r, i) => i > 0 && r[head.indexOf("specimenId")] === String(id))!;
+    const version = (id: number) => rowOf(id)[head.indexOf("sampleVersion")];
+    // Every row stops after the edited latitude.
+    const short = ["specimenId,sampleVersion,decimalLatitude,decimalLongitude", ...[a1, a2, a3].map((id) => `${id},${version(id)},44.6`)].join("\n") + "\n";
+    const p = await plan(f, short);
+    expect(p.sampleChanges).toEqual([]);
+    expect(heldOf(p, "column_missing").map((h) => [h.unit, h.detail])).toEqual([["coordinates", "decimalLongitude"]]);
+    // One row of the three complete and two short: still not a point for the whole sample.
+    const mixed = ["specimenId,sampleVersion,decimalLatitude,decimalLongitude", `${a1},${version(a1)},44.6,-123.262`, `${a2},${version(a2)},44.6`, `${a3},${version(a3)},44.6,-123.262`].join("\n") + "\n";
+    expect(heldOf(await plan(f, mixed), "column_missing").map((h) => h.detail)).toEqual(["decimalLongitude"]);
+    // Every row complete is offered.
+    const whole = ["specimenId,sampleVersion,decimalLatitude,decimalLongitude", ...[a1, a2, a3].map((id) => `${id},${version(id)},44.6,-123.262`)].join("\n") + "\n";
+    expect((await plan(f, whole)).sampleChanges.map((c) => c.unit)).toEqual(["coordinates"]);
+  });
+
+  it("holds a unit for a missing version cell in the row, not for a version that differs", async () => {
+    const f = await uploadFixture();
+    const { a2 } = f.ids;
+    // The header has specimenVersion, and the row stops before it.
+    const own = await plan(f, `specimenId,scientificName,specimenVersion\n${a2},Bombus\n`);
+    expect(heldOf(own, "column_missing").map((h) => [h.unit, h.detail])).toEqual([["determination", "specimenVersion"]]);
+    expect(heldOf(own, "specimen_changed_since")).toEqual([]);
+    const sample = await plan(f, `specimenId,locality,sampleVersion\n${f.ids.a1},Elsewhere\n${a2},Elsewhere\n${f.ids.a3},Elsewhere\n`);
+    expect(heldOf(sample, "column_missing").map((h) => [h.unit, h.detail])).toEqual([["place", "sampleVersion"]]);
+    expect(heldOf(sample, "sample_changed_since")).toEqual([]);
+  });
+
   it("refuses a file whose quotation mark never closes, rather than reading the rows after it as one cell", async () => {
     const f = await uploadFixture();
     expect(await refusal(f, bytesOf('specimenId,occurrenceRemarks\n1,"a remark that never ends\n2,fine\n3,fine\n'))).toBe("malformed");
@@ -634,6 +666,8 @@ describe("a sample's change counted once", () => {
         unit: "place",
         sampleId: sampleA,
         sampleNumber: "UP-1",
+        // As the listings name a sample: its number, its collectors and the days it was collected.
+        sample: expect.objectContaining({ id: sampleA, number: "UP-1", collectors: ["V. Volunteer"] }),
         cells: [{ column: "locality", was: "Corvallis", fileSays: "Elsewhere", differs: true }],
         rows: [2, 3],
         specimensInFile: 2,

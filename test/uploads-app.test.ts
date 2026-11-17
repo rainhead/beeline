@@ -6,9 +6,11 @@ import { en } from "../src/app/messages/en.js";
 import { MAX_FILE_BYTES } from "../src/app/upload-plan.js";
 import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { rows } from "./helpers.js";
-import { bytesOf, edited, uploadFixture, type UploadFixture } from "./upload-fixture.js";
+import { CURRENT_SEASON } from "./helpers.js";
+import { bytesOf, edited, readRecords, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 
 const ORIGIN = "http://localhost:3054";
+const esc = (text: string) => text.replaceAll("'", "&#39;");
 
 const upload = (f: UploadFixture, text: string, fileName = "edited.csv", fields: Record<string, string> = {}, cookie?: string) => {
   const body = new FormData();
@@ -258,11 +260,70 @@ describe("the preview", () => {
     const res = await upload(f, text);
     const body = await (await f.app.request(res.headers.get("location")!)).text();
     expect(body).toContain(en.uploads.page.held.date_unreadable);
-    expect(body).toContain(en.uploads.page.heldWith);
-    expect(body).toContain("scientificName: file says <q>Bombus</q>");
-    expect(body).toContain("sex: file says <q>male</q>");
-    // The date itself is the cause, shown as the line's own cell.
-    expect(body).toContain("<q>garbage</q>");
+    // Every cell of the unit, the one that caused the hold included, with what Beeline says and what the file says; columns as literals.
+    expect(body).toContain("<code>scientificName</code>: was <q>Bombus vosnesenskii</q>, file says <q>Bombus</q>");
+    expect(body).toContain("<code>sex</code>: was <q>female</q>, file says <q>male</q>");
+    expect(body).toContain("<code>dateIdentified</code>: was <q>2024-05-03</q>, file says <q>garbage</q>");
+    expect(body).toContain(en.uploads.page.heldIntro);
+    expect(body).toContain(esc(en.uploads.page.unitNote.determination!));
+  });
+
+  it("shows a name held because the specimen changed since, with what the file gave, and no version code", async () => {
+    const f = await uploadFixture();
+    const download = await f.download();
+    await f.conn.run(`UPDATE determination SET sex = 'male' WHERE specimen_id = ${f.ids.a1}`);
+    const res = await upload(f, edited(download, [{ id: f.ids.a1, set: { scientificName: "Andrena" } }]));
+    const body = await (await f.app.request(res.headers.get("location")!)).text();
+    expect(body).toContain(esc(en.uploads.page.held.specimen_changed_since!));
+    expect(body).toContain("<code>scientificName</code>: was <q>Bombus vosnesenskii</q>, file says <q>Andrena</q>");
+    expect(body).toContain("<code>sex</code>: was <q>male</q>, file says <q>female</q>");
+    // The version is bookkeeping and means nothing to the reader.
+    const version = readRecords(download)[1]![readRecords(download)[0]!.indexOf("specimenVersion")]!;
+    expect(body).not.toContain(version);
+    expect(body).not.toMatch(/\bs[0-9a-f]{12}\b/);
+  });
+
+  it("says what it would do when only columns it does not read differ, and when nothing differs at all", async () => {
+    const f = await uploadFixture();
+    const download = await f.download();
+    const page = async (text: string) => (await f.app.request((await upload(f, text)).headers.get("location")!)).text();
+    const other = await page(edited(download, [{ id: f.ids.a1, set: { county: "Linn" } }]));
+    expect(other).toContain(en.uploads.page.nothingOffered(false, true));
+    expect(other).toContain("Beeline would change nothing from this file. The differences in other columns are listed below.");
+    expect(other).not.toContain("Nothing in the file differs");
+    const none = await page(edited(download));
+    expect(none).toContain("Nothing in the file differs from what Beeline says.");
+    const held = await page(edited(download, [{ id: f.ids.a1, set: { specimenId: "987654" } }]));
+    expect(held).toContain(en.uploads.page.nothingOffered(true, false));
+    expect(held).not.toContain("Nothing in the file differs");
+  });
+
+  it("labels the rows it could not match, and names a sample by its number, its collector and its day", async () => {
+    const f = await uploadFixture();
+    const { a1, a2, a3 } = f.ids;
+    const res = await upload(
+      f,
+      edited(await f.download(), [
+        { id: f.ids.b1, set: { specimenId: "987654" } },
+        ...[a1, a2, a3].map((id) => ({ id, set: { locality: "Albany" } })),
+      ]),
+    );
+    const body = await (await f.app.request(res.headers.get("location")!)).text();
+    expect(body).toContain(en.uploads.page.rowsHeld);
+    expect(en.uploads.page.rowsHeld).toBe("Not matched to a specimen");
+    expect(body).not.toContain("Held, not compared");
+    // The store reads a day as midnight in Oregon.
+    const day = new Date(`${CURRENT_SEASON}-07-14T00:00:00-07:00`);
+    expect(body).toContain(`<a href="/samples/${f.ids.sampleA}">UP-1</a> <span class="meta">V. Volunteer, ${en.format.dateRange(day, day)}</span>`);
+  });
+
+  it("heads the page with the file's name, and says it is an uploaded copy", async () => {
+    const f = await uploadFixture();
+    const res = await upload(f, edited(await f.download()), "edited specimens.csv");
+    const body = await (await f.app.request(res.headers.get("location")!)).text();
+    expect(body).toContain("<h1>edited specimens.csv</h1>");
+    expect(body).toContain(en.uploads.page.uploadedCopy);
+    expect(body).not.toContain("Edited download");
   });
 
   it("will not write into a folder an earlier upload already used, and writes no row", async () => {

@@ -6,6 +6,7 @@ import {
   HOLD_REASONS,
   type CellChange,
   type HeldItem,
+  type SampleLabel,
   type SampleChange,
   type SeasonSplit,
   type SpecimenChange,
@@ -105,17 +106,34 @@ function Capped<T>({ m, items, line }: { m: Messages; items: readonly T[]; line:
   );
 }
 
-function Cells({ m, cells }: { m: Messages; cells: UnitCell[] }) {
+/** A column as the person sees it in their spreadsheet: a literal, set as the app sets one. */
+const Col = ({ name }: { name: string }) => <code>{name}</code>;
+
+/** `column: was X, file says Y`, one for each cell, with the cells' own words. */
+function Cells({ m, cells }: { m: Messages; cells: ReadonlyArray<{ column: string; was: string; fileSays: string }> }) {
   const p = m.uploads.page;
-  const differing = cells.filter((c) => c.differs);
   return (
     <>
-      {differing.map((c, i) => (
+      {cells.map((c, i) => (
         <>
           {i > 0 && "; "}
-          {c.column}: {p.was} <Said m={m} value={c.was} />, {p.fileSays} <Said m={m} value={c.fileSays} />
+          <Col name={c.column} />: {p.was} <Said m={m} value={c.was} />, {p.fileSays} <Said m={m} value={c.fileSays} />
         </>
       ))}
+    </>
+  );
+}
+
+/** A sample as the listings name it: its number as a link, then who collected it and when. */
+function SampleName({ m, sample }: { m: Messages; sample: SampleLabel }) {
+  const by = sample.collectors.length === 0 ? "" : `${m.format.list(sample.collectors)}, `;
+  return (
+    <>
+      <a href={sampleHref(sample.id)}>{sample.number}</a>{" "}
+      <Meta>
+        {by}
+        {m.format.dateRange(sample.dateStart, sample.dateEnd)}
+      </Meta>
     </>
   );
 }
@@ -124,8 +142,8 @@ function CellLine({ m, c }: { m: Messages; c: CellChange }) {
   const p = m.uploads.page;
   return (
     <>
-      <SpecimenLink m={m} id={c.specimenId} fieldNumber={c.fieldNumber} /> <Meta>{p.row(c.row)}</Meta> {c.column}: {p.was}{" "}
-      <Said m={m} value={c.was} />, {p.fileSays} <Said m={m} value={c.fileSays} />
+      <SpecimenLink m={m} id={c.specimenId} fieldNumber={c.fieldNumber} /> <Meta>{p.row(c.row)}</Meta>{" "}
+      <Cells m={m} cells={[{ column: c.column, was: c.was, fileSays: c.fileSays }]} />
     </>
   );
 }
@@ -134,7 +152,8 @@ function SpecimenLine({ m, c }: { m: Messages; c: SpecimenChange }) {
   const p = m.uploads.page;
   return (
     <>
-      <SpecimenLink m={m} id={c.specimenId} fieldNumber={c.fieldNumber} /> <Meta>{p.row(c.row)}</Meta> <Cells m={m} cells={c.cells} />
+      <SpecimenLink m={m} id={c.specimenId} fieldNumber={c.fieldNumber} /> <Meta>{p.row(c.row)}</Meta>{" "}
+      <Cells m={m} cells={c.cells.filter((x) => x.differs)} />
     </>
   );
 }
@@ -143,7 +162,8 @@ function SampleLine({ m, c }: { m: Messages; c: SampleChange }) {
   const p = m.uploads.page;
   return (
     <>
-      <a href={sampleHref(c.sampleId)}>{c.sampleNumber}</a> <Meta>{p.row(c.rows[0]!)}</Meta> <Cells m={m} cells={c.cells} />{" "}
+      <SampleName m={m} sample={c.sample} /> <Meta>{p.row(c.rows[0]!)}</Meta>{" "}
+      <Cells m={m} cells={c.cells.filter((x) => x.differs)} />{" "}
       <Meta>
         {p.sampleSpecimens(c.specimensInFile, c.specimensInSample)}; {c.printed ? p.printed : p.notPrinted}
       </Meta>
@@ -151,24 +171,26 @@ function SampleLine({ m, c }: { m: Messages; c: SampleChange }) {
   );
 }
 
+/** Reasons whose detail is something the reader can use; the others are told by the cells or the heading alone. */
+const SHOWS_DETAIL: readonly string[] = ["no_id", "repeated", "no_specimen", "number_disagrees", "rows_disagree", "column_missing"];
+
 function HeldLine({ m, h }: { m: Messages; h: HeldItem }) {
   const p = m.uploads.page;
-  const others = h.cells.filter((c) => c.column !== h.column);
   return (
     <>
       {h.specimenId !== null && <SpecimenLink m={m} id={h.specimenId} fieldNumber={h.fieldNumber} />}
-      {h.specimenId === null && h.sampleNumber !== null && <>{h.sampleNumber}</>} <Meta>{h.rows.length > 1 ? h.rows.map(p.row).join(", ") : p.row(h.row)}</Meta>
-      {h.column !== null && <> {h.column}</>}: {p.heldDetail[h.reason] ?? ""} {h.detail === "" ? <Absent label={p.nothing} spelled /> : <q>{h.detail}</q>}
-      {others.length > 0 && (
+      {h.specimenId === null && h.sample !== null && <SampleName m={m} sample={h.sample} />}{" "}
+      <Meta>{h.rows.length > 1 ? h.rows.map(p.row).join(", ") : p.row(h.row)}</Meta>
+      {h.cells.length > 0 && (
         <>
           {" "}
-          <Meta>{p.heldWith}</Meta>{" "}
-          {others.map((c, i) => (
-            <>
-              {i > 0 && "; "}
-              {c.column}: {p.fileSays} <Said m={m} value={c.fileSays} />
-            </>
-          ))}
+          <Cells m={m} cells={h.cells} />
+        </>
+      )}
+      {SHOWS_DETAIL.includes(h.reason) && (
+        <>
+          {" "}
+          {p.heldDetail[h.reason] ?? ""} {h.detail === "" ? <Absent label={p.nothing} spelled /> : <q>{h.detail}</q>}
         </>
       )}
     </>
@@ -192,7 +214,7 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
   const heldBy = (reason: string) => plan.held.filter((h) => h.reason === reason);
   return (
     <>
-      <PageHeader title={p.title(upload.file_name)} meta={p.uploaded(m.format.dateTime(upload.uploaded_at), upload.uploader)} />
+      <PageHeader title={p.title(upload.file_name)} lede={p.uploadedCopy} meta={p.uploaded(m.format.dateTime(upload.uploaded_at), upload.uploader)} />
       <p>
         <a href="/uploads">{p.back}</a>
       </p>
@@ -213,7 +235,7 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
       </DataTable>
 
       <h2>{p.changesHeading}</h2>
-      {!anyChange && <EmptyState>{p.noChanges}</EmptyState>}
+      {!anyChange && <EmptyState>{p.nothingOffered(plan.held.length > 0, plan.notApplied.length > 0)}</EmptyState>}
       {kinds.map((kind) => {
         const own = changesOf(kind);
         const samples = sampleChangesOf(kind);
@@ -223,7 +245,8 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
             <h3>
               {p.kind[kind]} <Meta>{m.format.number(own.length + samples.length)}</Meta>
             </h3>
-            <Meta block>{samples.length > 0 ? `${p.sampleNote} ${p.unitNote}` : p.unitNote}</Meta>
+            {samples.length > 0 && <Meta block>{p.sampleNote}</Meta>}
+            {p.unitNote[kind] !== undefined && <Meta block>{p.unitNote[kind]}</Meta>}
             <Capped m={m} items={samples} line={(c) => <SampleLine m={m} c={c} />} />
             <Capped m={m} items={own} line={(c) => <SpecimenLine m={m} c={c} />} />
           </section>
@@ -231,7 +254,7 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
       })}
 
       <h2>{p.heldHeading}</h2>
-      {plan.held.length === 0 && <EmptyState>{p.noHeld}</EmptyState>}
+      {plan.held.length === 0 ? <EmptyState>{p.noHeld}</EmptyState> : <p>{p.heldIntro}</p>}
       {HOLD_REASONS.map((reason) => {
         const items = heldBy(reason);
         if (items.length === 0) return null;
@@ -240,6 +263,9 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
             <h3>
               {p.held[reason]} <Meta>{m.format.number(items.length)}</Meta>
             </h3>
+            {[...new Set(items.flatMap((h) => (h.unit === null ? [] : [h.unit])))].map((unit) =>
+              p.unitNote[unit] === undefined ? null : <Meta block>{p.unitNote[unit]}</Meta>,
+            )}
             <Capped m={m} items={items} line={(h) => <HeldLine m={m} h={h} />} />
           </section>
         );

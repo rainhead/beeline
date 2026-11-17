@@ -904,7 +904,10 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
         const byText = new Map<string, number[]>();
         for (const sr of sampleRows) {
           const t = sr.results.get(disagreeing)!.fileText;
-          byText.set(t, [...(byText.get(t) ?? []), sr.row]);
+          // Appended in place: copying the list for each row is quadratic work on a sample of thousands of rows.
+          const saying = byText.get(t);
+          if (saying === undefined) byText.set(t, [sr.row]);
+          else saying.push(sr.row);
         }
         const each: HeldCell[] = [...byText].map(([fileSays, rowsSaying]) => ({
           column: disagreeing,

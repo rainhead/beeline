@@ -68,6 +68,7 @@ const attr = (text: string): string => escapeText(text).replace(/"/g, "&quot;");
 /** What a cell and a sheet may hold in Excel; a file past either is refused when written, not truncated. */
 export const MAX_CELL_CHARS = 32_767;
 export const MAX_SHEET_ROWS = 1_048_576;
+export const MAX_COLUMNS = 16_384;
 
 export interface XlsxWriter {
   /** The start of the file: everything before the first data row. */
@@ -87,7 +88,7 @@ export function xlsxWriter(opts: { sheetName: string; header: readonly string[];
   const { sheetName, header } = opts;
   const maxRows = opts.maxRows ?? MAX_SHEET_ROWS;
   if (sheetName === "" || sheetName.length > 31 || /[[\]:*?/\\]/.test(sheetName)) throw new Error(`not a sheet name: ${sheetName}`);
-  if (header.length === 0 || header.length > 16384) throw new Error("a sheet needs between 1 and 16384 columns");
+  if (header.length === 0 || header.length > MAX_COLUMNS) throw new Error(`a sheet needs between 1 and ${MAX_COLUMNS} columns`);
   const out: Uint8Array[] = [];
   const zip = new Zip((err, chunk) => {
     if (err) throw err;
@@ -105,6 +106,7 @@ export function xlsxWriter(opts: { sheetName: string; header: readonly string[];
   const row = (cells: ReadonlyArray<string | null>): string => {
     // Excel's own limits: a file past them cannot be opened by the program it is meant for.
     if (next > maxRows) throw new Error(`a sheet holds at most ${maxRows} rows`);
+    if (cells.length > MAX_COLUMNS) throw new Error(`a sheet holds at most ${MAX_COLUMNS} columns; row ${next} has ${cells.length}`);
     const r = next++;
     let xml = `<row r="${r}">`;
     cells.forEach((value, at) => {

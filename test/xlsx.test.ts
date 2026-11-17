@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
-import { MAX_CELL_CHARS, MAX_SHEET_ROWS, columnIndex, columnName, escapeText, writeXlsx, xlsxWriter } from "../src/app/xlsx.js";
+import { MAX_CELL_CHARS, MAX_COLUMNS, MAX_SHEET_ROWS, columnIndex, columnName, escapeText, writeXlsx, xlsxWriter } from "../src/app/xlsx.js";
 import type { XlsxCell, XlsxRead } from "../src/app/xlsx.js";
 import { readXlsx, readXlsxHere } from "../src/app/xlsx-reader.js";
 import { buildWorkbook, serialOf } from "./workbook.js";
@@ -150,6 +150,9 @@ describe("writing a workbook, and what SheetJS makes of it", () => {
 
   it("refuses a cell over 32,767 characters, and takes one at the limit", () => {
     expect(() => writeXlsx({ sheetName: "s", header: ["a"] }, [["x".repeat(MAX_CELL_CHARS + 1)]])).toThrow(/32767 characters/);
+    // A data row is held to the same width as the header: a cell past the last column Excel has is no cell.
+    expect(() => writeXlsx({ sheetName: "s", header: ["a"] }, [Array.from({ length: MAX_COLUMNS + 1 }, () => "x")])).toThrow(/16384 columns/);
+    expect(() => writeXlsx({ sheetName: "s", header: ["a"] }, [Array.from({ length: MAX_COLUMNS }, () => "x")])).not.toThrow();
     expect(sheetOf(readXlsxHere(writeXlsx({ sheetName: "s", header: ["a"] }, [["x".repeat(MAX_CELL_CHARS)]]))).rows[1]!.cells.get(0)!.text).toHaveLength(MAX_CELL_CHARS);
   });
 

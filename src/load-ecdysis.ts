@@ -216,6 +216,28 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       // of BC's 9,374 specimens. An archive that has the column is left to
       // its flags, so Washington's loads exactly as it did.
       if (currentFlag === "CAST(NULL AS VARCHAR)") {
+        // Which row is current is inferred here, not read, and the inference
+        // holds only for a first load. Loaded again, a row recorded as history
+        // that the occurrence has gone back to is skipped as already loaded,
+        // and an occurrence row standing in for a current one Beeline has
+        // since superseded is recorded anew and undoes that (CodeRabbit on
+        // this branch). So a published archive bridges a collection in once,
+        // and the signed-in download, which says which row is current, keeps
+        // it current after that.
+        const loadedBefore = await scalar(
+          conn,
+          `SELECT count(*) FROM ecdysis_identification e
+           JOIN determination d ON d.entity_id = e.determination_id
+           JOIN specimen_catalog_number c ON c.specimen_id = d.specimen_id
+           WHERE starts_with(c.catalog_number, $1)`,
+          [prefix],
+        );
+        if (loadedBefore > 0 && !opts.force) {
+          throw new Error(
+            `${opts.path}: this archive does not say which identification is current, so it loads only into a collection with nothing from Ecdysis yet, ` +
+              `and ${loadedBefore} ${prefix} identifications are already loaded; load the signed-in download instead, or pass force`,
+          );
+        }
         await conn.run(
           `UPDATE ecd_identification SET is_current = true
            WHERE record_id IN (
@@ -228,13 +250,6 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                -- "s.d." (no date) in the history is a blank on the occurrence;
                -- a date the occurrence has since corrected is a new statement.
                AND coalesce(nullif(i.date_identified, 's.d.'), '') = coalesce(nullif(o.date_identified, 's.d.'), '')
-             -- A row already loaded is current only if it already stands as
-             -- the record: one loaded as history that the occurrence has gone
-             -- back to would be skipped as loaded, and the change lost, so
-             -- there the occurrence row stands in, as it does without a match.
-             WHERE NOT EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.record_id = i.record_id)
-                OR EXISTS (SELECT 1 FROM ecdysis_identification e JOIN determination_of_record r ON r.entity_id = e.determination_id
-                           WHERE e.record_id = i.record_id)
              QUALIFY row_number() OVER (
                PARTITION BY i.occ_id
                ORDER BY ${ENTERED_AT.replaceAll("entered_text", "i.entered_text")} DESC NULLS LAST, i.record_id DESC) = 1)`,

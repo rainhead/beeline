@@ -608,8 +608,9 @@ describe("the archive a collection publishes", () => {
     expect((await record(a))?.[0]).toBe("Bombus vosnesenskii");
     // The current identification keeps its own recordID; no occurrence row stands in for it.
     expect(await rows(conn, `SELECT record_id FROM ecdysis_identification ORDER BY record_id`)).toEqual([["id-a"], ["id-a-old"]]);
-    // And loading it again records nothing.
-    expect((await loadEcdysis(conn, { path: dir, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).loaded).toBe(0);
+    // It loads once: which row is current is inferred, and the inference
+    // holds only for a first load, so loading it again is refused.
+    await expect(loadEcdysis(conn, { path: dir, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).rejects.toThrow(/nothing from Ecdysis yet/);
   });
 
   test("where no history row says what the occurrence says, the occurrence is the current identification", async () => {
@@ -623,21 +624,6 @@ describe("the archive a collection publishes", () => {
       [a, "Andrena sladeni"],
     ]);
     expect((await record(a))?.[0]).toBe("Andrena sladeni");
-  });
-
-  test("an occurrence that goes back to a name already loaded as history makes it the record again", async () => {
-    // The history row is already loaded, as history, so it cannot be
-    // recorded again; the occurrence row stands in for it (CodeRabbit on
-    // this branch).
-    const history = "200,B. Zand,,,Bombus vosnesenskii,,id-a-old,2025-08-01 10:00:00\n" + "200,B. Zand,,,Andrena sladeni,,id-a,2025-09-25 16:10:48\n";
-    const first = await published("200,BCBA_2303966,occ-a,Andrena sladeni,,B. Zand,,,2025-09-25 16:10:48\n", history);
-    await loadEcdysis(conn, { path: first, catalogPrefix: "BCBA_", determinerAliases: ALIASES });
-    expect((await record(a))?.[0]).toBe("Andrena sladeni");
-    const back = await published("200,BCBA_2303966,occ-a,Bombus vosnesenskii,,B. Zand,,,2025-10-01 09:00:00\n", history);
-    expect((await loadEcdysis(conn, { path: back, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).loaded).toBe(1);
-    expect((await record(a))?.[0]).toBe("Bombus vosnesenskii");
-    // Loading either again records nothing more.
-    expect((await loadEcdysis(conn, { path: back, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).loaded).toBe(0);
   });
 
   test("the current row is the newest by time, whichever way the time is written", async () => {
@@ -673,9 +659,12 @@ describe("the archive a collection publishes", () => {
     );
     expect((await loadEcdysis(conn, { path: bc, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).loaded).toBe(1);
     // An older export of the same collection is still refused.
-    const older = await published(
-      "201,BCBA_2303967,occ-bc,Andrena sladeni,,B. Zand,,,2025-01-01 00:00:00\n",
-      "201,B. Zand,,,Andrena sladeni,,id-bc-older,2025-01-01 00:00:00\n",
+    const older = await mkdtemp(join(tmpdir(), "ecdysis-bc-older-"));
+    await writeFile(join(older, "occurrences.csv"), OCC_HEADER + "201,BCBA_2303967,occ-bc,Andrena sladeni,,B. Zand,,,2025-01-01 00:00:00\n");
+    await writeFile(
+      join(older, "identifications.csv"),
+      "coreid,identifiedBy,dateIdentified,identificationQualifier,scientificName,identificationIsCurrent,identificationRemarks,recordID,modified\n" +
+        "201,B. Zand,,,Andrena sladeni,1,,id-bc-older,2025-01-01 00:00:00\n",
     );
     await expect(loadEcdysis(conn, { path: older, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).rejects.toThrow(/before the newest already loaded/);
   });

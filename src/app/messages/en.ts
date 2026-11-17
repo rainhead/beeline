@@ -2051,6 +2051,8 @@ export const en = {
         "This file has no specimenId column, so Beeline cannot tell which specimen each row is about. Download the specimens again and edit the new file, leaving that column in.",
       too_many_rows: "That file has more than 20,000 rows, so Beeline did not read it. Split it into smaller files.",
       no_rows: "That file has a row of column names and nothing after it.",
+      malformed:
+        "A cell in this file opens a quotation mark that never closes, which usually comes from editing the file as text. Open it in a spreadsheet, save it again as \"CSV UTF-8\", and upload that.",
     } as Record<string, string>,
     refusedRepeatedColumn: (column: string) =>
       `The column ${column} is in this file more than once, so Beeline cannot tell which one to read. Delete the extra one and upload the file again.`,
@@ -2092,7 +2094,7 @@ export const en = {
       notPrinted: "labels not printed",
       heldHeading: "Held",
       noHeld: "Nothing is held.",
-      heldWith: (columns: string) => `held together with ${columns}`,
+      heldWith: "Held with it, because the cells go together:",
       held: {
         no_id: "Rows where the specimenId is blank or is not a number",
         repeated: "Rows whose specimenId is on another row too",

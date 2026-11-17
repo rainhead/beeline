@@ -141,6 +141,34 @@ describe("a cell the file does not reach", () => {
   });
 });
 
+describe("a short row, and a file that is not whole", () => {
+  it("builds a unit from the columns its rows reach, not the ones the header has", async () => {
+    const f = await uploadFixture();
+    const { a1, a2, a3 } = f.ids;
+    const records = readRecords(await f.download());
+    const head = records[0]!;
+    const at = (name: string) => head.indexOf(name);
+    const rowOf = (id: number) => records.find((r, i) => i > 0 && r[at("specimenId")] === String(id))!;
+    // Exactly this header, its rows stopping after the edited eventDate: no row has a samplingProtocol cell.
+    const sample = ["specimenId,sampleVersion,eventDate,samplingProtocol", ...[a1, a2, a3].map((id) => `${id},${rowOf(id)[at("sampleVersion")]},2026-01-01`)].join("\n") + "\n";
+    const p = await plan(f, sample);
+    expect(p.held).toEqual([]);
+    expect(p.sampleChanges.map((c) => [c.unit, c.cells.map((x) => x.column)])).toEqual([["method_dates", ["eventDate"]]]);
+    // The same for a specimen's own unit.
+    const own = `specimenId,specimenVersion,scientificName,dateIdentified\n${a2},${rowOf(a2)[at("specimenVersion")]},Bombus\n`;
+    const q = await plan(f, own);
+    expect(q.held).toEqual([]);
+    expect(q.changes.map((c) => [c.unit, c.cells.map((x) => x.column)])).toEqual([["determination", ["scientificName"]]]);
+  });
+
+  it("refuses a file whose quotation mark never closes, rather than reading the rows after it as one cell", async () => {
+    const f = await uploadFixture();
+    expect(await refusal(f, bytesOf('specimenId,occurrenceRemarks\n1,"a remark that never ends\n2,fine\n3,fine\n'))).toBe("malformed");
+    // A quote that does close, with a newline in it, is a cell.
+    expect(await refusal(f, bytesOf('specimenId,occurrenceRemarks\n1,"two\nlines"\n'))).toBeNull();
+  });
+});
+
 describe("finding each row's specimen", () => {
   it("holds a row whose id is not a positive whole number, with the reason", async () => {
     const f = await uploadFixture();
@@ -365,6 +393,52 @@ describe("normalising both sides before comparing", () => {
     ]);
     expect(p.changes).toEqual([]);
     expect(p.sampleChanges).toEqual([]);
+  });
+});
+
+describe("a held unit names every cell held with it", () => {
+  it("lists, for a specimen, the differing cells of the unit with what the file says", async () => {
+    const f = await uploadFixture();
+    const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "male", dateIdentified: "garbage" } }]));
+    expect(p.changes).toEqual([]);
+    const held = heldOf(p, "date_unreadable");
+    expect(held).toHaveLength(1);
+    expect(held[0]!.column).toBe("dateIdentified");
+    expect(held[0]!.cells).toEqual([
+      { column: "scientificName", was: "Bombus vosnesenskii", fileSays: "Bombus" },
+      { column: "sex", was: "female", fileSays: "male" },
+      { column: "dateIdentified", was: "2024-05-03", fileSays: "garbage" },
+    ]);
+    expect(held[0]!.columns).toEqual(["scientificName", "sex", "dateIdentified"]);
+  });
+
+  it("lists, for a sample, the differing cells of the unit across its rows", async () => {
+    const f = await uploadFixture();
+    const { a1, a2, a3 } = f.ids;
+    const p = await plan(
+      f,
+      edited(await f.download(), [
+        ...[a1, a2, a3].map((id) => ({ id, set: { samplingProtocol: "blue vane trap" } })),
+        { id: a2, set: { eventDate: "July 14" } },
+      ]),
+    );
+    const held = heldOf(p, "date_unreadable");
+    expect(held).toHaveLength(1);
+    expect(held[0]!.cells).toEqual([
+      { column: "eventDate", was: DAY_A, fileSays: "July 14" },
+      { column: "samplingProtocol", was: "net", fileSays: "blue vane trap" },
+    ]);
+    expect(p.sampleChanges).toEqual([]);
+  });
+
+  it("names them for a unit held because the file is stale, too", async () => {
+    const f = await uploadFixture();
+    const { a1 } = f.ids;
+    const download = await f.download();
+    await f.conn.run(`UPDATE determination SET sex = 'male' WHERE specimen_id = ${a1}`);
+    const p = await plan(f, edited(download, [{ id: a1, set: { scientificName: "Andrena" } }]));
+    const held = heldOf(p, "specimen_changed_since")[0]!;
+    expect(held.cells.map((c) => [c.column, c.fileSays])).toEqual([["scientificName", "Andrena"], ["sex", "female"]]);
   });
 });
 

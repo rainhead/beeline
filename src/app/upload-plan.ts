@@ -32,7 +32,7 @@ import {
  */
 
 /** A whole file Beeline will not read. */
-export const REFUSALS = ["too_large", "not_utf8", "no_specimen_id_column", "repeated_column", "too_many_rows", "no_rows"] as const;
+export const REFUSALS = ["too_large", "not_utf8", "malformed", "no_specimen_id_column", "repeated_column", "too_many_rows", "no_rows"] as const;
 export type Refusal = (typeof REFUSALS)[number];
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -180,6 +180,12 @@ export interface CellChange {
   fileSays: string;
 }
 
+export interface HeldCell {
+  column: string;
+  was: string;
+  fileSays: string;
+}
+
 export interface HeldItem {
   reason: HoldReason;
   /** The first row concerned, the header being row 1. */
@@ -193,8 +199,10 @@ export interface HeldItem {
   unit: ChangeKind | null;
   /** The cell that caused the hold, or the first differing cell of the unit. */
   column: string | null;
-  /** Every differing cell held with it. */
+  /** Every differing cell of the unit held with it, and the cell that caused the hold. */
   columns: string[];
+  /** The same cells, with what Beeline says and what the file says for each. */
+  cells: HeldCell[];
   /** What the file said that could not be used, or what it said about the field number. */
   detail: string;
 }
@@ -223,7 +231,10 @@ export type PlanResult = { ok: true; plan: UploadPlan; rowCount: number } | { ok
 // --- Reading the file ---
 
 /** RFC 4180: quoted cells, doubled quotes inside them, `\n`, `\r\n` or a lone `\r` between records. */
-export function parseCsvRecords(text: string): string[][] {
+export const parseCsvRecords = (text: string): string[][] => readCsv(text).records;
+
+/** The records, and whether the text ended inside a quoted cell, which swallowed the records after it. */
+function readCsv(text: string): { records: string[][]; unclosed: boolean } {
   const records: string[][] = [];
   let record: string[] = [];
   let cell = "";
@@ -263,7 +274,7 @@ export function parseCsvRecords(text: string): string[][] {
     record.push(cell);
     records.push(record);
   }
-  return records;
+  return { records, unclosed: quoted };
 }
 
 /** Whether a file can be read at all, and if so its columns and rows. */
@@ -276,7 +287,8 @@ export function parseUpload(bytes: Uint8Array): Parsed {
     return { ok: false, refusal: "not_utf8" };
   }
   if (text.startsWith("﻿")) text = text.slice(1);
-  const records = parseCsvRecords(text);
+  const { records, unclosed } = readCsv(text);
+  if (unclosed) return { ok: false, refusal: "malformed" };
   const header = records[0] ?? [];
   const columns = new Map<string, number>();
   for (const [i, name] of header.entries()) {
@@ -552,8 +564,8 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
 
   const hold = (
     item: Pick<HeldItem, "reason" | "row" | "specimenId" | "fieldNumber" | "detail"> &
-      Partial<Pick<HeldItem, "rows" | "sampleNumber" | "unit" | "column" | "columns">>,
-  ) => plan.held.push({ rows: [item.row], sampleNumber: null, unit: null, column: null, columns: [], ...item });
+      Partial<Pick<HeldItem, "rows" | "sampleNumber" | "unit" | "column" | "columns" | "cells">>,
+  ) => plan.held.push({ rows: [item.row], sampleNumber: null, unit: null, column: null, columns: [], cells: [], ...item });
 
   const bySample = new Map<number, SampleRow[]>();
   const touchedRows: Array<{ sampleId: number; touched: boolean }> = [];
@@ -621,12 +633,15 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
     for (const unit of SPECIMEN_UNITS) {
       const present = columnsOfUnit(unit).filter((c) => results.has(c));
       const differing = present.filter((c) => results.get(c)!.differs);
+      // Every cell held with the unit: those that differ, and those that cannot be read.
+      const heldColumns = present.filter((c) => results.get(c)!.differs || !results.get(c)!.norm.ok);
+      const heldCells = heldColumns.map((c) => ({ column: c, was: results.get(c)!.nowText, fileSays: results.get(c)!.fileText }));
       let held = false;
       for (const column of present) {
         const r = results.get(column)!;
         if (!r.norm.ok) {
           held = true;
-          hold({ reason: r.norm.reason, row, specimenId, fieldNumber, sampleNumber, unit, column, columns: [column], detail: r.fileText });
+          hold({ reason: r.norm.reason, row, specimenId, fieldNumber, sampleNumber, unit, column, columns: heldColumns, cells: heldCells, detail: r.fileText });
         }
       }
       if (held || differing.length === 0) continue;
@@ -640,7 +655,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
         detail = cellText(cell(cells, "specimenVersion") ?? "");
       }
       if (why !== null) {
-        hold({ reason: why, row, specimenId, fieldNumber, sampleNumber, unit, column: differing[0]!, columns: differing, detail });
+        hold({ reason: why, row, specimenId, fieldNumber, sampleNumber, unit, column: differing[0]!, columns: heldColumns, cells: heldCells, detail });
         continue;
       }
       plan.changes.push({
@@ -672,13 +687,20 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
     const sampleNumber = sampleNow.row.sample_number;
     const allRows = sampleRows.map((r) => r.row);
     for (const unit of SAMPLE_UNITS) {
-      const present = columnsOfUnit(unit).filter((c) => hasColumn(c));
+      // Only columns that some row of this sample reaches: a short row may stop before a column the file has.
+      const present = columnsOfUnit(unit).filter((c) => sampleRows.some((sr) => sr.results.has(c)));
       if (present.length === 0) continue;
+      /** The cells of the unit that differ or cannot be read, as the first row that says so gives them. */
+      const cellsHeld = (): HeldCell[] =>
+        present.flatMap((c) => {
+          const says = sampleRows.find((sr) => sr.results.get(c)?.differs || (sr.results.has(c) && !sr.results.get(c)!.norm.ok))?.results.get(c);
+          return says === undefined ? [] : [{ column: c, was: says.nowText, fileSays: says.fileText }];
+        });
       const held = (
         reason: HoldReason,
         rowsConcerned: SampleRow[],
         column: string,
-        columnsHeld: string[],
+        _columnsHeld: string[],
         detail: string,
       ) =>
         hold({
@@ -690,7 +712,8 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
           sampleNumber,
           unit,
           column,
-          columns: columnsHeld,
+          columns: cellsHeld().map((x) => x.column),
+          cells: cellsHeld(),
           detail,
         });
       // A cell that cannot be read holds the unit for the whole sample, so the
@@ -709,7 +732,8 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload): P
               sampleNumber,
               unit,
               column,
-              columns: [column],
+              columns: cellsHeld().map((x) => x.column),
+              cells: cellsHeld(),
               detail: r.fileText,
             });
           }

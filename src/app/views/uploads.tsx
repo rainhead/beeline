@@ -153,13 +153,24 @@ function SampleLine({ m, c }: { m: Messages; c: SampleChange }) {
 
 function HeldLine({ m, h }: { m: Messages; h: HeldItem }) {
   const p = m.uploads.page;
-  const others = h.columns.filter((c) => c !== h.column);
+  const others = h.cells.filter((c) => c.column !== h.column);
   return (
     <>
       {h.specimenId !== null && <SpecimenLink m={m} id={h.specimenId} fieldNumber={h.fieldNumber} />}
       {h.specimenId === null && h.sampleNumber !== null && <>{h.sampleNumber}</>} <Meta>{h.rows.length > 1 ? h.rows.map(p.row).join(", ") : p.row(h.row)}</Meta>
       {h.column !== null && <> {h.column}</>}: {p.heldDetail[h.reason] ?? ""} {h.detail === "" ? <Absent label={p.nothing} spelled /> : <q>{h.detail}</q>}
-      {others.length > 0 && <> <Meta>({p.heldWith(others.join(", "))})</Meta></>}
+      {others.length > 0 && (
+        <>
+          {" "}
+          <Meta>{p.heldWith}</Meta>{" "}
+          {others.map((c, i) => (
+            <>
+              {i > 0 && "; "}
+              {c.column}: {p.fileSays} <Said m={m} value={c.fileSays} />
+            </>
+          ))}
+        </>
+      )}
     </>
   );
 }

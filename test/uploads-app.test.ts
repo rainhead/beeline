@@ -84,6 +84,9 @@ describe("uploading a file", () => {
     expect(res.status).toBe(400);
     expect(await res.text()).toContain(en.uploads.refused.no_specimen_id_column);
     // A file with a column twice is refused with its name.
+    const unclosed = await upload(f, 'specimenId,occurrenceRemarks\n1,"never closed\n2,x\n');
+    expect(unclosed.status).toBe(400);
+    expect(await unclosed.text()).toContain("never closes");
     const twice = await upload(f, "specimenId,locality,locality\n1,a,b\n");
     expect(twice.status).toBe(400);
     expect(await twice.text()).toContain(en.uploads.refusedRepeatedColumn("locality"));
@@ -247,6 +250,33 @@ describe("the preview", () => {
     expect(await declared.text()).toContain(en.uploads.refused.too_large);
     expect(await uploadCount(f)).toBe(0);
     expect(await kept(f)).toEqual([]);
+  });
+
+  it("shows every cell held with a held unit, and what the file says for each", async () => {
+    const f = await uploadFixture();
+    const text = edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "male", dateIdentified: "garbage" } }]);
+    const res = await upload(f, text);
+    const body = await (await f.app.request(res.headers.get("location")!)).text();
+    expect(body).toContain(en.uploads.page.held.date_unreadable);
+    expect(body).toContain(en.uploads.page.heldWith);
+    expect(body).toContain("scientificName: file says <q>Bombus</q>");
+    expect(body).toContain("sex: file says <q>male</q>");
+    // The date itself is the cause, shown as the line's own cell.
+    expect(body).toContain("<q>garbage</q>");
+  });
+
+  it("will not write into a folder an earlier upload already used, and writes no row", async () => {
+    const f = await uploadFixture();
+    // The id the next upload will draw, as a store restored to an earlier copy could draw it again.
+    const next = Number((await rows(f.conn, `SELECT nextval('entity_id_seq')`))[0]![0]) + 1;
+    const folder = join(f.paths.uploadsDir, String(next));
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "upload.csv"), "earlier upload");
+    const res = await upload(f, await f.download());
+    expect(res.status).toBe(500);
+    expect(await readFile(join(folder, "upload.csv"), "utf8")).toBe("earlier upload");
+    expect(await readdir(folder)).toEqual(["upload.csv"]);
+    expect(await uploadCount(f)).toBe(0);
   });
 
   it("caps a list at 200 lines and counts the rest", async () => {

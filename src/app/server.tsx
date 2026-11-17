@@ -2104,7 +2104,16 @@ export function createApp({
       (await sql<{ id: bigint }>`SELECT nextval('entity_id_seq') AS id`.execute(db)).rows[0]!.id,
     );
     const fileName = file.name === "" ? "upload.csv" : file.name;
-    await mkdir(uploadFolder(id), { recursive: true });
+    // The parent may be new; the upload's own folder must be. A store put back
+    // to an earlier copy can draw an id that an earlier upload already used,
+    // and its kept file must never be overwritten: fail, writing nothing.
+    await mkdir(uploadsPath, { recursive: true });
+    try {
+      await mkdir(uploadFolder(id));
+    } catch (err) {
+      console.error(`upload ${id} refused: its folder ${uploadFolder(id)} cannot be made (${(err as Error).message})`);
+      return errorResponse(c, "failed", { err: err as Error });
+    }
     const keptAt = uploadFile(id);
     try {
       await writeFile(keptAt, bytes);

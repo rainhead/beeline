@@ -283,18 +283,18 @@ describe("the preview", () => {
     expect(en.uploads.page.unitNote.place).toMatch(/no observation, a blank changes nothing/);
   });
 
-  it("shows a date the spreadsheet converted, held with the new name, with what to do", async () => {
+  it("shows a date with a time of day, held with the new name, with what to do", async () => {
     const f = await uploadFixture();
     const bytes = edited(await f.download(), [
-      { id: f.ids.a1, set: { scientificName: "Bombus", dateIdentified: { date: serialOf("2025-07-01") } } },
+      { id: f.ids.a1, set: { scientificName: "Bombus", dateIdentified: { date: serialOf("2025-07-01") + 0.5 } } },
     ]);
     const body = await pageOf(f, bytes);
-    expect(body).toContain(esc(en.uploads.page.held.converted_to_date!));
-    expect(body).toContain(esc(en.uploads.page.heldTodo.converted_to_date!));
+    expect(body).toContain(esc(en.uploads.page.held.holds_time!));
+    expect(body).toContain(esc(en.uploads.page.heldTodo.holds_time!));
     expect(body).toContain("<code>scientificName</code>: was <q>Bombus vosnesenskii</q>, file says <q>Bombus</q>");
-    expect(body).toContain("<code>dateIdentified</code>: was <q>2024-05-03</q>, file says <q>2025-07-01</q>");
+    expect(body).toContain("<code>dateIdentified</code>: was <q>2024-05-03</q>, file says <q>2025-07-01 12:00:00</q>");
     expect(body).toContain(esc(en.uploads.page.unitNote.determination!));
-    expect(en.uploads.page.heldTodo.converted_to_date).toMatch(/Format the cell as text/);
+    expect(en.uploads.page.heldTodo.holds_time).toMatch(/Format it as text/);
   });
 
   it("says in plain words what is held and what to do, for every reason a unit can be held for", () => {

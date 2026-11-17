@@ -5,13 +5,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
-import { MAX_CELL_CHARS, MAX_CHOICES_CHARS, MAX_COLUMNS, MAX_SHEET_ROWS, columnIndex, columnName, escapeText, writeXlsx, xlsxWriter } from "../src/app/xlsx.js";
+import type { ColumnChoices, ExtraSheet } from "../src/app/xlsx.js";
+import * as XLSX from "xlsx";
+import { SHADE_RGB, MAX_CELL_CHARS, MAX_CHOICES_CHARS, MAX_COLUMNS, MAX_SHEET_ROWS, columnIndex, columnName, escapeText, writeXlsx, xlsxWriter } from "../src/app/xlsx.js";
 import type { XlsxCell, XlsxRead } from "../src/app/xlsx.js";
 import { readXlsx, readXlsxHere } from "../src/app/xlsx-reader.js";
 import { buildWorkbook, serialOf } from "./workbook.js";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+/** A warning on a column, for a test that does not care what it says. */
+const warn = (words: string[]): ColumnChoices => ({ words, title: "Not listed", message: "Take a listed word." });
 
 /** The sheet of a read that must have worked. */
 function sheetOf(read: XlsxRead) {
@@ -112,17 +117,17 @@ describe("writing a workbook, and what SheetJS makes of it", () => {
     expect(sheet).not.toContain("<f");
     // Style 1 is the Text format, and every column has it, so a cell nobody wrote is text when somebody types in it.
     expect(new TextDecoder().decode(parts["xl/styles.xml"])).toContain(`<xf numFmtId="49"`);
-    expect(sheet).toMatch(/<col min="1" max="3"[^>]*style="1"/);
+    for (const n of [1, 2, 3]) expect(sheet).toMatch(new RegExp(`<col min="${n}" max="${n}"[^>]*style="1"`));
   });
 
   it("offers a column's words as a dropdown below its heading, and keeps the cells text", () => {
-    const bytes = writeXlsx({ sheetName: "s", header: ["a", "sex", "state"], choices: { sex: ["female", "male"], state: ["in collection", "R&D <1>"] } }, [
+    const bytes = writeXlsx({ sheetName: "s", header: ["a", "sex", "state"], choices: { sex: warn(["female", "male"]), state: warn(["in collection", "R&D <1>"]) } }, [
       ["1", "female", null],
     ]);
     const sheet = new TextDecoder().decode(unzipSync(bytes)["xl/worksheets/sheet1.xml"]);
     // After the rows, where the format puts it, one list for each column, from row 2 to the sheet's last row.
     expect(sheet).toMatch(/<\/sheetData><dataValidations count="2">.*<\/dataValidations><\/worksheet>$/);
-    expect(sheet).toContain(`<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="B2:B${MAX_SHEET_ROWS}"><formula1>"female,male"</formula1></dataValidation>`);
+    expect(sheet).toContain(`<dataValidation type="list" errorStyle="warning" allowBlank="1" showErrorMessage="1" errorTitle="Not listed" error="Take a listed word." sqref="B2:B${MAX_SHEET_ROWS}"><formula1>"female,male"</formula1></dataValidation>`);
     // The list is XML text like any other.
     expect(sheet).toContain(`sqref="C2:C${MAX_SHEET_ROWS}"><formula1>"in collection,R&amp;D &lt;1&gt;"</formula1>`);
     // The cells are what they were: text, in the Text format.
@@ -134,13 +139,19 @@ describe("writing a workbook, and what SheetJS makes of it", () => {
   });
 
   it("refuses choices it cannot write as a list", () => {
-    const write = (choices: Record<string, string[]>) => () => writeXlsx({ sheetName: "s", header: ["a"], choices }, []);
-    expect(write({ b: ["x"] })).toThrow(/does not have: b/);
-    expect(write({ a: [] })).toThrow(/without commas or quotes/);
-    expect(write({ a: ["one, two"] })).toThrow(/without commas or quotes/);
-    expect(write({ a: ['say "x"'] })).toThrow(/without commas or quotes/);
-    expect(write({ a: ["x".repeat(MAX_CHOICES_CHARS + 1)] })).toThrow(/more than 255 characters/);
-    expect(write({ a: ["x".repeat(MAX_CHOICES_CHARS)] })).not.toThrow();
+    const write = (choices: Record<string, ColumnChoices>) => () => writeXlsx({ sheetName: "s", header: ["a"], choices }, []);
+    expect(write({ b: warn(["x"]) })).toThrow(/does not have: b/);
+    expect(write({ a: warn([]) })).toThrow(/without commas or quotes/);
+    expect(write({ a: warn(["one, two"]) })).toThrow(/without commas or quotes/);
+    expect(write({ a: warn(['say "x"']) })).toThrow(/without commas or quotes/);
+    expect(write({ a: warn(["x".repeat(MAX_CHOICES_CHARS + 1)]) })).toThrow(/more than 255 characters/);
+    expect(write({ a: warn(["x".repeat(MAX_CHOICES_CHARS)]) })).not.toThrow();
+    // The warning's own words have Excel's limits: 32 characters for the title and 255 for the message.
+    expect(write({ a: { words: ["x"], title: "t".repeat(33), message: "m" } })).toThrow(/title/);
+    expect(write({ a: { words: ["x"], title: "t".repeat(32), message: "m" } })).not.toThrow();
+    expect(write({ a: { words: ["x"], title: "", message: "m" } })).toThrow(/title/);
+    expect(write({ a: { words: ["x"], title: "t", message: "m".repeat(256) } })).toThrow(/message/);
+    expect(write({ a: { words: ["x"], title: "t", message: "m".repeat(255) } })).not.toThrow();
   });
 
   it("writes the same file whether it is given all at once or a page at a time", () => {
@@ -189,6 +200,121 @@ describe("writing a workbook, and what SheetJS makes of it", () => {
     expect(MAX_SHEET_ROWS).toBe(1_048_576);
     expect(() => writeXlsx({ sheetName: "s", header: ["a"], maxRows: 3 }, [["1"], ["2"], ["3"]])).toThrow(/at most 3 rows/);
     expect(sheetOf(readXlsxHere(writeXlsx({ sheetName: "s", header: ["a"], maxRows: 3 }, [["1"], ["2"]]))).rows).toHaveLength(3);
+  });
+});
+
+describe("sheets beside the main one, warnings, suggestions and shading (beeline-kgyd.2)", () => {
+  const names: ExtraSheet = { name: "names", header: ["scientificName", "taxonRank"], rows: [["Apis mellifera", "species"], ["Bombus", "genus"], ["Osmia <lignaria> & co", null]] };
+  const people: ExtraSheet = { name: "People & places", header: ["who"], rows: [["Ann"], ["Bo"]] };
+  const decode = (bytes: Uint8Array, part: string) => new TextDecoder().decode(unzipSync(bytes)[part]);
+
+  it("holds each extra sheet in its own part, every one text, readable by SheetJS beside the main one", () => {
+    const bytes = writeXlsx({ sheetName: "main", header: ["a"], sheets: [names, people] }, [["1"]]);
+    const parts = unzipSync(bytes);
+    expect(Object.keys(parts).filter((n) => n.startsWith("xl/worksheets/")).sort()).toEqual(["xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml", "xl/worksheets/sheet3.xml"]);
+    const workbook = decode(bytes, "xl/workbook.xml");
+    expect(workbook).toContain(`<sheet name="main" sheetId="1" r:id="rId1"/><sheet name="names" sheetId="2" r:id="rId2"/><sheet name="People &amp; places" sheetId="3" r:id="rId3"/>`);
+    const rels = decode(bytes, "xl/_rels/workbook.xml.rels");
+    for (const n of [1, 2, 3]) expect(rels).toContain(`<Relationship Id="rId${n}" Type="${REL}/worksheet" Target="worksheets/sheet${n}.xml"/>`);
+    // The styles' relationship does not collide with a sheet's.
+    expect(rels).toContain(`<Relationship Id="rId4" Type="${REL}/styles" Target="styles.xml"/>`);
+    const types = decode(bytes, "[Content_Types].xml");
+    for (const n of [1, 2, 3]) expect(types).toContain(`<Override PartName="/xl/worksheets/sheet${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`);
+    // SheetJS, directly: every sheet is there, the main one first, with its cells, as text in the Text format.
+    const book = XLSX.read(bytes, { type: "array", cellNF: true, dense: true });
+    expect(book.SheetNames).toEqual(["main", "names", "People & places"]);
+    const rowsOf = (name: string) => XLSX.utils.sheet_to_json<string[]>(book.Sheets[name]!, { header: 1, blankrows: false });
+    expect(rowsOf("names")).toEqual([["scientificName", "taxonRank"], ["Apis mellifera", "species"], ["Bombus", "genus"], ["Osmia <lignaria> & co"]]);
+    expect(rowsOf("People & places")).toEqual([["who"], ["Ann"], ["Bo"]]);
+    for (const name of book.SheetNames) {
+      for (const row of book.Sheets[name]!["!data"] as Array<Array<XLSX.CellObject | undefined>>) {
+        for (const cell of row) if (cell !== undefined && cell.t !== "z") expect([name, cell.t, cell.z]).toEqual([name, "s", "@"]);
+      }
+    }
+    // The app's reader reads the main sheet only, and says which others it did not.
+    const read = readXlsxHere(bytes);
+    expect(read.ok && read.sheet.name).toBe("main");
+    expect(read.ok && read.otherSheets).toEqual(["names", "People & places"]);
+  });
+
+  it("refuses a sheet name that is not valid, and two sheets of one name, in any case", () => {
+    const write = (sheets: ExtraSheet[], sheetName = "main") => () => writeXlsx({ sheetName, header: ["a"], sheets }, []);
+    const sheet = (name: string): ExtraSheet => ({ name, header: ["x"], rows: [] });
+    for (const bad of ["", "x".repeat(32), "a/b", "a\\b", "a?", "a*", "a:b", "a[1]", "'quoted", "quoted'"]) expect(write([sheet(bad)]), bad).toThrow(/sheet name/);
+    expect(write([sheet("x".repeat(31))])).not.toThrow();
+    expect(write([sheet("names"), sheet("Names")])).toThrow(/two sheets are named/);
+    expect(write([sheet("main")])).toThrow(/two sheets are named/);
+    expect(write([sheet("MAIN")])).toThrow(/two sheets are named/);
+    expect(write([{ name: "n", header: [], rows: [] }])).toThrow(/between 1 and/);
+    expect(write([sheet("ok")], "bad/name")).toThrow(/sheet name/);
+  });
+
+  it("offers a column the words of an extra sheet's column as suggestions only: a range, with nothing refused and no warning", () => {
+    const bytes = writeXlsx({ sheetName: "main", header: ["a", "scientificName"], sheets: [names], choices: { scientificName: { sheet: "names", column: "scientificName" } } }, []);
+    const sheet = decode(bytes, "xl/worksheets/sheet1.xml");
+    // From row 2 to the sheet's last row (three data rows, so row 4), absolute, on the column the name has.
+    expect(sheet).toContain(`<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="B2:B${MAX_SHEET_ROWS}"><formula1>names!$A$2:$A$4</formula1></dataValidation>`);
+    expect(sheet).not.toContain("errorStyle");
+    // The second column of the sheet.
+    const other = writeXlsx({ sheetName: "main", header: ["rank"], sheets: [names], choices: { rank: { sheet: "names", column: "taxonRank" } } }, []);
+    expect(decode(other, "xl/worksheets/sheet1.xml")).toContain("<formula1>names!$B$2:$B$4</formula1>");
+    // A name that needs quoting is quoted in the formula, with its own apostrophes doubled and XML escaped.
+    const quoted = writeXlsx({ sheetName: "main", header: ["a"], sheets: [people], choices: { a: { sheet: "People & places", column: "who" } } }, []);
+    expect(decode(quoted, "xl/worksheets/sheet1.xml")).toContain("<formula1>'People &amp; places'!$A$2:$A$3</formula1>");
+    const apostrophe = writeXlsx({ sheetName: "main", header: ["a"], sheets: [{ name: "Bo's list", header: ["w"], rows: [["x"]] }], choices: { a: { sheet: "Bo's list", column: "w" } } }, []);
+    expect(decode(apostrophe, "xl/worksheets/sheet1.xml")).toContain("<formula1>'Bo''s list'!$A$2:$A$2</formula1>");
+    // Names that read as a cell reference are quoted too.
+    for (const [name, text] of [["A1", "'A1'"], ["R1C1", "'R1C1'"], ["1abc", "'1abc'"], ["ok_name", "ok_name"]] as const) {
+      const bytes = writeXlsx({ sheetName: "main", header: ["a"], sheets: [{ name, header: ["w"], rows: [["x"]] }], choices: { a: { sheet: name, column: "w" } } }, []);
+      expect(decode(bytes, "xl/worksheets/sheet1.xml"), name).toContain(`<formula1>${text}!$A$2:$A$2</formula1>`);
+    }
+    // And the file is a valid workbook for the library that reads it.
+    expect(readXlsxHere(bytes).ok).toBe(true);
+  });
+
+  it("writes no validation for a column whose reference sheet has no rows, and refuses one that points nowhere", () => {
+    const empty: ExtraSheet = { name: "names", header: ["scientificName"], rows: [] };
+    const none = writeXlsx({ sheetName: "main", header: ["a"], sheets: [empty], choices: { a: { sheet: "names", column: "scientificName" } } }, []);
+    expect(decode(none, "xl/worksheets/sheet1.xml")).not.toContain("dataValidation");
+    const write = (choices: Record<string, ColumnChoices>) => () => writeXlsx({ sheetName: "main", header: ["a"], sheets: [names], choices }, []);
+    expect(write({ a: { sheet: "nope", column: "scientificName" } })).toThrow(/not there: nope/);
+    expect(write({ a: { sheet: "names", column: "nope" } })).toThrow(/does not have: nope/);
+    expect(write({ b: { sheet: "names", column: "scientificName" } })).toThrow(/does not have: b/);
+  });
+
+  it("writes a warning that dismisses, with the caller's title and message escaped", () => {
+    const bytes = writeXlsx({ sheetName: "s", header: ["sex"], choices: { sex: { words: ["female", "male"], title: "Not a <word>", message: `Beeline takes "female" or "male" in sex.` } } }, []);
+    expect(decode(bytes, "xl/worksheets/sheet1.xml")).toContain(
+      `<dataValidation type="list" errorStyle="warning" allowBlank="1" showErrorMessage="1" errorTitle="Not a &lt;word&gt;" error="Beeline takes &quot;female&quot; or &quot;male&quot; in sex." sqref="A2:A${MAX_SHEET_ROWS}"><formula1>"female,male"</formula1></dataValidation>`,
+    );
+  });
+
+  it("shades the columns it is told to, bolds headings, and keeps the Text format on every cell", () => {
+    const bytes = writeXlsx({ sheetName: "s", header: ["a", "b", "c"], shadedColumns: ["b"], boldHeadings: ["a"], sheets: [names] }, [["1", "2", null]]);
+    const styles = decode(bytes, "xl/styles.xml");
+    // A plain RGB colour, not a theme colour, and the Text format on all of the styles in use.
+    expect(styles).toContain(`<fgColor rgb="${SHADE_RGB}"/>`);
+    expect(styles).not.toContain("theme=");
+    const xfs = [...styles.matchAll(/<xf numFmtId="(\d+)"[^>]*\/>/g)].map((m) => m[1]);
+    expect(xfs.slice(2)).toEqual(["49", "49", "49"]);
+    const sheet = decode(bytes, "xl/worksheets/sheet1.xml");
+    // The heading of a bold column, a shaded column's heading and cells (an empty one too), and a plain column.
+    expect(sheet).toMatch(/<c r="A1" s="2"/);
+    expect(sheet).toMatch(/<c r="B1" s="3"/);
+    expect(sheet).toMatch(/<c r="C1" s="1"/);
+    expect(sheet).toMatch(/<c r="B2" s="3"/);
+    expect(sheet).toMatch(/<c r="C2" s="1"\/>/);
+    expect(sheet).toMatch(/<col min="2" max="2"[^>]*style="3"/);
+    // SheetJS reads every cell of every sheet as text in the Text format.
+    const book = XLSX.read(bytes, { type: "array", cellNF: true, cellStyles: true, dense: true });
+    for (const name of book.SheetNames) {
+      for (const row of book.Sheets[name]!["!data"] as Array<Array<XLSX.CellObject | undefined>>) {
+        for (const cell of row) if (cell !== undefined && cell.t !== "z") expect([name, cell.t, cell.z]).toEqual([name, "s", "@"]);
+      }
+    }
+    const write = (opts: { shadedColumns?: string[]; boldHeadings?: string[] }) => () => writeXlsx({ sheetName: "s", header: ["a"], ...opts }, []);
+    expect(write({ shadedColumns: ["z"] })).toThrow(/does not have: z/);
+    expect(write({ boldHeadings: ["z"] })).toThrow(/does not have: z/);
   });
 });
 

@@ -7,7 +7,7 @@ import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type Sa
 import { labelName } from "../person-name.js";
 import { orcidUrl } from "../orcid.js";
 import { plantRelationship } from "../trap-method.js";
-import { xlsxWriter } from "./xlsx.js";
+import { xlsxWriter, type XlsxWriterOptions } from "./xlsx.js";
 
 /**
  * Browsing the collection: the query layer behind /samples and /specimens.
@@ -1829,10 +1829,10 @@ export function xlsxStream<Row>(
   fetch: (limit: number, offset: number) => Promise<Page<Row>>,
   toRow: (row: Row, page: Page<Row>) => readonly unknown[],
   timing?: CsvTiming,
-  /** The words a column may hold, by its heading, offered as a dropdown (xlsxWriter's `choices`). */
-  choices?: Readonly<Record<string, readonly string[]>>,
+  /** What the workbook offers beyond the rows: choices, extra sheets, shading (xlsxWriter's options). */
+  options?: Pick<XlsxWriterOptions, "sheets" | "choices" | "shadedColumns" | "boldHeadings">,
 ): ReadableStream<Uint8Array> {
-  const writer = xlsxWriter({ sheetName, header, choices });
+  const writer = xlsxWriter({ sheetName, header, ...options });
   return pagedStream(
     header[0] ?? "xlsx",
     fetch,

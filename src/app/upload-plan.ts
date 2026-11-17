@@ -14,6 +14,7 @@ import {
   textCell,
   type SpecimenRow,
 } from "./listings.js";
+import { oregonToday } from "../oregon-today.js";
 import { columnName, type CellType, type XlsxCell, type XLSX_REFUSALS } from "./xlsx.js";
 import { readXlsx, type ReadLimits } from "./xlsx-reader.js";
 
@@ -89,6 +90,7 @@ export const HOLD_REASONS = [
   "number_unreadable",
   "date_unreadable",
   "converted_to_date",
+  "holds_time",
   "holds_formula",
   "converted_other",
   // A unit that is not complete (UNIT_RULES).
@@ -125,7 +127,7 @@ const SPECIMEN_UNITS: readonly SpecimenUnit[] = ["determination", "disposition"]
 const SAMPLE_UNITS: readonly SampleUnit[] = ["method_dates", "place", "coordinates"];
 
 /** How a column's cell is read when its text is not Beeline's text. */
-type Reads =
+export type Reads =
   | "text" // any text: it differs
   | "word" // text compared ignoring case, read as the lower-case word
   | "number" // a plain decimal number
@@ -166,6 +168,31 @@ rule("disposition", "disposition", "text");
 rule("occurrenceRemarks", "disposition", "text");
 // Beeline writes this as true or false; a spreadsheet may write TRUE. Never applied.
 rule("identifiedByExpert", "not_applied", "word");
+
+/**
+ * The tabs Beeline puts in the download beside `specimens`, which are for
+ * looking up and are not read from an upload. An upload does not list them as
+ * tabs that were not read, and a change to one changes nothing.
+ */
+export const REFERENCE_TABS = ["names", "identifiers", "collectors", "about"] as const;
+
+/** How a column is read, for the file's own account of what each column takes. */
+export const columnRule = (column: string): { reads: Reads; kind: ChangeKind } | undefined => RULES.get(column);
+
+/**
+ * The columns Beeline reads from an upload: those the comparison takes as
+ * differences, which are every column with a rule that is not `not_applied`,
+ * and those that find the row (the keys, and the field number it checks). The
+ * download shades every other column, so that the file cannot say a column is
+ * read that the comparison ignores: both come from RULES.
+ */
+export const READ_COLUMNS: readonly string[] = SPECIMEN_CSV_HEADER.filter((c) => NOT_COMPARED.has(c) || RULES.get(c)?.kind !== "not_applied");
+/** Read, but not to be edited: the file is edited against them. */
+export const LEAVE_ALONE_COLUMNS: readonly string[] = ["specimenId", "specimenVersion", "sampleVersion"];
+/** The columns shaded grey: the ones Beeline ignores, and the ones that must be left alone. */
+export const SHADED_COLUMNS: readonly string[] = SPECIMEN_CSV_HEADER.filter((c) => !READ_COLUMNS.includes(c) || LEAVE_ALONE_COLUMNS.includes(c));
+/** The columns whose headings are bold: the ones Beeline reads that a person may edit. */
+export const BOLD_COLUMNS: readonly string[] = READ_COLUMNS.filter((c) => !LEAVE_ALONE_COLUMNS.includes(c));
 
 /** The most row numbers an item names; a count says how many more there are. A file of thousands of rows of one sample must not print them all. */
 export const ROWS_NAMED = 10;
@@ -375,12 +402,12 @@ export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits>
   const rows = body.filter((r) => [...r.cells.values()].some((c) => c.text.trim() !== ""));
   if (rows.length > MAX_ROWS) return { ok: false, refusal: "too_many_rows" };
   if (rows.length === 0) return { ok: false, refusal: "no_rows" };
-  return { ok: true, upload: { columns, unrecognised, otherSheets: read.otherSheets, rows } };
+  return { ok: true, upload: { columns, unrecognised, otherSheets: read.otherSheets.filter((n) => !(REFERENCE_TABS as readonly string[]).includes(n)), rows } };
 }
 
 // --- Reading a cell ---
 
-type CellProblem = "number_unreadable" | "date_unreadable" | "converted_to_date" | "holds_formula" | "converted_other";
+type CellProblem = "number_unreadable" | "date_unreadable" | "converted_to_date" | "holds_time" | "holds_formula" | "converted_other";
 
 /** A cell as the strict reading found it: what it says, or why it cannot be used. */
 interface Evaluated {
@@ -515,6 +542,15 @@ function evaluate(column: string, cell: XlsxCell | undefined, nowText: string): 
     const value = isProblem(read) ? ({ kind: "text", text: fileText } as const) : read;
     return { column, nowText: was, fileText, value, differs: !sameValue(value, readOwn(reads, was)), problem: null };
   }
+  // A real date cell in a date column is that day: the file stores it as a serial and the workbook's date system,
+  // which is unambiguous, unlike typed text. Staff fill the file by pasting rows from other sheets, which bring their
+  // cell types with them. A date with a time of day is not a day, and is held.
+  if (type === "date" && (reads === "days" || reads === "moment")) {
+    if (/\d\s+\d/.test(fileText)) return { column, nowText: was, fileText, value: { kind: "text", text: fileText }, differs: true, problem: "holds_time" };
+    const read = readText(reads, fileText, "text");
+    if (isProblem(read)) return { column, nowText: was, fileText, value: { kind: "text", text: fileText }, differs: true, problem: read };
+    return { column, nowText: was, fileText, value: read, differs: !sameValue(read, readOwn(reads, was)), problem: null };
+  }
   const convertedTo = PROBLEM_OF_TYPE[type];
   if (convertedTo !== undefined) {
     return { column, nowText: was, fileText, value: { kind: "text", text: fileText }, differs: true, problem: convertedTo };
@@ -540,8 +576,6 @@ interface Incomplete {
 
 const MAX_INTEGER = 2_147_483_647;
 
-/** A day, `YYYY-MM-DD`, as Oregon reads today. */
-export const oregonToday = (now: Date = new Date()): string => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(now);
 
 type UnitCells = ReadonlyMap<string, Evaluated>;
 const blank = (cells: UnitCells, column: string): boolean => cells.get(column)!.value.kind === "blank";

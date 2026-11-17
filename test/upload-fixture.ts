@@ -145,7 +145,7 @@ export function edited(
     addColumns?: Record<string, string>;
     dropRows?: number[];
     /** The sheet's name, and other sheets of the workbook (see buildWorkbook). */
-    sheets?: { name?: string; others?: string[]; before?: boolean };
+    sheets?: { name?: string; others?: string[]; before?: boolean; date1904?: boolean };
   } = {},
 ): Uint8Array {
   const records = matrixOf(download);

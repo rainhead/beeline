@@ -1,5 +1,6 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { pathToFileURL } from "node:url";
+import { oregonToday } from "./oregon-today.js";
 
 /**
  * A one-time repair of what legacy promotion left behind (beeline-iuva).
@@ -190,7 +191,6 @@ const numberOf = (r: string) => `
 const sqlString = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
 /** Today's date where the program is, which is the date a remark is good for. */
-const oregonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
 
 /** Whether a legacy record carries an expert's, or a volunteer's, identification at all. */
 const hasExpert = (r: string) => `(coalesce(nullif(trim(${r}.genus), ''), nullif(trim(${r}."scientificName"), '')) IS NOT NULL)`;

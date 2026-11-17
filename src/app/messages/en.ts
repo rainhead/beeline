@@ -2034,6 +2034,47 @@ export const en = {
       acting: "You are acting for someone else. Keys belong to the person signed in, so stop acting for them to make or revoke a key.",
     },
   },
+  /** What the Excel download itself offers a person typing in it: warnings, tabs to look names up in, and the about tab (beeline-kgyd.2). */
+  workbook: {
+    /** The warning a spreadsheet shows when a cell holds a word the column does not take. The title is at most 32 characters and the message at most 255, which is Excel's limit. */
+    warning: {
+      title: "Not one of the listed words",
+      message: (column: string) =>
+        `Beeline takes one of the listed words in the ${column} column. You may keep what you typed, but Beeline will not use that cell when the file is uploaded.`,
+    },
+    /** The tab that says what the file is. Its first column is the topic and its second what to know. */
+    about: {
+      headingTopic: "Topic",
+      headingText: "What to know",
+      purposeTopic: "What this file is for",
+      purpose:
+        "This is the specimens list from Beeline, to edit and upload again on the Edited downloads page. Beeline compares what you upload with what it says now and lists every difference. It does not change any record from a file yet.",
+      columnsTopic: "White and grey columns",
+      columns:
+        "Beeline reads the white columns when you upload the file, and their headings are in bold. The grey columns are for reference: Beeline ignores what is in them, apart from the three named below. Nothing is locked, so you can still sort and filter on any column.",
+      leaveTopic: "specimenId, specimenVersion and sampleVersion",
+      leave:
+        "These three are grey, but Beeline does read them: it finds each row by them and uses them to see whether the record changed since you downloaded the file. Leave them as they are.",
+      lookupTopic: "The names, identifiers and collectors tabs",
+      lookup:
+        "These tabs are for looking things up, and Beeline does not read them when you upload, so changing them changes nothing. The scientificName and identifiedBy columns offer the names and identifiers as suggestions, and you may type something else. The collectors tab has no suggestions, because Beeline does not read the recordedBy column.",
+      windowsTopic: "Who is on the identifiers and collectors tabs",
+      windows:
+        "The names tab holds the scientific names in Beeline's taxonomy. The identifiers tab holds people who identified a specimen, or whose identification is of a specimen collected, in the last five years. The collectors tab holds people who collected a sample in the last 24 months.",
+      columnHeading: (column: string) => column,
+      anyText: "Any text.",
+      oneOf: (words: readonly string[]) => `One of ${words.join(", ")}, or leave it blank.`,
+      dayRule: "A day or two days, written as YYYY-MM-DD or YYYY-MM-DD/YYYY-MM-DD. A cell that the spreadsheet made a date is read as that day.",
+      momentRule: "A date written as YYYY-MM-DD, YYYY-MM or YYYY. A cell that the spreadsheet made a date is read as that day.",
+      wholeNumber: "A whole number of metres.",
+      scientificName:
+        "A scientific name. The names tab lists those in Beeline's taxonomy; a name that is not there is fine for now, and Beeline does not yet check names against its taxonomy.",
+      identifiedBy:
+        "The person who identified the specimen. A name that is not on the identifiers tab is fine: Beeline will ask about new names when it can apply changes.",
+      fieldNumber: "The field number of the specimen. Leave it as it is: Beeline does not use a row whose number is not the specimen's.",
+    },
+  },
+
   /** Comparing an edited copy of the specimens download (beeline-kgyd). Staff only; nothing here changes a record. */
   uploads: {
     title: "Edited downloads",
@@ -2158,6 +2199,7 @@ export const en = {
         number_unreadable: "Cells that should hold a number and do not",
         date_unreadable: "Cells that should hold a date and do not",
         converted_to_date: "Cells the spreadsheet turned into a date",
+        holds_time: "Date cells that hold a time of day as well as a date",
         holds_formula: "Cells that hold a formula",
         converted_other: "Cells the spreadsheet turned into something that is not text, such as TRUE or an error",
         name_blank: "Identifications with no scientific name",
@@ -2187,7 +2229,8 @@ export const en = {
         number_disagrees: "Leave the fieldNumber and specimenId columns as they were, or download again and make the edit in the new file.",
         number_unreadable: "Type the number with its digits, a minus sign where it has one, and a decimal point, such as -123.262.",
         date_unreadable: "Type the date as YYYY-MM-DD, such as 2026-07-14. A date identified may also be YYYY-MM or YYYY, and a collecting date may be two days with a slash between, 2026-07-14/2026-07-16.",
-        converted_to_date: "Format the cell as text, then type the value as YYYY-MM-DD.",
+        converted_to_date: "Format the cell as text, then type the value as YYYY-MM-DD. Beeline reads a date cell only in the date identified and collecting date columns.",
+        holds_time: "The cell holds a time as well as a date. Format it as text and type the day as YYYY-MM-DD.",
         holds_formula: "Beeline reads what was typed, not a formula. Format the cell as text and type the value itself.",
         converted_other: "Format the cell as text, then type the value again.",
         name_blank: "Type the name, or put back the one that was there.",

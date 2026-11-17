@@ -134,6 +134,15 @@ async function optionalColumn(conn: DuckDBConnection, file: string, column: stri
   return names.has(column) ? `trim("${column}")` : "CAST(NULL AS VARCHAR)";
 }
 
+/**
+ * When an identification was entered in Ecdysis, from its `modified` text:
+ * archives write it to the second, flat exports as month/day/year to the
+ * minute. Compared as text the two orders disagree, so anything that orders
+ * identifications parses them first.
+ */
+const ENTERED_AT = `coalesce(try_strptime(entered_text, '%Y-%m-%d %H:%M:%S'), try_strptime(entered_text, '%m/%d/%Y %H:%M'),
+                         try_strptime(entered_text, '%Y-%m-%d'))`;
+
 /** The archive's two files, or the one flat CSV. */
 function locate(path: string): { input: "archive"; occurrences: string; identifications: string } | { input: "flat"; occurrences: string } {
   if (statSync(path).isDirectory()) {
@@ -219,7 +228,16 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                -- "s.d." (no date) in the history is a blank on the occurrence;
                -- a date the occurrence has since corrected is a new statement.
                AND coalesce(nullif(i.date_identified, 's.d.'), '') = coalesce(nullif(o.date_identified, 's.d.'), '')
-             QUALIFY row_number() OVER (PARTITION BY i.occ_id ORDER BY i.entered_text DESC, i.record_id DESC) = 1)`,
+             -- A row already loaded is current only if it already stands as
+             -- the record: one loaded as history that the occurrence has gone
+             -- back to would be skipped as loaded, and the change lost, so
+             -- there the occurrence row stands in, as it does without a match.
+             WHERE NOT EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.record_id = i.record_id)
+                OR EXISTS (SELECT 1 FROM ecdysis_identification e JOIN determination_of_record r ON r.entity_id = e.determination_id
+                           WHERE e.record_id = i.record_id)
+             QUALIFY row_number() OVER (
+               PARTITION BY i.occ_id
+               ORDER BY ${ENTERED_AT.replaceAll("entered_text", "i.entered_text")} DESC NULLS LAST, i.record_id DESC) = 1)`,
         );
       }
       // Symbiota keeps an occurrence's current determination on the
@@ -421,8 +439,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                      WHEN regexp_matches(date_identified, '^\\d{4}-\\d{2}-\\d{2}$') THEN try_cast(date_identified AS DATE) END AS determined_on,
                 CASE WHEN regexp_matches(date_identified, '^\\d{4}$') THEN 'year'
                      WHEN regexp_matches(date_identified, '^\\d{4}-\\d{2}$') THEN 'month' END AS precision,
-                coalesce(try_strptime(entered_text, '%Y-%m-%d %H:%M:%S'), try_strptime(entered_text, '%m/%d/%Y %H:%M'),
-                         try_strptime(entered_text, '%Y-%m-%d')) AS entered_at,
+                ${ENTERED_AT} AS entered_at,
                 (SELECT min(p.entity_id) FROM ecd_alias al JOIN person p ON p.display_name = al.person
                   WHERE al.alias = ident.identified_by) AS determiner_id
          FROM ident
@@ -513,7 +530,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                  FROM ecdysis_identification e
                  JOIN determination d ON d.entity_id = e.determination_id
                  JOIN specimen_catalog_number c ON c.specimen_id = d.specimen_id
-                WHERE left(c.catalog_number, length($1)) = $1)
+                WHERE starts_with(c.catalog_number, $1))
        FROM ecd_candidate`,
       [prefix],
     )) as [[Date | null, Date | null]];

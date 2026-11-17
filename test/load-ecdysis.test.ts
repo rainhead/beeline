@@ -625,6 +625,34 @@ describe("the archive a collection publishes", () => {
     expect((await record(a))?.[0]).toBe("Andrena sladeni");
   });
 
+  test("an occurrence that goes back to a name already loaded as history makes it the record again", async () => {
+    // The history row is already loaded, as history, so it cannot be
+    // recorded again; the occurrence row stands in for it (CodeRabbit on
+    // this branch).
+    const history = "200,B. Zand,,,Bombus vosnesenskii,,id-a-old,2025-08-01 10:00:00\n" + "200,B. Zand,,,Andrena sladeni,,id-a,2025-09-25 16:10:48\n";
+    const first = await published("200,BCBA_2303966,occ-a,Andrena sladeni,,B. Zand,,,2025-09-25 16:10:48\n", history);
+    await loadEcdysis(conn, { path: first, catalogPrefix: "BCBA_", determinerAliases: ALIASES });
+    expect((await record(a))?.[0]).toBe("Andrena sladeni");
+    const back = await published("200,BCBA_2303966,occ-a,Bombus vosnesenskii,,B. Zand,,,2025-10-01 09:00:00\n", history);
+    expect((await loadEcdysis(conn, { path: back, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).loaded).toBe(1);
+    expect((await record(a))?.[0]).toBe("Bombus vosnesenskii");
+    // Loading either again records nothing more.
+    expect((await loadEcdysis(conn, { path: back, catalogPrefix: "BCBA_", determinerAliases: ALIASES })).loaded).toBe(0);
+  });
+
+  test("the current row is the newest by time, whichever way the time is written", async () => {
+    // A history row to the minute, month first, as flat exports write it,
+    // against one to the second: as text "9/25/2025" sorts after "2025-10-13".
+    const dir = await published(
+      "200,BCBA_2303966,occ-a,Bombus vosnesenskii,,B. Zand,,,2025-10-13 18:35:00\n",
+      "200,B. Zand,,,Bombus vosnesenskii,,id-sept,9/25/2025 16:10\n" + "200,B. Zand,,,Bombus vosnesenskii,,id-oct,2025-10-13 18:35:00\n",
+    );
+    await loadEcdysis(conn, { path: dir, catalogPrefix: "BCBA_", determinerAliases: ALIASES });
+    expect(
+      await rows(conn, `SELECT e.record_id FROM ecdysis_identification e JOIN determination_of_record r ON r.entity_id = e.determination_id`),
+    ).toEqual([["id-oct"]]);
+  });
+
   test("one collection's archive is not refused for being older than another collection's", async () => {
     // Each atlas's archive is taken on its own schedule, so the order check
     // compares an archive only with what its own collection already loaded.

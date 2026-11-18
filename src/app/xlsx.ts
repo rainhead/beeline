@@ -141,6 +141,23 @@ export interface XlsxWriterOptions {
   shadedColumns?: readonly string[];
   /** Headings to write in bold. */
   boldHeadings?: readonly string[];
+  /**
+   * Width, in characters, of a column by its heading; a column not named is
+   * 16 wide. A spreadsheet draws a text cell's overflow across the empty cell
+   * beside it, so a column too narrow for its text makes the text look like
+   * the next column's content (beeline-kgyd.11). The rows are streamed, so
+   * the writer cannot measure them: the caller says what fits.
+   */
+  widths?: Readonly<Record<string, number>>;
+  /**
+   * Headings of the columns whose text is wrapped inside the cell. A
+   * spreadsheet draws an unwrapped text cell's overflow across the empty cell
+   * beside it, however wide the column is, and free text can be any length.
+   * A wrapped cell never overflows: its row grows to hold it, in Excel, Google
+   * Sheets and Gnumeric alike, when the row has no height of its own, as the
+   * writer's rows have none (beeline-kgyd.11).
+   */
+  wrappedColumns?: readonly string[];
 }
 
 /** The most characters a list of choices may come to, commas included: the limit of a list written into the sheet itself. */
@@ -169,6 +186,9 @@ export function sheetRef(name: string): string {
 const STYLE_TEXT = 1;
 const STYLE_BOLD = 2;
 const STYLE_GREY = 3;
+// The same two with the text wrapped inside the cell.
+const STYLE_TEXT_WRAPPED = 4;
+const STYLE_GREY_WRAPPED = 5;
 /** A plain RGB colour and not a theme colour, so that every program shows the same grey: light enough for black text. */
 export const SHADE_RGB = "FFD9D9D9";
 
@@ -234,9 +254,15 @@ export function xlsxWriter(opts: XlsxWriterOptions): XlsxWriter {
   if (header.length === 0 || header.length > MAX_COLUMNS) throw new Error(`a sheet needs between 1 and ${MAX_COLUMNS} columns`);
   const shaded = new Set(opts.shadedColumns ?? []);
   const bold = new Set(opts.boldHeadings ?? []);
+  for (const heading of Object.keys(opts.widths ?? {})) if (!header.includes(heading)) throw new Error(`a width for a column the sheet does not have: ${heading}`);
+  for (const [heading, width] of Object.entries(opts.widths ?? {})) if (!Number.isFinite(width) || width <= 0) throw new Error(`a width must be a positive number: ${heading}`);
+  const wrapped = new Set(opts.wrappedColumns ?? []);
+  for (const heading of wrapped) if (!header.includes(heading)) throw new Error(`wrapping for a column the sheet does not have: ${heading}`);
   for (const heading of [...shaded, ...bold]) if (!header.includes(heading)) throw new Error(`styling for a column the sheet does not have: ${heading}`);
+  // Own entries only: a heading such as "constructor" must not find a width on Object.prototype.
+  const widthOf = (heading: string) => (opts.widths !== undefined && Object.hasOwn(opts.widths, heading) ? opts.widths[heading]! : 16);
   // The style of each column's cells and of its heading.
-  const bodyStyles = header.map((h) => (shaded.has(h) ? STYLE_GREY : STYLE_TEXT));
+  const bodyStyles = header.map((h) => (shaded.has(h) ? (wrapped.has(h) ? STYLE_GREY_WRAPPED : STYLE_GREY) : wrapped.has(h) ? STYLE_TEXT_WRAPPED : STYLE_TEXT));
   const headStyles = header.map((h, at) => (bold.has(h) ? STYLE_BOLD : bodyStyles[at]!));
   // Worked out before anything is written, so a bad list fails the download at its start and not at its end.
   const dropdowns = choicesXml(header, opts.choices ?? {}, extra);
@@ -317,7 +343,7 @@ export function xlsxWriter(opts: XlsxWriterOptions): XlsxWriter {
           `<Relationship Id="rId${names.length + 1}" Type="${NS_REL}/styles" Target="styles.xml"/>` +
           `</Relationships>`,
       );
-      // Style 1 is the Text format, 2 the Text format in bold, 3 the Text format on grey. Style 0 is the spreadsheet's default and is used by nothing.
+      // Style 1 is the Text format, 2 the Text format in bold, 3 the Text format on grey, 4 and 5 the first and third with the text wrapped. Style 0 is the spreadsheet's default and is used by nothing.
       part(
         "xl/styles.xml",
         `${XML_HEAD}<styleSheet xmlns="${NS_MAIN}">` +
@@ -326,10 +352,12 @@ export function xlsxWriter(opts: XlsxWriterOptions): XlsxWriter {
           `<fill><patternFill patternType="solid"><fgColor rgb="${SHADE_RGB}"/><bgColor indexed="64"/></patternFill></fill></fills>` +
           `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
           `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
-          `<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+          `<cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
           `<xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
           `<xf numFmtId="49" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>` +
-          `<xf numFmtId="49" fontId="0" fillId="2" borderId="0" xfId="0" applyNumberFormat="1" applyFill="1"/></cellXfs>` +
+          `<xf numFmtId="49" fontId="0" fillId="2" borderId="0" xfId="0" applyNumberFormat="1" applyFill="1"/>` +
+          `<xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment wrapText="1"/></xf>` +
+          `<xf numFmtId="49" fontId="0" fillId="2" borderId="0" xfId="0" applyNumberFormat="1" applyFill="1" applyAlignment="1"><alignment wrapText="1"/></xf></cellXfs>` +
           `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
           `</styleSheet>`,
       );
@@ -340,7 +368,7 @@ export function xlsxWriter(opts: XlsxWriterOptions): XlsxWriter {
         encoder.encode(
           `${XML_HEAD}<worksheet xmlns="${NS_MAIN}">` +
             `<cols>${header
-              .map((_, at) => `<col min="${at + 1}" max="${at + 1}" width="16" style="${bodyStyles[at]}" customWidth="1"/>`)
+              .map((_, at) => `<col min="${at + 1}" max="${at + 1}" width="${widthOf(header[at]!)}" style="${bodyStyles[at]}" customWidth="1"/>`)
               .join("")}</cols>` +
             `<sheetData>${row(header, headStyles)}`,
         ),

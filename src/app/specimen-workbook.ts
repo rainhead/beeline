@@ -111,8 +111,32 @@ export interface SpecimenWorkbook {
   /** The headings of the main sheet, in order: a subset of the CSV's. */
   header: readonly string[];
   /** The writer's options for everything beyond the rows. */
-  options: Pick<XlsxWriterOptions, "sheets" | "choices" | "shadedColumns" | "boldHeadings">;
+  options: Pick<XlsxWriterOptions, "sheets" | "choices" | "shadedColumns" | "boldHeadings" | "widths" | "wrappedColumns">;
 }
+
+/**
+ * The columns whose text can be long: free text, or a name with a subgenus.
+ * A spreadsheet draws an unwrapped text cell's overflow across the empty cell
+ * beside it, and an empty cell does not stop it. On a row with no
+ * determination, associatedTaxa's `"visits flowers of":"Astereae"` ran over the
+ * empty scientificName and read as a flower being the bee's name, and
+ * identifiedBy runs over an empty dateIdentified the same way
+ * (beeline-kgyd.11). Width alone cannot stop it, since a host is free text of
+ * any length, so these columns wrap: a long value makes its row taller and
+ * never reaches the next cell.
+ */
+export const WRAPPED_COLUMNS: readonly string[] = ["recordedBy", "locality", "county", "associatedTaxa", "scientificName", "identifiedBy", "occurrenceRemarks"];
+
+/** How wide each wrapped column is drawn, in characters (the rest are 16): wide enough that most rows stay one line, narrow enough to leave the sheet readable. */
+export const COLUMN_WIDTHS: Readonly<Record<string, number>> = {
+  recordedBy: 26,
+  locality: 32,
+  county: 18,
+  associatedTaxa: 56,
+  scientificName: 36,
+  identifiedBy: 24,
+  occurrenceRemarks: 40,
+};
 
 /** The specimens file, beyond its rows. `today` is a day in Oregon, which a test fixes. */
 export async function specimenWorkbook(db: Kysely<Database>, m: Messages, today: string = oregonToday()): Promise<SpecimenWorkbook> {
@@ -144,6 +168,6 @@ export async function specimenWorkbook(db: Kysely<Database>, m: Messages, today:
   sheets.push({ name: ABOUT_TAB, header: [m.workbook.about.headingTopic, m.workbook.about.headingText], rows: aboutRows(m) });
   return {
     header: layout.headings,
-    options: { sheets, choices, shadedColumns: layout.shaded, boldHeadings: layout.read },
+    options: { sheets, choices, shadedColumns: layout.shaded, boldHeadings: layout.read, widths: COLUMN_WIDTHS, wrappedColumns: WRAPPED_COLUMNS },
   };
 }

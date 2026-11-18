@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { readXlsxHere as readXlsx } from "../src/app/xlsx-reader.js";
-import { MAX_SHEET_ROWS, columnIndex, columnName } from "../src/app/xlsx.js";
+import { MAX_SHEET_ROWS, columnIndex, columnName, writeXlsx } from "../src/app/xlsx.js";
 import * as XLSX from "xlsx";
 import { specimenWorkbook } from "../src/app/specimen-workbook.js";
 import { SPECIMEN_CHOICES, SPECIMENS_LAYOUT, columnRule } from "../src/app/upload-plan.js";
@@ -2084,7 +2084,7 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     const xml = new TextDecoder().decode(unzipSync(bytes)["xl/worksheets/sheet1.xml"]);
     expect(xml).not.toContain("<f>");
     // Every cell has the Text format.
-    for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toMatch(/ s="[123]"/);
+    for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toMatch(/ s="[1-5]"/);
   });
 
   it("is stamped as an Excel file, and gives each person the rows they are shown", async () => {
@@ -2204,6 +2204,29 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
     ]);
   });
 
+  it("wraps the columns whose text can be long, so none is drawn over the empty cell beside it (beeline-kgyd.11)", async () => {
+    const { db } = await tabsFixture();
+    const { options, header } = await specimenWorkbook(db, en, TODAY);
+    // The ones that spilled: a host, a determiner's name, a name with a subgenus.
+    for (const h of ["associatedTaxa", "identifiedBy", "scientificName"]) {
+      expect(options.wrappedColumns, h).toContain(h);
+      expect(options.widths?.[h], h).toBeGreaterThan(16);
+    }
+    // Written, the cell of a long host in a row with nothing beside it carries the wrapping style.
+    const longHost = `"visits flowers of":"Chrysothamnus viscidiflorus ssp. viscidiflorus"`;
+    const row = header.map((h) => (h === "associatedTaxa" ? longHost : null));
+    const files = unzipSync(writeXlsx({ sheetName: "specimens", header, ...options }, [row]));
+    const xml = strFromU8(files["xl/worksheets/sheet1.xml"]!);
+    const styles = strFromU8(files["xl/styles.xml"]!);
+    const wrapStyles = [...styles.matchAll(/<xf [^>]*>(<alignment wrapText="1"\/>)?/g)].flatMap((m, at) => (m[1] === undefined ? [] : [at]));
+    const hostAt = columnName(header.indexOf("associatedTaxa"));
+    const hostCell = xml.match(new RegExp(`<c r="${hostAt}2" s="(\\d+)"`));
+    expect(wrapStyles).toContain(Number(hostCell![1]));
+    // The empty cell beside it is the one the text would have been drawn over.
+    const nextAt = columnName(header.indexOf("associatedTaxa") + 1);
+    expect(xml).toMatch(new RegExp(`<c r="${nextAt}2" s="\\d+"/>`));
+  });
+
   it("lists people who identified a specimen in the last five years, as identifiedBy writes them, once each and sorted", async () => {
     const { db } = await tabsFixture();
     const { options } = await specimenWorkbook(db, en, TODAY);
@@ -2301,7 +2324,8 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       const xml = sheetXml(bytes);
       const head = rowsOf(book(bytes), "specimens")[0]!;
       const styleOf = (ref: string) => new RegExp(`<c r="${ref}" s="(\\d)"`).exec(xml)![1];
-      const grey = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "3");
+      // 3 is grey and 5 is grey with the text wrapped; 1 is plain and 4 plain wrapped.
+      const grey = head.filter((c, at) => ["3", "5"].includes(styleOf(`${columnName(at)}1`)!));
       const bold = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "2");
       expect(head).toEqual([
         "fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa",
@@ -2315,7 +2339,7 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       expect(grey).toEqual(head.filter((c) => !SPECIMENS_LAYOUT.read.includes(c)));
       for (const c of SPECIMENS_LAYOUT.read) expect(["determination", "disposition"], c).toContain(columnRule(c)!.kind);
       // The whole of a grey column is grey, a white column's cells are plain, in the first data row too.
-      head.forEach((c, at) => expect(styleOf(`${columnName(at)}2`), c).toBe(grey.includes(c) ? "3" : "1"));
+      head.forEach((c, at) => expect(["3", "5"].includes(styleOf(`${columnName(at)}2`)!), c).toBe(grey.includes(c)));
       // Nothing is locked, so a person may still sort and filter.
       expect(xml).not.toContain("sheetProtection");
       expect(strFromU8(unzipSync(bytes)["xl/workbook.xml"]!)).not.toContain("workbookProtection");

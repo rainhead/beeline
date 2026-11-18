@@ -215,7 +215,11 @@ import {
   sampleCsvRow,
   SPECIMEN_CSV_HEADER,
   specimenCsvRow,
+  listingYears,
+  DETERMINATION_STATES,
+  type DeterminationState,
 } from "./listings.js";
+import { oregonToday } from "../oregon-today.js";
 import { programArchives } from "./dwc-archive.js";
 import { archiveDir, readArchiveManifest } from "./program-archives.js";
 import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
@@ -1165,6 +1169,8 @@ export function createApp({
         <SampleListing
           m={m}
           query={query}
+          years={await listingYears(db)}
+          currentYear={Number(oregonToday().slice(0, 4))}
           page={results}
           atlases={atlases}
           admin={admin}
@@ -1210,6 +1216,8 @@ export function createApp({
         <SpecimenListing
           m={m}
           query={query}
+          years={await listingYears(db)}
+          currentYear={Number(oregonToday().slice(0, 4))}
           page={results}
           atlases={atlases}
           admin={admin}
@@ -1894,11 +1902,14 @@ export function createApp({
       view === "sample" && Number.isInteger(specimenAsked) && specimenAsked > 0 ? await seasonOf(db, acting.personId, specimenAsked) : null;
     const asked = focusSeason ?? Number(c.req.query("season"));
     const season = seasons.some((s) => s.season === asked) ? asked : defaultSeason(seasons);
+    const askedDet = c.req.query("det") ?? "";
+    const det = (DETERMINATION_STATES as readonly string[]).includes(askedDet) ? (askedDet as DeterminationState) : "any";
     const rows =
-      view === "batch" ? await batchRows(db, acting.personId, me) : season === null ? [] : await seasonRows(db, acting.personId, me, season);
+      view === "batch" ? await batchRows(db, acting.personId, me) : season === null ? [] : await seasonRows(db, acting.personId, me, season, det);
     const data = {
       view,
       season,
+      det,
       rows,
       taxa: await rowTaxa(db, rows),
       readOnly: acting.impersonating,

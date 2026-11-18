@@ -351,6 +351,25 @@ tbody tr.flag:hover { background: inherit; }
   gap: var(--space-3) var(--space-6);
   margin-bottom: var(--space-4);
 }
+/* The year menu, a label, a select and a button on one line (beeline-kgyd.8). */
+.year-form { display: flex; gap: var(--space-2); align-items: center; margin: 0; }
+.year-form label { white-space: nowrap; font: var(--md-sys-typescale-label); }
+/* One-click filters above the table (beeline-hkd4): links, so each is a listing of its own. */
+.quick-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+.quick-filters a {
+  font: var(--md-sys-typescale-label);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--radius-full);
+  text-decoration: none;
+  color: var(--md-sys-color-on-surface);
+}
+.quick-filters a:visited { color: var(--md-sys-color-on-surface); }
+.quick-filters a:hover { background: var(--md-sys-color-surface-variant); }
+.quick-filters a[aria-current] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
 /* A segmented control: one choice among a few, all visible. Links, since
    each is a listing of its own. */
 .segmented {

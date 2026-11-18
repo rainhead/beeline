@@ -221,13 +221,15 @@ class DetermineGrid extends LitElement {
     super.connectedCallback();
     // The season menu is the shell's, a plain GET form: choosing a season goes there.
     // It waits for the saves first, like every other way off the page.
-    document.querySelector<HTMLSelectElement>("#determine-season")?.addEventListener("change", (e) => {
-      const menu = e.target as HTMLSelectElement;
-      void this.#afterSaves(
-        () => menu.form?.requestSubmit(),
-        () => (menu.value = String(this.data.season)),
-      );
-    });
+    for (const id of ["#determine-season", "#determine-named"]) {
+      document.querySelector<HTMLSelectElement>(id)?.addEventListener("change", (e) => {
+        const menu = e.target as HTMLSelectElement;
+        void this.#afterSaves(
+          () => menu.form?.requestSubmit(),
+          () => (menu.value = id === "#determine-season" ? String(this.data.season) : this.data.det),
+        );
+      });
+    }
     document.addEventListener("click", this.#holdLink);
     window.addEventListener("beforeunload", this.#warnUnsaved);
     window.addEventListener("pageshow", this.#reloadIfRestored);

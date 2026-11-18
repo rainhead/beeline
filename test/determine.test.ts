@@ -136,6 +136,22 @@ describe("seasons", () => {
   });
 });
 
+describe("showing only what is named a given distance (beeline-o9rd)", () => {
+  it("judges on what the person sees: their draft, else the newest volunteer name", async () => {
+    const { db, ada, spec, animal, conn } = await fixture();
+    const shown = async (det: Parameters<typeof seasonRows>[4]) => (await seasonRows(db, ada, ada, 2026, det)).map((r) => r.fieldNumber);
+    // 26000102 is Ada's own Bombus (the expert's species is not hers to see).
+    expect(await shown("genus")).toEqual(["26000102"]);
+    expect(await shown("species")).toEqual([]);
+    expect(await shown("from_genus")).toEqual(["26000102"]);
+    expect(await shown("undetermined")).toEqual(["25000900", "26000101", "26000103"]);
+    // A draft species on another specimen counts, and replaces nothing on this one.
+    await conn.run(`INSERT INTO determination_draft (specimen_id, determiner_id, animal_id) VALUES (${await spec("26000101")}, ${ada}, ${await animal("Bombus vosnesenskii")})`);
+    expect(await shown("species")).toEqual(["26000101"]);
+    expect(await shown("undetermined")).toEqual(["25000900", "26000103"]);
+  });
+});
+
 describe("the rows", () => {
   it("are the person's own, in collecting order, with their earlier name and never the expert's", async () => {
     const { db, ada, animal } = await fixture();

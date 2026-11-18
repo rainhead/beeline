@@ -800,6 +800,23 @@ export const en = {
       detAny: "Any",
       detDetermined: "Determined",
       detUndetermined: "Not determined",
+      /** How far the name goes (beeline-o9rd): the options of the same menu, each a band of ranks. */
+      detCoarse: "Named only above genus",
+      detGenus: "Named to genus only",
+      detSpecies: "Named to species",
+      detFromGenus: "Named to genus or finer",
+      detHint: "Judged on the name of record. On samples, at least one specimen is that far.",
+      /** One collection year (beeline-kgyd.8); the Identify page says it this way too. */
+      year: "Collection year",
+      yearAny: "Any year",
+      yearGo: "Show",
+      /** The links above the table that set the common filters in one click (beeline-hkd4). */
+      quick: {
+        label: "Common filters",
+        thisYear: (year: number) => `This collection year (${year})`,
+        notNamed: "Not named",
+        coarse: "Named only above genus",
+      },
       /** Whether labels are on paper (beeline-3v33): a sample's labels, or a specimen's own. */
       labels: "Labels",
       labelsAny: "Any",
@@ -1543,6 +1560,19 @@ export const en = {
      * reads as spring or summer (Karla Salp, 2026-11-13, beeline-mjml).
      */
     season: "Collection year",
+    /** Which specimens to list by how far the name shown goes (beeline-o9rd). */
+    named: {
+      label: "Show",
+      options: [
+        ["any", "All specimens"],
+        ["undetermined", "Not named"],
+        ["coarse", "Named only above genus"],
+        ["genus", "Named to genus only"],
+        ["species", "Named to species"],
+        ["from_genus", "Named to genus or finer"],
+        ["determined", "Named at all"],
+      ] as ReadonlyArray<readonly [string, string]>,
+    },
     /** Only without script, beside the season menu. */
     seasonGo: "Show",
     seasonOption: (season: number, unnamed: number) =>

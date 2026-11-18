@@ -482,6 +482,18 @@ describe("a unit is listed only when it is complete", () => {
       for (const bad of ["queen", "f", "unknown"]) expect(heldOf(await edit(f, { sex: bad }), "sex_unknown"), bad).toHaveLength(1);
     });
 
+    it("is judged on Beeline's own value for a column the file is not read for, so an edit there cannot hold it", async () => {
+      const f = await uploadFixture();
+      const parsed = await parseUpload(edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "queen" } }]));
+      if (!parsed.ok) throw new Error(parsed.refusal);
+      // A file read for the name alone: the sex it carries is not Beeline's to take from it.
+      const nameOnly: Layout = { recognise: [], read: ["scientificName"], headings: [], shaded: [] };
+      const p = await comparePlan(f.db, { ...parsed.upload, layout: nameOnly }, { today: DEFAULT_TODAY });
+      expect(p.held).toEqual([]);
+      expect(p.differences.map((d) => d.cells.filter((c) => c.differs).map((c) => [c.column, c.fileSays]))).toEqual([[["scientificName", "Bombus"]]]);
+      expect(p.notApplied.map((n) => [n.column, n.fileSays])).toEqual([["sex", "queen"]]);
+    });
+
     it("needs a caste Beeline knows, or none", async () => {
       const f = await uploadFixture();
       for (const bad of ["king", "queen", "w"]) expect(heldOf(await edit(f, { caste: bad }), "caste_unknown"), bad).toHaveLength(1);

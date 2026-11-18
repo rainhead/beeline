@@ -874,7 +874,10 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
       if (columns.has(column)) {
         const r = evaluate(column, cell(cells, column), nowText, readHere.has(column));
         results.set(column, r);
-        full.set(column, r);
+        // A unit is judged on what Beeline would hold after the upload: the file's cell where this file's column is
+        // read, and Beeline's own value where it is not, so that an edit to a column the file is not read for
+        // cannot hold the unit it belongs to.
+        full.set(column, readHere.has(column) ? r : fromBeeline(column, nowText));
       } else full.set(column, fromBeeline(column, nowText));
     }
     const touched = [...results.values()].some((r) => r.differs || r.problem !== null);

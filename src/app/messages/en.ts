@@ -2052,7 +2052,7 @@ export const en = {
         "This file is for editing specimens: giving them their names, and recording what became of them. Fill in the white columns, then upload it on the Edited downloads page. Beeline compares what you upload with what it says now and lists every difference. It does not change any record from a file yet. The grey columns are there to help you recognise each bee.",
       columnsTopic: "White and grey columns",
       columns:
-        "Beeline reads the white columns when you upload the file, and their headings are in bold. The grey columns are for reference: Beeline ignores what is in them, and tells you if you changed one, apart from the two named below. Nothing is locked, so you can still sort and filter on any column.",
+        "Beeline reads the white columns when you upload the file, and their headings are in bold. The grey columns are for reference: Beeline ignores what is in them, and tells you if you changed one, apart from fieldNumber and the two named below. Leave fieldNumber as it is: Beeline checks it against the specimen the row is for, and sets the whole row aside if the two disagree. Nothing is locked, so you can still sort and filter on any column.",
       leaveTopic: "specimenId and specimenVersion",
       leave:
         "These two are grey, but Beeline does read them: it finds each row by them and uses them to see whether the record changed since you downloaded the file. Leave them as they are.",
@@ -2086,7 +2086,7 @@ export const en = {
       heading: "Upload a file",
       fileLabel: "Excel file",
       fileHint:
-        "The Excel file for editing specimens from Specimens, up to 20 MB and 20,000 rows. Leave its specimenId, specimenVersion and sampleVersion columns as they are: Beeline finds each row by them. Keep the cells you edit formatted as text, and type a date as YYYY-MM-DD.",
+        "The Excel file for editing specimens from Specimens, up to 20 MB and 20,000 rows. Leave its specimenId and specimenVersion columns as they are: Beeline finds each row by them. Keep the cells you edit formatted as text, and type a date as YYYY-MM-DD.",
       referenceLabel: "Request behind the file (optional)",
       referenceHint:
         "Where the request came from, so a change can be traced to who asked for it: an email's message id or a link to an issue, such as https://github.com/example/example/issues/1. Never an address or a name.",

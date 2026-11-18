@@ -1,0 +1,164 @@
+import { sql, type Kysely } from "kysely";
+import { areaDisplayName } from "../area-name.js";
+import type { AreaKind, Database } from "../model.js";
+import { areaKey } from "./listings.js";
+
+/**
+ * The areas, as three pages (beeline-9jd4; the three are Peter's,
+ * 2026-11-17): administrative districts, properties and ecoregions. Each
+ * lists every such area that at least one sample's point lies inside
+ * (schema/038), and how many samples lie inside it.
+ *
+ * - **Administrative districts** are the counties and BC's regional
+ *   districts, under the state or province each is in, because a county's
+ *   name is not unique: Oregon and Washington each have a Benton County.
+ * - **Properties** are land somebody holds and names: national wildlife
+ *   refuges, WDFW wildlife area units, National Park Service units, state and
+ *   provincial parks, city and county parks, and the other parks and
+ *   reserves OpenStreetMap outlines, where land trust preserves are. Each
+ *   says where it is, because a park's name is not unique either: Seattle
+ *   and Bend each have a Discovery Park.
+ * - **Ecoregions** are the EPA's Level III ecoregions.
+ *
+ * Two kinds the store holds are on none of them. A federal wilderness is
+ * where collecting needs a permit, which is not a thing to advertise as a
+ * place to browse (Peter, 2026-11-17); a sample inside one still says so on
+ * its own page. An island is none of the three.
+ *
+ * **Staff only.** The counts are of every sample, whoever may see where it
+ * is: a count of one in a small park would tell a volunteer that somebody
+ * collected there, which is what withholding a location is meant to keep
+ * from them (`withheld`, src/app/listings.ts). Staff see every location, so
+ * for them a count and the listing it links to agree. Showing these pages to
+ * anyone else needs the counts taken through that rule first.
+ *
+ * Counts are split by season: the current season against every earlier one
+ * (Peter, 2026-11-17: "Samples in 2026" and "Samples in past seasons"). A
+ * season is sample_season's, the calendar year of a sample's first day, and
+ * the current one is today's year in Oregon (season, schema/102), as on the
+ * Programs page. This is not the active and settled split the check counts
+ * use: in January and February last season is still active, and here it is
+ * already past.
+ */
+
+export const AREA_TABS = ["districts", "properties", "ecoregions"] as const;
+export type AreaTab = (typeof AREA_TABS)[number];
+
+export const isAreaTab = (value: string): value is AreaTab => (AREA_TABS as readonly string[]).includes(value);
+
+/** The kinds of area each page lists. */
+export const TAB_KINDS: Record<AreaTab, readonly AreaKind[]> = {
+  districts: ["county"],
+  properties: ["refuge", "wildlife_area", "nps_unit", "state_park", "city_park", "park"],
+  ecoregions: ["ecoregion"],
+};
+
+export interface AreaSummary {
+  /** The `area` filter's value for this area (areaKey). */
+  key: string;
+  /** As a page shows it (areaDisplayName). */
+  name: string;
+  /**
+   * Where a property is, from the counties its samples' points are in:
+   * "King County, WA" where they are all in one, else the states ("OR, WA").
+   * Null for a district or an ecoregion, and for a property none of whose
+   * samples is in a county.
+   */
+  where: string | null;
+  /** Samples inside it from the current season. */
+  current: number;
+  /** Samples inside it from every earlier season. */
+  past: number;
+}
+
+/**
+ * What a page's section gathers: the areas of one kind, or, for the
+ * districts, those of one state or province. `state` is null for a district
+ * no sample's point could be given a state from.
+ */
+export type AreaGrouping = { by: "kind"; kind: AreaKind } | { by: "state"; state: string | null; country: string | null };
+
+export interface AreaGroup {
+  grouping: AreaGrouping;
+  areas: AreaSummary[];
+}
+
+/** Where a property's samples are: their one county, else their states. */
+function whereOf(r: { counties: string[] | null; states: string[] | null }): string | null {
+  const counties = r.counties ?? [];
+  if (counties.length === 1) return counties[0]!;
+  const states = r.states ?? [];
+  return states.length === 0 ? null : states.join(", ");
+}
+
+interface AreaRow {
+  kind: AreaKind;
+  source: string;
+  source_id: string;
+  name: string;
+  state: string | null;
+  country: string | null;
+  counties: string[];
+  states: string[];
+  current: number;
+  past: number;
+}
+
+export interface AreaListing {
+  /** The current season, which the first count is of. */
+  season: number;
+  groups: AreaGroup[];
+}
+
+/**
+ * One page's areas, in sections: the districts by state or province, the
+ * properties by kind, the ecoregions as one. The view orders the sections;
+ * each section's areas are by name.
+ */
+export async function listAreas(db: Kysely<Database>, tab: AreaTab): Promise<AreaListing> {
+  const { rows: seasons } = await sql<{ year: number }>`SELECT current_season AS year FROM season`.execute(db);
+  const season = Number(seasons[0]!.year);
+  // A district's state is what its samples' points say (sample_area_derivation,
+  // beeline-rax1), not a fact stored about the district: nothing records that
+  // a county lies inside a state (Peter, 2026-10-26). Every sample in a
+  // county agrees, since the point's state is read from that county.
+  const { rows } = await sql<AreaRow>`
+    SELECT sac.kind, sac.source, sac.source_id, sac.name,
+           CASE WHEN sac.kind = 'county' THEN min(d.state_province) END AS state,
+           CASE WHEN sac.kind = 'county' THEN min(d.country) END AS country,
+           -- Where the area's samples are: each one's county, as its point
+           -- says, with the state, since a county's name needs one.
+           list_sort(list(DISTINCT concat(cty.name, ', ', d.state_province))
+                     FILTER (WHERE cty.name IS NOT NULL AND d.state_province IS NOT NULL)) AS counties,
+           list_sort(list(DISTINCT d.state_province) FILTER (WHERE d.state_province IS NOT NULL)) AS states,
+           count(DISTINCT sac.sample_id) FILTER (WHERE ss.season = ${season})::INTEGER AS current,
+           count(DISTINCT sac.sample_id) FILTER (WHERE ss.season IS DISTINCT FROM ${season})::INTEGER AS past
+    FROM sample_area_current sac
+    JOIN sample_area_derivation d ON d.sample_id = sac.sample_id
+    LEFT JOIN sample_area_current cty ON cty.sample_id = sac.sample_id AND cty.kind = 'county'
+    JOIN sample_season ss ON ss.sample_id = sac.sample_id
+    WHERE sac.kind IN (${sql.join(TAB_KINDS[tab])})
+    GROUP BY sac.kind, sac.source, sac.source_id, sac.name`.execute(db);
+  const collator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
+  const groups = new Map<string, AreaGroup>();
+  for (const r of rows) {
+    const grouping: AreaGrouping =
+      tab === "districts" ? { by: "state", state: r.state, country: r.country } : { by: "kind", kind: r.kind };
+    const id = grouping.by === "state" ? `${grouping.country ?? ""}/${grouping.state ?? ""}` : grouping.kind;
+    const group = groups.get(id) ?? { grouping, areas: [] };
+    groups.set(id, group);
+    group.areas.push({
+      key: areaKey(r.source, r.source_id),
+      name: areaDisplayName(r.name),
+      where: tab !== "properties" ? null : whereOf(r),
+      current: Number(r.current),
+      past: Number(r.past),
+    });
+  }
+  for (const group of groups.values()) {
+    // Two parks can share a name (OpenStreetMap has several a Riverside
+    // Park): the key settles their order, so a reload does not swap them.
+    group.areas.sort((a, b) => collator.compare(a.name, b.name) || a.key.localeCompare(b.key));
+  }
+  return { season, groups: [...groups.values()] };
+}

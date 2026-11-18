@@ -162,6 +162,7 @@ describe("the taxonomy pages", () => {
     // The rest alphabetical, by the labels a person reads.
     const group = between(menu, `aria-label="${en.layout.more}"`, "</nav>");
     expect([...group.matchAll(/href="([^"]+)"/g)].map((match) => match[1])).toEqual([
+      "/areas",
       "/design",
       "/exports",
       "/glossary",

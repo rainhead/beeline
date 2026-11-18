@@ -83,6 +83,8 @@ function MoreLinks({ m, admin, jobsFailing }: { m: Messages; admin: boolean; job
         // /people and /jobs are gated; /design is only unlisted — it reads no
         // records, so keeping a volunteer out of it protects nothing, and the
         // reason not to offer it to them is that it is not their tool.
+        // Staff's, because its counts are of every sample (src/app/areas.ts).
+        { href: "/areas", label: m.layout.nav.areas, shown: admin },
         { href: "/people", label: m.layout.nav.people, shown: admin },
         { href: "/unclaimed", label: m.layout.nav.unclaimed, shown: admin },
         { href: "/jobs", label: m.layout.nav.jobs, shown: admin },

@@ -175,6 +175,15 @@ button.compact-button {
    prose measure — a listing has a dozen columns and no reason to be 64rem
    wide (see main's grid in layout.css). Only a direct child of main does
    this: a table inside a card or a design-system specimen stays put. */
+/* Links to a long page's own sections (the Areas page's kinds). */
+.jump-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  font: var(--md-sys-typescale-label);
+  margin-bottom: var(--space-6);
+}
+
 .table-scroll { overflow-x: auto; }
 .table-scroll table { min-width: 36rem; }
 main > .table-scroll {

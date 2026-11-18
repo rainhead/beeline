@@ -44,8 +44,10 @@ FROM ST_Read('__SOURCES__/bc_muni.geojson') WHERE ADMIN_AREA_NAME LIKE '%Norther
 -- National wildlife refuges. Fee, agreement and other refuge land;
 -- conservation easements (E) are private land a visitor could not tell from
 -- its neighbours.
+-- orgcode is the Service's own id for the refuge, which an area is keyed by
+-- (named_area, below).
 CREATE TABLE refuge AS
-SELECT ORGNAME AS name, ST_MakeValid(geom::GEOMETRY) AS geom
+SELECT ORGNAME AS name, ORGCODE::TEXT AS orgcode, ST_MakeValid(geom::GEOMETRY) AS geom
 FROM (SELECT * FROM ST_Read('__SOURCES__/nwr_0.geojson')
       UNION ALL BY NAME SELECT * FROM ST_Read('__SOURCES__/nwr_500.geojson')
       UNION ALL BY NAME SELECT * FROM ST_Read('__SOURCES__/nwr_1000.geojson'))
@@ -54,12 +56,12 @@ WHERE INTTYPE1 <> 'E';
 -- WDFW wildlife area units, named by the unit (Whiskey Dick, part of L.T.
 -- Murray; beeline-9jd4).
 CREATE TABLE wildlife_area_unit AS
-SELECT WLAU_Name AS unit, WLA_Name AS area, ST_MakeValid(geom::GEOMETRY) AS geom
+SELECT WLAU_Name AS unit, WLA_Name AS area, SubUnitID::TEXT AS unit_id, ST_MakeValid(geom::GEOMETRY) AS geom
 FROM ST_Read('__SOURCES__/wdfw_units.geojson');
 
 -- National Park Service units, memorials left out.
 CREATE TABLE nps_unit AS
-SELECT UNIT_NAME AS unit, ST_MakeValid(geom::GEOMETRY) AS geom
+SELECT UNIT_NAME AS unit, UNIT_CODE AS unit_code, ST_MakeValid(geom::GEOMETRY) AS geom
 FROM ST_Read('__SOURCES__/nps_units.geojson')
 WHERE UNIT_TYPE NOT IN ('National Memorials', 'Other Designations');
 
@@ -113,16 +115,53 @@ GROUP BY NA_L3CODE;
 -- the town it passes (Palouse to Cascades runs through Easton), and an
 -- unnamed "State Park Property" is no place anybody would recognise. BC
 -- writes its names in capitals and with the designation: ELK FALLS PARK.
+-- source, source_id and full_name are what an area is made of (named_area,
+-- below): the park's code at Washington State Parks, and in BC the number
+-- the province files the park under (ORCS, primary and secondary), with the
+-- name as the agency writes it in full (Alta Lake State Park, ELK FALLS PARK).
 CREATE TABLE state_park AS
-SELECT ParkName AS park, 'SP' AS suffix, ST_MakeValid(geom::GEOMETRY) AS geom
+SELECT ParkName AS park, 'SP' AS suffix, 'wa-parks' AS source, ParkCode::TEXT AS source_id,
+       concat(ParkName, ' ', Category) AS full_name, ST_MakeValid(geom::GEOMETRY) AS geom
 FROM ST_Read('__SOURCES__/wa_state_parks.geojson')
 WHERE Category NOT IN ('State Park Trail', 'State Park Property')
 UNION ALL
 SELECT regexp_replace(PROTECTED_LANDS_NAME, ' (PARK|PROTECTED AREA|ECOLOGICAL RESERVE|RECREATION AREA)$', ''),
        CASE PROTECTED_LANDS_DESIGNATION WHEN 'PROVINCIAL PARK' THEN 'PP' WHEN 'PROTECTED AREA' THEN 'PA'
             WHEN 'ECOLOGICAL RESERVE' THEN 'ER' ELSE 'RA' END,
+       'bc-parks', concat(ORCS_PRIMARY, '-', ORCS_SECONDARY), PROTECTED_LANDS_NAME,
        ST_MakeValid(geom::GEOMETRY)
 FROM ST_Read('__SOURCES__/bc_parks.geojson');
+
+-- The refuges, wildlife area units, National Park Service units and state
+-- and provincial parks as areas (beeline-9jd4): one row per id the source
+-- itself gives the place, which the derive step copies into the store for
+-- the ones samples lie inside (src/derive-area.ts). Made from the tables
+-- above, so what counts as a refuge or a park is said once, and the locality
+-- rule and the areas read the same outlines.
+--
+-- Outlines that share an id are one area. A refuge arrives as up to 65
+-- features. WDFW's Jackman Creek unit (1006401) arrives as nine subunits,
+-- and takes the shortest of their names, the unit's own. Deception Pass and
+-- Hope Island (Skagit) share a park code, 52500, as do eight National Park
+-- Service parks and their preserves in Alaska and Colorado (Denali). Kofa
+-- NWR shares 22570 with its administrative site. The name is the first in
+-- the alphabet except where said, which gives the park and the refuge.
+CREATE TABLE named_area AS
+SELECT 'usfws' AS source, orgcode AS source_id, 'refuge' AS kind,
+       coalesce(min(name) FILTER (WHERE name LIKE '%REFUGE'), min(name)) AS name,
+       ST_MakeValid(ST_Union_Agg(geom)) AS geom
+FROM refuge WHERE orgcode IS NOT NULL GROUP BY orgcode
+UNION ALL
+SELECT 'wdfw', unit_id, 'wildlife_area',
+       concat(arg_min(unit, (length(unit), unit)), ' Unit, ', arg_min(area, (length(unit), unit)), ' Wildlife Area'),
+       ST_MakeValid(ST_Union_Agg(geom))
+FROM wildlife_area_unit WHERE unit_id IS NOT NULL GROUP BY unit_id
+UNION ALL
+SELECT 'nps', unit_code, 'nps_unit', min(unit), ST_MakeValid(ST_Union_Agg(geom))
+FROM nps_unit WHERE unit_code IS NOT NULL GROUP BY unit_code
+UNION ALL
+SELECT source, source_id, 'state_park', min(full_name), ST_MakeValid(ST_Union_Agg(geom))
+FROM state_park WHERE source_id IS NOT NULL GROUP BY source, source_id;
 
 -- Town limits: a point inside one is in that town, whatever is nearest.
 -- Census-designated places are kept apart as kind 'cdp', since they are
@@ -144,10 +183,47 @@ WHERE ADMIN_AREA_NAME NOT LIKE '%Northern Rockies%';
 -- "Deschutes National Forest". Islets under 100 ha are left out of the
 -- islands: most are in rivers (Norwood Island in the Willamette), where a
 -- point on the bank would otherwise be given to them.
-CREATE TABLE osm_area AS
-SELECT osm_id, name, area_ha, is_island, ST_MakeValid(ST_GeomFromWKB(wkb)) AS geom
+--
+-- One row per OpenStreetMap id, which an area is keyed by (beeline-9jd4). A
+-- park or island on a state line is in both states' extracts, sometimes as a
+-- part in each: 143 ids came twice or three times in October 2026 (Chief
+-- Joseph Wildlife Area, Barnston Island). Their outlines are joined, and the
+-- is_city_park says a park is a city's or a county's, by how OpenStreetMap
+-- maps it (ingest/gazetteer-osm.sql); the areas give those a kind of their
+-- own. The size is the larger part's, which understates a park cut in two; the size
+-- only orders the parks a point is inside, smallest first. The 100 ha test
+-- is still each part's own, as it was.
+--
+-- agency_share is how much of a park lies inside the agencies' own areas
+-- (named_area, above), from 0 to 1; NULL for an island. OpenStreetMap
+-- outlines the agencies' land too, often several times over: North Cascades
+-- National Park is there as the park, as its south unit and as the "North
+-- Cascades National Park Complex", beside the National Park Service's own
+-- outline. The derive step leaves out a park that lies mostly inside the
+-- agencies' areas (src/derive-area.ts), so each such place is listed once,
+-- from the agency. Where two agencies' land overlaps it is counted once: the
+-- parts inside each are joined before they are measured (CodeRabbit).
+CREATE TEMP TABLE osm_area_merged AS
+SELECT osm_id, min(name) AS name, max(area_ha) AS area_ha, bool_or(is_island) AS is_island,
+       bool_or(is_city_park) AS is_city_park,
+       ST_MakeValid(ST_Union_Agg(ST_MakeValid(ST_GeomFromWKB(wkb)))) AS geom
 FROM osm_area_staged
-WHERE (is_island AND area_ha >= 100) OR (NOT is_island AND coalesce(protect_class, '') <> '6');
+WHERE (is_island AND area_ha >= 100) OR (NOT is_island AND coalesce(protect_class, '') <> '6')
+GROUP BY osm_id;
+
+CREATE TEMP TABLE osm_agency_share AS
+SELECT o.osm_id, ST_Area(ST_Union_Agg(ST_Intersection(o.geom, n.geom))) / any_value(ST_Area(o.geom)) AS share
+FROM osm_area_merged o JOIN named_area n ON ST_Intersects(o.geom, n.geom)
+WHERE NOT o.is_island AND ST_Area(o.geom) > 0
+GROUP BY o.osm_id;
+
+CREATE TABLE osm_area AS
+SELECT o.osm_id, o.name, o.area_ha, o.is_island, o.is_city_park,
+       CASE WHEN NOT o.is_island THEN coalesce(s.share, 0) END AS agency_share, o.geom
+FROM osm_area_merged o LEFT JOIN osm_agency_share s USING (osm_id);
+
+DROP TABLE osm_area_merged;
+DROP TABLE osm_agency_share;
 
 -- OpenStreetMap's named campgrounds, as points (beeline-4hxe).
 CREATE TABLE campground AS

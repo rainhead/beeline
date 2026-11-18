@@ -237,13 +237,17 @@ export async function buildTestGazetteer(path: string, buildId: string): Promise
     CREATE TABLE region AS SELECT 'US-OR-41003' AS region_id, 'USA' AS country, 'OR' AS state, 'Benton' AS county,
       'census' AS source, '41003' AS source_id, 'Benton County' AS name, ${box(-124, 44, -122, 45)} AS geom;
     CREATE TABLE refuge AS SELECT 'WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE' AS name, ${box(-123.35, 44.38, -123.25, 44.45)} AS geom;
+    -- The same refuge as an area, keyed by an id of its own (beeline-9jd4):
+    -- made up, as the outline is.
+    CREATE TABLE named_area AS SELECT 'usfws' AS source, '99001' AS source_id, 'refuge' AS kind,
+      'WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE' AS name, ${box(-123.35, 44.38, -123.25, 44.45)} AS geom;
     CREATE TABLE wildlife_area_unit (unit TEXT, area TEXT, geom GEOMETRY);
     CREATE TABLE nps_unit (unit TEXT, geom GEOMETRY);
     CREATE TABLE state_park (park TEXT, suffix TEXT, geom GEOMETRY);
     CREATE TABLE town_limits (name TEXT, kind TEXT, geom GEOMETRY);
-    CREATE TABLE osm_area (osm_id TEXT, name TEXT, area_ha DOUBLE, is_island BOOLEAN, geom GEOMETRY);
+    CREATE TABLE osm_area (osm_id TEXT, name TEXT, area_ha DOUBLE, is_island BOOLEAN, geom GEOMETRY, is_city_park BOOLEAN DEFAULT FALSE, agency_share DOUBLE DEFAULT 0);
     -- A made-up federal wilderness, which is never a locality.
-    INSERT INTO osm_area VALUES ('way/1', 'Alsea Wilderness', 4000, false, ${box(-123.65, 44.48, -123.55, 44.53)}),
+    INSERT INTO osm_area (osm_id, name, area_ha, is_island, geom) VALUES ('way/1', 'Alsea Wilderness', 4000, false, ${box(-123.65, 44.48, -123.55, 44.53)}),
       ('way/2', 'Ox Wilderness Area', 3000, false, ${box(-123.80, 44.48, -123.70, 44.53)});
     CREATE TABLE wilderness AS SELECT * FROM (VALUES
       ('9001', 'Alsea Wilderness', 'FS', ${box(-123.65, 44.48, -123.55, 44.53)}),

@@ -9,6 +9,13 @@
 -- __OUT__ as Parquet, with each outline as WKB, so a slow extract (British
 -- Columbia's takes minutes) is read once and not on every build.
 -- __PBF__ and __OUT__ are substituted by the builder.
+-- The outlines are longitude then latitude, and ST_Area_Spheroid must be
+-- told so: DuckDB 2.0 refuses to guess, where 1.x took latitude first and
+-- this file flipped each outline to suit it. Nobody saw the refusal until an
+-- extract had to be read again (2026-11-17), since a built Parquet file is
+-- reused.
+SET geometry_always_xy = true;
+
 CREATE TEMP TABLE osm_want AS
 SELECT kind, id, element_at(tags, 'name')[1] AS name, element_at(tags, 'leisure')[1] AS leisure,
        element_at(tags, 'boundary')[1] AS boundary, element_at(tags, 'protect_class')[1] AS protect_class,
@@ -47,10 +54,15 @@ FROM osm_way_node wn JOIN osm_node n ON n.id = wn.node_id
 GROUP BY wn.way_id HAVING count(*) >= 2;
 
 COPY (
+  -- is_city_park (beeline-9jd4): mapped as a park for recreation and as no
+  -- protected area, which is how OpenStreetMap maps a city's or a county's
+  -- park and not a state park or a reserve.
   SELECT concat(owner_kind, '/', owner_id) AS osm_id, name, protect_class, place IS NOT NULL AS is_island,
-         ST_Area_Spheroid(ST_FlipCoordinates(g)) / 10000 AS area_ha, ST_AsWKB(g) AS wkb
+         coalesce(leisure = 'park' AND coalesce(boundary, '') NOT IN ('protected_area', 'national_park'), FALSE) AS is_city_park,
+         ST_Area_Spheroid(g) / 10000 AS area_ha, ST_AsWKB(g) AS wkb
   FROM (
     SELECT p.owner_kind, p.owner_id, any_value(w.name) AS name, any_value(w.protect_class) AS protect_class,
+           any_value(w.leisure) AS leisure, any_value(w.boundary) AS boundary,
            any_value(w.place) AS place, ST_BuildArea(ST_Collect(list(l.geom))) AS g
     FROM osm_part p
     JOIN osm_want w ON w.kind = p.owner_kind AND w.id = p.owner_id

@@ -43,7 +43,7 @@ describe("deriveAreas", () => {
     const conn = await storeWithPerson();
     await insertCleanSample(conn);
     expect(await deriveAreas(conn, join(dir, "absent.duckdb"))).toEqual({
-      gazetteerBuild: null, pending: 0, inWilderness: 0, inCounty: 0, inEcoregion: 0, ecoregionByShore: 0, outdated: false, countiesStamped: 0,
+      gazetteerBuild: null, pending: 0, inWilderness: 0, inCounty: 0, inEcoregion: 0, ecoregionByShore: 0, inPlace: 0, outdated: false, countiesStamped: 0,
     });
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_area_derivation`)).toEqual([[0]]);
   });
@@ -63,7 +63,7 @@ describe("deriveAreas", () => {
     await insertCleanSample(conn, {}, ALSEA);
     const r = await deriveAreas(conn, path);
     expect(r).toEqual({
-      gazetteerBuild: "build-old", pending: 0, inWilderness: 0, inCounty: 0, inEcoregion: 0, ecoregionByShore: 0, outdated: true, countiesStamped: 0,
+      gazetteerBuild: "build-old", pending: 0, inWilderness: 0, inCounty: 0, inEcoregion: 0, ecoregionByShore: 0, inPlace: 0, outdated: true, countiesStamped: 0,
     });
     expect(describeAreas(r)).toBe("areas: the gazetteer predates them; rebuild it");
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_area_derivation`)).toEqual([[0]]);
@@ -76,7 +76,7 @@ describe("deriveAreas", () => {
     const inAlsea = await insertCleanSample(conn, {}, ALSEA);
     const outside = await insertCleanSample(conn, { sample_number: "'2'" }, REFUGE);
     expect(await deriveAreas(conn, path)).toEqual({
-      gazetteerBuild: "build-a", pending: 2, inWilderness: 1, inCounty: 2, inEcoregion: 2, ecoregionByShore: 0, outdated: false, countiesStamped: 0,
+      gazetteerBuild: "build-a", pending: 2, inWilderness: 1, inCounty: 2, inEcoregion: 2, ecoregionByShore: 0, inPlace: 1, outdated: false, countiesStamped: 0,
     });
     expect(await inside(conn)).toEqual([[inAlsea, "wilderness.net", "9001", "wilderness", "Alsea Wilderness"]]);
     // Both are in Benton County, by its Census GEOID.
@@ -88,6 +88,7 @@ describe("deriveAreas", () => {
     // test ecoregions are Coast Range (Alsea) and Willamette Valley (refuge).
     expect(await areas(conn)).toEqual([
       ["41003", "Benton County"], ["7.1.8", "Coast Range"], ["7.1.9", "Willamette Valley"], ["9001", "Alsea Wilderness"],
+      ["99001", "WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE"],
     ]);
     // Both were tested, the one outside every area too, at their own points.
     expect(
@@ -134,7 +135,7 @@ describe("deriveAreas", () => {
     await deriveAreas(conn, path);
     await buildTestGazetteer(path, "build-c2");
     expect(await deriveAreas(conn, path, { batchSize: 1 })).toEqual({
-      gazetteerBuild: "build-c2", pending: 2, inWilderness: 2, inCounty: 2, inEcoregion: 2, ecoregionByShore: 0, outdated: false, countiesStamped: 0,
+      gazetteerBuild: "build-c2", pending: 2, inWilderness: 2, inCounty: 2, inEcoregion: 2, ecoregionByShore: 0, inPlace: 0, outdated: false, countiesStamped: 0,
     });
     expect(await rows(conn, `SELECT source_id, gazetteer_build FROM area ORDER BY 1`)).toEqual([
       ["41003", "build-c2"],
@@ -247,6 +248,104 @@ describe("ecoregions (beeline-l5so)", () => {
     expect(await counties(conn)).toEqual([[id, "census", "41003", "Benton County"]]);
     expect(await ecoregions(conn)).toEqual([]);
     expect(await missing(conn)).toEqual([[id, false]]);
+  });
+});
+
+describe("the places people collect in (beeline-9jd4)", () => {
+  const places = (conn: DuckDBConnection) =>
+    rows(
+      conn,
+      `SELECT sample_id, source, source_id, kind, name FROM sample_area_current
+       WHERE kind NOT IN ('wilderness', 'county', 'ecoregion') ORDER BY sample_id, kind, source_id`,
+    );
+
+  /** The test gazetteer with a park that laps over the refuge's east side, and an island. Synthetic outlines. */
+  async function withParkAndIsland(path: string, buildId: string): Promise<void> {
+    await buildTestGazetteer(path, buildId);
+    const instance = await openDuckDb(path);
+    const g = await instance.connect();
+    await loadSpatial(g);
+    await g.run(`INSERT INTO osm_area (osm_id, name, area_ha, is_island, geom, is_city_park) VALUES
+      ('way/3', 'Muddy Creek Natural Area', 500, false, ST_MakeEnvelope(-123.28, 44.38, -123.20, 44.45), false),
+      ('relation/4', 'Kiger Island', 900, true, ST_MakeEnvelope(-123.24, 44.50, -123.20, 44.54), false),
+      ('way/5', NULL, 20, false, ST_MakeEnvelope(-123.24, 44.50, -123.20, 44.54), false),
+      ('way/6', 'Kiger Island Park', 5, false, ST_MakeEnvelope(-123.225, 44.515, -123.215, 44.525), true),
+      -- Outlines over everything here that name whoever holds the land, or
+      -- carry a code, and no place. 'WA DNR' and 'PS001' are names
+      -- OpenStreetMap has; the office is made up, after its
+      -- 'BLM - Farmington Field Office'.
+      ('relation/7', 'WA DNR', 90000, false, ST_MakeEnvelope(-124, 44, -122, 45), false),
+      ('relation/8', 'BLM - Alsea Field Office', 90000, false, ST_MakeEnvelope(-124, 44, -122, 45), false),
+      ('way/9', 'PS001', 90000, false, ST_MakeEnvelope(-124, 44, -122, 45), true)`);
+    // OpenStreetMap's own outline of the refuge, nearly all of it inside the
+    // Fish and Wildlife Service's: the agency's is the area.
+    await g.run(`INSERT INTO osm_area (osm_id, name, area_ha, is_island, geom, is_city_park, agency_share) VALUES
+      ('relation/10', 'William L. Finley National Wildlife Refuge', 4000, false,
+       ST_MakeEnvelope(-123.36, 44.38, -123.25, 44.45), false, 0.91)`);
+    g.closeSync();
+    instance.closeSync();
+  }
+
+  test("a point is in every refuge, park and island whose outline it is inside, and in no federal wilderness as a park", async () => {
+    const path = join(dir, "places.duckdb");
+    await withParkAndIsland(path, "build-places");
+    const conn = await storeWithPerson();
+    const refugeOnly = await insertCleanSample(conn, {}, REFUGE);
+    // Inside the refuge and the park that laps over it: both.
+    const both = await insertCleanSample(conn, { sample_number: "'2'" }, { latitude: "44.41", longitude: "-123.27" });
+    // On the island, in its city park, where a park nobody named lies too.
+    const island = await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "44.52", longitude: "-123.22" });
+    // About 80 m west of the refuge's edge: outside it, with no allowance.
+    const beside = await insertCleanSample(conn, { sample_number: "'4'" }, { latitude: "44.41", longitude: "-123.351" });
+    // Inside OpenStreetMap's "Alsea Wilderness": Wilderness.net's is the area, not this.
+    const wild = await insertCleanSample(conn, { sample_number: "'5'" }, ALSEA);
+    const result = await deriveAreas(conn, path);
+    expect(result).toMatchObject({ pending: 5, inWilderness: 1, inPlace: 3 });
+    expect(describeAreas(result)).toContain("3 in a refuge, park or island");
+    expect(await places(conn)).toEqual([
+      [refugeOnly, "usfws", "99001", "refuge", "WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE"],
+      [both, "osm", "way/3", "park", "Muddy Creek Natural Area"],
+      [both, "usfws", "99001", "refuge", "WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE"],
+      [island, "osm", "way/6", "city_park", "Kiger Island Park"],
+      [island, "osm", "relation/4", "island", "Kiger Island"],
+    ]);
+    expect(await places(conn)).not.toContainEqual(expect.arrayContaining([beside]));
+    expect(await places(conn)).not.toContainEqual(expect.arrayContaining([wild]));
+    // Only what a sample lies inside is copied in.
+    expect(await rows(conn, `SELECT kind, count(*)::INTEGER FROM area GROUP BY kind ORDER BY kind`)).toEqual([
+      ["city_park", 1], ["county", 1], ["ecoregion", 2], ["island", 1], ["park", 1], ["refuge", 1], ["wilderness", 1],
+    ]);
+  });
+
+  test("a gazetteer built before named_area finds no refuge, park or island, and the rest as before", async () => {
+    const path = join(dir, "places-old.duckdb");
+    await withParkAndIsland(path, "build-places-old");
+    const instance = await openDuckDb(path);
+    const g = await instance.connect();
+    await g.run(`DROP TABLE named_area`);
+    g.closeSync();
+    instance.closeSync();
+    const conn = await storeWithPerson();
+    const id = await insertCleanSample(conn, {}, { latitude: "44.41", longitude: "-123.27" });
+    expect(await deriveAreas(conn, path)).toMatchObject({ outdated: false, pending: 1, inCounty: 1, inEcoregion: 1, inPlace: 0 });
+    expect(await places(conn)).toEqual([]);
+    expect(await counties(conn)).toEqual([[id, "census", "41003", "Benton County"]]);
+  });
+
+  test("the store takes every kind and source, and refuses one it does not know", async () => {
+    const conn = await storeWithPerson();
+    await loadSpatial(conn);
+    for (const [source, kind] of [
+      ["usfws", "refuge"], ["wdfw", "wildlife_area"], ["nps", "nps_unit"], ["wa-parks", "state_park"],
+      ["bc-parks", "state_park"], ["osm", "city_park"], ["osm", "park"], ["osm", "island"],
+    ]) {
+      await conn.run(
+        `INSERT INTO area VALUES ('${source}', '${kind}-1', '${kind}', 'A place', ST_MakeEnvelope(0, 0, 1, 1), 'b')`,
+      );
+    }
+    await expect(
+      conn.run(`INSERT INTO area VALUES ('osm', 'x', 'town', 'A place', ST_MakeEnvelope(0, 0, 1, 1), 'b')`),
+    ).rejects.toThrow(/CHECK/);
   });
 });
 

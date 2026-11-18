@@ -8,8 +8,9 @@
 import type { Child } from "hono/jsx";
 import type { TaxonQualifier } from "../views/components/taxon.js";
 import type { LocalityBasis } from "../../locality-rule.js";
-import type { OutOfDateField } from "../../model.js";
+import type { AreaKind, OutOfDateField } from "../../model.js";
 import { OLD_BEELINE_ORIGIN } from "../old-beeline.js";
+import type { AreaTab } from "../areas.js";
 
 /** An outside data source the site footer credits, with the licence or terms it asks credit under, where it names some. */
 export interface CreditedSource {
@@ -282,6 +283,7 @@ export const en = {
       jobs: "Jobs",
       taxonomy: "Taxonomy",
       programs: "Programs",
+      areas: "Areas",
       printRuns: "Print runs",
       exports: "Exports",
       identify: "Identify specimens",
@@ -777,7 +779,7 @@ export const en = {
       from: "Collected from",
       to: "Collected to",
       place: "Place",
-      placeHint: "Locality, county, state, country, wilderness, or ecoregion",
+      placeHint: "Locality, county, state, country, refuge, park, island, wilderness, or ecoregion",
       collector: "Collector",
       collectorHint: "Name or iNaturalist login — anyone on the sample",
       /**
@@ -1897,6 +1899,67 @@ export const en = {
    * everyone signed in. The counts link into the listings for staff only,
    * since a volunteer's listings hold only their own records.
    */
+  /** The Areas pages (beeline-9jd4), which staff read. */
+  areas: {
+    title: "Areas",
+    /** Under the title, one per tab. */
+    intro: {
+      districts:
+        "Every county and regional district that at least one sample was collected in, by its true coordinates, under its state or province.",
+      properties:
+        "Every refuge, park, preserve and wildlife area unit that at least one sample was collected in, by its true coordinates. A sample is in every property its point lies inside, so one sample can count in two. Where says which county the samples were in, since two parks can share a name.",
+      ecoregions: "Every EPA Level III ecoregion that at least one sample was collected in, by its true coordinates.",
+    } satisfies Record<AreaTab, string>,
+    tabsLabel: "Kinds of area",
+    tab: {
+      districts: "Administrative districts",
+      properties: "Properties",
+      ecoregions: "Ecoregions",
+    } satisfies Record<AreaTab, string>,
+    none: "No sample has been placed in one yet. The nightly run places them, once the gazetteer is on the machine.",
+    sectionsLabel: "Sections of this page",
+    /** A link to a section: "OR, USA (36)". */
+    sectionCount: (heading: string, count: number) => `${heading} (${n(count)})`,
+    /** In place of a state: no sample in the district has a point a state could be read from. */
+    stateUnknown: "State not known",
+    colArea: {
+      districts: "District",
+      properties: "Property",
+      ecoregions: "Ecoregion",
+    } satisfies Record<AreaTab, string>,
+    /** Where a property is: its county and state, or its states where it spans counties. */
+    colWhere: "Where",
+    /** The current season's samples, and every earlier season's (Peter, 2026-11-17). */
+    colCurrent: (season: number) => `Samples in ${season}`,
+    colPast: "Samples in past seasons",
+    /** The pill of the listings' area filter. */
+    filter: "Area",
+    /** In place of a name: the store holds no such area, or nothing in it that this reader may see. */
+    filterUnknown: "an area with nothing to show",
+    kind: {
+      refuge: "National wildlife refuges",
+      wildlife_area: "WDFW wildlife area units",
+      nps_unit: "National Park Service units",
+      state_park: "State and provincial parks",
+      city_park: "City and county parks",
+      park: "Other parks and reserves",
+      island: "Islands",
+      wilderness: "Federal wildernesses",
+      county: "Counties and regional districts",
+      ecoregion: "Ecoregions",
+    } satisfies Record<AreaKind, string>,
+    /** What a reader needs to know about a kind before reading its counts. */
+    kindNote: {
+      refuge:
+        "From the Fish and Wildlife Service's boundaries, conservation easements left out. A sample counts only if its point is inside the outline.",
+      state_park:
+        "Washington's state parks and British Columbia's provincial parks, protected areas and ecological reserves. Oregon's state parks are under Other parks and reserves.",
+      park:
+        "Every other park or reserve that OpenStreetMap outlines: Oregon's state parks, land trust preserves, conservation areas.",
+      city_park: "Parks that OpenStreetMap maps for recreation and not as protected land: a city's, a county's or a neighbourhood's.",
+    } as Partial<Record<AreaKind, string>>,
+  },
+
   programs: {
     title: "Programs",
     intro:

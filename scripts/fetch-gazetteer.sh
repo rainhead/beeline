@@ -10,6 +10,9 @@ DL=${1:-data/gazetteer-sources}
 mkdir -p "$DL"
 cd "$DL"
 get() { [ -s "$2" ] || { echo "fetching $2" >&2; curl -sSfL -m 1800 -o "$2.part" "$1" && mv -f "$2.part" "$2"; }; }
+# A file downloaded before its source's own id was asked for (beeline-9jd4) is
+# fetched again: an area is keyed by that id, never by its name.
+needs() { [ ! -s "$1" ] || jq -e --arg f "$2" '.features[0].properties | has($f)' "$1" >/dev/null || { echo "$1 has no $2: fetching it again" >&2; rm -f "$1"; }; }
 
 # Towns, peaks and named places, with population and elevation (GeoNames, CC BY 4.0).
 get https://download.geonames.org/export/dump/US.zip US.zip
@@ -29,7 +32,8 @@ get "$WFS&typeName=pub:WHSE_TANTALIS.TA_PARK_ECORES_PA_SVW" bc_parks.geojson
 # 30 m, in pages of 500.
 FWS="https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/FWSInterest_Simplified_Authoritative/FeatureServer/0/query"
 for o in 0 500 1000; do
-  get "$FWS?where=RSL_TYPE%3D%27NWR%27&outFields=ORGNAME,INTTYPE1&outSR=4326&f=geojson&resultOffset=$o&resultRecordCount=500&orderByFields=OBJECTID&maxAllowableOffset=0.0003&geometryPrecision=5" "nwr_$o.geojson"
+  needs "nwr_$o.geojson" ORGCODE
+  get "$FWS?where=RSL_TYPE%3D%27NWR%27&outFields=ORGCODE,ORGNAME,INTTYPE1,FWSREGION&outSR=4326&f=geojson&resultOffset=$o&resultRecordCount=500&orderByFields=OBJECTID&maxAllowableOffset=0.0003&geometryPrecision=5" "nwr_$o.geojson"
 done
 # The layer held 1,455 refuge features in October 2026. Three pages cover it
 # only while the first two are full and the last is not; otherwise refuges
@@ -39,11 +43,14 @@ for page in nwr_0 nwr_500; do
 done
 [ "$(jq '.features | length' nwr_1000.geojson)" -lt 500 ] || { echo "more than 1,500 refuge features: add a page to this script and to ingest/gazetteer.sql" >&2; exit 1; }
 # WDFW wildlife area units.
-get "https://geodataservices.wdfw.wa.gov/arcgis/rest/services/MapServices/WildlifeAreas/MapServer/0/query?where=1%3D1&outFields=WLA_Name,WLAU_Name,AccessTypeIDDesc&outSR=4326&f=geojson&maxAllowableOffset=0.0003&geometryPrecision=5" wdfw_units.geojson
+needs wdfw_units.geojson SubUnitID
+get "https://geodataservices.wdfw.wa.gov/arcgis/rest/services/MapServices/WildlifeAreas/MapServer/0/query?where=1%3D1&outFields=SubUnitID,WLA_Name,WLAU_Name,AccessTypeIDDesc&outSR=4326&f=geojson&maxAllowableOffset=0.0003&geometryPrecision=5" wdfw_units.geojson
 # Washington state parks, as WA State Parks publishes them.
-get "https://services5.arcgis.com/4LKAHwqnBooVDUlX/arcgis/rest/services/WA_State_Park_Boundaries/FeatureServer/0/query?where=1%3D1&outFields=ParkName,Category&outSR=4326&f=geojson&maxAllowableOffset=0.0002&geometryPrecision=5" wa_state_parks.geojson
+needs wa_state_parks.geojson ParkCode
+get "https://services5.arcgis.com/4LKAHwqnBooVDUlX/arcgis/rest/services/WA_State_Park_Boundaries/FeatureServer/0/query?where=1%3D1&outFields=ParkCode,ParkName,Category&outSR=4326&f=geojson&maxAllowableOffset=0.0002&geometryPrecision=5" wa_state_parks.geojson
 # National Park Service units: parks, monuments, recreation areas.
-get "https://services1.arcgis.com/fBc8EJBxQRMcHlei/arcgis/rest/services/NPS_Land_Resources_Division_Boundary_and_Tract_Data_Service/FeatureServer/2/query?where=1%3D1&outFields=UNIT_NAME,UNIT_TYPE&outSR=4326&f=geojson&maxAllowableOffset=0.0005&geometryPrecision=5" nps_units.geojson
+needs nps_units.geojson UNIT_CODE
+get "https://services1.arcgis.com/fBc8EJBxQRMcHlei/arcgis/rest/services/NPS_Land_Resources_Division_Boundary_and_Tract_Data_Service/FeatureServer/2/query?where=1%3D1&outFields=UNIT_CODE,UNIT_NAME,UNIT_TYPE&outSR=4326&f=geojson&maxAllowableOffset=0.0005&geometryPrecision=5" nps_units.geojson
 # Federal wildernesses, every agency's, as Wilderness.net publishes the
 # National Wilderness Preservation System (beeline-9jd4), simplified to about
 # 30 m, in pages of 300: a single request of all of them takes minutes.

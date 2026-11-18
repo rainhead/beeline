@@ -7,38 +7,14 @@
  * (beeline-4wx3).
  */
 import { html, LitElement, nothing } from "lit";
-import { matchesWords, type ComboboxOption } from "../combobox-model.js";
+import type { ComboboxOption } from "../combobox-model.js";
+import { mergeNames, searchTaxa, type EcdysisName, type PickerTaxon } from "./taxon-search.js";
 import "../combobox.js";
 import { messagesFor } from "../../messages/index.js";
 
 const m = messagesFor(null);
 
-export interface PickerTaxon {
-  /**
-   * The tree's entity id; for a name from Ecdysis the tree lacks, its Ecdysis
-   * id made negative, which no entity id is. The page keys its names by this
-   * (rowTaxa in src/app/determine.ts makes the same keys).
-   */
-  id: number;
-  rank: string;
-  name: string;
-  family: string | null;
-  order: string | null;
-  bee: boolean;
-  castes: boolean;
-  uses: number;
-  /** Set on a name from Ecdysis the tree does not hold yet: the draft names it by this id. */
-  ecdysisTid?: number;
-}
-
-/** A name from the server's search of Ecdysis (searchEcdysisNames). */
-interface EcdysisName {
-  tid: number;
-  rank: string;
-  name: string;
-  family: string | null;
-  order: string | null;
-}
+export type { PickerTaxon };
 
 let taxaPromise: Promise<PickerTaxon[]> | null = null;
 let pickers = 0;
@@ -71,19 +47,6 @@ const ecdysisAnswers = new Map<string, EcdysisName[] | "pending" | "failed">();
 
 const queryKey = (query: string) => query.toLowerCase().replace(/[().]/g, " ").split(/\s+/).filter(Boolean).join(" ");
 
-/** A name from Ecdysis in the picker's shape. Never a bee (the server leaves bees out), so no castes. */
-export const fromEcdysis = (e: EcdysisName): PickerTaxon => ({
-  id: -e.tid,
-  rank: e.rank,
-  name: e.name,
-  family: e.family,
-  order: e.order,
-  bee: false,
-  castes: false,
-  uses: 0,
-  ecdysisTid: e.tid,
-});
-
 const ITALIC = new Set(["genus", "subgenus", "species", "subspecies"]);
 export const isItalic = (rank: string) => ITALIC.has(rank);
 
@@ -101,39 +64,6 @@ export function placeOf(t: PickerTaxon): string {
   if (t.bee) return family ?? "";
   const order = t.rank === "order" ? null : t.order;
   return [family, order].filter((s) => s !== null && s !== "").join(" · ");
-}
-
-/**
- * Every word typed must start a word of the name, in order: `bom vos` finds
- * Bombus vosnesenskii, `b vos` too. Commoner names first, bees before
- * bycatch, an exact match before everything.
- */
-export function searchTaxa(taxa: readonly PickerTaxon[], query: string, bycatch: boolean, limit = 10): PickerTaxon[] {
-  const q = query.toLowerCase().replace(/[().]/g, " ").split(/\s+/).filter(Boolean);
-  if (q.length === 0) return [];
-  const out: { t: PickerTaxon; score: number }[] = [];
-  for (const t of taxa) {
-    if (!bycatch && !t.bee) continue;
-    if (!matchesWords(query, t.name)) continue;
-    const words = t.name.toLowerCase().replace(/[()]/g, "").split(/\s+/);
-    const exact = words.join(" ") === q.join(" ");
-    out.push({ t, score: (exact ? 1e9 : 0) + Math.log(t.uses + 1) * 10 + (t.bee ? 5 : 0) - words.length });
-  }
-  return out
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((o) => o.t);
-}
-
-/**
- * The tree's matches, then Ecdysis's for the same query once they have come
- * back, leaving out any name the tree's list already has. The tree's come
- * first and stay put, so the option Enter takes does not change under the
- * person's finger when Ecdysis answers.
- */
-export function mergeNames(tree: readonly PickerTaxon[], ecdysis: readonly EcdysisName[], limit = 8): PickerTaxon[] {
-  const held = new Set(tree.map((t) => t.name));
-  return [...tree, ...ecdysis.filter((e) => !held.has(e.name)).slice(0, limit).map(fromEcdysis)];
 }
 
 /**

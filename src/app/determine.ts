@@ -79,8 +79,6 @@ export interface EntryTaxon {
   order: string | null;
   bee: boolean;
   castes: boolean;
-  /** Specimens whose determination of record is this node: how common it is, to order suggestions. */
-  uses: number;
 }
 
 /** Specimens a person can reach, as a subquery over sample ids. */
@@ -250,12 +248,10 @@ const TAXA_TTL_MS = 10 * 60_000;
 export async function entryTaxa(db: Kysely<Database>, now = Date.now()): Promise<EntryTaxon[]> {
   if (taxaMemo !== null && now - taxaMemo.at < TAXA_TTL_MS) return taxaMemo.taxa;
   const nodes = (
-    await sql<{ id: number; rank: string; name: string; parent_id: number | null; castes: boolean; uses: number }>`
-      SELECT a.entity_id AS id, a.rank, a.scientific_name AS name, a.parent_id, c.has_castes AS castes,
-             CAST(coalesce(u.n, 0) AS INTEGER) AS uses
+    await sql<{ id: number; rank: string; name: string; parent_id: number | null; castes: boolean }>`
+      SELECT a.entity_id AS id, a.rank, a.scientific_name AS name, a.parent_id, c.has_castes AS castes
       FROM animal a
-      JOIN animal_castes c ON c.animal_id = a.entity_id
-      LEFT JOIN (SELECT animal_id, count(*) AS n FROM determination_of_record GROUP BY animal_id) u ON u.animal_id = a.entity_id`.execute(db)
+      JOIN animal_castes c ON c.animal_id = a.entity_id`.execute(db)
   ).rows;
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const above = (id: number, rank: string): string | null => {
@@ -277,7 +273,6 @@ export async function entryTaxa(db: Kysely<Database>, now = Date.now()): Promise
         order: above(n.id, "order"),
         bee: f !== null && BEE_FAMILIES.includes(f),
         castes: n.castes,
-        uses: n.uses,
       };
     });
   taxaMemo = { at: now, taxa };

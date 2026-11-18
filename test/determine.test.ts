@@ -317,11 +317,11 @@ describe("the overnight commit", () => {
 });
 
 describe("the names offered", () => {
-  it("leave out the scaffolding, mark bees and castes, and count uses", async () => {
+  it("leave out the scaffolding, and mark bees and castes", async () => {
     const { db } = await fixture();
     const taxa = await entryTaxa(db);
     const by = new Map(taxa.map((t) => [t.name, t]));
-    expect(by.get("Bombus vosnesenskii")).toMatchObject({ bee: true, castes: true, family: "Apidae", uses: 1 });
+    expect(by.get("Bombus vosnesenskii")).toMatchObject({ bee: true, castes: true, family: "Apidae" });
     expect(by.get("Vespula")).toMatchObject({ bee: false, castes: false });
     expect(by.get("Bombus flavidus")).toMatchObject({ castes: false });
   });

@@ -50,9 +50,10 @@ The server checks that again for `register_email` evidence (`decideRegistration`
 
 A failed run is retried every 15 minutes until 5am, like every night job, which is about a dozen requests at worst.
 
-## Not built yet
+## The download of a print run's addresses
 
-- The download of a print run's addresses (beeline-w8ab.3).
+Staff cut a run's sheets apart and mail each collector their labels, so the run's page has a button that downloads a CSV of the collectors' mailing addresses for a mail merge (beeline-w8ab.3, `POST /print-runs/:id/addresses.csv`, `src/app/print-run-addresses.ts`). It is a POST so that a browser prefetch cannot spend one of the day's requests, and the button shows only where `config.idealLogic` holds a client. The request reads the run's distinct primary collectors from the store, calls `fetchRegistrants()` once, matches each collector to a registrant through `person_registration`, builds the file in memory and sends it with `Cache-Control: no-store`. Nothing is written to disk, and the one log line says who downloaded which run and how many rows had an address, never a name or an address. The file has one row per address, not per person, so a household gets one envelope: collectors whose street (folded to lower-case letters and digits) and postal code agree share a row. A collector who has no linked registration, whose registration has no address, or whose registration is no longer in Ideal Logic's answer still gets a row, with empty address columns and a note saying which, after the addressed rows. When the client throws an `IdealLogicError`, the answer is a 429 for a spent budget and a 503 for anything else, carrying the error's fixed text and the requests left today, and never a partial file.
+
 - The page where staff place the registrants nobody is linked to (beeline-w8ab.2).
 - Linking at sign-in: iNaturalist reports the signed-in account's own confirmed email address, which could be compared with the registration's. How to compare without storing either is undecided.
 - "Keep in lab" and other instructions not to mail (beeline-w8ab.4), and email (beeline-w8ab.6).

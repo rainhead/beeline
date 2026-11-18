@@ -2753,6 +2753,33 @@ export const en = {
       /** Beside a label that is a second print under the number it already had. */
       reprint: "reprint",
       download: "Download the sheets (PDF)",
+      /** The mailing addresses of the run's collectors, fetched from Ideal Logic as the file is made (beeline-w8ab.3). */
+      addresses: {
+        button: "Download the mailing addresses (CSV)",
+        hint: "For a mail merge onto address labels. The addresses come from Ideal Logic when you press the button and are not kept by Beeline. Each download uses one of the requests Ideal Logic allows each day.",
+        notConfigured: "Beeline is not set up to read addresses from Ideal Logic.",
+        canceledNoAddresses: "This run was canceled, so its labels will not be mailed.",
+        /** The message is the client's own fixed text. */
+        failed: (reason: string, remaining: number) =>
+          `No file was made. ${reason} Beeline may make ${n(remaining)} more ${remaining === 1 ? "request" : "requests"} to Ideal Logic today.`,
+        headers: {
+          names: "Names",
+          line1: "Address line 1",
+          line2: "Address line 2",
+          city: "City",
+          stateProvince: "State or province",
+          postalCode: "Postal code",
+          country: "Country",
+          labels: "Labels",
+          printedAs: "Printed as",
+          note: "Note",
+        },
+        notes: {
+          noRegistration: "No address: this collector is not linked to a registration in Ideal Logic.",
+          noAddress: "No address: the registration in Ideal Logic has no street address.",
+          notInAnswer: "No address: the registration this collector is linked to is no longer in Ideal Logic.",
+        },
+      },
       approve: "Approve",
       approveHint: "The labels have been proofed and are good to print.",
       markPrinted: "Mark printed",

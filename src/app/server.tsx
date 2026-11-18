@@ -1837,6 +1837,11 @@ export function createApp({
       batchCount: view === "batch" ? rows.length : await batchSize(db, acting.personId, me),
       focus: focusSeason !== null && rows.some((r) => r.id === specimenAsked) ? specimenAsked : null,
     } as const;
+    // The rows are in the page itself, so a copy a browser kept shows them
+    // as they were when it loaded. Brought back with Back, it showed none of
+    // the names given since, and a sex chosen on such a row was sent without
+    // its name and replaced the saved draft (beeline-rt6h).
+    c.header("cache-control", "no-store");
     return c.html(
       await page(c, m.determine.title, <DeterminePage m={m} seasons={seasons} data={data} />, ["/static/determine.css"]),
     );

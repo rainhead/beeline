@@ -20,6 +20,7 @@ import { NumberIndex, pastedList, type NumberProblem } from "../../../determinat
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
+import { leavesPage, RequestQueue } from "./queue.js";
 import { deselect, emptySelection, holdsWork, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
@@ -72,7 +73,8 @@ class DetermineGrid extends LitElement {
 
   data: DeterminePageData;
   taxa = new Map<number, TaxonInfo>();
-  #queue: Promise<unknown> = Promise.resolve();
+  /** Saves, and the requests that reread the rows, one at a time in the order made (queue.ts). */
+  #queue = new RequestQueue();
   /**
    * The newest write sent for each row and not yet answered. A row reads
    * through it, so a second change made before the first is saved builds on
@@ -136,8 +138,52 @@ class DetermineGrid extends LitElement {
     super.disconnectedCallback();
     this.#pinned.disconnect();
     window.removeEventListener("resize", this.#clearPinned);
+    document.removeEventListener("click", this.#holdLink);
+    window.removeEventListener("beforeunload", this.#warnUnsaved);
     document.documentElement.style.scrollPaddingTop = "";
   }
+
+  /**
+   * Leave the page only once every change made on it has been sent
+   * (beeline-rt6h). Saves go one at a time, so naming rows quickly leaves
+   * several waiting, and loading another page cancels the one being sent and
+   * never sends the rest. Until this, only the find box's move to another
+   * year waited; the collection year menu and every link left at once, and
+   * the names not yet sent were lost without a word. If a change failed the
+   * page stays, so it can be tried again.
+   */
+  async #afterSaves(go: () => void, stay: () => void = () => undefined) {
+    if (this.#queue.busy) {
+      this.message = d.leaving;
+      await this.#queue.idle();
+    }
+    if (this.failed.size > 0) {
+      this.message = d.leaveUnsaved;
+      stay();
+      return;
+    }
+    go();
+  }
+
+  /** A link clicked while changes are still being sent is followed once they have been. */
+  #holdLink = (e: MouseEvent) => {
+    if (!this.#queue.busy) return;
+    const a = e.target instanceof Element ? e.target.closest<HTMLAnchorElement>("a[href]") : null;
+    if (a === null || !leavesPage(e, { target: a.target, download: a.hasAttribute("download") })) return;
+    e.preventDefault();
+    void this.#afterSaves(() => window.location.assign(a.href));
+  };
+
+  /**
+   * What nothing above can hold: closing the tab, Back, reloading, a form in
+   * the header. The browser asks before it drops changes not yet sent, or
+   * ones that failed and wait to be tried again.
+   */
+  #warnUnsaved = (e: BeforeUnloadEvent) => {
+    if (!this.#queue.busy && this.failed.size === 0) return;
+    e.preventDefault();
+    e.returnValue = "";
+  };
 
   /** Close a row's name box and put focus back on the row's name button, not at the top of the page. */
   #closeEditor(r: EntryRow) {
@@ -148,9 +194,16 @@ class DetermineGrid extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     // The season menu is the shell's, a plain GET form: choosing a season goes there.
+    // It waits for the saves first, like every other way off the page.
     document.querySelector<HTMLSelectElement>("#determine-season")?.addEventListener("change", (e) => {
-      (e.target as HTMLSelectElement).form?.requestSubmit();
+      const menu = e.target as HTMLSelectElement;
+      void this.#afterSaves(
+        () => menu.form?.requestSubmit(),
+        () => (menu.value = String(this.data.season)),
+      );
     });
+    document.addEventListener("click", this.#holdLink);
+    window.addEventListener("beforeunload", this.#warnUnsaved);
     loadTaxa()
       .then((list: PickerTaxon[]) => {
         for (const t of list) this.taxa.set(t.id, { name: t.name, rank: t.rank, castes: t.castes });
@@ -238,8 +291,7 @@ class DetermineGrid extends LitElement {
         this.saving = saving;
       }
     };
-    this.#queue = this.#queue.then(run);
-    return this.#queue;
+    return this.#queue.run(run);
   }
 
   #write(rows: EntryRow[], patch: Partial<EntryValue>) {
@@ -296,19 +348,29 @@ class DetermineGrid extends LitElement {
     this.selection = ids.every((id) => this.selected.has(id)) ? deselect(this.selection, ids) : selectMore(this.selection, ids);
   }
 
+  /**
+   * Change the list and read it back. The answer replaces every row on
+   * screen, so the request waits its turn behind the saves: sent beside one,
+   * it could read a row before the save reached the store and be answered
+   * after it, and the row would then show without the name just given. A sex
+   * chosen on that row was sent without the name and replaced the saved draft
+   * (beeline-rt6h).
+   */
   async #batchRequest(body: object) {
-    const res = await fetch("/determinations/batch", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify(body),
+    const out = await this.#queue.run(async () => {
+      const res = await fetch("/determinations/batch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      return (await res.json()) as {
+        addition: null | { entries: { text: string; found: number; problem: NumberProblem | null }[]; added: number; already: number; named: number[] };
+        rows: EntryRow[];
+        taxa: Record<number, TaxonInfo>;
+      };
     });
-    if (!res.ok) throw new Error(String(res.status));
-    const out = (await res.json()) as {
-      addition: null | { entries: { text: string; found: number; problem: NumberProblem | null }[]; added: number; already: number; named: number[] };
-      rows: EntryRow[];
-      taxa: Record<number, TaxonInfo>;
-    };
     for (const [id, t] of Object.entries(out.taxa)) this.taxa.set(Number(id), t);
     // The view links carry the count; keep it true without a reload.
     const link = document.querySelector<HTMLAnchorElement>('a[href="/determinations?view=batch"]');
@@ -451,11 +513,7 @@ class DetermineGrid extends LitElement {
    * started meanwhile cancels the move.
    */
   async #leaveFor(specimen: number, season: number, typed: string, search: number) {
-    let queue: Promise<unknown>;
-    do {
-      queue = this.#queue;
-      await queue;
-    } while (queue !== this.#queue || this.#pending.size > 0);
+    await this.#queue.idle();
     if (search !== this.#search) return;
     if (this.failed.size > 0) {
       this.message = d.jump.unsaved(typed, season);

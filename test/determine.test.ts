@@ -352,6 +352,13 @@ describe("the page and its endpoints", () => {
     expect(theirs.status).toBe(404);
   });
 
+  it("tells the browser to keep no copy of the page, whose rows a copy would show as they were (beeline-rt6h)", async () => {
+    const { app } = await appFixture();
+    const res = await app.request("/determinations");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
   it("adds typed numbers to the batch and returns it", async () => {
     const { app, json } = await appFixture();
     const res = await json("/determinations/batch", { add: "26000103, 2400555" });

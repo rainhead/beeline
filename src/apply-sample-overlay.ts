@@ -238,7 +238,13 @@ export async function applyStaffPoint(
   sampleId: number,
   row: Pick<SampleOverlayRow, "base_value" | "value" | "reason">,
   setBy: number | null,
-  opts: { transactional?: boolean } = {},
+  /**
+   * `transactional`: the write is its own transaction. `settleFinding`: delete
+   * the stored finding that the old records disagreed about the point, which
+   * the save itself does and a replay of the file does not (the nightly
+   * would otherwise delete it again on every pass).
+   */
+  opts: { transactional?: boolean; settleFinding?: boolean } = {},
 ): Promise<string | null> {
   const transactional = opts.transactional ?? false;
   if (row.value === "") {
@@ -293,11 +299,13 @@ export async function applyStaffPoint(
     // The old records' disagreement about where the sample was is answered
     // by the point staff chose, as a collector's edit answers one
     // (src/app/sample-edit.ts). There is no removal to bring it back for.
-    await conn.run(
-      `DELETE FROM sample_promotion_finding
-       WHERE sample_id = $1 AND rule_name = 'within_sample_disagreement' AND details LIKE 'coordinates: %'`,
-      [sampleId] as never,
-    );
+    if (opts.settleFinding === true) {
+      await conn.run(
+        `DELETE FROM sample_promotion_finding
+         WHERE sample_id = $1 AND rule_name = 'within_sample_disagreement' AND details LIKE 'coordinates: %'`,
+        [sampleId] as never,
+      );
+    }
   });
   return null;
 }
@@ -327,13 +335,9 @@ export async function applySampleOverlay(
       result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "not a sample reference" });
       continue;
     }
-    if ("legacy_id" in ref && (row.field !== "coordinates" || row.value === "")) {
+    if ("legacy_id" in ref && row.field !== "coordinates") {
       // Reported, never thrown: the file may hold one, and the nightly goes on.
-      result.unresolved.push({
-        sample_ref: row.sample_ref,
-        field: row.field,
-        reason: "an old record's reference carries only a point that is set; a sample with no observation has no removal",
-      });
+      result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "an old record's reference carries only a point" });
       continue;
     }
     const found = await resolveSampleRef(conn, ref);
@@ -342,6 +346,20 @@ export async function applySampleOverlay(
       continue;
     }
     const { sampleId } = found;
+    if ("legacy_id" in ref && row.value === "") {
+      // A removal under an old record's key is for a sample that has since been
+      // linked to an observation (the key standing in the file is kept, so the
+      // sample never has two rows); one with no observation has no removal.
+      const linked = await rows(conn, `SELECT inat_observation_id IS NOT NULL FROM sample WHERE entity_id = $1`, [sampleId]);
+      if (linked[0]?.[0] !== true) {
+        result.unresolved.push({
+          sample_ref: row.sample_ref,
+          field: row.field,
+          reason: "a sample with no observation has no removal; its point is corrected by setting the right one",
+        });
+        continue;
+      }
+    }
     const setBy = byLogin.get(row.author.toLowerCase()) ?? null;
 
     // Holds and waivers (beeline-plu, beeline-1kb.9). Delete-then-insert, as

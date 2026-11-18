@@ -22,6 +22,7 @@ import {
   type SampleOverlayRow,
 } from "../sample-overlay.js";
 import { withPrintRunLock } from "../print-run.js";
+import { isWriteConflict } from "../write-conflict.js";
 import { applySampleEdit, loadSampleForStaff } from "./sample-edit.js";
 
 /**
@@ -87,6 +88,8 @@ export type StaffLocalityResult =
   | { outcome: "unchanged" }
   /** A point cannot be changed while an unprinted print run holds the sample. */
   | { outcome: "in_print_run" }
+  /** The store write lost a write conflict, and nothing was recorded anywhere (an entered sample has no file row). */
+  | { outcome: "conflict" }
   | { outcome: "invalid"; problem: string }
   /** No staging rows back this non-iNat sample — nothing durable to anchor on. */
   | { outcome: "no_staging" }
@@ -178,7 +181,6 @@ async function pointAnchor(
   deps: Pick<StaffLocalityDeps, "db" | "sampleOverlayPath">,
   sample: StaffLocalityTarget,
 ): Promise<{ kind: "ref"; ref: string } | { kind: "entered" } | null> {
-  if (sample.inat_observation_id !== null) return { kind: "ref", ref: observationRef(sample.inat_observation_id) };
   const table = await sql<{ n: bigint }>`
     SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = 'legacy_specimen_number' AND NOT temporary`.execute(deps.db);
   if (Number(table.rows[0]?.n ?? 0) > 0) {
@@ -189,10 +191,14 @@ async function pointAnchor(
       const ref = parseSampleRef(r.sample_ref);
       return r.field === "coordinates" && ref !== null && "legacy_id" in ref && ids.has(ref.legacy_id);
     });
+    // Whatever the sample has now: a row standing under an old record's key
+    // stays its key after an observation is linked, so a second save does not
+    // add a second row and a removal replaces the one row.
     if (standing !== undefined) return { kind: "ref", ref: standing.sample_ref };
     const first = records.rows[0]?.id;
-    if (first !== undefined) return { kind: "ref", ref: legacyRecordRef(first) };
+    if (first !== undefined && sample.inat_observation_id === null) return { kind: "ref", ref: legacyRecordRef(first) };
   }
+  if (sample.inat_observation_id !== null) return { kind: "ref", ref: observationRef(sample.inat_observation_id) };
   const entered = await sql<{ e: boolean }>`SELECT EXISTS (SELECT 1 FROM sample_entry WHERE sample_id = ${sample.entity_id}) AS e`.execute(deps.db);
   return entered.rows[0]?.e ? { kind: "entered" } : null;
 }
@@ -236,8 +242,8 @@ async function heldByUnprintedRun(conn: DuckDBConnection, sampleId: number): Pro
  * the print runs' lock, as the trap form's writes are: the app's own `conn`
  * is shared by every request, so a BEGIN there would take other requests'
  * statements into the transaction. Only the write is under the lock; the
- * waivers are refreshed after it. A save is refused while an unprinted run
- * holds the sample.
+ * waivers are refreshed after it. A change, a removal included, is refused
+ * while an unprinted run holds the sample.
  */
 export async function setStaffCoordinates(
   deps: StaffLocalityDeps,
@@ -279,16 +285,25 @@ export async function setStaffCoordinates(
   const setBy = await personOfLogin(conn, input.author);
   const writer = deps.printWriter ?? conn;
   const row = { base_value: base, value, reason };
-  const written = await withPrintRunLock(async (): Promise<{ frozen: true } | { problem: string } | null> => {
-    if (!input.remove && (await heldByUnprintedRun(writer, sample.entity_id))) return { frozen: true };
+  const written = await withPrintRunLock(async (): Promise<{ frozen: true } | { conflict: true } | { problem: string } | null> => {
+    if (await heldByUnprintedRun(writer, sample.entity_id)) return { frozen: true };
     // Durability before immediacy: if the file write fails, nothing applied.
     if (anchor.kind === "ref") {
       await upsertSampleOverlay(deps.sampleOverlayPath, [{ sample_ref: anchor.ref, field: "coordinates", author: input.author, ...row }]);
     }
-    const problem = await applyStaffPoint(writer, sample.entity_id, row, setBy, { transactional: true });
+    let problem: string | null;
+    try {
+      problem = await applyStaffPoint(writer, sample.entity_id, row, setBy, { transactional: true, settleFinding: true });
+    } catch (err) {
+      // An entered sample has no file row: a lost conflict recorded nothing,
+      // and the caller is told so rather than that it was recorded.
+      if (anchor.kind === "entered" && isWriteConflict(err)) return { conflict: true };
+      throw err;
+    }
     return problem === null ? null : { problem };
   });
   if (written !== null && "frozen" in written) return { outcome: "in_print_run" };
+  if (written !== null && "conflict" in written) return { outcome: "conflict" };
   if (written !== null) return { outcome: "unresolved", reason: written.problem };
   // Slow, and a point's own write does not need it: the flags a waiver was
   // made against may have changed with the point.

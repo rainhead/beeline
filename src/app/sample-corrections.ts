@@ -606,6 +606,8 @@ export function setCoordinates(
       { ...form, author: actor.login },
     );
     if (result.outcome === "in_print_run") return refused("in_print_run");
+    // Nothing was recorded anywhere, so nothing was done: say so, as the trap count does.
+    if (result.outcome === "conflict") return refused("busy");
     const bad = overlayRefusal(result);
     if (bad !== null) return bad;
     let settled = true;
@@ -737,6 +739,8 @@ export function takeLocation(
       { reason, author: actor.login },
     );
     if (result.outcome === "in_print_run") return refused("in_print_run");
+    // Nothing was recorded anywhere, so nothing was done: say so, as the trap count does.
+    if (result.outcome === "conflict") return refused("busy");
     const bad = overlayRefusal(result);
     if (bad !== null) return bad;
     if (result.outcome === "unchanged") return refused("not_moved");

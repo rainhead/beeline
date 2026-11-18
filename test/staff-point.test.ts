@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createKysely } from "../src/db.js";
-import { compareLegacyExport, writeDifferences } from "../src/compare-legacy-export.js";
+import { compareLegacyExport, DEFAULT_RULINGS, writeDifferences } from "../src/compare-legacy-export.js";
+import { readRulings } from "../src/legacy-export-rulings.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { applySampleOverlay } from "../src/apply-sample-overlay.js";
 import { legacyRecordRef, parseSampleOverlay, parseSampleRef, readSampleOverlay, upsertSampleOverlay } from "../src/sample-overlay.js";
@@ -73,20 +74,6 @@ const place = async (conn: DuckDBConnection, id: number) =>
     `SELECT s.country, s.state_province, s.county, (SELECT atlas_id FROM sample_atlas a WHERE a.sample_id = s.entity_id)
      FROM sample s WHERE s.entity_id = ${id}`,
   ))[0];
-/** A run Beeline prepared and printed for the sample's specimens, at the given moments (SQL expressions), its labels at `at`. */
-const printedByBeeline = async (conn: DuckDBConnection, sampleId: number, prepared: string, printed: string, at = "46.0646, -118.343") => {
-  await conn.run(
-    `INSERT INTO print_run (prepared_by, prepared_at, approved_by, approved_at, printed_by, printed_at)
-     SELECT min(entity_id), ${prepared}, min(entity_id), ${printed}, min(entity_id), ${printed} FROM person`,
-  );
-  await conn.run(
-    `INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text,
-                                collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
-     SELECT (SELECT max(entity_id) FROM print_run), sp.entity_id, 1, 0, 'l', 'c', 'd', 'c', 'm', 'n', ${at}, s.date_start, s.date_end
-     FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.sample_id = ${sampleId}`,
-  );
-};
-
 describe("a staff point on a sample with no observation", () => {
   it("is saved under the sample's first old record, and the sample takes it as staff_entry", async () => {
     const s = await setup();
@@ -136,20 +123,80 @@ describe("a staff point on a sample with no observation", () => {
     expect((await location(s.conn, s.old))!.slice(0, 4)).toEqual([44.5, -123.2, 25, "staff_entry"]);
   });
 
-  it("is refused while an unprinted print run holds the sample, and allowed once it prints or is canceled", async () => {
+  describe("while a print run holds the sample", () => {
+    /** A run with a label for each specimen of the sample, in the given state. */
+    async function holdInRun(conn: DuckDBConnection, sampleId: number, state: "prepared" | "printed" | "canceled") {
+      await conn.run(`INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person`);
+      const run = `(SELECT max(entity_id) FROM print_run)`;
+      if (state === "printed") await conn.run(`UPDATE print_run SET approved_by = prepared_by, approved_at = now(), printed_by = prepared_by, printed_at = now() WHERE entity_id = ${run}`);
+      if (state === "canceled") await conn.run(`UPDATE print_run SET canceled_by = prepared_by, canceled_at = now() WHERE entity_id = ${run}`);
+      await conn.run(
+        `INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text,
+                                    collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
+         SELECT ${run}, sp.entity_id, 1, 0, 'l', 'c', 'd', 'c', 'm', 'n', 46.0646, -118.343, s.date_start, s.date_end
+         FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.sample_id = ${sampleId}`,
+      );
+    }
+
+    it("a point change is refused while the run has not printed, and nothing is written", async () => {
+      const s = await setup();
+      await holdInRun(s.conn, s.old, "prepared");
+      expect(await setCoordinates(s.deps, s.sam, s.old, newPoint)).toEqual({ ok: false, refusal: "in_print_run" });
+      expect(await rows(s.conn, `SELECT count(*) FROM sample_location_override`)).toEqual([[0n]]);
+      expect(await readSampleOverlay(s.paths.sampleOverlayPath)).toEqual([]);
+    });
+
+    it("is allowed once the run is canceled, or has printed", async () => {
+      const s = await setup();
+      await holdInRun(s.conn, s.old, "canceled");
+      expect(await setCoordinates(s.deps, s.sam, s.old, newPoint)).toMatchObject({ ok: true, outcome: "saved" });
+      await holdInRun(s.conn, s.other, "printed");
+      expect(await setCoordinates(s.deps, s.sam, s.other, newPoint)).toMatchObject({ ok: true, outcome: "saved" });
+    });
+
+    it("a removal on an observation sample is refused too, and the point stands", async () => {
+      const s = await setup();
+      const sample = await insertCleanSample(s.conn, { sample_number: "'OBS-2'", inat_observation_id: "424243" });
+      await setCoordinates(s.deps, s.sam, sample, newPoint);
+      await s.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sample}, 1)`);
+      await holdInRun(s.conn, sample, "prepared");
+      expect(await setCoordinates(s.deps, s.sam, sample, removal)).toEqual({ ok: false, refusal: "in_print_run" });
+      expect((await location(s.conn, sample))!.slice(0, 4)).toEqual([44.5, -123.2, 25, "staff_entry"]);
+    });
+  });
+
+  it("keeps its key when an observation is linked to the sample later: one row, and a removal replaces it", async () => {
     const s = await setup();
-    await s.conn.run(`INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person`);
-    await s.conn.run(
-      `INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text,
-                                  collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
-       SELECT (SELECT max(entity_id) FROM print_run), sp.entity_id, 1, 0, 'l', 'c', 'd', 'c', 'm', 'n', 46.0646, -118.343, s.date_start, s.date_end
-       FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.sample_id = ${s.old}`,
-    );
-    expect(await setCoordinates(s.deps, s.sam, s.old, newPoint)).toEqual({ ok: false, refusal: "in_print_run" });
+    await setCoordinates(s.deps, s.sam, s.old, newPoint);
+    await s.conn.run(`UPDATE sample SET inat_observation_id = 777001 WHERE entity_id = ${s.old}`);
+    await setCoordinates(s.deps, s.sam, s.old, { ...newPoint, latitude: "44.6" });
+    expect((await readSampleOverlay(s.paths.sampleOverlayPath)).map((r) => [r.sample_ref, r.value])).toEqual([["legacy:bbbb2222", "44.6 -123.2 25"]]);
+    // The sample has an observation now, so it has a removal, applied as for any observation sample.
+    expect(await setCoordinates(s.deps, s.sam, s.old, removal)).toMatchObject({ ok: true, outcome: "removed" });
+    expect((await readSampleOverlay(s.paths.sampleOverlayPath)).map((r) => [r.sample_ref, r.value])).toEqual([["legacy:bbbb2222", ""]]);
+    expect(await rows(s.conn, `SELECT count(*) FROM sample_location_override`)).toEqual([[0n]]);
+    // The nightly's replay applies it cleanly and puts nothing back.
+    const replay = await applySampleOverlay(s.conn, await readSampleOverlay(s.paths.sampleOverlayPath));
+    expect(replay).toEqual({ applied: 1, unresolved: [] });
+    expect(await rows(s.conn, `SELECT count(*) FROM sample_location_override`)).toEqual([[0n]]);
+  });
+
+  it("an entered sample's write that loses a write conflict says nothing was done, not that it was recorded", async () => {
+    const s = await setup({ separatePrintWriter: true });
+    const entered = await insertCleanSample(s.conn, { sample_number: "'OBAS-8'", kind: "'trap'" }, { source: "'staff_entry'" });
+    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+    const writer = s.deps.printWriter as unknown as { run: (sql: string, ...rest: unknown[]) => Promise<unknown> };
+    const run = writer.run.bind(writer);
+    writer.run = async (sql: string, ...rest: unknown[]) => {
+      if (/^\s*INSERT INTO sample_location_override/.test(sql)) throw new Error("TransactionContext Error: Catalog write-write conflict on update");
+      return run(sql, ...rest);
+    };
+    expect(await setCoordinates(s.deps, s.sam, entered, newPoint)).toEqual({ ok: false, refusal: "busy" });
+    writer.run = run;
     expect(await rows(s.conn, `SELECT count(*) FROM sample_location_override`)).toEqual([[0n]]);
     expect(await readSampleOverlay(s.paths.sampleOverlayPath)).toEqual([]);
-    await s.conn.run(`UPDATE print_run SET canceled_by = prepared_by, canceled_at = now()`);
-    expect(await setCoordinates(s.deps, s.sam, s.old, newPoint)).toMatchObject({ ok: true, outcome: "saved" });
+    // Sent again, it applies.
+    expect(await setCoordinates(s.deps, s.sam, entered, newPoint)).toMatchObject({ ok: true, outcome: "saved" });
   });
 
   it("answers the old records' disagreement about where the sample was", async () => {
@@ -161,6 +208,14 @@ describe("a staff point on a sample with no observation", () => {
     );
     await setCoordinates(s.deps, s.sam, s.old, newPoint);
     expect(await rows(s.conn, `SELECT details FROM sample_promotion_finding WHERE sample_id = ${s.old}`)).toEqual([["county: A | B"]]);
+  });
+
+  it("a replay of the overlay does not delete the finding again: only the save settles it", async () => {
+    const s = await setup();
+    await setCoordinates(s.deps, s.sam, s.old, newPoint);
+    await s.conn.run(`INSERT INTO sample_promotion_finding (sample_id, rule_name, details) VALUES (${s.old}, 'within_sample_disagreement', 'coordinates: a | b')`);
+    await applySampleOverlay(s.conn, await readSampleOverlay(s.paths.sampleOverlayPath));
+    expect(await rows(s.conn, `SELECT count(*) FROM sample_promotion_finding WHERE sample_id = ${s.old}`)).toEqual([[1n]]);
   });
 
   it("is refused to anyone but staff, while impersonating, and while a job runs", async () => {
@@ -221,7 +276,7 @@ describe("an overlay row naming an old record", () => {
     const s = await setup();
     const result = await applySampleOverlay(s.conn, [{ sample_ref: "legacy:bbbb2222", field: "locality", base_value: "", value: "Somewhere", author: "samstaff", reason: "" }]);
     expect(result.applied).toBe(0);
-    expect(result.unresolved[0]!.reason).toMatch(/only a point that is set/);
+    expect(result.unresolved[0]!.reason).toMatch(/only a point/);
   });
 
   describe("on a store with no old records", () => {
@@ -288,6 +343,13 @@ describe("the legacy-format export of a sample whose point staff set", () => {
       `SELECT "column", kind FROM read_csv('${differences}', header = true, all_varchar = true)
        WHERE "column" IN ('county', 'decimalLatitude', 'decimalLongitude', 'coordinateUncertaintyInMeters') GROUP BY 1, 2 ORDER BY 1, 2`,
     );
+    // And every one of them is ruled, so a staff point that production already holds is not unexplained.
+    const rulings = await readRulings(DEFAULT_RULINGS);
+    await compareLegacyExport(s.conn, exportPath, rulings);
+    const ruled = join(dir, "ruled.csv");
+    await writeDifferences(s.conn, rulings, ruled);
+    expect(await rows(s.conn, `SELECT DISTINCT kind, outcome FROM read_csv('${ruled}', header = true, all_varchar = true) WHERE kind = 'staff_point'`)).toEqual([["staff_point", "expected"]]);
+    expect(await rows(s.conn, `SELECT count(*) FROM read_csv('${ruled}', header = true, all_varchar = true) WHERE kind = 'staff_point' AND coalesce(outcome, '') = ''`)).toEqual([[0n]]);
     expect(kinds).toEqual([
       ["coordinateUncertaintyInMeters", "staff_point"],
       ["county", "staff_point"],

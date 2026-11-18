@@ -574,9 +574,12 @@ function Reason({ m, id }: { m: Messages; id: string }) {
   return <TextField id={id} name="reason" label={m.people.reason} hint={m.people.reasonHint} />;
 }
 
+const inatProfileHref = (login: string) => `https://www.inaturalist.org/people/${encodeURIComponent(login)}`;
+
 export function PersonPage({
   m,
   person,
+  specimens,
   atlases,
   programs,
   history,
@@ -587,6 +590,8 @@ export function PersonPage({
 }: {
   m: Messages;
   person: PersonDetail;
+  /** What they collected, and the Specimens listing that shows it (null without a login to filter by). */
+  specimens: { count: number; href: string | null };
   atlases: readonly AtlasOption[];
   programs: readonly ProgramOption[];
   /** Everything the change log holds about them, newest first (beeline-o22). */
@@ -609,7 +614,22 @@ export function PersonPage({
       </p>
       <PageHeader
         title={person.display_name}
-        lede={p.samplesCollected(person.samples, person.primary_samples)}
+        lede={
+          <>
+            {specimens.href === null ? (
+              p.specimensCollected(specimens.count)
+            ) : (
+              <a href={specimens.href}>{p.specimensCollected(specimens.count)}</a>
+            )}
+            , {p.samplesCollected(person.samples, person.primary_samples)}
+            {person.login !== null && person.login !== "" && (
+              <>
+                {" · "}
+                <a href={inatProfileHref(person.login)}>{p.inatProfile}</a>
+              </>
+            )}
+          </>
+        }
         mark={atlas === undefined ? undefined : <AtlasMark code={atlas.code} name={atlas.name} />}
       />
       <Meta block>
@@ -664,7 +684,9 @@ export function PersonPage({
               {person.logins.map((l) => (
                 <tr>
                   <td>
-                    <code>{l.login}</code>
+                    <a href={inatProfileHref(l.login)}>
+                      <code>{l.login}</code>
+                    </a>
                   </td>
                   <td>
                     <OrAbsent value={l.uid} label={m.absence.notRecorded} />

@@ -2,7 +2,7 @@ import { sql, type Kysely } from "kysely";
 import { PROGRAM_MEMBERSHIP, type Database, type MembershipKind } from "../model.js";
 import type { PersonChange } from "../person-change.js";
 import { splitCodes } from "../person-overlay.js";
-import { toCsv } from "./listings.js";
+import { ALL, countSpecimens, EMPTY_QUERY, listingHref, STAFF_READER, toCsv } from "./listings.js";
 
 /**
  * The people roster: who is in the store, and which iNaturalist account each
@@ -775,4 +775,32 @@ export async function linkChanges(
     const match = c.current_name === null ? null : (by.get(c.current_name) ?? null);
     return { ...c, handle: match?.handle ?? null };
   });
+}
+
+/**
+ * The specimens a person collected, for their page, and where to see them.
+ *
+ * With a login, the count is the Specimens listing's own count of the query
+ * the link carries (all scopes, collector = the login), so the number and the
+ * page it links to cannot disagree: the collector filter matches anyone on a
+ * sample's collector list, not only its primary, and it counts `specimen`
+ * rows, so a sample that has only a working count and no rows yet adds
+ * nothing, here and there. Without a login the filter would have to match the
+ * name as free text, which also finds other people whose names contain it, so
+ * there is no link; the count is then by the person's own rows in
+ * `sample_collector`, which is the same reach as the filter.
+ */
+export async function specimensCollected(
+  db: Kysely<Database>,
+  person: { person_id: number; login: string | null },
+): Promise<{ count: number; href: string | null }> {
+  if (person.login !== null && person.login !== "") {
+    const query = { ...EMPTY_QUERY, scope: ALL, collector: person.login };
+    const counted = await countSpecimens(db, query, 0, STAFF_READER);
+    return { count: counted.total, href: listingHref("/specimens", EMPTY_QUERY, { scope: ALL, collector: person.login }) };
+  }
+  const found = await sql<{ n: number | bigint }>`
+    SELECT count(*) AS n FROM specimen sp
+    WHERE EXISTS (SELECT 1 FROM sample_collector c WHERE c.sample_id = sp.sample_id AND c.person_id = ${person.person_id})`.execute(db);
+  return { count: Number(found.rows[0]?.n ?? 0), href: null };
 }

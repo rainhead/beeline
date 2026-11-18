@@ -924,3 +924,55 @@ describe("recording who leads a program", () => {
     expect(csv).toContain(",MM;WaBA");
   });
 });
+
+describe("what a person's page says they collected (beeline-q1hx)", () => {
+  /** A sample with `printed` specimen rows, collected by the people named in order. */
+  async function sampleOf(ctx: Awaited<ReturnType<typeof rosterApp>>, number: string, collectors: number[], printed: number, count = printed) {
+    const id = await insertCleanSample(ctx.conn, {
+      sample_number: `'${number}'`,
+      specimen_count: String(count),
+      collector_id: String(collectors[0]),
+    });
+    for (const [i, person] of collectors.slice(1).entries()) {
+      await ctx.conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${id}, ${person}, ${i + 2})`);
+    }
+    for (let n = 1; n <= printed; n++) {
+      await ctx.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, ${n})`);
+    }
+    return id;
+  }
+
+  async function fixture() {
+    const ctx = await rosterApp({ personId: 3, admin: true });
+    await sampleOf(ctx, "1", [1], 2); // Ada alone
+    await sampleOf(ctx, "2", [2, 1], 3); // Bo's, with Ada second
+    await sampleOf(ctx, "3", [2], 4); // Bo alone
+    await sampleOf(ctx, "4", [1], 0, 5); // Ada's, five specimens counted and none printed yet
+    return ctx;
+  }
+
+  it("counts specimens, not samples, on any position of the collector list, and links to the listing that shows the same number", async () => {
+    const ctx = await fixture();
+    const body = await (await ctx.app.request("/people/adacollects")).text();
+    // 2 + 3 printed rows; the unprinted sample's count of 5 is not a specimen yet.
+    expect(body).toContain(`>5 specimens collected</a>`);
+    expect(body).toContain(`href="/specimens?scope=all&amp;collector=adacollects"`);
+    expect(body).toContain("from 3 samples, 2 as primary collector");
+    const listing = await (await ctx.app.request("/specimens?scope=all&collector=adacollects")).text();
+    expect(listing).toContain("5 specimens");
+  });
+
+  it("links to the iNaturalist profile by login", async () => {
+    const ctx = await fixture();
+    const body = await (await ctx.app.request("/people/adacollects")).text();
+    expect(body).toContain(`href="https://www.inaturalist.org/people/adacollects"`);
+  });
+
+  it("gives a person with no login the count by their own collector rows, and neither link", async () => {
+    const ctx = await fixture();
+    const body = await (await ctx.app.request("/people/2")).text();
+    expect(body).toContain("7 specimens collected");
+    expect(body).not.toContain(`>7 specimens collected</a>`);
+    expect(body).not.toContain("inaturalist.org/people");
+  });
+});

@@ -1,4 +1,7 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
@@ -1003,19 +1006,40 @@ describe("which sheet is read, and what else the workbook holds", () => {
   it("compares an unedited specimens file with its tabs of Beeline's own as no difference, and lists none of them as a tab that was not read", async () => {
     const f = await uploadFixture();
     const download = await f.file();
-    // The file as the app wrote it, untouched: the specimens tab and Beeline's three.
+    // The file as the app wrote it, untouched: the specimens tab and Beeline's four.
     const read = readXlsxHere(download);
     expect(read.ok && read.sheet.name).toBe("specimens");
-    expect(read.ok && read.otherSheets).toEqual(["names", "identifiers", "about"]);
+    expect(read.ok && read.otherSheets).toEqual(["names", "identifiers", "words", "about"]);
     const p = await planAsRead(f, download);
     nothingDiffers(p);
     expect(p.otherSheets).toEqual([]);
     expect(p.counts.unchanged.active + p.counts.unchanged.settled).toBe(4);
   });
 
+  // Gnumeric's converter, where it is installed: a real spreadsheet program opening the file and saving it again,
+  // which no library standing in for one is. CI has none, so the test says it was skipped there.
+  const ssconvert = spawnSync("ssconvert", ["--version"]).status === 0;
+  it.skipIf(!ssconvert)("compares the file as Gnumeric saves it again, untouched, as no difference (needs ssconvert)", async () => {
+    const f = await uploadFixture();
+    const dir = await mkdtemp(join(tmpdir(), "beeline-gnumeric-"));
+    await writeFile(join(dir, "from-beeline.xlsx"), await f.file());
+    const converted = spawnSync("ssconvert", [join(dir, "from-beeline.xlsx"), join(dir, "from-gnumeric.xlsx")], { timeout: 60_000 });
+    expect(converted.status, String(converted.stderr)).toBe(0);
+    const saved = new Uint8Array(await readFile(join(dir, "from-gnumeric.xlsx")));
+    // Not the bytes Beeline wrote: Gnumeric wrote its own file.
+    expect(Buffer.from(saved).equals(Buffer.from(await f.file()))).toBe(false);
+    const read = readXlsxHere(saved);
+    expect(read.ok && read.sheet.name).toBe("specimens");
+    const p = await planAsRead(f, saved);
+    nothingDiffers(p);
+    expect(p.otherSheets).toEqual([]);
+    expect(p.unrecognised).toEqual([]);
+    expect(p.counts.unchanged.active + p.counts.unchanged.settled).toBe(4);
+  });
+
   it("changing one of Beeline's own tabs changes nothing, and a tab of the person's own is still listed", async () => {
     const f = await uploadFixture();
-    const p = await planAsRead(f, edited(await f.file(), [], { sheets: { others: ["names", "identifiers", "about", "my notes"] } }));
+    const p = await planAsRead(f, edited(await f.file(), [], { sheets: { others: ["names", "identifiers", "words", "about", "my notes"] } }));
     nothingDiffers(p);
     expect(p.otherSheets).toEqual(["my notes"]);
   });

@@ -94,11 +94,20 @@ export type ColumnChoices =
    */
   | { words: readonly string[]; title: string; message: string }
   /**
-   * The words in a column of one of the extra sheets, offered as suggestions
-   * only: nothing is refused and nothing warns. A sheet with no rows gives
-   * no validation.
+   * The words in a column of one of the extra sheets, from its second row to
+   * the last cell of that column that holds something. With a `title` and a
+   * `message`, a cell holding anything else gets that warning, which the
+   * person may dismiss; without them the words are suggestions only, and
+   * nothing is refused and nothing warns. A column with no words gives no
+   * validation.
+   *
+   * This is the form to use for any list a person must be able to pick from:
+   * a list written into the validation itself (`words`, above) is one quoted
+   * string, which Excel splits at its commas and Gnumeric offers whole, as a
+   * single choice (seen in Gnumeric 2026-11-17: caste offered
+   * "gyne,worker,drone").
    */
-  | { sheet: string; column: string };
+  | { sheet: string; column: string; title?: string; message?: string };
 
 /** A sheet written whole, beside the main one: its name, its header and every row. */
 export interface ExtraSheet {
@@ -187,11 +196,23 @@ function choicesXml(header: readonly string[], choices: Readonly<Record<string, 
     if (source === undefined) throw new Error(`choices for ${column} come from a sheet that is not there: ${choice.sheet}`);
     const from = source.header.indexOf(choice.column);
     if (from < 0) throw new Error(`choices for ${column} come from a column that ${choice.sheet} does not have: ${choice.column}`);
-    // Nothing to offer, so no validation: a list pointing at empty cells would offer a blank.
-    if (source.rows.length === 0) return [];
+    // The list ends at the column's own last word, since the sheet's columns may be of different lengths and a
+    // list that ran on into empty cells would offer a blank.
+    const filled = source.rows.findLastIndex((r) => (r[from] ?? "") !== "");
+    // Nothing to offer, so no validation.
+    if (filled < 0) return [];
     const letter = columnName(from);
-    const range = `${sheetRef(source.name)}!$${letter}$2:$${letter}$${source.rows.length + 1}`;
-    return [`<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="${sqref}"><formula1>${escapeText(range)}</formula1></dataValidation>`];
+    const range = `${sheetRef(source.name)}!$${letter}$2:$${letter}$${filled + 2}`;
+    const { title, message } = choice;
+    if (title === undefined && message === undefined) {
+      return [`<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="${sqref}"><formula1>${escapeText(range)}</formula1></dataValidation>`];
+    }
+    if (title === undefined || title === "" || title.length > MAX_ERROR_TITLE_CHARS) throw new Error(`the warning's title for ${column} is 1 to ${MAX_ERROR_TITLE_CHARS} characters`);
+    if (message === undefined || message === "" || message.length > MAX_ERROR_MESSAGE_CHARS) throw new Error(`the warning's message for ${column} is 1 to ${MAX_ERROR_MESSAGE_CHARS} characters`);
+    return [
+      `<dataValidation type="list" errorStyle="warning" allowBlank="1" showErrorMessage="1" errorTitle="${attr(title)}" error="${attr(message)}" sqref="${sqref}">` +
+        `<formula1>${escapeText(range)}</formula1></dataValidation>`,
+    ];
   });
   return lists.length === 0 ? "" : `<dataValidations count="${lists.length}">${lists.join("")}</dataValidations>`;
 }

@@ -74,6 +74,8 @@ export async function identifierRows(db: Kysely<Database>, today: string): Promi
 export const NAMES_TAB = "names";
 export const IDENTIFIERS_TAB = "identifiers";
 export const ABOUT_TAB = "about";
+/** The words each column with a fixed vocabulary takes, a column for each. */
+export const WORDS_TAB = "words";
 
 /** What the file says of each column Beeline reads from it, from the comparison's own rule for it and the words the upload page uses. */
 function aboutRows(m: Messages): Rows {
@@ -115,22 +117,30 @@ export interface SpecimenWorkbook {
 /** The specimens file, beyond its rows. `today` is a day in Oregon, which a test fixes. */
 export async function specimenWorkbook(db: Kysely<Database>, m: Messages, today: string = oregonToday()): Promise<SpecimenWorkbook> {
   const layout = SPECIMENS_LAYOUT;
-  const warn = (words: readonly string[], column: string): ColumnChoices => ({
-    words,
-    title: m.workbook.warning.title,
-    message: m.workbook.warning.message(column),
-  });
   const sheets: ExtraSheet[] = [];
   const choices: Record<string, ColumnChoices> = {};
-  // The four vocabularies warn on whichever file reads the column.
-  for (const [column, words] of Object.entries(SPECIMEN_CHOICES)) if (layout.read.includes(column)) choices[column] = warn(words, column);
+  // The vocabularies of the columns this file reads, each a column of the words tab, and each a warning on its
+  // column of the main sheet. On a tab and not written into the check itself, because Gnumeric offers a list
+  // written that way as one choice, commas and all.
+  const vocabularies = Object.entries(SPECIMEN_CHOICES).filter(([column]) => layout.read.includes(column));
+  const longest = Math.max(0, ...vocabularies.map(([, words]) => words.length));
+  for (const [column] of vocabularies) {
+    choices[column] = { sheet: WORDS_TAB, column, title: m.workbook.warning.title, message: m.workbook.warning.message(column) };
+  }
   const [names, identifiers] = await Promise.all([nameRows(db), identifierRows(db, today)]);
   sheets.push(
     { name: NAMES_TAB, header: ["scientificName", "taxonRank", "family"], rows: names },
     { name: IDENTIFIERS_TAB, header: ["identifiedBy"], rows: identifiers },
+    {
+      name: WORDS_TAB,
+      header: vocabularies.map(([column]) => column),
+      rows: Array.from({ length: longest }, (_, i) => vocabularies.map(([, words]) => words[i] ?? null)),
+    },
   );
   choices.scientificName = { sheet: NAMES_TAB, column: "scientificName" };
-  choices.identifiedBy = { sheet: IDENTIFIERS_TAB, column: "identifiedBy" };
+  // identifiedBy takes no list. A list that only suggests does not exist in every program: Google Sheets marks any
+  // name not on it "Invalid: input must fall within specified range", and an identifier Beeline has not met is
+  // ordinary (Peter, 2026-11-17, typing his own name). The identifiers tab is for looking a spelling up.
   sheets.push({ name: ABOUT_TAB, header: [m.workbook.about.headingTopic, m.workbook.about.headingText], rows: aboutRows(m) });
   return {
     header: layout.headings,

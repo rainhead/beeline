@@ -27,7 +27,7 @@ import { readXlsxHere as readXlsx } from "../src/app/xlsx-reader.js";
 import { MAX_SHEET_ROWS, columnIndex, columnName } from "../src/app/xlsx.js";
 import * as XLSX from "xlsx";
 import { specimenWorkbook } from "../src/app/specimen-workbook.js";
-import { SPECIMENS_LAYOUT, columnRule } from "../src/app/upload-plan.js";
+import { SPECIMEN_CHOICES, SPECIMENS_LAYOUT, columnRule } from "../src/app/upload-plan.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
 import { refreshPlantCommonNames } from "../src/plant-common-names.js";
@@ -2076,7 +2076,7 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
   it("has no collectors tab, since nothing in the file reads recordedBy", async () => {
     const { db } = await tabsFixture();
     const { options } = await specimenWorkbook(db, en, TODAY);
-    expect(options.sheets!.map((s) => s.name)).toEqual(["names", "identifiers", "about"]);
+    expect(options.sheets!.map((s) => s.name)).toEqual(["names", "identifiers", "words", "about"]);
   });
 
   describe("in the download", () => {
@@ -2098,7 +2098,7 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
     it("holds the identifications tab and Beeline's three, in that order, every cell text in the Text format", async () => {
       const { bytes } = await download();
       const b = book(bytes);
-      expect(b.SheetNames).toEqual(["specimens", "names", "identifiers", "about"]);
+      expect(b.SheetNames).toEqual(["specimens", "names", "identifiers", "words", "about"]);
       for (const name of b.SheetNames) {
         for (const row of b.Sheets[name]!["!data"] as Array<Array<XLSX.CellObject | undefined>>) {
           for (const cell of row) if (cell !== undefined && cell.t !== "z") expect([name, cell.t, cell.z]).toEqual([name, "s", "@"]);
@@ -2108,7 +2108,7 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       expect(rowsOf(b, "identifiers").flat()).toContain("Fresh Face");
     });
 
-    it("takes suggestions for scientificName and identifiedBy from the right ranges, and refuses and warns of nothing there", async () => {
+    it("takes suggestions for scientificName from the names tab, refusing and warning of nothing, and gives identifiedBy no list at all", async () => {
       const { bytes } = await download();
       const b = book(bytes);
       const xml = sheetXml(bytes);
@@ -2117,7 +2117,9 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       const last = (name: string) => rowsOf(b, name).length;
       expect(last("names")).toBeGreaterThan(1);
       expect(xml).toContain(`<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="${letter("scientificName")}2:${letter("scientificName")}${MAX_SHEET_ROWS}"><formula1>names!$A$2:$A$${last("names")}</formula1>`);
-      expect(xml).toContain(`<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="${letter("identifiedBy")}2:${letter("identifiedBy")}${MAX_SHEET_ROWS}"><formula1>identifiers!$A$2:$A$${last("identifiers")}</formula1>`);
+      // No list on identifiedBy: Google Sheets marks a name that is not on a list as invalid, and a new identifier is ordinary.
+      expect(xml).not.toContain(`sqref="${letter("identifiedBy")}2:`);
+      expect(xml).not.toContain("identifiers!");
       // The suggestions never warn: only the vocabularies this file reads do.
       expect([...xml.matchAll(/errorStyle="warning"/g)]).toHaveLength(4);
     });
@@ -2128,8 +2130,18 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       const head = rowsOf(book(bytes), "specimens")[0]!;
       for (const column of ["identificationQualifier", "sex", "caste", "disposition"]) {
         const l = columnName(head.indexOf(column));
-        const validation = new RegExp(`<dataValidation type="list" errorStyle="warning" allowBlank="1" showErrorMessage="1" errorTitle="([^"]*)" error="([^"]*)" sqref="${l}2:${l}\\d+">`).exec(xml);
+        const validation = new RegExp(
+          `<dataValidation type="list" errorStyle="warning" allowBlank="1" showErrorMessage="1" errorTitle="([^"]*)" error="([^"]*)" sqref="${l}2:${l}\\d+"><formula1>words!\\$([A-Z]+)\\$2:\\$[A-Z]+\\$(\\d+)</formula1>`,
+        ).exec(xml);
         expect(validation, column).not.toBeNull();
+        // The list is that column of the words tab, from its first word to its last and no further, and holds the
+        // very words the upload takes. On a tab, since Gnumeric offers a list written into the check as one choice.
+        const words = rowsOf(book(bytes), "words");
+        const at = words[0]!.indexOf(column);
+        expect(columnName(at), column).toBe(validation![3]);
+        const listed = words.slice(1, Number(validation![4])).map((r) => r[at]);
+        expect(listed, column).toEqual([...SPECIMEN_CHOICES[column as keyof typeof SPECIMEN_CHOICES]]);
+        expect(words[Number(validation![4])]?.[at] ?? "", column).toBe("");
         expect(validation![1]).toBe(en.workbook.warning.title);
         expect(validation![2]).toBe(en.workbook.warning.message(column));
         expect(validation![1]!.length).toBeLessThanOrEqual(32);
@@ -2193,7 +2205,7 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
 
     it("is the same for a volunteer, and the CSV is as it was: no tabs, no shading, the same columns", async () => {
       const volunteer = await download("alice");
-      expect(book(volunteer.bytes).SheetNames).toEqual(["specimens", "names", "identifiers", "about"]);
+      expect(book(volunteer.bytes).SheetNames).toEqual(["specimens", "names", "identifiers", "words", "about"]);
       const csv = await (await volunteer.app.request("/specimens.csv?scope=all")).text();
       expect(csv.split("\n")[0]!.replace(/^﻿/, "")).toBe(SPECIMEN_CSV_HEADER.join(","));
     });

@@ -174,7 +174,7 @@ rule("identifiedByExpert", "not_applied", "word");
  * are for looking up and are not read from an upload. An upload does not list
  * them as tabs that were not read, and a change to one changes nothing.
  */
-export const REFERENCE_TABS = ["names", "identifiers", "about"] as const;
+export const REFERENCE_TABS = ["names", "identifiers", "words", "about"] as const;
 
 /** How a column is read, for the file's own account of what each column takes. */
 export const columnRule = (column: string): { reads: Reads; kind: ChangeKind } | undefined => RULES.get(column);

@@ -2058,7 +2058,7 @@ export const en = {
         "These two are grey, but Beeline does read them: it finds each row by them and uses them to see whether the record changed since you downloaded the file. Leave them as they are.",
       lookupTopic: "The names and identifiers tabs",
       lookup:
-        "These tabs are for looking things up, and Beeline does not read them when you upload, so changing them changes nothing. The scientificName and identifiedBy columns offer the names and identifiers as suggestions, and you may type something else.",
+        "These tabs are for looking things up, and Beeline does not read them when you upload, so changing them changes nothing. The scientificName column offers the names as you type; a name that is not on the names tab may be marked by your spreadsheet, and you may still type it. The identifiers tab is there to check how a person's name is spelled.",
       windowsTopic: "Who is on the identifiers tab",
       windows:
         "The names tab holds the scientific names in Beeline's taxonomy. The identifiers tab holds people who identified a specimen in the last five years, or who identified a specimen collected in the last five years.",

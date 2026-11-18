@@ -255,9 +255,24 @@ describe("sheets beside the main one, warnings, suggestions and shading (beeline
     // From row 2 to the sheet's last row (three data rows, so row 4), absolute, on the column the name has.
     expect(sheet).toContain(`<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="B2:B${MAX_SHEET_ROWS}"><formula1>names!$A$2:$A$4</formula1></dataValidation>`);
     expect(sheet).not.toContain("errorStyle");
-    // The second column of the sheet.
+    // The second column of the sheet, which is one word shorter: the list ends at that column's own last word, so
+    // it never offers a blank.
     const other = writeXlsx({ sheetName: "main", header: ["rank"], sheets: [names], choices: { rank: { sheet: "names", column: "taxonRank" } } }, []);
-    expect(decode(other, "xl/worksheets/sheet1.xml")).toContain("<formula1>names!$B$2:$B$4</formula1>");
+    expect(decode(other, "xl/worksheets/sheet1.xml")).toContain("<formula1>names!$B$2:$B$3</formula1>");
+    // A column with no words at all gives no list.
+    const none = writeXlsx({ sheetName: "main", header: ["a"], sheets: [{ name: "w", header: ["x", "y"], rows: [["1", null], ["2", ""]] }], choices: { a: { sheet: "w", column: "y" } } }, []);
+    expect(decode(none, "xl/worksheets/sheet1.xml")).not.toContain("dataValidation");
+    // With a title and a message the same list warns, and still refuses nothing. This is how a short vocabulary is
+    // written: Gnumeric offers a list written into the check itself as one choice, commas and all.
+    const warned = writeXlsx(
+      { sheetName: "main", header: ["rank"], sheets: [names], choices: { rank: { sheet: "names", column: "taxonRank", title: "Not listed", message: "Take one of the listed words." } } },
+      [],
+    );
+    expect(decode(warned, "xl/worksheets/sheet1.xml")).toContain(
+      `<dataValidation type="list" errorStyle="warning" allowBlank="1" showErrorMessage="1" errorTitle="Not listed" error="Take one of the listed words." sqref="A2:A${MAX_SHEET_ROWS}"><formula1>names!$B$2:$B$3</formula1></dataValidation>`,
+    );
+    // A warning needs both its title and its message.
+    expect(() => writeXlsx({ sheetName: "main", header: ["rank"], sheets: [names], choices: { rank: { sheet: "names", column: "taxonRank", title: "Not listed" } } }, [])).toThrow(/message/);
     // A name that needs quoting is quoted in the formula, with its own apostrophes doubled and XML escaped.
     const quoted = writeXlsx({ sheetName: "main", header: ["a"], sheets: [people], choices: { a: { sheet: "People & places", column: "who" } } }, []);
     expect(decode(quoted, "xl/worksheets/sheet1.xml")).toContain("<formula1>'People &amp; places'!$A$2:$A$3</formula1>");

@@ -244,6 +244,8 @@ export function xlsxWriter(opts: XlsxWriterOptions): XlsxWriter {
   const bold = new Set(opts.boldHeadings ?? []);
   for (const heading of Object.keys(opts.widths ?? {})) if (!header.includes(heading)) throw new Error(`a width for a column the sheet does not have: ${heading}`);
   for (const heading of [...shaded, ...bold]) if (!header.includes(heading)) throw new Error(`styling for a column the sheet does not have: ${heading}`);
+  // Own entries only: a heading such as "constructor" must not find a width on Object.prototype.
+  const widthOf = (heading: string) => (opts.widths !== undefined && Object.hasOwn(opts.widths, heading) ? opts.widths[heading]! : 16);
   // The style of each column's cells and of its heading.
   const bodyStyles = header.map((h) => (shaded.has(h) ? STYLE_GREY : STYLE_TEXT));
   const headStyles = header.map((h, at) => (bold.has(h) ? STYLE_BOLD : bodyStyles[at]!));
@@ -349,7 +351,7 @@ export function xlsxWriter(opts: XlsxWriterOptions): XlsxWriter {
         encoder.encode(
           `${XML_HEAD}<worksheet xmlns="${NS_MAIN}">` +
             `<cols>${header
-              .map((_, at) => `<col min="${at + 1}" max="${at + 1}" width="${opts.widths?.[header[at]!] ?? 16}" style="${bodyStyles[at]}" customWidth="1"/>`)
+              .map((_, at) => `<col min="${at + 1}" max="${at + 1}" width="${widthOf(header[at]!)}" style="${bodyStyles[at]}" customWidth="1"/>`)
               .join("")}</cols>` +
             `<sheetData>${row(header, headStyles)}`,
         ),

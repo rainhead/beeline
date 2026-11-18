@@ -912,7 +912,7 @@ export const en = {
       download: "Download as CSV",
       edit: "Download the Excel file for editing specimens",
       editNote:
-        "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. The file holds what these filters select, so filter first, for example to one collection year. Every cell is kept as text, so Excel leaves it as it is. Only program staff can upload the file after you edit it. To name your bees yourself today, use Identify specimens.",
+        "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. The file holds what these filters select, so filter first, for example to one collection year. Every cell is kept as text, so Excel leaves it as it is. Only program staff can upload the file after you edit it, and an upload only lists what differs from what Beeline holds. To name your bees yourself today, use Identify specimens.",
 
       note:
         "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +

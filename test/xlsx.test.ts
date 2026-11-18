@@ -309,6 +309,8 @@ describe("sheets beside the main one, warnings, suggestions and shading (beeline
     expect(sheet).toMatch(/<col min="1" max="1" width="16"/);
     expect(sheet).toMatch(/<col min="2" max="2" width="56"/);
     expect(() => writeXlsx({ sheetName: "s", header: ["a"], widths: { z: 9 } }, [])).toThrow(/does not have: z/);
+    // A heading that is also a property of every object gets the default.
+    expect(decode(writeXlsx({ sheetName: "s", header: ["constructor", "b"], widths: { b: 56 } }, []), "xl/worksheets/sheet1.xml")).toMatch(/<col min="1" max="1" width="16"/);
   });
 
   it("shades the columns it is told to, bolds headings, and keeps the Text format on every cell", () => {

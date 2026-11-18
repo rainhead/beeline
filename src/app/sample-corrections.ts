@@ -14,6 +14,7 @@ import {
   takeObservationLocation,
   type StaffLocalityResult,
 } from "./locality-override.js";
+import { isWriteConflict } from "../write-conflict.js";
 import { withPromotionLock } from "./promotion-lock.js";
 import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { loadSample, type LocalitySuggestion } from "./record.js";
@@ -630,6 +631,7 @@ export type TrapCountResult =
   | { ok: true; outcome: Outcome; /** The effort now held, as the sample's page shows it; null when none. */ effort: string | null }
   | Common
   | StaffOnly
+  | Refused<"busy">
   | Invalid;
 
 /**
@@ -669,7 +671,13 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
       effort = trapEffort(Number(given), method);
     }
     if (effort === (sample.sampling_effort ?? null)) return { ok: true, outcome: "unchanged", effort };
-    await deps.db.updateTable("sample").set({ sampling_effort: effort }).where("entity_id", "=", sampleId).execute();
+    try {
+      await deps.db.updateTable("sample").set({ sampling_effort: effort }).where("entity_id", "=", sampleId).execute();
+    } catch (err) {
+      // Nothing is recorded anywhere else, so a conflict means nothing was done: say so, and let the caller send it again.
+      if (isWriteConflict(err)) return refused("busy");
+      throw err;
+    }
     await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "trap count change");
     return { ok: true, outcome: effort === null ? "removed" : "saved", effort };
   });

@@ -1670,6 +1670,8 @@ export function createApp({
         return c.text("Admins only.", 403);
       case "not_found":
         return errorResponse(c, "notFound");
+      case "busy":
+        return c.text(m.record.sample.staffCoordinates.busy, 409);
       case "invalid":
         return c.text(result.problem, 400);
       default:

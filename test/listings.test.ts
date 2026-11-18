@@ -9,6 +9,7 @@ import {
   csvCell,
   csvStream,
   EMPTY_QUERY,
+  SPECIMEN_CSV_HEADER,
   listSamples,
   listingHref,
   MINE,
@@ -23,6 +24,10 @@ import { join } from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { readXlsxHere as readXlsx } from "../src/app/xlsx-reader.js";
+import { MAX_SHEET_ROWS, columnIndex, columnName } from "../src/app/xlsx.js";
+import * as XLSX from "xlsx";
+import { specimenWorkbook } from "../src/app/specimen-workbook.js";
+import { SPECIMEN_CHOICES, SPECIMENS_LAYOUT, columnRule } from "../src/app/upload-plan.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
 import { refreshPlantCommonNames } from "../src/plant-common-names.js";
@@ -1908,25 +1913,36 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     return read.sheet;
   };
 
-  it("has the CSV's rows and columns for the same query, in the same order, and the same values", async () => {
+  const IDENTIFYING = "/specimens.xlsx";
+
+  it("has the layout's headings in its order, and for each specimen the CSV's value for the same heading", async () => {
     const { app, conn } = await listingApp("staffer");
     // A value the CSV has to guard, which a text cell does not: the Excel file says it as it is.
     await conn.run(`UPDATE determination SET determiner_name = '=Dee Determiner' WHERE determiner_name IS NOT NULL AND determiner_id IS NULL`);
     for (const query of ["scope=all", "scope=OBA", "scope=WaBA", "scope=all&q=barnes", "scope=all&sort=atlas&dir=desc", "scope=all&from=2026-01-01"]) {
       const csv = csvRecords(await (await app.request(`/specimens.csv?${query}`)).text());
-      const res = await app.request(`/specimens.xlsx?${query}`);
+      const res = await app.request(`${IDENTIFYING}?${query}`);
       expect(res.status, query).toBe(200);
       const sheet = await sheetOf(res);
       expect(sheet.name).toBe("specimens");
       expect(sheet.rows.length, query).toBe(csv.length);
       expect(csv.length, query).toBeGreaterThan(1);
-      sheet.rows.forEach((row, i) => {
-        expect(row.row).toBe(i + 1);
-        csv[i]!.forEach((value, at) => {
+      const heads = [...sheet.rows[0]!.cells.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c.text);
+      // The headings and their order are the layout's own.
+      expect(heads).toEqual([...SPECIMENS_LAYOUT.headings]);
+      const csvAt = (heading: string) => csv[0]!.indexOf(heading);
+      const idAt = csvAt("specimenId");
+      const csvOf = new Map(csv.slice(1).map((r) => [r[idAt], r]));
+      sheet.rows.slice(1).forEach((row, i) => {
+        expect(row.row).toBe(i + 2);
+        const mine = csvOf.get(row.cells.get(heads.indexOf("specimenId"))!.text)!;
+        expect(mine, `${query} row ${i + 2}`).toBeDefined();
+        heads.forEach((heading, at) => {
           // The CSV's guard, a quote before a leading =, +, -, @, tab or return, is not in the Excel file.
+          const value = mine[csvAt(heading)]!;
           const unguarded = /^'[=+\-@\t\r]/.test(value) ? value.slice(1) : value;
           // Null is a cell left out, and the CSV writes it as nothing.
-          expect(row.cells.get(at)?.text ?? "", `${query} row ${i + 1} column ${at}`).toBe(unguarded);
+          expect(row.cells.get(at)?.text ?? "", `${query} row ${i + 2} ${heading}`).toBe(unguarded);
         });
       });
     }
@@ -1935,7 +1951,7 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
   it("is a text cell everywhere, header included, and a leading = is only text", async () => {
     const { app, conn } = await listingApp("staffer");
     await conn.run(`UPDATE determination SET determiner_name = '=Dee Determiner' WHERE determiner_name IS NOT NULL AND determiner_id IS NULL`);
-    const bytes = new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer());
+    const bytes = new Uint8Array(await (await app.request(`${IDENTIFYING}?scope=all`)).arrayBuffer());
     const read = readXlsx(bytes);
     if (!read.ok) throw new Error(read.refusal);
     for (const row of read.sheet.rows) for (const cell of row.cells.values()) expect(cell.type).toBe("text");
@@ -1943,21 +1959,20 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     const xml = new TextDecoder().decode(unzipSync(bytes)["xl/worksheets/sheet1.xml"]);
     expect(xml).not.toContain("<f>");
     // Every cell has the Text format.
-    for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toContain(`s="1"`);
+    for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toMatch(/ s="[123]"/);
   });
 
   it("is stamped as an Excel file, and answers who may have it as the CSV does", async () => {
     const { app } = await listingApp("staffer");
-    const res = await app.request("/specimens.xlsx?scope=all");
+    const res = await app.request(`${IDENTIFYING}?scope=all`);
     expect(res.headers.get("content-type")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     expect(res.headers.get("content-disposition")).toMatch(/^attachment; filename="beeline-specimens-\d{4}-\d{2}-\d{2}-\d{6}\.xlsx"$/);
-    // The same location rule as the CSV: what a volunteer may not see of a record is in neither file.
+    // The same location rule as the CSV: what a volunteer may not see of a record is in neither file. The identifying file
+    // has no coordinates, so what is compared is the rows a volunteer is given.
     const alice = await listingApp("alice");
     const csv = csvRecords(await (await alice.app.request("/specimens.csv?scope=all")).text());
-    const xlsx = await sheetOf(await alice.app.request("/specimens.xlsx?scope=all"));
+    const xlsx = await sheetOf(await alice.app.request(`${IDENTIFYING}?scope=all`));
     expect(xlsx.rows.length).toBe(csv.length);
-    const lat = csv[0]!.indexOf("decimalLatitude");
-    expect(xlsx.rows.map((r) => r.cells.get(lat)?.text ?? "")).toEqual(csv.map((r) => r[lat]));
     // Nobody signed in is not served, by either.
     const anonymous = createApp({
       ...(await scratchPaths()),
@@ -1968,7 +1983,7 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
       resolveSession: async () => null,
     });
     expect((await anonymous.request("/specimens.csv?scope=all")).status).toBe(401);
-    expect((await anonymous.request("/specimens.xlsx?scope=all")).status).toBe(401);
+    expect((await anonymous.request(`${IDENTIFYING}?scope=all`)).status).toBe(401);
   });
 
   it("is offered beside the CSV on the specimens page, as the file to edit and upload back, and not on the samples page", async () => {
@@ -1981,5 +1996,218 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     expect(await get(app, "/samples?scope=all")).not.toContain(".xlsx");
     // Everyone may download it, a volunteer too.
     expect(await get((await listingApp("alice")).app, "/specimens?scope=all")).toContain(`/specimens.xlsx?`);
+  });
+});
+
+describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd.2)", () => {
+  /** A fixed today, so that "the last five years" means the same on every day the suite runs. */
+  const TODAY = `${CURRENT_SEASON}-09-30`;
+  const year = (back: number, monthDay: string) => `${CURRENT_SEASON - back}-${monthDay}`;
+
+  /** A store with a recent and an old identifier, and an identifier known only by a name text. */
+  async function tabsFixture() {
+    const { instance, conn } = await createMemoryDb();
+    const who = (name: string) => person(conn, name);
+    const [rita, ivan, ida, rex] = (await Promise.all(["Rita Recent", "Ivan Ancient", "Ida Identifier", "Rex Recorded"].map(who))) as [number, number, number, number];
+    // A slice of the tree, with its scaffolding: the kingdom is not a name anyone gives a specimen.
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('kingdom', 'Animalia')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'order', 'Hymenoptera', entity_id FROM animal WHERE scientific_name = 'Animalia'`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'family', 'Apidae', entity_id FROM animal WHERE scientific_name = 'Hymenoptera'`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'genus', 'Bombus', entity_id FROM animal WHERE scientific_name = 'Apidae'`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'species', 'Bombus vosnesenskii', entity_id FROM animal WHERE scientific_name = 'Bombus'`);
+    const sample = (collector: number, day: string, number: string) => insertCleanSample(conn, { collector_id: String(collector), sample_number: `'${number}'`, date_start: `DATE '${day}'`, date_end: `DATE '${day}'` });
+    const recent = await sample(rita, year(0, "07-01"), "R-1");
+    const ancient = await sample(ivan, year(8, "07-01"), "A-1");
+    const specimen = async (sampleId: number, n: number) => {
+      const [[id]] = (await rows(conn, `INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, ${n}) RETURNING entity_id`)) as [[number]];
+      return id;
+    };
+    const onRecent = await specimen(recent, 1);
+    const onAncient = await Promise.all([1, 2, 3, 4, 5].map((n) => specimen(ancient, n)));
+    const determine = (specimenId: number, by: { id?: number; name?: string }, extra: { channel: string; determinedOn?: string; recordedAt?: string }) =>
+      conn.run(
+        `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_id, determiner_name, verbatim_identification, determined_on, recorded_at)
+         SELECT ${specimenId}, entity_id, false, '${extra.channel}', ${by.id ?? "NULL"}, ${by.name === undefined ? "NULL" : `'${by.name}'`}, 'Bombus',
+                ${extra.determinedOn === undefined ? "NULL" : `DATE '${extra.determinedOn}'`}, ${extra.recordedAt === undefined ? "now()" : `TIMESTAMPTZ '${extra.recordedAt} 12:00:00+00'`}
+         FROM animal WHERE scientific_name = 'Bombus'`,
+      );
+    // Dated this year, of an old specimen; twice, so the name is listed once.
+    await determine(onAncient[0]!, { id: ida }, { channel: "in_app", determinedOn: year(0, "06-01"), recordedAt: year(0, "06-02") });
+    await determine(onAncient[0]!, { id: ida }, { channel: "in_app", determinedOn: year(1, "06-01"), recordedAt: year(1, "06-02") });
+    // Dated and recorded eight years ago, of a specimen collected eight years ago.
+    await determine(onAncient[1]!, { id: ivan }, { channel: "in_app", determinedOn: year(8, "08-01"), recordedAt: year(8, "08-02") });
+    // Known only by a name text, of a specimen collected this year; the old system gave no date.
+    await determine(onRecent, { name: "Nell Namey" }, { channel: "legacy_import" });
+    // Old system, old specimen, recorded on the day it was imported: that day says nothing about when it was identified.
+    await determine(onAncient[2]!, { name: "Legacy Lone" }, { channel: "legacy_import" });
+    // No date of its own, an old specimen, recorded this year by a channel whose recording day means something.
+    await determine(onAncient[3]!, { id: rex }, { channel: "in_app", recordedAt: year(0, "05-01") });
+    // Not dated, an old specimen and recorded long ago: out.
+    await determine(onAncient[4]!, { name: "Long Gone" }, { channel: "ecdysis_import", recordedAt: year(8, "05-01") });
+    return { db: createKysely(instance), conn };
+  }
+
+  it("lists the names of the tree a person may give a specimen, sorted, with rank and family, and not its scaffolding", async () => {
+    const { db } = await tabsFixture();
+    const { options } = await specimenWorkbook(db, en, TODAY);
+    const names = options.sheets!.find((s) => s.name === "names")!;
+    expect(names.header).toEqual(["scientificName", "taxonRank", "family"]);
+    expect(names.rows).toEqual([
+      ["Apidae", "family", "Apidae"],
+      ["Bombus", "genus", "Apidae"],
+      ["Bombus vosnesenskii", "species", "Apidae"],
+      ["Hymenoptera", "order", null],
+    ]);
+  });
+
+  it("lists people who identified a specimen in the last five years, as identifiedBy writes them, once each and sorted", async () => {
+    const { db } = await tabsFixture();
+    const { options } = await specimenWorkbook(db, en, TODAY);
+    const identifiers = options.sheets!.find((s) => s.name === "identifiers")!;
+    expect(identifiers.header).toEqual(["identifiedBy"]);
+    // Ida by a date this year (listed once for two determinations), Nell by a name text on a specimen collected this year,
+    // Rex by the day his determination was recorded. Not Ivan, not the old system's name on an old specimen, nor an old record.
+    expect(identifiers.rows).toEqual([["Ida Identifier"], ["Nell Namey"], ["Rex Recorded"]]);
+    // A later today moves the window: six years on, nothing dated or collected this year is in it.
+    const later = await specimenWorkbook(db, en, `${CURRENT_SEASON + 6}-01-01`);
+    expect(later.options.sheets!.find((s) => s.name === "identifiers")!.rows).toEqual([]);
+  });
+
+  it("has no collectors tab, since nothing in the file reads recordedBy", async () => {
+    const { db } = await tabsFixture();
+    const { options } = await specimenWorkbook(db, en, TODAY);
+    expect(options.sheets!.map((s) => s.name)).toEqual(["names", "identifiers", "words", "about"]);
+  });
+
+  describe("in the download", () => {
+    const download = async (as: "staffer" | "alice" = "staffer") => {
+      const { app, conn } = await listingApp(as);
+      // Dated now, so an identifier is always recent whatever day the suite runs.
+      await conn.run(
+        `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name, verbatim_identification, determined_on)
+         SELECT sp.entity_id, an.entity_id, false, 'in_app', 'Fresh Face', 'Andrena', current_date
+         FROM specimen sp, animal an WHERE sp.field_number = 'OBA00002' AND an.scientific_name = 'Andrena'`,
+      );
+      const bytes = new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer());
+      return { bytes, app };
+    };
+    const sheetXml = (bytes: Uint8Array) => strFromU8(unzipSync(bytes)["xl/worksheets/sheet1.xml"]!);
+    const book = (bytes: Uint8Array) => XLSX.read(bytes, { type: "array", cellNF: true, dense: true });
+    const rowsOf = (b: XLSX.WorkBook, name: string) => XLSX.utils.sheet_to_json<string[]>(b.Sheets[name]!, { header: 1, blankrows: false });
+
+    it("holds the identifications tab and Beeline's three, in that order, every cell text in the Text format", async () => {
+      const { bytes } = await download();
+      const b = book(bytes);
+      expect(b.SheetNames).toEqual(["specimens", "names", "identifiers", "words", "about"]);
+      for (const name of b.SheetNames) {
+        for (const row of b.Sheets[name]!["!data"] as Array<Array<XLSX.CellObject | undefined>>) {
+          for (const cell of row) if (cell !== undefined && cell.t !== "z") expect([name, cell.t, cell.z]).toEqual([name, "s", "@"]);
+        }
+      }
+      expect(rowsOf(b, "names")[0]).toEqual(["scientificName", "taxonRank", "family"]);
+      expect(rowsOf(b, "identifiers").flat()).toContain("Fresh Face");
+    });
+
+    it("takes suggestions for scientificName from the names tab, refusing and warning of nothing, and gives identifiedBy no list at all", async () => {
+      const { bytes } = await download();
+      const b = book(bytes);
+      const xml = sheetXml(bytes);
+      const head = rowsOf(b, "specimens")[0]!;
+      const letter = (column: string) => columnName(head.indexOf(column));
+      const last = (name: string) => rowsOf(b, name).length;
+      expect(last("names")).toBeGreaterThan(1);
+      expect(xml).toContain(`<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="${letter("scientificName")}2:${letter("scientificName")}${MAX_SHEET_ROWS}"><formula1>names!$A$2:$A$${last("names")}</formula1>`);
+      // No list on identifiedBy: Google Sheets marks a name that is not on a list as invalid, and a new identifier is ordinary.
+      expect(xml).not.toContain(`sqref="${letter("identifiedBy")}2:`);
+      expect(xml).not.toContain("identifiers!");
+      // The suggestions never warn: only the vocabularies this file reads do.
+      expect([...xml.matchAll(/errorStyle="warning"/g)]).toHaveLength(4);
+    });
+
+    it("warns, and does not refuse, in the columns that take a few words that this file reads, naming the column", async () => {
+      const { bytes } = await download();
+      const xml = sheetXml(bytes);
+      const head = rowsOf(book(bytes), "specimens")[0]!;
+      for (const column of ["identificationQualifier", "sex", "caste", "disposition"]) {
+        const l = columnName(head.indexOf(column));
+        const validation = new RegExp(
+          `<dataValidation type="list" errorStyle="warning" allowBlank="1" showErrorMessage="1" errorTitle="([^"]*)" error="([^"]*)" sqref="${l}2:${l}\\d+"><formula1>words!\\$([A-Z]+)\\$2:\\$[A-Z]+\\$(\\d+)</formula1>`,
+        ).exec(xml);
+        expect(validation, column).not.toBeNull();
+        // The list is that column of the words tab, from its first word to its last and no further, and holds the
+        // very words the upload takes. On a tab, since Gnumeric offers a list written into the check as one choice.
+        const words = rowsOf(book(bytes), "words");
+        const at = words[0]!.indexOf(column);
+        expect(columnName(at), column).toBe(validation![3]);
+        const listed = words.slice(1, Number(validation![4])).map((r) => r[at]);
+        expect(listed, column).toEqual([...SPECIMEN_CHOICES[column as keyof typeof SPECIMEN_CHOICES]]);
+        expect(words[Number(validation![4])]?.[at] ?? "", column).toBe("");
+        expect(validation![1]).toBe(en.workbook.warning.title);
+        expect(validation![2]).toBe(en.workbook.warning.message(column));
+        expect(validation![1]!.length).toBeLessThanOrEqual(32);
+        expect(validation![2]!.length).toBeLessThanOrEqual(255);
+        expect(validation![2]).toContain(column);
+      }
+      // A column of the CSV that this file does not carry has no warning.
+      expect(head).not.toContain("samplingProtocol");
+    });
+
+    it("shades exactly the recognising and bookkeeping columns, and bolds the headings it reads", async () => {
+      const { bytes } = await download();
+      const xml = sheetXml(bytes);
+      const head = rowsOf(book(bytes), "specimens")[0]!;
+      const styleOf = (ref: string) => new RegExp(`<c r="${ref}" s="(\\d)"`).exec(xml)![1];
+      const grey = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "3");
+      const bold = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "2");
+      expect(head).toEqual([
+        "fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa",
+        "scientificName", "identificationQualifier", "sex", "caste", "identifiedBy", "dateIdentified", "disposition", "occurrenceRemarks",
+        "specimenId", "specimenVersion",
+      ]);
+      expect(grey).toEqual([...SPECIMENS_LAYOUT.recognise, "specimenId", "specimenVersion"]);
+      expect(bold).toEqual(["scientificName", "identificationQualifier", "sex", "caste", "identifiedBy", "dateIdentified", "disposition", "occurrenceRemarks"]);
+      // The shaded set is the complement of what the comparison reads from this file, worked out here from its own rules:
+      // every column that belongs to a unit the layout reads is white, every other is grey.
+      expect(grey).toEqual(head.filter((c) => !SPECIMENS_LAYOUT.read.includes(c)));
+      for (const c of SPECIMENS_LAYOUT.read) expect(["determination", "disposition"], c).toContain(columnRule(c)!.kind);
+      // The whole of a grey column is grey, a white column's cells are plain, in the first data row too.
+      head.forEach((c, at) => expect(styleOf(`${columnName(at)}2`), c).toBe(grey.includes(c) ? "3" : "1"));
+      // Nothing is locked, so a person may still sort and filter.
+      expect(xml).not.toContain("sheetProtection");
+      expect(strFromU8(unzipSync(bytes)["xl/workbook.xml"]!)).not.toContain("workbookProtection");
+    });
+
+    it("has an about tab that names every column Beeline reads and says what to leave alone and what the other tabs are", async () => {
+      const { bytes } = await download();
+      const about = rowsOf(book(bytes), "about");
+      expect(about[0]).toEqual([en.workbook.about.headingTopic, en.workbook.about.headingText]);
+      const first = about.map((r) => r[0]);
+      for (const column of SPECIMENS_LAYOUT.read) expect(first, column).toContain(column);
+      // The columns not read are not on it.
+      expect(first).not.toContain("recordedBy");
+      const text = (topic: string) => about.find((r) => r[0] === topic)![1]!;
+      expect(text(en.workbook.about.purposeTopic)).toBe(en.workbook.about.purpose);
+      expect(text(en.workbook.about.leaveTopic)).toBe(en.workbook.about.leave);
+      for (const key of ["specimenId", "specimenVersion"]) expect(en.workbook.about.leaveTopic).toContain(key);
+      // A name that is not on the identifiers tab is not a fault.
+      expect(text("identifiedBy")).toBe(en.workbook.about.identifiedBy);
+      expect(en.workbook.about.identifiedBy).toMatch(/not on the identifiers tab is fine/);
+      expect(text(en.workbook.about.lookupTopic)).toBe(en.workbook.about.lookup);
+      // What a column takes is the vocabulary the comparison holds it to, and the page's own words for dates.
+      expect(text("sex")).toBe(en.workbook.about.oneOf(["female", "male", "gynandromorph"].join(", ")));
+      expect(text("identificationQualifier")).toBe(en.workbook.about.oneOf(["cf.", "aff.", "nr."].join(", ")));
+      expect(text("dateIdentified")).toBe(en.workbook.about.momentRule);
+      expect(text("disposition")).toBe(en.workbook.about.oneOf(["in collection", "missing"].join(", ")));
+      expect(text("occurrenceRemarks")).toBe(en.workbook.about.occurrenceRemarks);
+      // The file speaks only of specimens.
+      for (const [, words] of about) expect(words).not.toMatch(/correct|collecting date|coordinates/i);
+    });
+
+    it("is the same for a volunteer, and the CSV is as it was: no tabs, no shading, the same columns", async () => {
+      const volunteer = await download("alice");
+      expect(book(volunteer.bytes).SheetNames).toEqual(["specimens", "names", "identifiers", "words", "about"]);
+      const csv = await (await volunteer.app.request("/specimens.csv?scope=all")).text();
+      expect(csv.split("\n")[0]!.replace(/^﻿/, "")).toBe(SPECIMEN_CSV_HEADER.join(","));
+    });
   });
 });

@@ -4,12 +4,22 @@ import { join } from "node:path";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
-import { MAX_FILE_BYTES } from "../src/app/upload-plan.js";
+import { MAX_FILE_BYTES, SPECIMENS_LAYOUT, UNIT_COLUMNS, type Layout } from "../src/app/upload-plan.js";
 import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { rows } from "./helpers.js";
 import { CURRENT_SEASON } from "./helpers.js";
 import { bytesOf, edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 import { buildWorkbook, serialOf } from "./workbook.js";
+
+/**
+ * This file tests how the page shows every kind of unit, though the specimens file reads only a specimen's two: a
+ * sample's dates, place and coordinates wait for the samples upload (beeline-kgyd.4). So the app these tests make is
+ * given a layout in which every column that belongs to a unit is read. The comparison's own tests do the same by
+ * giving it a parsed upload (test/upload-plan.test.ts); here it is the app's route that is given the wider layout.
+ */
+const WIDE: Layout = { ...SPECIMENS_LAYOUT, read: UNIT_COLUMNS };
+const wideFixture = (signedInAs?: Parameters<typeof uploadFixture>[0], options: Parameters<typeof uploadFixture>[1] = {}) =>
+  uploadFixture(signedInAs, { layout: WIDE, ...options });
 
 const ORIGIN = "http://localhost:3054";
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -43,7 +53,7 @@ const kept = async (f: UploadFixture) => {
 
 describe("uploads: who may use them", () => {
   it("answers a volunteer no, on every route, though the Excel file is theirs to download", async () => {
-    const f = await uploadFixture("volunteer");
+    const f = await wideFixture("volunteer");
     expect((await f.app.request("/uploads")).status).toBe(403);
     expect((await upload(f, await f.download())).status).toBe(403);
     expect((await f.app.request("/uploads/1")).status).toBe(403);
@@ -57,7 +67,7 @@ describe("uploads: who may use them", () => {
   });
 
   it("refuses staff who are viewing Beeline as somebody else", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const cookie = `${IMPERSONATING_COOKIE}=${encodeURIComponent("Vera Volunteer")}`;
     const get = await f.app.request("/uploads", { headers: { cookie } });
     expect(get.status).toBe(403);
@@ -69,7 +79,7 @@ describe("uploads: who may use them", () => {
   });
 
   it("links staff to it from the specimens listing, beside the Excel file, and from the exports", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const page = await (await f.app.request("/specimens?scope=all")).text();
     expect(page).toContain(`href="/uploads"`);
     expect(page).toContain(en.uploads.linkFromSpecimens);
@@ -80,7 +90,7 @@ describe("uploads: who may use them", () => {
 
 describe("uploading a file", () => {
   it("shows the form, which takes an Excel file, with the example in the hint and not as a placeholder", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const body = await (await f.app.request("/uploads")).text();
     expect(body).toContain(`enctype="multipart/form-data"`);
     expect(body).toContain(`type="file"`);
@@ -92,7 +102,7 @@ describe("uploading a file", () => {
   });
 
   it("stores nothing for a file it cannot read, and says why", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const refused = async (file: Uint8Array | string, says: string) => {
       const res = await upload(f, file);
       expect(res.status).toBe(400);
@@ -117,7 +127,7 @@ describe("uploading a file", () => {
   });
 
   it("refuses a CSV, and tells the person to download the Excel file from Specimens and edit that", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const res = await upload(f, "specimenId,locality\n1,Corvallis\n", "edited.csv");
     expect(res.status).toBe(400);
     const body = await res.text();
@@ -130,7 +140,7 @@ describe("uploading a file", () => {
   });
 
   it("keeps an accepted file on disk and in upload, byte for byte, and sends the person to its page", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const bytes = edited(await f.download(), [{ id: f.ids.a1, set: { disposition: "missing", occurrenceRemarks: "Lost" } }]);
     const res = await upload(f, bytes, "C:\\Users\\x\\my edited file.xlsx", { reference: " https://github.com/example/example/issues/7 " });
     expect(res.status).toBe(303);
@@ -155,7 +165,7 @@ describe("uploading a file", () => {
 
 describe("the upload table", () => {
   it("refuses an empty file, a file with no rows and a hash that is not 64 characters, since a deployed store cannot gain a CHECK later", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const insert = (sha: string, size: number, count: number) =>
       f.conn.run(
         `INSERT INTO upload (uploaded_by, uploaded_at, file_name, sha256, byte_size, row_count) VALUES (${f.staffer}, now(), 'x.xlsx', '${sha}', ${size}, ${count})`,
@@ -173,7 +183,7 @@ describe("the preview", () => {
   const pageOf = async (f: UploadFixture, bytes: Uint8Array) => (await f.app.request((await upload(f, bytes)).headers.get("location")!)).text();
 
   it("shows a difference and a held row, says nothing was changed, and changes no record", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const { a1, b1 } = f.ids;
     const before = await records(f);
     const bytes = edited(await f.download(), [
@@ -209,7 +219,7 @@ describe("the preview", () => {
     expect(body).toContain(esc(en.uploads.page.heldTodo.no_specimen!));
     expect(body).toContain("987654");
     // The columns Beeline does not read from a file come last, collapsed.
-    expect(body).toMatch(/<details>\s*<summary>[^<]*Differences in columns Beeline does not read from a file/);
+    expect(body).toMatch(/<details>\s*<summary>[^<]*Differences in columns Beeline does not read from this file/);
     expect(body.indexOf("<details>")).toBeGreaterThan(body.indexOf(en.uploads.page.heldHeading));
     expect(body).toContain("<q>Linn</q>");
     expect(body).toContain(en.uploads.page.colSettled);
@@ -219,7 +229,7 @@ describe("the preview", () => {
   });
 
   it("shows the columns that were not read near the top, and the one that was probably meant", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const bytes = edited(await f.download(), [{ id: f.ids.a1, set: { county: "Linn" } }], {
       renameColumns: { sex: " sex " },
       addColumns: { "My notes": "see me" },
@@ -239,7 +249,7 @@ describe("the preview", () => {
   });
 
   it("says which tabs were not read", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const body = await pageOf(f, edited(await f.download(), [{ id: f.ids.a1, set: { county: "Linn" } }], { sheets: { others: ["Notes", "specimens (2)"], before: true } }));
     expect(body).toContain(en.uploads.page.otherSheetsHeading);
     expect(body).toContain(en.uploads.page.otherSheetsNote);
@@ -250,7 +260,7 @@ describe("the preview", () => {
   });
 
   it("does not link a row for a specimen Beeline does not have", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const body = await pageOf(f, edited(await f.download(), [{ id: f.ids.a1, set: { specimenId: "987654" } }]));
     expect(body).toContain(esc(en.uploads.page.held.no_specimen!));
     expect(body).toContain("987654");
@@ -269,7 +279,7 @@ describe("the preview", () => {
   });
 
   it("holds a sample for either reason its details may not match, and says both", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const download = await f.download();
     await f.conn.run(`UPDATE sample SET protocol = 'blue vane trap' WHERE entity_id = ${f.ids.sampleA}`);
     const body = await pageOf(f, edited(download, onSample(f, { locality: "Elsewhere" })));
@@ -283,18 +293,18 @@ describe("the preview", () => {
     expect(en.uploads.page.unitNote.place).toMatch(/no observation, a blank changes nothing/);
   });
 
-  it("shows a date the spreadsheet converted, held with the new name, with what to do", async () => {
-    const f = await uploadFixture();
+  it("shows a date with a time of day, held with the new name, with what to do", async () => {
+    const f = await wideFixture();
     const bytes = edited(await f.download(), [
-      { id: f.ids.a1, set: { scientificName: "Bombus", dateIdentified: { date: serialOf("2025-07-01") } } },
+      { id: f.ids.a1, set: { scientificName: "Bombus", dateIdentified: { date: serialOf("2025-07-01") + 0.5 } } },
     ]);
     const body = await pageOf(f, bytes);
-    expect(body).toContain(esc(en.uploads.page.held.converted_to_date!));
-    expect(body).toContain(esc(en.uploads.page.heldTodo.converted_to_date!));
+    expect(body).toContain(esc(en.uploads.page.held.holds_time!));
+    expect(body).toContain(esc(en.uploads.page.heldTodo.holds_time!));
     expect(body).toContain("<code>scientificName</code>: was <q>Bombus vosnesenskii</q>, file says <q>Bombus</q>");
-    expect(body).toContain("<code>dateIdentified</code>: was <q>2024-05-03</q>, file says <q>2025-07-01</q>");
+    expect(body).toContain("<code>dateIdentified</code>: was <q>2024-05-03</q>, file says <q>2025-07-01 12:00:00</q>");
     expect(body).toContain(esc(en.uploads.page.unitNote.determination!));
-    expect(en.uploads.page.heldTodo.converted_to_date).toMatch(/Format the cell as text/);
+    expect(en.uploads.page.heldTodo.holds_time).toMatch(/Format it as text/);
   });
 
   it("says in plain words what is held and what to do, for every reason a unit can be held for", () => {
@@ -307,7 +317,7 @@ describe("the preview", () => {
   });
 
   it("shows another person's upload, with its plan, to an admin", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const bytes = edited(await f.download(), [{ id: f.ids.a2, set: { disposition: "missing", occurrenceRemarks: "Lost" } }]);
     await f.conn.run(
       `INSERT INTO upload (uploaded_by, uploaded_at, file_name, sha256, byte_size, row_count)
@@ -327,7 +337,7 @@ describe("the preview", () => {
   });
 
   it("says when the kept file is gone, and refuses one whose bytes are not what arrived", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const bytes = edited(await f.download());
     const res = await upload(f, bytes);
     const location = res.headers.get("location")!;
@@ -348,7 +358,7 @@ describe("the preview", () => {
   });
 
   it("refuses a body over the limit however it is sent, and stores nothing", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const big = new Uint8Array(MAX_FILE_BYTES + 64 * 1024 + 4096);
     // A body with no declared length: a stream, which is what a lying or chunked client sends.
     const form = new FormData();
@@ -378,7 +388,7 @@ describe("the preview", () => {
   });
 
   it("shows every cell held with a held unit, and what the file says for each", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const body = await pageOf(f, edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "male", dateIdentified: "garbage" } }]));
     expect(body).toContain(esc(en.uploads.page.held.date_unreadable!));
     // Every cell of the unit, the one that caused the hold included, with what Beeline says and what the file says; columns as literals.
@@ -390,7 +400,7 @@ describe("the preview", () => {
   });
 
   it("shows a unit held because it is not complete, with the reason and the cell", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const body = await pageOf(f, edited(await f.download(), [{ id: f.ids.a1, set: { sex: "queen" } }]));
     expect(body).toContain(esc(en.uploads.page.held.sex_unknown!));
     expect(body).toContain(esc(en.uploads.page.heldTodo.sex_unknown!));
@@ -398,7 +408,7 @@ describe("the preview", () => {
   });
 
   it("shows a name held because the specimen changed since, with what the file gave, and no version code", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const download = await f.download();
     await f.conn.run(`UPDATE determination SET sex = 'male' WHERE specimen_id = ${f.ids.a1}`);
     const body = await pageOf(f, edited(download, [{ id: f.ids.a1, set: { scientificName: "Andrena" } }]));
@@ -413,7 +423,7 @@ describe("the preview", () => {
   });
 
   it("says what it finds when only columns it does not read differ, and when nothing differs at all", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const download = await f.download();
     const other = await pageOf(f, edited(download, [{ id: f.ids.a1, set: { county: "Linn" } }]));
     expect(other).toContain(en.uploads.page.nothingDiffers(false, true));
@@ -427,7 +437,7 @@ describe("the preview", () => {
   });
 
   it("labels the rows it could not match, and names a sample by its number, its collector and its day", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const body = await pageOf(f, edited(await f.download(), [{ id: f.ids.b1, set: { specimenId: "987654" } }, ...onSample(f, { locality: "Albany" })]));
     expect(body).toContain(en.uploads.page.rowsHeld);
     expect(en.uploads.page.rowsHeld).toBe("Not matched to a specimen");
@@ -438,7 +448,7 @@ describe("the preview", () => {
   });
 
   it("heads the page with the file's name, and says it is an uploaded copy", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const res = await upload(f, edited(await f.download()), "edited specimens.xlsx");
     const body = await (await f.app.request(res.headers.get("location")!)).text();
     expect(body).toContain("<h1>edited specimens.xlsx</h1>");
@@ -447,7 +457,7 @@ describe("the preview", () => {
   });
 
   it("will not write into a folder an earlier upload already used, and writes no row", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     // The id the next upload will draw, as a store restored to an earlier copy could draw it again.
     const next = Number((await rows(f.conn, `SELECT nextval('entity_id_seq')`))[0]![0]) + 1;
     const folder = join(f.paths.uploadsDir, String(next));
@@ -461,7 +471,7 @@ describe("the preview", () => {
   });
 
   it("caps a list at 200 lines and counts the rest", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const { a1 } = f.ids;
     // One specimen named by 250 rows is held, as one specimen repeated 250 times.
     const matrix = matrixOf(await f.download());
@@ -473,7 +483,7 @@ describe("the preview", () => {
   });
 
   it("compares the Excel file as the app wrote it with no differences, and holds nothing", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const body = await pageOf(f, await f.download());
     expect(body).toContain("Nothing in the file differs from what Beeline says.");
     expect(body).toContain(en.uploads.page.noHeld);
@@ -484,7 +494,7 @@ describe("reading an upload in a worker", () => {
   const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
   it("shows two previews of one upload at once", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const res = await upload(f, edited(await f.download(), [{ id: f.ids.a1, set: { disposition: "missing", occurrenceRemarks: "Lost" } }]));
     const location = res.headers.get("location")!;
     const pages = await Promise.all([f.app.request(location), f.app.request(location), f.app.request(location)]);
@@ -493,7 +503,7 @@ describe("reading an upload in a worker", () => {
   });
 
   it("refuses a file that takes longer than the limit, says so in plain words, and stores nothing", async () => {
-    const f = await uploadFixture("staffer", { readLimits: { timeMs: 1 } });
+    const f = await wideFixture("staffer", { readLimits: { timeMs: 1 } });
     const res = await upload(f, await f.download());
     expect(res.status).toBe(400);
     expect(await res.text()).toContain(esc(en.uploads.refused.took_too_long!));
@@ -502,7 +512,7 @@ describe("reading an upload in a worker", () => {
   });
 
   it("refuses a workbook that needs more memory than the reader has, and the app goes on answering", async () => {
-    const f = await uploadFixture("staffer", { readLimits: { memoryMb: 24 } });
+    const f = await wideFixture("staffer", { readLimits: { memoryMb: 24 } });
     const rows = Array.from({ length: 50_000 }, (_, i) => `<row r="${i + 1}"><c r="A${i + 1}" t="inlineStr"><is><t>${"x".repeat(400)}</t></is></c></row>`).join("");
     const bomb = zipSync({ ...unzipSync(buildWorkbook([["specimenId"]])), "xl/worksheets/sheet1.xml": strToU8(`<worksheet xmlns="${MAIN}"><sheetData>${rows}</sheetData></worksheet>`) });
     const res = await upload(f, bomb);
@@ -514,7 +524,7 @@ describe("reading an upload in a worker", () => {
   }, 60_000);
 
   it("keeps the page small for a file of thousands of rows of one specimen, and for a sample of thousands of specimens", async () => {
-    const f = await uploadFixture();
+    const f = await wideFixture();
     const matrix = matrixOf(await f.download());
     const row = matrix.find((r) => r.includes("OBA10001"))!;
     const repeated = await pageOf(f, buildWorkbook([matrix[0]!, ...Array.from({ length: 5_000 }, () => row)]));

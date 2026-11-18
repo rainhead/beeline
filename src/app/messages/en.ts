@@ -910,9 +910,10 @@ export const en = {
     csv: {
       menu: "Download",
       download: "Download as CSV",
-      edit: "Download an Excel file to edit",
+      edit: "Excel file for editing specimens",
       editNote:
-        "The same rows as the CSV, in an Excel file whose cells are all kept as text, so Excel leaves them as they are. Edit it and upload it back; type a date as YYYY-MM-DD.",
+        "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. Every cell is kept as text, so Excel leaves it as it is. Staff can upload it back after you edit it.",
+
       note:
         "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +
         "less any location hidden here. Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
@@ -2158,19 +2159,58 @@ export const en = {
       acting: "You are acting for someone else. Keys belong to the person signed in, so stop acting for them to make or revoke a key.",
     },
   },
+  /** What the Excel download itself offers a person typing in it: warnings, tabs to look names up in, and the about tab (beeline-kgyd.2). */
+  workbook: {
+    /** The warning a spreadsheet shows when a cell holds a word the column does not take. The title is at most 32 characters and the message at most 255, which is Excel's limit. */
+    warning: {
+      title: "Not one of the listed words",
+      message: (column: string) =>
+        `Beeline takes one of the listed words in the ${column} column. You may keep what you typed, but Beeline will not use that cell when the file is uploaded.`,
+    },
+    /** The tab that says what the file is. Its first column is the topic and its second what to know. */
+    about: {
+      headingTopic: "Topic",
+      headingText: "What to know",
+      purposeTopic: "What this file is for",
+      purpose:
+        "This file is for editing specimens: giving them their names, and recording what became of them. Fill in the white columns, then upload it on the Edited downloads page. Beeline compares what you upload with what it says now and lists every difference. It does not change any record from a file yet. The grey columns are there to help you recognise each bee.",
+      columnsTopic: "White and grey columns",
+      columns:
+        "Beeline reads the white columns when you upload the file, and their headings are in bold. The grey columns are for reference: Beeline ignores what is in them, and tells you if you changed one, apart from fieldNumber and the two named below. Leave fieldNumber as it is: Beeline checks it against the specimen the row is for, and sets the whole row aside if the two disagree. Nothing is locked, so you can still sort and filter on any column.",
+      leaveTopic: "specimenId and specimenVersion",
+      leave:
+        "These two are grey, but Beeline does read them: it finds each row by them and uses them to see whether the record changed since you downloaded the file. Leave them as they are.",
+      lookupTopic: "The names and identifiers tabs",
+      lookup:
+        "These tabs are for looking things up, and Beeline does not read them when you upload, so changing them changes nothing. The scientificName column offers the names as you type; a name that is not on the names tab may be marked by your spreadsheet, and you may still type it. The identifiers tab is there to check how a person's name is spelled.",
+      windowsTopic: "Who is on the identifiers tab",
+      windows:
+        "The names tab holds the scientific names in Beeline's taxonomy. The identifiers tab holds people who identified a specimen in the last five years, or who identified a specimen collected in the last five years.",
+      anyText: "Any text.",
+      oneOf: (words: string) => `One of ${words}, or leave it blank.`,
+      momentRule: "A date written as YYYY-MM-DD, YYYY-MM or YYYY. A cell that the spreadsheet made a date is read as that day.",
+      scientificName:
+        "A scientific name. The names tab lists those in Beeline's taxonomy; a name that is not there is fine for now, and Beeline does not yet check names against its taxonomy.",
+      occurrenceRemarks:
+        "The remark that says what became of the specimen. Beeline keeps a disposition with its remark, so a disposition needs one.",
+      identifiedBy:
+        "The person who identified the specimen. A name that is not on the identifiers tab is fine: Beeline will ask about new names when it can apply changes.",
+    },
+  },
+
   /** Comparing an edited copy of the specimens download (beeline-kgyd). Staff only; nothing here changes a record. */
   uploads: {
     title: "Edited downloads",
     heading: "Compare an edited download",
     intro:
-      "Upload the Excel file you downloaded from Specimens and edited. Beeline keeps the file and lists every cell that differs from what it says now. Beeline does not apply changes from a file yet, so an upload changes no record.",
+      "Upload the Excel file for editing specimens that you downloaded from Specimens and edited. Beeline keeps the file and lists every identification and disposition that differs from what it says now. Beeline does not apply changes from a file yet, so an upload changes no record.",
     linkFromSpecimens: "Upload an edited Excel file",
     linkFromExports: "Compare an edited copy of the specimens download",
     form: {
       heading: "Upload a file",
       fileLabel: "Excel file",
       fileHint:
-        "The Excel file from Specimens, up to 20 MB and 20,000 rows. Leave its specimenId, specimenVersion and sampleVersion columns as they are: Beeline finds each row by them. Keep the cells you edit formatted as text, and type a date as YYYY-MM-DD.",
+        "The Excel file for editing specimens from Specimens, up to 20 MB and 20,000 rows. Leave its specimenId and specimenVersion columns as they are: Beeline finds each row by them. Keep the cells you edit formatted as text, and type a date as YYYY-MM-DD.",
       referenceLabel: "Request behind the file (optional)",
       referenceHint:
         "Where the request came from, so a change can be traced to who asked for it: an email's message id or a link to an issue, such as https://github.com/example/example/issues/1. Never an address or a name.",
@@ -2282,6 +2322,7 @@ export const en = {
         number_unreadable: "Cells that should hold a number and do not",
         date_unreadable: "Cells that should hold a date and do not",
         converted_to_date: "Cells the spreadsheet turned into a date",
+        holds_time: "Date cells that hold a time of day as well as a date",
         holds_formula: "Cells that hold a formula",
         converted_other: "Cells the spreadsheet turned into something that is not text, such as TRUE or an error",
         name_blank: "Identifications with no scientific name",
@@ -2310,8 +2351,9 @@ export const en = {
         no_specimen: "Check the specimenId against a new download.",
         number_disagrees: "Leave the fieldNumber and specimenId columns as they were, or download again and make the edit in the new file.",
         number_unreadable: "Type the number with its digits, a minus sign where it has one, and a decimal point, such as -123.262.",
-        date_unreadable: "Type the date as YYYY-MM-DD, such as 2026-07-14. A date identified may also be YYYY-MM or YYYY, and a collecting date may be two days with a slash between, 2026-07-14/2026-07-16.",
-        converted_to_date: "Format the cell as text, then type the value as YYYY-MM-DD.",
+        date_unreadable: "Type the date as YYYY-MM-DD, such as 2024-05-03. A date identified may also be YYYY-MM or YYYY.",
+        converted_to_date: "Format the cell as text, then type the value as YYYY-MM-DD. Beeline reads a date cell only in the date identified column.",
+        holds_time: "The cell holds a time as well as a date. Format it as text and type the day as YYYY-MM-DD.",
         holds_formula: "Beeline reads what was typed, not a formula. Format the cell as text and type the value itself.",
         converted_other: "Format the cell as text, then type the value again.",
         name_blank: "Type the name, or put back the one that was there.",
@@ -2342,9 +2384,9 @@ export const en = {
         rows_disagree: "The rows say",
         column_missing: "Missing column",
       } as Record<string, string>,
-      notAppliedHeading: "Differences in columns Beeline does not read from a file",
+      notAppliedHeading: "Differences in columns Beeline does not read from this file",
       notAppliedNote:
-        "Beeline never reads these from a file. An identification by an expert, for instance, outranks every other identification for good, so a cell edited here would otherwise decide which name a specimen carries.",
+        "Beeline ignored these. Some columns are there only to help you recognise the bee, and some Beeline never reads from a file: an identification by an expert, for instance, outranks every other identification for good, so a cell edited there would otherwise decide which name a specimen carries.",
       more: (count: number) => `${n(count)} more are not shown here.`,
       notFound: "No such upload.",
       fileMissing: "The file this upload kept is no longer on disk, so it cannot be compared again.",

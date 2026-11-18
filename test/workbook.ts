@@ -28,7 +28,7 @@ const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").
 export function buildWorkbook(
   rows: ReadonlyArray<ReadonlyArray<TestCell>>,
   /** `name` is the sheet's name; `others` are the names of more sheets, each with one cell, put `before` the sheet or after it. */
-  options: { name?: string; others?: string[]; before?: boolean } = {},
+  options: { name?: string; others?: string[]; before?: boolean; date1904?: boolean } = {},
 ): Uint8Array {
   const name = options.name ?? "specimens";
   const others = options.others ?? [];
@@ -70,7 +70,7 @@ export function buildWorkbook(
         [1, ...others.map((_, i) => i + 2)].map((n) => `<Override PartName="/xl/worksheets/sheet${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("") +
         `</Types>`,
     ),
-    "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="${main}" xmlns:r="${rel}"><sheets>${tabs}</sheets></workbook>`),
+    "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="${main}" xmlns:r="${rel}">${options.date1904 === true ? `<workbookPr date1904="1"/>` : ""}<sheets>${tabs}</sheets></workbook>`),
     "xl/_rels/workbook.xml.rels": strToU8(
       `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}</Relationships>`,
     ),
@@ -84,3 +84,6 @@ export function buildWorkbook(
 
 /** The spreadsheet serial for a calendar day, as the 1900 system counts it. */
 export const serialOf = (isoDay: string): number => Date.parse(`${isoDay}T00:00:00Z`) / 86_400_000 + 25569;
+
+/** The same day as the 1904 system counts it, which the Mac versions of Excel used to: 1,462 days fewer. */
+export const serialOf1904 = (isoDay: string): number => serialOf(isoDay) - 1462;

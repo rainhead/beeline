@@ -74,7 +74,8 @@ import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
-import { MAX_FILE_BYTES, comparePlan, parseUpload, type Parsed } from "./upload-plan.js";
+import { specimenWorkbook } from "./specimen-workbook.js";
+import { MAX_FILE_BYTES, comparePlan, parseUpload, type Layout as UploadLayout, type Parsed } from "./upload-plan.js";
 import type { ReadLimits } from "./xlsx-reader.js";
 import {
   listRuns,
@@ -200,6 +201,8 @@ import {
   listSamples,
   listSpecimens,
   type Reader,
+  type Page,
+  type SpecimenRow,
   OUTSIDE,
   STAFF_READER,
   parseListingQuery,
@@ -308,6 +311,8 @@ export interface AppDeps {
   uploadsDir?: string;
   /** The reader's time and memory limits for an upload, which a test sets small; the defaults are src/app/xlsx-reader.ts's. */
   uploadReadLimits?: Partial<ReadLimits>;
+  /** Which columns an upload is read for; the specimens file's by default. A test of the page gives a wider one, since no file yet reads a sample's columns. */
+  uploadLayout?: UploadLayout;
   /** The registry mark each print run raises (config.registryMarkPath, src/registry-mark.ts). */
   registryMarkPath?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -347,6 +352,7 @@ export function createApp({
   printRunsDir,
   uploadsDir,
   uploadReadLimits,
+  uploadLayout,
   registryMarkPath,
   programGovernance,
   programContactsPath,
@@ -1234,9 +1240,19 @@ export function createApp({
 
   // The file to edit and upload back (beeline-kgyd): every cell is text, so a
   // spreadsheet cannot reformat what it holds.
+  // The file for editing specimens, open to everyone since a later slice will let volunteers upload it. A few of the
+  // CSV's columns (SPECIMENS_LAYOUT); the samples will have a file of their own.
   app.get("/specimens.xlsx", async (c) => {
     const { fetch, timing } = await specimenDownload(c, "xlsx");
-    return c.body(xlsxStream("specimens", SPECIMEN_CSV_HEADER, fetch, specimenCsvRow, timing), 200, {
+    // The tabs are read when the file is asked for; the CSV has none of this.
+    const workbook = await specimenWorkbook(db, c.get("m"));
+    // The same values the CSV writes for the same headings, a few of its columns.
+    const at = workbook.header.map((h) => SPECIMEN_CSV_HEADER.indexOf(h as (typeof SPECIMEN_CSV_HEADER)[number]));
+    const toRow = (r: SpecimenRow, page: Page<SpecimenRow>) => {
+      const written = specimenCsvRow(r, page);
+      return at.map((i) => written[i]);
+    };
+    return c.body(xlsxStream("specimens", workbook.header, fetch, toRow, timing, workbook.options), 200, {
       "content-type": XLSX_CONTENT_TYPE,
       "content-disposition": `attachment; filename="${exportFilename("beeline-specimens", new Date(), "xlsx")}"`,
     });
@@ -2169,7 +2185,7 @@ export function createApp({
     const keptAt = uploadFile(id);
     try {
       await writeFile(keptAt, bytes);
-      const parsed = await parseUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits);
+      const parsed = await parseUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits, uploadLayout);
       if (!parsed.ok) {
         await rm(uploadFolder(id), { recursive: true, force: true });
         return uploadForm(c, refusalText(m, parsed), 400);
@@ -2217,7 +2233,7 @@ export function createApp({
     if (createHash("sha256").update(bytes).digest("hex") !== row.sha256) {
       return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileAltered} />), 500);
     }
-    const parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits);
+    const parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, uploadLayout);
     if (!parsed.ok) {
       return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={refusalText(m, parsed)} />), 500);
     }

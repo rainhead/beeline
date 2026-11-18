@@ -1,4 +1,7 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
@@ -8,14 +11,18 @@ import {
   HOLD_REASONS,
   MAX_FILE_BYTES,
   MAX_ROWS,
-  oregonToday,
+  UNIT_COLUMNS,
+  comparePlan,
+  parseUpload,
   planUpload,
+  type Layout,
   type HeldItem,
   type UploadPlan,
 } from "../src/app/upload-plan.js";
+import { readXlsxHere } from "../src/app/xlsx-reader.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample } from "./helpers.js";
 import { bytesOf, edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
-import { buildWorkbook, serialOf, type TestCell } from "./workbook.js";
+import { buildWorkbook, serialOf, serialOf1904, type TestCell } from "./workbook.js";
 
 /** The plan for a file's bytes; a refusal fails the test. */
 /**
@@ -28,7 +35,25 @@ const DEFAULT_TODAY = `${CURRENT_SEASON}-12-31`;
 /** Every reason a plan in this file has held something for, so the last test can say none of them is dead. */
 const seen = new Set<string>();
 
+/**
+ * A layout that reads every column that belongs to a unit. No file reads a sample's dates and method, its locality or
+ * coordinates today (the specimens file reads a specimen's two units), but the
+ * comparison's rules for them wait for the samples upload and are tested here, by giving the comparison a parsed
+ * upload that names them as read.
+ */
+const allRead: Layout = { recognise: [], read: UNIT_COLUMNS, headings: [], shaded: [] };
+
+/** The plan for a file's bytes, read as though every unit's columns were read from it. */
 async function plan(f: UploadFixture, bytes: Uint8Array, today = DEFAULT_TODAY): Promise<UploadPlan> {
+  const parsed = await parseUpload(bytes);
+  if (!parsed.ok) throw new Error(`refused: ${parsed.refusal}`);
+  const result = await comparePlan(f.db, { ...parsed.upload, layout: allRead }, { today });
+  for (const h of result.held) seen.add(h.reason);
+  return result;
+}
+
+/** The plan as the app makes it: the layout is the file's own. */
+async function planAsRead(f: UploadFixture, bytes: Uint8Array, today = DEFAULT_TODAY): Promise<UploadPlan> {
   const result = await planUpload(f.db, bytes, { today });
   if (!result.ok) throw new Error(`refused: ${result.refusal}`);
   for (const h of result.plan.held) seen.add(h.reason);
@@ -331,32 +356,57 @@ describe("dates", () => {
     expect(valueOf(await read(a3, "2024-05-01"))).toEqual({ kind: "moment", date: "2024-05-01", precision: "day" });
   });
 
-  it("holds a cell the spreadsheet turned into a date, with that reason, and the rest of its unit with it", async () => {
+  it("reads a real date cell in a date column as that day, as it reads typed text (staff paste rows from other sheets)", async () => {
     const f = await uploadFixture();
     const { a1, b1 } = f.ids;
     const download = await f.download();
-    const p = await plan(
-      f,
-      edited(download, [
-        // A name changed together with a date the spreadsheet converted.
-        { id: a1, set: { scientificName: "Bombus", dateIdentified: { date: serialOf("2025-07-01") } } },
-        ...onSample(f, { eventDate: { date: serialOf(`${CURRENT_SEASON}-07-15`) }, samplingProtocol: "blue vane trap" }),
-        // The month a person typed as 2025-07 and a spreadsheet made the first of July.
-        { id: b1, set: { dateIdentified: { date: serialOf("2025-07-01") } } },
-      ]),
-    );
+    const valueOf = (p: UploadPlan, column: string) => p.differences[0]!.cells.find((c) => c.column === column)!.value;
+    // A date cell that is Beeline's day is unchanged, as the same day typed is.
+    nothingDiffers(await plan(f, edited(download, [{ id: a1, set: { dateIdentified: { date: serialOf("2024-05-03") } } }])));
+    nothingDiffers(await plan(f, edited(download, onSample(f, { eventDate: { date: serialOf(DAY_A) } }))));
+    // A different day is a difference, with that day and a day's precision.
+    const identified = await plan(f, edited(download, [{ id: a1, set: { dateIdentified: { date: serialOf("2025-07-01") } } }]));
+    expect(summary(identified)).toEqual([["determination", "dateIdentified"]]);
+    expect(valueOf(identified, "dateIdentified")).toEqual({ kind: "moment", date: "2025-07-01", precision: "day" });
+    expect(heldOf(identified, "converted_to_date")).toEqual([]);
+    const collected = await plan(f, edited(download, onSample(f, { eventDate: { date: serialOf(`${CURRENT_SEASON}-07-15`) } })));
+    expect(collected.sampleDifferences[0]!.cells.find((c) => c.column === "eventDate")!.value).toEqual({ kind: "days", start: `${CURRENT_SEASON}-07-15`, end: `${CURRENT_SEASON}-07-15` });
+    // The workbook's own date system counts the same day: the 1904 serial of a day is 1,462 less.
+    const mac = await plan(f, edited(download, [{ id: b1, set: { dateIdentified: { date: serialOf1904("2025-07-01") } } }], { sheets: { date1904: true } }));
+    expect(valueOf(mac, "dateIdentified")).toEqual({ kind: "moment", date: "2025-07-01", precision: "day" });
+    // It is validated as typed text is: a day after today makes the identification incomplete.
+    const future = await plan(f, edited(download, [{ id: a1, set: { dateIdentified: { date: serialOf(`${CURRENT_SEASON + 1}-01-02`) } } }]));
+    expect(heldOf(future, "date_identified_future")).toHaveLength(1);
+  });
+
+  it("holds a date cell that carries a time of day, and a date cell in a column that is not a date column", async () => {
+    const f = await uploadFixture();
+    const { a1 } = f.ids;
+    const download = await f.download();
+    // A time as well as a day: not a day.
+    const time = await plan(f, edited(download, [{ id: a1, set: { dateIdentified: { date: serialOf("2025-07-01") + 0.5 } } }]));
+    expect(heldOf(time, "holds_time").map((h) => [h.row, h.unit, h.column])).toEqual([[2, "determination", "dateIdentified"]]);
+    expect(time.differences).toEqual([]);
+    const sampleTime = await plan(f, edited(download, onSample(f, { eventDate: { date: serialOf(`${CURRENT_SEASON}-07-15`) + 0.25 } })));
+    expect(heldOf(sampleTime, "holds_time").map((h) => h.column)).toEqual(["eventDate", "eventDate", "eventDate"]);
+    // Not a date column: held as before, with the rest of its unit.
+    const p = await plan(f, edited(download, [{ id: a1, set: { scientificName: { date: serialOf("2025-07-01") }, sex: "male" } }, ...onSample(f, { locality: { date: serialOf("2025-07-01") } })]));
     expect(heldOf(p, "converted_to_date").map((h) => [h.row, h.unit, h.column, h.detail])).toEqual([
-      [2, "determination", "dateIdentified", "2025-07-01"],
-      [2, "method_dates", "eventDate", `${CURRENT_SEASON}-07-15`],
-      [3, "method_dates", "eventDate", `${CURRENT_SEASON}-07-15`],
-      [4, "method_dates", "eventDate", `${CURRENT_SEASON}-07-15`],
-      [5, "determination", "dateIdentified", "2025-07-01"],
+      [2, "determination", "scientificName", "2025-07-01"],
+      [2, "place", "locality", "2025-07-01"],
+      [3, "place", "locality", "2025-07-01"],
+      [4, "place", "locality", "2025-07-01"],
     ]);
-    // The name and the date are held together; the method waits with the date.
-    expect(heldOf(p, "converted_to_date")[0]!.cells.map((c) => c.column)).toEqual(["scientificName", "dateIdentified"]);
-    expect(heldOf(p, "converted_to_date")[1]!.cells.map((c) => c.column)).toEqual(["eventDate", "samplingProtocol"]);
+    expect(heldOf(p, "converted_to_date")[0]!.cells.map((c) => c.column)).toEqual(["scientificName", "sex"]);
     expect(p.differences).toEqual([]);
     expect(p.sampleDifferences).toEqual([]);
+  });
+
+  it("holds nothing for an identifier Beeline does not know, nor for a name it has never seen", async () => {
+    const f = await uploadFixture();
+    const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { identifiedBy: "Nobody Anyone Knows" } }]));
+    expect(p.held).toEqual([]);
+    expect(summary(p)).toEqual([["determination", "identifiedBy"]]);
   });
 
   it("holds a cell the spreadsheet made a formula, a boolean or an error, each with its reason", async () => {
@@ -430,6 +480,18 @@ describe("a unit is listed only when it is complete", () => {
       for (const word of DETERMINATION_SEXES) expect((await edit(f, { sex: word, caste: "" })).differences, word).toHaveLength(word === "female" ? 0 : 1);
       expect((await edit(f, { sex: "" })).differences).toHaveLength(1);
       for (const bad of ["queen", "f", "unknown"]) expect(heldOf(await edit(f, { sex: bad }), "sex_unknown"), bad).toHaveLength(1);
+    });
+
+    it("is judged on Beeline's own value for a column the file is not read for, so an edit there cannot hold it", async () => {
+      const f = await uploadFixture();
+      const parsed = await parseUpload(edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "queen" } }]));
+      if (!parsed.ok) throw new Error(parsed.refusal);
+      // A file read for the name alone: the sex it carries is not Beeline's to take from it.
+      const nameOnly: Layout = { recognise: [], read: ["scientificName"], headings: [], shaded: [] };
+      const p = await comparePlan(f.db, { ...parsed.upload, layout: nameOnly }, { today: DEFAULT_TODAY });
+      expect(p.held).toEqual([]);
+      expect(p.differences.map((d) => d.cells.filter((c) => c.differs).map((c) => [c.column, c.fileSays]))).toEqual([[["scientificName", "Bombus"]]]);
+      expect(p.notApplied.map((n) => [n.column, n.fileSays])).toEqual([["sex", "queen"]]);
     });
 
     it("needs a caste Beeline knows, or none", async () => {
@@ -742,15 +804,15 @@ describe("a file edited against something Beeline no longer says", () => {
 describe("a held unit names every cell held with it", () => {
   it("lists, for a specimen, the cells of the unit that differ and the cell that caused the hold, with what the file says", async () => {
     const f = await uploadFixture();
-    const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "male", dateIdentified: { date: serialOf("2025-07-01") } } }]));
+    const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "male", dateIdentified: { date: serialOf("2025-07-01") + 0.5 } } }]));
     expect(p.differences).toEqual([]);
-    const held = heldOf(p, "converted_to_date");
+    const held = heldOf(p, "holds_time");
     expect(held).toHaveLength(1);
     expect(held[0]!.column).toBe("dateIdentified");
     expect(held[0]!.cells).toEqual([
       { column: "scientificName", was: "Bombus vosnesenskii", fileSays: "Bombus" },
       { column: "sex", was: "female", fileSays: "male" },
-      { column: "dateIdentified", was: "2024-05-03", fileSays: "2025-07-01" },
+      { column: "dateIdentified", was: "2024-05-03", fileSays: "2025-07-01 12:00:00" },
     ]);
     expect(held[0]!.columns).toEqual(["scientificName", "sex", "dateIdentified"]);
   });
@@ -939,7 +1001,6 @@ describe("a sample's difference counted once", () => {
     expect(p.counts.withDifferences).toEqual({ active: 1, settled: 1, unplaced: 0 });
     expect(p.counts.unchanged).toEqual({ active: 2, settled: 0, unplaced: 0 });
     void SETTLED_SEASON;
-    void oregonToday;
   });
 });
 
@@ -952,6 +1013,115 @@ describe("which sheet is read, and what else the workbook holds", () => {
     expect(summary(p)).toEqual([["place", "locality"]]);
     // A file with one sheet has no others.
     expect((await plan(f, await f.download())).otherSheets).toEqual([]);
+  });
+
+  it("compares an unedited specimens file with its tabs of Beeline's own as no difference, and lists none of them as a tab that was not read", async () => {
+    const f = await uploadFixture();
+    const download = await f.file();
+    // The file as the app wrote it, untouched: the specimens tab and Beeline's four.
+    const read = readXlsxHere(download);
+    expect(read.ok && read.sheet.name).toBe("specimens");
+    expect(read.ok && read.otherSheets).toEqual(["names", "identifiers", "words", "about"]);
+    const p = await planAsRead(f, download);
+    nothingDiffers(p);
+    expect(p.otherSheets).toEqual([]);
+    expect(p.counts.unchanged.active + p.counts.unchanged.settled).toBe(4);
+  });
+
+  // Gnumeric's converter, where it is installed: a real spreadsheet program opening the file and saving it again,
+  // which no library standing in for one is. CI has none, so the test says it was skipped there.
+  const ssconvert = spawnSync("ssconvert", ["--version"]).status === 0;
+  it.skipIf(!ssconvert)("compares the file as Gnumeric saves it again, untouched, as no difference (needs ssconvert)", async () => {
+    const f = await uploadFixture();
+    const dir = await mkdtemp(join(tmpdir(), "beeline-gnumeric-"));
+    await writeFile(join(dir, "from-beeline.xlsx"), await f.file());
+    const converted = spawnSync("ssconvert", [join(dir, "from-beeline.xlsx"), join(dir, "from-gnumeric.xlsx")], { timeout: 60_000 });
+    expect(converted.status, String(converted.stderr)).toBe(0);
+    const saved = new Uint8Array(await readFile(join(dir, "from-gnumeric.xlsx")));
+    // Not the bytes Beeline wrote: Gnumeric wrote its own file.
+    expect(Buffer.from(saved).equals(Buffer.from(await f.file()))).toBe(false);
+    const read = readXlsxHere(saved);
+    expect(read.ok && read.sheet.name).toBe("specimens");
+    const p = await planAsRead(f, saved);
+    nothingDiffers(p);
+    expect(p.otherSheets).toEqual([]);
+    expect(p.unrecognised).toEqual([]);
+    expect(p.counts.unchanged.active + p.counts.unchanged.settled).toBe(4);
+  });
+
+  it("changing one of Beeline's own tabs changes nothing, and a tab of the person's own is still listed", async () => {
+    const f = await uploadFixture();
+    const p = await planAsRead(f, edited(await f.file(), [], { sheets: { others: ["names", "identifiers", "words", "about", "my notes"] } }));
+    nothingDiffers(p);
+    expect(p.otherSheets).toEqual(["my notes"]);
+  });
+
+  it("reads the specimens file's identification and disposition columns as units", async () => {
+    const f = await uploadFixture();
+    const { a1, a2 } = f.ids;
+    const download = await f.file();
+    const p = await planAsRead(f, edited(download, [
+      { id: a1, set: { scientificName: "Bombus", identifiedBy: "A Person Beeline Has Never Seen" } },
+      // Pasted from another sheet: a real date cell, and a name for a specimen that had none.
+      { id: a2, set: { scientificName: "Bombus vosnesenskii", dateIdentified: { date: serialOf("2025-07-01") }, disposition: "missing", occurrenceRemarks: "Lost" } },
+    ]));
+    expect(p.differences.map((d) => [d.specimenId, d.unit, d.cells.filter((c) => c.differs).map((c) => c.column)])).toEqual([
+      [a1, "determination", ["scientificName", "identifiedBy"]],
+      [a2, "determination", ["scientificName", "dateIdentified"]],
+      [a2, "disposition", ["disposition", "occurrenceRemarks"]],
+    ]);
+    // An identifier Beeline has never seen is not a fault: nothing is held.
+    expect(p.held).toEqual([]);
+    // A disposition without its remark is held, as a unit.
+    const blank = await planAsRead(f, edited(download, [{ id: a1, set: { disposition: "missing" } }]));
+    expect(heldOf(blank, "remarks_blank")).toHaveLength(1);
+  });
+
+  it("reports an edit to a column that only helps recognise the bee as ignored, and makes no unit of it", async () => {
+    const f = await uploadFixture();
+    const { a1 } = f.ids;
+    const p = await planAsRead(f, edited(await f.file(), [{ id: a1, set: { eventDate: `${CURRENT_SEASON}-07-15`, locality: "Albany", recordedBy: "Somebody Else", fieldNumber: "OBA10001" } }]));
+    expect(p.differences).toEqual([]);
+    expect(p.sampleDifferences).toEqual([]);
+    expect(p.held).toEqual([]);
+    expect(p.notApplied.map((c) => c.column).sort()).toEqual(["eventDate", "locality", "recordedBy"]);
+    expect(p.notApplied.find((c) => c.column === "eventDate")).toMatchObject({ fileSays: `${CURRENT_SEASON}-07-15` });
+  });
+
+  it("still loads an older download with all the CSV's columns, and lists what differs in the columns it does not read", async () => {
+    const f = await uploadFixture();
+    const { a1 } = f.ids;
+    const p = await planAsRead(f, edited(await f.download(), [
+      { id: a1, set: { scientificName: "Bombus", locality: "Albany", decimalLatitude: "44.6", samplingProtocol: "blue vane trap", county: "Linn" } },
+    ]));
+    // The identification is a difference; the rest are columns this file does not read, and no sample unit is made of them.
+    expect(summary(p)).toEqual([["determination", "scientificName"]]);
+    expect(p.sampleDifferences).toEqual([]);
+    expect(p.held).toEqual([]);
+    expect(p.notApplied.map((c) => c.column).sort()).toEqual(["county", "decimalLatitude", "locality", "samplingProtocol"]);
+    nothingDiffers(await planAsRead(f, await f.download()));
+  });
+
+  it("holds a specimen's units whose specimenVersion is missing or no longer Beeline's, and needs no sampleVersion", async () => {
+    const f = await uploadFixture();
+    const { a1 } = f.ids;
+    const missing = await planAsRead(f, edited(await f.file(), [{ id: a1, set: { scientificName: "Bombus" } }], { dropColumns: ["specimenVersion"] }));
+    expect(heldOf(missing, "column_missing").map((h) => [h.unit, h.detail])).toEqual([["determination", "specimenVersion"]]);
+    const stale = await planAsRead(f, edited(await f.file(), [{ id: a1, set: { scientificName: "Bombus", specimenVersion: "old" } }]));
+    expect(heldOf(stale, "specimen_changed_since")).toHaveLength(1);
+    // The file has no sampleVersion, and nothing it reads needs one.
+    expect(matrixOf(await f.file())[0]).not.toContain("sampleVersion");
+    nothingDiffers(await planAsRead(f, await f.file()));
+  });
+
+  it("reaches each rule that waits for the samples upload through the comparison, given a file that names its columns as read", async () => {
+    const f = await uploadFixture();
+    const download = await f.download();
+    const sampleOnly = async (set: Record<string, TestCell>) => plan(f, edited(download, onSample(f, set)));
+    expect(summary(await sampleOnly({ samplingProtocol: "blue vane trap" }))).toEqual([["method_dates", "samplingProtocol"]]);
+    expect(summary(await sampleOnly({ eventDate: `${CURRENT_SEASON}-07-15` }))).toEqual([["method_dates", "eventDate"]]);
+    expect(summary(await sampleOnly({ locality: "Albany" }))).toEqual([["place", "locality"]]);
+    expect(summary(await sampleOnly({ decimalLatitude: "44.6", decimalLongitude: "-123.3" }))).toEqual([["coordinates", "decimalLatitude", "decimalLongitude"]]);
   });
 
   it("reads the only sheet whatever it is called", async () => {

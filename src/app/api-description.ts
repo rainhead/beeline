@@ -285,7 +285,8 @@ const ENDPOINTS: Endpoint[] = [
     body: {
       ideal_logic_id: "the registration's id in Ideal Logic, such as QNN6-MX8, or an empty string to unlink the person",
       evidence: "staff (the default), or register_email where the old Beeline's register lists the registration's email address against this person's login",
-      reference: REFERENCE,
+      reference:
+        "reference: an optional note of 1 to 500 characters pointing at the request behind the change, kept in the record of the key's use and on the decision itself. Never an address or a name",
     },
     answers: "{ person_id, outcome, was, ideal_logic_id, registrant } where registrant is the name on the registration, to check against the person",
   },

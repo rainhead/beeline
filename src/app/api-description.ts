@@ -268,6 +268,14 @@ const ENDPOINTS: Endpoint[] = [
     body: { rule: "a QC rule name", remove: "boolean", note: "string", reference: REFERENCE },
     answers: "{ sample_id, outcome }",
   },
+  {
+    method: "POST",
+    route: "/people/:id/membership",
+    summary: "Set where a person belongs, as their page does. The id is the person's id or their iNaturalist login.",
+    needs: "staff key",
+    body: { belongs_to: "a program's code such as OBA, MM for Master Melittology itself with no atlas, or an empty string for nothing recorded", note: "string", reference: REFERENCE },
+    answers: "{ person_id, outcome, was, belongs_to }",
+  },
 ];
 
 /** The routes the description lists, as the router names them: "GET /samples/:id". */

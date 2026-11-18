@@ -348,8 +348,21 @@ class DetermineGrid extends LitElement {
     this.lastBulk = null;
   }
 
+  /**
+   * The bar's Undo puts back what its rows said before the bar changed them.
+   * A row changed in its own cell since, or put back by its own Undo, is no
+   * longer the bar's to put back: naming ten rows Bombus, refining three to
+   * species and then pressing Undo took the three species away as well.
+   */
+  #dropFromBulkUndo(r: EntryRow) {
+    if (!this.lastBulk) return;
+    const before = this.lastBulk.before.filter((w) => w.specimenId !== r.id);
+    this.lastBulk = before.length > 0 ? { ...this.lastBulk, before } : null;
+  }
+
   /** Back to what the row said before today: its earlier determination, or nothing. */
   #undoRow(r: EntryRow) {
+    this.#dropFromBulkUndo(r);
     const p = r.prior;
     void this.#send([{ specimenId: r.id, animalId: p?.animalId ?? null, ecdysisTid: null, sex: p?.sex ?? null, caste: p?.caste ?? null, sendName: true, sendSex: true }]);
   }
@@ -362,14 +375,7 @@ class DetermineGrid extends LitElement {
    * reopen it either.
    */
   #rowChanged(r: EntryRow) {
-    // The bar's Undo puts back what its rows said before the bar changed
-    // them. A row changed in its own cell since is no longer the bar's to
-    // put back: naming ten rows Bombus, refining three to species and then
-    // pressing Undo took the three species away as well.
-    if (this.lastBulk) {
-      const before = this.lastBulk.before.filter((w) => w.specimenId !== r.id);
-      this.lastBulk = before.length > 0 ? { ...this.lastBulk, before } : null;
-    }
+    this.#dropFromBulkUndo(r);
     if (!this.selected.has(r.id)) return;
     if (this.lastBulk?.selection.ids === this.selection.ids) this.lastBulk = { ...this.lastBulk, selection: markUsed(this.lastBulk.selection) };
     this.selection = markUsed(this.selection);

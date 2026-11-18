@@ -201,11 +201,11 @@ describe("drafts", () => {
     const { db, ada, animal, spec } = await fixture();
     const s = await spec("26000101");
     const bombus = await animal("Bombus");
-    await Promise.all([
+    // The second to be asked for is the second to run, and answers with the row as both left it.
+    const [, [row]] = await Promise.all([
       saveDrafts(db, ada, ada, [{ specimenId: s, animalId: bombus, ecdysisTid: null }]),
       saveDrafts(db, ada, ada, [{ specimenId: s, sex: "female", caste: "worker" }]),
     ]);
-    const [row] = await seasonRows(db, ada, ada, CURRENT_SEASON).then((rows) => rows.filter((r) => r.id === s));
     expect(row!.draft).toMatchObject({ animalId: bombus, sex: "female", caste: "worker" });
   });
 

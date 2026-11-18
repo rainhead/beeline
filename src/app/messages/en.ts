@@ -1702,6 +1702,10 @@ export const en = {
       ecdysisShort: (letters: number) => `Type ${letters} letters of a genus to search all of Ecdysis's insect names.`,
     },
     saveFailed: "That didn't save. Check your connection, then try again.",
+    /** A link or the collection year menu was used while changes were still being sent: the page waits for them. */
+    leaving: "Saving your changes before leaving this page…",
+    /** It waited, and a change failed, so the page stayed. */
+    leaveUnsaved: "A change here hasn't saved, so this page stayed open. Try it again before you leave.",
   },
 
   /**

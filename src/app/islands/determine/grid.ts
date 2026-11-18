@@ -20,6 +20,7 @@ import { NumberIndex, pastedList, type NumberProblem } from "../../../determinat
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
+import { leavesPage, RequestQueue, sentParts, type RowWrite } from "./queue.js";
 import { deselect, emptySelection, holdsWork, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
@@ -27,7 +28,15 @@ const d = m.determine;
 
 const CHUNK = 400;
 
-type Write = EntryValue & { specimenId: number };
+/**
+ * How long a request may go unanswered before it counts as failed. Without
+ * a limit a request on a dead connection holds the queue, and with it every
+ * link on the page, for as long as the browser cares to wait.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/** What a row should say, and which parts of that the store is to be told (queue.ts). */
+type Write = EntryValue & RowWrite;
 type TaxonInfo = { name: string; rank: string; castes: boolean };
 
 /** What picking a name writes: a node of the tree, or a name from Ecdysis the tree lacks (beeline-4wx3). */
@@ -72,7 +81,8 @@ class DetermineGrid extends LitElement {
 
   data: DeterminePageData;
   taxa = new Map<number, TaxonInfo>();
-  #queue: Promise<unknown> = Promise.resolve();
+  /** Saves, and the requests that reread the rows, one at a time in the order made (queue.ts). */
+  #queue = new RequestQueue();
   /**
    * The newest write sent for each row and not yet answered. A row reads
    * through it, so a second change made before the first is saved builds on
@@ -136,8 +146,70 @@ class DetermineGrid extends LitElement {
     super.disconnectedCallback();
     this.#pinned.disconnect();
     window.removeEventListener("resize", this.#clearPinned);
+    document.removeEventListener("click", this.#holdLink);
+    window.removeEventListener("beforeunload", this.#warnUnsaved);
+    window.removeEventListener("pageshow", this.#reloadIfRestored);
     document.documentElement.style.scrollPaddingTop = "";
   }
+
+  /**
+   * Leave the page only once every change made on it has been sent
+   * (beeline-rt6h). Saves go one at a time, so naming rows quickly leaves
+   * several waiting, and loading another page cancels the one being sent and
+   * never sends the rest. Until this, only the find box's move to another
+   * year waited; the collection year menu and every link left at once, and
+   * the names not yet sent were lost without a word. If a change failed the
+   * page stays, so it can be tried again.
+   */
+  async #afterSaves(go: () => void, stay: () => void = () => undefined) {
+    if (!this.#queue.busy) {
+      // Nothing to wait for. If an earlier change failed, the browser asks
+      // (#warnUnsaved), which leaves a way out when it can never be saved.
+      go();
+      return;
+    }
+    const failures = this.#failures;
+    this.message = d.leaving;
+    await this.#queue.idle();
+    if (this.failed.size > 0 || this.#failures !== failures) {
+      this.message = d.leaveUnsaved;
+      stay();
+      return;
+    }
+    go();
+  }
+
+  /** Requests that have failed, counted so that one failing while the page waits to leave keeps it open. */
+  #failures = 0;
+
+  /**
+   * A page the browser kept whole and brought back with Back still holds the
+   * rows as they were when it was left, so it is loaded again. `no-store`
+   * stops most browsers keeping it, and Chrome keeps some such pages anyway.
+   */
+  #reloadIfRestored = (e: PageTransitionEvent) => {
+    if (e.persisted) window.location.reload();
+  };
+
+  /** A link clicked while changes are still being sent is followed once they have been. */
+  #holdLink = (e: MouseEvent) => {
+    if (!this.#queue.busy) return;
+    const a = e.target instanceof Element ? e.target.closest<HTMLAnchorElement>("a[href]") : null;
+    if (a === null || !leavesPage(e, { target: a.target, download: a.hasAttribute("download") })) return;
+    e.preventDefault();
+    void this.#afterSaves(() => window.location.assign(a.href));
+  };
+
+  /**
+   * What nothing above can hold: closing the tab, Back, reloading, a form in
+   * the header. The browser asks before it drops changes not yet sent, or
+   * ones that failed and wait to be tried again.
+   */
+  #warnUnsaved = (e: BeforeUnloadEvent) => {
+    if (!this.#queue.busy && this.failed.size === 0) return;
+    e.preventDefault();
+    e.returnValue = "";
+  };
 
   /** Close a row's name box and put focus back on the row's name button, not at the top of the page. */
   #closeEditor(r: EntryRow) {
@@ -148,9 +220,17 @@ class DetermineGrid extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     // The season menu is the shell's, a plain GET form: choosing a season goes there.
+    // It waits for the saves first, like every other way off the page.
     document.querySelector<HTMLSelectElement>("#determine-season")?.addEventListener("change", (e) => {
-      (e.target as HTMLSelectElement).form?.requestSubmit();
+      const menu = e.target as HTMLSelectElement;
+      void this.#afterSaves(
+        () => menu.form?.requestSubmit(),
+        () => (menu.value = String(this.data.season)),
+      );
     });
+    document.addEventListener("click", this.#holdLink);
+    window.addEventListener("beforeunload", this.#warnUnsaved);
+    window.addEventListener("pageshow", this.#reloadIfRestored);
     loadTaxa()
       .then((list: PickerTaxon[]) => {
         for (const t of list) this.taxa.set(t.id, { name: t.name, rank: t.rank, castes: t.castes });
@@ -191,10 +271,16 @@ class DetermineGrid extends LitElement {
   /** The value a row should take when part of it changes. */
   #next(r: EntryRow, patch: Partial<EntryValue>): Write {
     const v = { ...this.#current(r), ...patch };
+    // The parts this change gives, and any a change before it gave that the
+    // store has not yet answered for, or refused: sent again, they save even
+    // if that one never does.
+    const unsent = this.#pending.get(r.id) ?? this.failed.get(r.id);
+    const sendName = "animalId" in patch || "ecdysisTid" in patch || unsent?.sendName === true;
+    const sendSex = "sex" in patch || "caste" in patch || unsent?.sendSex === true;
     const social = this.#castes(v.animalId);
     if (!social) v.caste = null;
     else if (v.sex === "male") v.caste = "drone";
-    return { specimenId: r.id, ...v };
+    return { specimenId: r.id, ...v, sendName, sendSex };
   }
 
   /** Send writes in order, one request at a time, and take the server's word for the result. */
@@ -215,7 +301,8 @@ class DetermineGrid extends LitElement {
           method: "POST",
           headers: { "content-type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ writes }),
+          body: JSON.stringify({ writes: writes.map(sentParts) }),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
         if (!res.ok) throw new Error(String(res.status));
         const { rows, taxa } = (await res.json()) as { rows: EntryRow[]; taxa?: Record<string, TaxonInfo> };
@@ -227,6 +314,7 @@ class DetermineGrid extends LitElement {
         for (const id of landed) failed.delete(id);
         this.failed = failed;
       } catch {
+        this.#failures++;
         const failed = new Map(this.failed);
         for (const w of settle()) failed.set(w.specimenId, w);
         this.failed = failed;
@@ -238,8 +326,7 @@ class DetermineGrid extends LitElement {
         this.saving = saving;
       }
     };
-    this.#queue = this.#queue.then(run);
-    return this.#queue;
+    return this.#queue.run(run);
   }
 
   #write(rows: EntryRow[], patch: Partial<EntryValue>) {
@@ -248,7 +335,7 @@ class DetermineGrid extends LitElement {
 
   #bulk(patch: Partial<EntryValue>, text: string) {
     const rows = this.rows.filter((r) => this.selected.has(r.id));
-    this.lastBulk = { before: rows.map((r) => ({ specimenId: r.id, ...this.#current(r) })), text, selection: this.selection };
+    this.lastBulk = { before: rows.map((r) => ({ specimenId: r.id, ...this.#current(r), sendName: true, sendSex: true })), text, selection: this.selection };
     this.message = "";
     this.selection = markUsed(this.selection);
     void this.#write(rows, patch);
@@ -261,10 +348,23 @@ class DetermineGrid extends LitElement {
     this.lastBulk = null;
   }
 
+  /**
+   * The bar's Undo puts back what its rows said before the bar changed them.
+   * A row changed in its own cell since, or put back by its own Undo, is no
+   * longer the bar's to put back: naming ten rows Bombus, refining three to
+   * species and then pressing Undo took the three species away as well.
+   */
+  #dropFromBulkUndo(r: EntryRow) {
+    if (!this.lastBulk) return;
+    const before = this.lastBulk.before.filter((w) => w.specimenId !== r.id);
+    this.lastBulk = before.length > 0 ? { ...this.lastBulk, before } : null;
+  }
+
   /** Back to what the row said before today: its earlier determination, or nothing. */
   #undoRow(r: EntryRow) {
+    this.#dropFromBulkUndo(r);
     const p = r.prior;
-    void this.#send([{ specimenId: r.id, animalId: p?.animalId ?? null, ecdysisTid: null, sex: p?.sex ?? null, caste: p?.caste ?? null }]);
+    void this.#send([{ specimenId: r.id, animalId: p?.animalId ?? null, ecdysisTid: null, sex: p?.sex ?? null, caste: p?.caste ?? null, sendName: true, sendSex: true }]);
   }
 
   /**
@@ -275,6 +375,7 @@ class DetermineGrid extends LitElement {
    * reopen it either.
    */
   #rowChanged(r: EntryRow) {
+    this.#dropFromBulkUndo(r);
     if (!this.selected.has(r.id)) return;
     if (this.lastBulk?.selection.ids === this.selection.ids) this.lastBulk = { ...this.lastBulk, selection: markUsed(this.lastBulk.selection) };
     this.selection = markUsed(this.selection);
@@ -296,19 +397,35 @@ class DetermineGrid extends LitElement {
     this.selection = ids.every((id) => this.selected.has(id)) ? deselect(this.selection, ids) : selectMore(this.selection, ids);
   }
 
+  /**
+   * Change the list and read it back. The answer replaces every row on
+   * screen, so the request waits its turn behind the saves: sent beside one,
+   * it could read a row before the save reached the store and be answered
+   * after it, and the row would then show without the name just given. A sex
+   * chosen on that row was sent without the name and replaced the saved draft
+   * (beeline-rt6h).
+   */
   async #batchRequest(body: object) {
-    const res = await fetch("/determinations/batch", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify(body),
+    const out = await this.#queue.run(async () => {
+      try {
+        const res = await fetch("/determinations/batch", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        return (await res.json()) as {
+          addition: null | { entries: { text: string; found: number; problem: NumberProblem | null }[]; added: number; already: number; named: number[] };
+          rows: EntryRow[];
+          taxa: Record<number, TaxonInfo>;
+        };
+      } catch (err) {
+        this.#failures++;
+        throw err;
+      }
     });
-    if (!res.ok) throw new Error(String(res.status));
-    const out = (await res.json()) as {
-      addition: null | { entries: { text: string; found: number; problem: NumberProblem | null }[]; added: number; already: number; named: number[] };
-      rows: EntryRow[];
-      taxa: Record<number, TaxonInfo>;
-    };
     for (const [id, t] of Object.entries(out.taxa)) this.taxa.set(Number(id), t);
     // The view links carry the count; keep it true without a reload.
     const link = document.querySelector<HTMLAnchorElement>('a[href="/determinations?view=batch"]');
@@ -321,7 +438,8 @@ class DetermineGrid extends LitElement {
     if (typed === "" || this.data.readOnly) return;
     try {
       const out = await this.#batchRequest({ add: typed });
-      input.value = "";
+      // Unless more was typed or scanned while this waited its turn.
+      if (input.value.trim() === typed) input.value = "";
       this.rows = out.rows;
       const a = out.addition!;
       this.problems = [
@@ -411,7 +529,7 @@ class DetermineGrid extends LitElement {
   /**
    * A number not in this year: ask the server, which looks in every year,
    * and open the year it is in with the specimen selected (beeline-mjml).
-   * Drafts save as they are made, so leaving the page loses nothing.
+   * It leaves only once every change here has been sent (#leaveFor).
    */
   async #locate(typed: string) {
     const search = this.#search;
@@ -451,11 +569,7 @@ class DetermineGrid extends LitElement {
    * started meanwhile cancels the move.
    */
   async #leaveFor(specimen: number, season: number, typed: string, search: number) {
-    let queue: Promise<unknown>;
-    do {
-      queue = this.#queue;
-      await queue;
-    } while (queue !== this.#queue || this.#pending.size > 0);
+    await this.#queue.idle();
     if (search !== this.#search) return;
     if (this.failed.size > 0) {
       this.message = d.jump.unsaved(typed, season);

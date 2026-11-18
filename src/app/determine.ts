@@ -365,36 +365,94 @@ async function assertReachable(db: Kysely<Database>, personId: number, ids: read
   if (missing.length > 0) throw new UnreachableSpecimens(missing);
 }
 
-export interface DraftWrite extends EntryValue {
+/**
+ * A change to what one specimen says. A part left out (`undefined`) stays as
+ * the store has it; a part given, `null` included, replaces it. The name is
+ * one part (`animalId` and `ecdysisTid` together, since a name is one or the
+ * other) and the sex is the other (`sex` and `caste` together, since a caste
+ * belongs to a sex).
+ */
+export interface DraftWrite {
   specimenId: number;
+  animalId?: number | null;
+  ecdysisTid?: number | null;
+  sex?: DraftSex | null;
+  caste?: DraftCaste | null;
 }
 
 const same = (a: EntryValue, b: EntryValue) =>
   a.animalId === b.animalId && (a.ecdysisTid ?? null) === (b.ecdysisTid ?? null) && a.sex === b.sex && a.caste === b.caste;
 
 /**
- * Write what each specimen should now say. The value is normalised against
- * the taxon — a caste only where the taxon has castes, and a male of a social
- * bee is a drone — and a value that says nothing new (empty, or the same as
- * the determination already made) removes the draft rather than keeping one.
+ * Write what each specimen should now say. Each write changes the name, the
+ * sex or both, and the part it leaves out stays as the store has it: the
+ * person's draft, or with no draft the determination already made
+ * (beeline-rt6h). Before that a write was the whole row as the sender's
+ * screen showed it and replaced the draft, so a screen with an old copy of a
+ * row (a second tab, a page the browser brought back) that set a sex on it
+ * erased a name saved since. The result is normalised against the taxon — a
+ * caste only where the taxon has castes, and a male of a social bee is a
+ * drone — and one that says nothing new (empty, or the same as the
+ * determination already made) removes the draft rather than keeping one.
  * Returns the rows as they now stand.
  */
-export async function saveDrafts(
+export function saveDrafts(
   db: Kysely<Database>,
   personId: number,
   determinerId: number,
   writes: readonly DraftWrite[],
   now: Date = new Date(),
 ): Promise<EntryRow[]> {
+  // One at a time. A save reads the draft, lays its parts over it and writes
+  // the whole draft back, so two at once for one specimen (a name from one
+  // tab and a sex from another) could each read the draft before the other
+  // wrote, and the later would put back the part the earlier had changed.
+  // The app is the only process that writes the store (ADR 0005).
+  const mine = savingDrafts.then(() => saveDraftsInTurn(db, personId, determinerId, writes, now));
+  savingDrafts = mine.then(
+    () => undefined,
+    () => undefined,
+  );
+  return mine;
+}
+
+let savingDrafts: Promise<void> = Promise.resolve();
+
+async function saveDraftsInTurn(
+  db: Kysely<Database>,
+  personId: number,
+  determinerId: number,
+  writes: readonly DraftWrite[],
+  now: Date,
+): Promise<EntryRow[]> {
   const ids = [...new Set(writes.map((w) => w.specimenId))];
   await assertReachable(db, personId, ids);
-  if (writes.some((w) => w.animalId !== null && (w.ecdysisTid ?? null) !== null)) {
+  if (writes.some((w) => (w.animalId ?? null) !== null && (w.ecdysisTid ?? null) !== null)) {
     throw new BadRequest("a write names a taxon in the tree and one from Ecdysis");
   }
+  // Each write laid over what the store has for its specimen. Several for
+  // one specimen apply in the order given.
+  const before = new Map((await rowsById(db, personId, determinerId, ids)).map((r) => [r.id, r]));
+  const merged = new Map<number, EntryValue & { specimenId: number; named: boolean }>();
+  for (const w of writes) {
+    const row = before.get(w.specimenId);
+    const base = merged.get(w.specimenId) ?? row?.draft ?? row?.prior ?? null;
+    const names = w.animalId !== undefined || w.ecdysisTid !== undefined;
+    const sexes = w.sex !== undefined || w.caste !== undefined;
+    merged.set(w.specimenId, {
+      specimenId: w.specimenId,
+      animalId: names ? (w.animalId ?? null) : (base?.animalId ?? null),
+      ecdysisTid: names ? (w.ecdysisTid ?? null) : (base?.ecdysisTid ?? null),
+      sex: sexes ? (w.sex ?? null) : (base?.sex ?? null),
+      caste: sexes ? (w.caste ?? null) : (base?.caste ?? null),
+      named: names || merged.get(w.specimenId)?.named === true,
+    });
+  }
+  const values = [...merged.values()];
   // A name from Ecdysis that the tree has adopted since it was offered (the
   // overnight commit adopted it for someone else's draft) is written as the
   // node, so a draft carries an Ecdysis id only while the tree lacks the name.
-  const tids = [...new Set(writes.map((w) => w.ecdysisTid ?? null).filter((id): id is number => id !== null))];
+  const tids = [...new Set(values.map((w) => w.ecdysisTid ?? null).filter((id): id is number => id !== null))];
   const adopted = new Map<number, number>();
   const offered = new Set<number>();
   if (tids.length > 0) {
@@ -402,7 +460,11 @@ export async function saveDrafts(
       SELECT CAST(ecdysis_tid AS INTEGER) AS tid, min(entity_id) AS id FROM animal
       WHERE ecdysis_tid IN (${sql.join(tids)}) GROUP BY ecdysis_tid`.execute(db);
     for (const r of held.rows) adopted.set(r.tid, r.id);
-    const rest = tids.filter((t) => !adopted.has(t));
+    // Only a name this request gives is checked. One a draft already holds
+    // was checked when it was given, and a later fetch of Ecdysis that
+    // stopped offering it must not refuse a sex set beside it.
+    const given = new Set(values.filter((w) => w.named).map((w) => w.ecdysisTid ?? null));
+    const rest = tids.filter((t) => !adopted.has(t) && given.has(t));
     if (rest.length > 0) {
       // What the search offers (searchEcdysisNames), checked again here
       // because an id is easy to type.
@@ -416,7 +478,7 @@ export async function saveDrafts(
       if (missing.length > 0) throw new UnknownTaxon(missing);
     }
   }
-  const resolved = writes.map((w) =>
+  const resolved = values.map((w) =>
     w.ecdysisTid != null && adopted.has(w.ecdysisTid) ? { ...w, animalId: adopted.get(w.ecdysisTid)!, ecdysisTid: null } : w,
   );
   const animalIds = [...new Set(resolved.map((w) => w.animalId).filter((id): id is number => id !== null))];
@@ -428,11 +490,9 @@ export async function saveDrafts(
     const missing = animalIds.filter((id) => !castes.has(id));
     if (missing.length > 0) throw new UnknownTaxon(missing);
   }
-  const before = new Map((await rowsById(db, personId, determinerId, ids)).map((r) => [r.id, r]));
-
-  const upserts: DraftWrite[] = [];
+  const upserts: (EntryValue & { specimenId: number })[] = [];
   const removals: number[] = [];
-  for (const w of new Map(resolved.map((w) => [w.specimenId, w])).values()) {
+  for (const w of resolved) {
     const sex: DraftSex | null = w.sex === "female" || w.sex === "male" ? w.sex : null;
     // A name from Ecdysis is never a bee (searchEcdysisNames), so it has no castes.
     const social = w.animalId !== null && castes.get(w.animalId) === true;

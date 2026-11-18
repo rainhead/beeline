@@ -1909,6 +1909,11 @@ export function createApp({
       batchCount: view === "batch" ? rows.length : await batchSize(db, acting.personId, me),
       focus: focusSeason !== null && rows.some((r) => r.id === specimenAsked) ? specimenAsked : null,
     } as const;
+    // The rows are in the page itself, so a copy a browser kept shows them
+    // as they were when it loaded. Brought back with Back, it showed none of
+    // the names given since, and a sex chosen on such a row was sent without
+    // its name and replaced the saved draft (beeline-rt6h).
+    c.header("cache-control", "no-store");
     return c.html(
       await page(c, m.determine.title, <DeterminePage m={m} seasons={seasons} data={data} />, ["/static/determine.css"]),
     );
@@ -1977,15 +1982,20 @@ export function createApp({
       const clean = body.writes.map((w: unknown): DraftWrite => {
         if (typeof w !== "object" || w === null) throw new BadRequest("each write must be an object");
         const r = w as Record<string, unknown>;
-        // saveDrafts normalises sex and caste against the taxon, dropping
-        // anything it does not know; only the type is checked here.
-        return {
-          specimenId: id(r.specimenId, false)!,
-          animalId: id(r.animalId, true),
-          ecdysisTid: id(r.ecdysisTid, true),
-          sex: text(r.sex) as DraftWrite["sex"],
-          caste: text(r.caste) as DraftWrite["caste"],
-        };
+        // A write changes the name, the sex or both, and the part it leaves
+        // out stays as the store has it (saveDrafts). saveDrafts normalises
+        // sex and caste against the taxon, dropping anything it does not
+        // know; only the type is checked here.
+        const write: DraftWrite = { specimenId: id(r.specimenId, false)! };
+        if ("animalId" in r || "ecdysisTid" in r) {
+          write.animalId = id(r.animalId, true);
+          write.ecdysisTid = id(r.ecdysisTid, true);
+        }
+        if ("sex" in r || "caste" in r) {
+          write.sex = text(r.sex) as DraftWrite["sex"];
+          write.caste = text(r.caste) as DraftWrite["caste"];
+        }
+        return write;
       });
       // The names of what was saved, as the batch route returns them: a name
       // from Ecdysis that the tree adopted overnight comes back as a node the

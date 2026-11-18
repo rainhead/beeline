@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
 import { recordSampleChanges, type SampleChangeSource } from "../sample-change.js";
-import { loadTrapSample, mayEditTrapSample, setTrapSampleLocality } from "../trap-sample.js";
+import { loadTrapSample, mayEditTrapSample, setTrapSampleLocality, trapEffort } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
 import {
@@ -615,6 +615,61 @@ export function setCoordinates(
       await recordChange(deps, sample.sample_id, actor, note, "coordinate change");
     }
     return { ok: true, outcome: outcomeOf(result), settled };
+  });
+}
+
+export interface TrapCountInput {
+  /** The number of traps, a positive whole number as text or a number; blank takes the count away. */
+  count: string | number;
+  note: string;
+}
+
+export type TrapCountResult =
+  | { ok: true; outcome: Outcome; /** The effort now held, as the sample's page shows it; null when none. */ effort: string | null }
+  | Common
+  | StaffOnly
+  | Invalid;
+
+/**
+ * Staff set how many traps a trap sample had, or take the count away. The count
+ * is kept only as the first number of the sample's effort ("6 vane traps",
+ * `trapEffort`), so this writes the effort with the sample's current method; a
+ * blank count clears it. Any trap sample may be corrected, printed or not,
+ * since nothing prints or exports the count. Staff only, and refused while
+ * impersonating.
+ *
+ * It is written straight to the sample and recorded in its history, with no
+ * overlay file: a count has no old record to be kept against, and production
+ * is never promoted again (ADR 0006). A development store rebuilt from the
+ * old records loses it.
+ */
+export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<TrapCountInput>): Promise<TrapCountResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const sample = await deps.db
+      .selectFrom("sample")
+      .where("entity_id", "=", sampleId)
+      .select(["kind", "protocol", "sampling_effort"])
+      .executeTakeFirst();
+    if (sample === undefined) return refused("not_found");
+    return { ready: sample };
+  };
+  return correct(sampleId, input, gates, async (sample, form): Promise<TrapCountResult> => {
+    const invalid = (problem: string): Invalid => ({ ok: false, refusal: "invalid", problem });
+    const given = String(form.count).trim();
+    let effort: string | null = null;
+    if (given !== "") {
+      if (!/^[1-9]\d{0,5}$/.test(given)) return invalid("The trap count must be a whole number of one or more, or blank to take it away.");
+      if (sample.kind !== "trap") return invalid("This is a net sample, which has no trap count. Only a trap sample has one.");
+      const method = (sample.protocol ?? "").trim();
+      if (method === "") return invalid("This sample has no method, and the count is kept with the kind of trap. Set the method first, then the count.");
+      effort = trapEffort(Number(given), method);
+    }
+    if (effort === (sample.sampling_effort ?? null)) return { ok: true, outcome: "unchanged", effort };
+    await deps.db.updateTable("sample").set({ sampling_effort: effort }).where("entity_id", "=", sampleId).execute();
+    await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "trap count change");
+    return { ok: true, outcome: effort === null ? "removed" : "saved", effort };
   });
 }
 

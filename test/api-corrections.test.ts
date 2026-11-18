@@ -1160,4 +1160,31 @@ describe("taking the observation's location", () => {
     const mine = (await readSampleChanges(w.paths.sampleChangesPath)).filter((c) => c.source === "api" && c.field === "location");
     expect(mine.map((c) => c.author)).toEqual(["samstaff"]);
   });
+
+  it("sets and clears a trap sample's trap count for a staff key, and refuses the rest", async () => {
+    const w = await world();
+    const trap = await insertCleanSample(w.conn, {
+      collector_id: String(w.people.alice),
+      sample_number: "'T-9'",
+      kind: "'trap'",
+      protocol: "'vane trap'",
+    });
+    const effort = async () => ((await rows(w.conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${trap}`)) as (string | null)[][])[0]![0];
+    const path = `/samples/${trap}/trap-count`;
+    const saved = await w.send(w.keys.sam, path, { count: 4, reference: "ticket 1" });
+    expect(saved.status).toBe(200);
+    expect(await json(saved)).toEqual({ sample_id: trap, outcome: "saved", effort: "4 vane traps" });
+    expect(await effort()).toBe("4 vane traps");
+    expect(await json(await w.send(w.keys.sam, path, { count: "4" }))).toMatchObject({ outcome: "unchanged" });
+    expect(await json(await w.send(w.keys.sam, path, { count: "" }))).toEqual({ sample_id: trap, outcome: "removed", effort: null });
+    expect(await effort()).toBeNull();
+    expect((await w.send(w.keys.sam, path, { count: "x" })).status).toBe(422);
+    expect((await w.send(w.keys.sam, path, {})).status).toBe(400);
+    expect((await w.send(w.keys.sam, `/samples/${w.linked}/trap-count`, { count: 2 })).status).toBe(422);
+    expect((await w.send(w.keys.alice, path, { count: 2 })).status).toBe(403);
+    expect((await w.send(w.keys.samEdit, path, { count: 2 })).status).toBe(403);
+    expect((await w.send(w.keys.aliceRead, path, { count: 2 })).status).toBe(403);
+    expect(await effort()).toBeNull();
+  });
+
 });

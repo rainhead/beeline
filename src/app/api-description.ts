@@ -246,6 +246,14 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     method: "POST",
+    route: "/samples/:id/trap-count",
+    summary: "Set how many traps a trap sample had, or take the count away with an empty one.",
+    needs: "staff key",
+    body: { count: "whole number as text or number; empty to clear", note: "string", reference: REFERENCE },
+    answers: "{ sample_id, outcome, effort }",
+  },
+  {
+    method: "POST",
     route: "/samples/:id/take-observation-location",
     summary: "Use iNaturalist's location for the sample.",
     needs: "staff key",

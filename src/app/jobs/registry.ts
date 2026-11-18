@@ -28,7 +28,7 @@ import type { Database } from "../../model.js";
 import { duckdbReader, recordPersonChanges } from "../../person-change.js";
 import { recordSampleChanges, type SampleLogPaths } from "../../sample-change.js";
 import { promoteObservations } from "../../promote-observations.js";
-import { fetchObservationsById, syncINat, type FetchByIdOptions } from "../../sync-inat.js";
+import { fetchObservationsById, pruneSightings, syncINat, type FetchByIdOptions } from "../../sync-inat.js";
 import { DEFAULT_QUERY_COPY_PATH, type AppConfig } from "../config.js";
 import { deploymentPath } from "../../deployment-path.js";
 import { describeManifest, writeProgramArchives } from "../program-archives.js";
@@ -461,6 +461,9 @@ export async function pipelineTail(
   sampleOverlayPath?: string,
   tiles: FetchTilesOptions & { demDir?: string; gazetteerPath?: string } = {},
 ): Promise<string> {
+  // After the runs, so the sightings each just wrote are the ones kept.
+  const forgotten = await ctx.step("forget repeated sightings", () => pruneSightings(ctx.conn));
+  if (forgotten > 0) parts.push(`${forgotten} repeated sightings forgotten`);
   parts.push(await tolerantStep(ctx, "fetch places", (onFailure) => refreshPlaces(ctx.conn, { signal: ctx.signal, onFailure })));
   const promoted = await ctx.step("promote observations", () =>
     promoteObservations(ctx.conn, { sampleOverlayPath, retry: { signal: ctx.signal } }),

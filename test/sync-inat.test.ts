@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
-import { BY_ID_SOURCE, canonicalJson, fetchObservationsById, syncINat } from "../src/sync-inat.js";
+import { BY_ID_SOURCE, canonicalJson, fetchObservationsById, pruneSightings, syncINat } from "../src/sync-inat.js";
 import { refreshCitedObservations } from "../src/app/jobs/registry.js";
 
 let conn: DuckDBConnection;
@@ -247,6 +247,51 @@ describe("iNat sync", () => {
     // Seen again (even unchanged, no new load) — the finding clears.
     await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(42)]]) });
     expect(await missing()).toHaveLength(0);
+  });
+
+  test("forgetting repeated sightings keeps the latest by each source, and changes no finding (beeline-amdt)", async () => {
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const gone = await insertCleanSample(conn, { inat_observation_id: "42" });
+    const here = await insertCleanSample(conn, { inat_observation_id: "43", sample_number: "'2'" });
+    const other = { ...base, projectId: 18521 };
+    const said = () =>
+      rows(conn, `SELECT sample_id, details FROM qc_finding WHERE rule_name = 'observation_missing_upstream' ORDER BY 1`);
+    const sightings = () =>
+      rows(
+        conn,
+        `SELECT sn.inat_id, r.source, count(*) FROM observation_seen sn
+         JOIN sync_run r ON r.entity_id = sn.sync_run_id GROUP BY ALL ORDER BY 1, 2`,
+      );
+
+    // Both projects return 42 and 43, twice over: four sightings of each.
+    for (let sweep = 0; sweep < 2; sweep++) {
+      await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(42), obs(43)], []]) });
+      await syncINat(conn, { ...other, fetchImpl: fakeApi([[obs(42), obs(43)], []]) });
+    }
+    expect(await pruneSightings(conn)).toBe(4);
+    expect(await sightings()).toEqual([
+      [42n, "18521", 1n],
+      [42n, "99706", 1n],
+      [43n, "18521", 1n],
+      [43n, "99706", 1n],
+    ]);
+    // What is kept is the latest: nothing here is missing.
+    expect(await said()).toEqual([]);
+    expect(await pruneSightings(conn)).toBe(0);
+
+    // 42 stops coming back from one project. The flag and its date are the
+    // same before and after the earlier sightings are forgotten.
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(43)]]) });
+    const flagged = await said();
+    expect(flagged).toEqual([[gone, expect.stringContaining("observation 42 not returned by a sync since")]]);
+    expect(await pruneSightings(conn)).toBe(1);
+    expect(await said()).toEqual(flagged);
+
+    // A sighting by the other project, after the miss, clears it as before.
+    await syncINat(conn, { ...other, fetchImpl: fakeApi([[obs(42), obs(43)], []]) });
+    await pruneSightings(conn);
+    expect(await said()).toEqual([]);
+    expect(here).toBeGreaterThan(gone);
   });
 
   test("an incremental (updated_since) run never claims coverage — and sends the param", async () => {

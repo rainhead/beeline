@@ -35,12 +35,19 @@ COMMENT ON COLUMN observation_load.content_hash IS 'sha256 of the canonical (rec
 
 -- Not an entity (ADR 0002): nothing anchors on a presence fact — it is pure
 -- bookkeeping for deletion detection, keyed by what it witnesses.
+--
+-- A run writes a row for every observation it returns. The nightly and the
+-- weekly sweep then delete each row that a later run of the same source has
+-- repeated (pruneSightings, src/sync-inat.ts, beeline-amdt): deletion
+-- detection asks which sources have returned an observation and when any
+-- last did, and the latest sighting by each source answers both. So the
+-- table holds about one row per observation and source, not one per run.
 CREATE TABLE observation_seen (
   sync_run_id INTEGER NOT NULL REFERENCES sync_run(entity_id),
   inat_id     BIGINT NOT NULL,
   PRIMARY KEY (sync_run_id, inat_id)
 );
-COMMENT ON TABLE observation_seen IS 'Every observation a run fetched, changed or not. Loads are hash-deduped, so a missing load row cannot distinguish unchanged from gone — deletion detection (qc_rule_observation_missing_upstream) reads presence from here instead.';
+COMMENT ON TABLE observation_seen IS 'The observations each run returned, changed or not, kept until a later run of the same source returns them again: the latest sighting of each observation by each source. Loads are hash-deduped, so a missing load row cannot distinguish unchanged from gone — deletion detection (qc_rule_observation_missing_upstream) reads presence from here instead.';
 
 -- The other half of what a by-id run learns (beeline-wcc6). A sample can cite
 -- an observation no sync ever returned: the legacy records link 474 that were

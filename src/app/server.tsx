@@ -20,6 +20,7 @@ import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionR
 import { createApi, refuseStrayCredentials, type ApiDeps } from "./api.js";
 import type { PeopleDeps } from "./api-people.js";
 import { createKey, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
+import { describeApi } from "./api-description.js";
 import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
@@ -923,6 +924,7 @@ export function createApp({
           problem={extra.problem}
           acting={c.get("acting").actingFor !== null}
           now={new Date()}
+          description={describeApi(config.origin, (await atlasOptions(db)).map((a) => a.code))}
         />,
       ),
       status,

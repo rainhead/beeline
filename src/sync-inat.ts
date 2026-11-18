@@ -161,10 +161,13 @@ function oneSyncAtATime<T>(run: () => Promise<T>, signal?: AbortSignal): Promise
     void ahead.then(() => {
       signal?.removeEventListener("abort", giveUp);
       if (signal?.aborted) return;
-      run().then(resolve, reject);
+      // Through a promise, so that a run that throws before its first await
+      // settles its turn like any other.
+      Promise.resolve().then(run).then(resolve, reject);
     });
   });
-  syncs = Promise.allSettled([ahead, next]);
+  // Nothing is kept of a run but that it has ended.
+  syncs = Promise.allSettled([ahead, next]).then(() => undefined);
   return next;
 }
 

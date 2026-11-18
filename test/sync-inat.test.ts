@@ -289,13 +289,23 @@ describe("iNat sync", () => {
     // waiting for the run ahead, and the run behind it still waits its turn.
     pages.length = 0;
     const stopping = new AbortController();
-    const ahead = syncINat(check, { ...base, fetchImpl: slowApi("ahead", [obs(8)]) });
+    let aheadEnded = false;
+    const ahead = syncINat(check, { ...base, fetchImpl: slowApi("ahead", [obs(8), obs(11)]) }).finally(() => {
+      aheadEnded = true;
+    });
     const waiting = syncINat(jobs, { ...base, signal: stopping.signal, fetchImpl: slowApi("waiting", [obs(9)]) });
     const behind = syncINat(jobs, { ...base, fetchImpl: slowApi("behind", [obs(10)]) });
     stopping.abort(new Error("shutting down"));
     await expect(waiting).rejects.toThrow("shutting down");
+    expect(aheadEnded).toBe(false);
     await Promise.all([ahead, behind]);
-    expect(pages).toEqual(["ahead", "behind"]);
+    expect(pages).toEqual(["ahead", "ahead", "behind"]);
+
+    // And one whose caller had already aborted never starts.
+    await expect(
+      syncINat(jobs, { ...base, signal: AbortSignal.abort(new Error("stopped")), fetchImpl: slowApi("never", [obs(12)]) }),
+    ).rejects.toThrow("stopped");
+    expect(pages).not.toContain("never");
   });
 
   test("an incremental (updated_since) run never claims coverage — and sends the param", async () => {

@@ -2443,7 +2443,7 @@ export function createApp({
     const m = c.get("m");
     const t = m.printRuns.run.addresses;
     const ideal = config.idealLogic;
-    if (ideal == null) return c.text(t.notConfigured, 404);
+    if (ideal == null) return errorResponse(c, "notFound", { message: t.notConfigured });
     const id = printRunId(c);
     const run = await loadRun(db, id);
     if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });

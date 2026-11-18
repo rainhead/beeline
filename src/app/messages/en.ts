@@ -1233,6 +1233,20 @@ export const en = {
         noOldRecords: "Old Beeline holds no records of this sample and it was not entered in Beeline, so it cannot be corrected here.",
         conflict: "Someone changed this sample's method or dates after you opened the form. Reload the page to see what they saved, then make your correction again.",
       },
+      /** Staff correcting how many traps a trap sample had, from a second pencil on the Method row (beeline-kgyd.4.1). */
+      trapCount: {
+        /** The pencil, for a screen reader: it has no visible words. */
+        open: "Correct how many traps this sample had",
+        hint: "The count is kept with the kind of trap, as the sample's effort. Nothing prints it. Leave it blank to take it away.",
+        count: "Number of traps",
+        note: "Reason (optional)",
+        save: "Save",
+        problems: {
+          count: "The trap count must be a whole number of one or more, or blank to take it away.",
+          net: "This is a net sample, which has no trap count. Only a trap sample has one.",
+          method: "This sample has no method, and the count is kept with the kind of trap. Set the method first, then the count.",
+        },
+      },
       staffCoordinates: {
         setBy: (name: string) => `Coordinates set in Beeline by ${name}.`,
         setByStaff: "Coordinates set in Beeline by staff.",

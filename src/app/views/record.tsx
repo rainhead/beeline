@@ -19,6 +19,7 @@ import { programHref } from "../programs.js";
 import { plantNameKey } from "../../plant-name-key.js";
 import type { ListedFlag } from "../listings.js";
 import { methodNamesTrap } from "../../trap-method.js";
+import { trapCountOf } from "../../trap-sample.js";
 import {
   Absent,
   AtlasMark,
@@ -170,6 +171,7 @@ export function SampleFacts({
   sample,
   placeEdit = null,
   methodEdit = false,
+  trapCountEdit = false,
   personLinks = false,
 }: {
   m: Messages;
@@ -185,6 +187,8 @@ export function SampleFacts({
    * its own form (beeline-0wbq).
    */
   methodEdit?: boolean;
+  /** Whether the reader may correct a trap sample's trap count: staff, on any trap sample (beeline-kgyd.4.1). */
+  trapCountEdit?: boolean;
   /**
    * Whether the reader may change the locality from the Place row, and
    * whether they may write any name or only one offered (`samplePlaceEdit`).
@@ -210,6 +214,7 @@ export function SampleFacts({
             {protocolSaysMore(sample) && <Meta> · {sample.protocol}</Meta>}
           </span>
           {methodEdit && <MethodEdit m={m} sample={sample} />}
+          {trapCountEdit && sample.kind === "trap" && <TrapCountEdit m={m} sample={sample} />}
         </>
       ),
     },
@@ -629,6 +634,28 @@ function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
 }
 
 /**
+ * Staff correcting how many traps a trap sample had, from its own pencil on
+ * the Method row. The count is the leading number of the sample's effort, so
+ * the form shows that number and a blank takes it away (src/trap-sample.ts).
+ */
+function TrapCountEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.trapCount;
+  return (
+    <InlineEdit
+      label={t.open}
+      action={`/samples/${sample.sample_id}/trap-count`}
+      back={sampleHref(sample.sample_id)}
+      save={t.save}
+      cancel={m.listings.samples.placeEdit.cancel}
+    >
+      <Meta block>{t.hint}</Meta>
+      <TextField id="trap-count" name="count" label={t.count} value={trapCountOf(sample.sampling_effort)?.toString() ?? null} />
+      <TextField id="trap-count-note" name="note" label={t.note} />
+    </InlineEdit>
+  );
+}
+
+/**
  * Staff setting the coordinates (beeline-942), from a pencil on the
  * Coordinates row (beeline-8w8n), as the place is changed from its row. The
  * pair and its accuracy in one small form, and where staff coordinates
@@ -1021,6 +1048,7 @@ export function SamplePage({
           sample={sample}
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
           methodEdit={admin && (sample.from_old_records || enteredPastItsForm)}
+          trapCountEdit={admin}
           personLinks={admin}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />

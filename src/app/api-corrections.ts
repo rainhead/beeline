@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { isWriteConflict } from "../write-conflict.js";
 import { apiError, type ApiEnv } from "./api.js";
-import { localityReasonFor, takeLocationDefaultReason } from "./correction-reasons.js";
+import { localityReasonFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import type { Messages } from "./messages/index.js";
 import { EDITABLE_FIELDS, type EditableFieldName } from "./sample-edit.js";
 import {
@@ -12,6 +12,7 @@ import {
   holdSample,
   setCoordinates,
   setPlace,
+  setTrapCount,
   takeLocation,
   unreachable,
   waiveFlag,
@@ -24,6 +25,7 @@ import {
   type SetPlaceResult,
   type StaffCoordinatesCorrectionResult,
   type TakeObservationLocationCorrectionResult,
+  type TrapCountResult,
 } from "./sample-corrections.js";
 
 /**
@@ -98,6 +100,7 @@ type AnyFailure = Extract<
   | EditSampleResult
   | SetPlaceResult
   | StaffCoordinatesCorrectionResult
+  | TrapCountResult
   | TakeObservationLocationCorrectionResult
   | QcDecisionCorrectionResult,
   { ok: false }
@@ -405,6 +408,15 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     [],
     setCoordinates,
     (r) => ({ outcome: r.outcome, settled: r.settled }),
+  );
+
+  endpoint(
+    "trap-count",
+    (b) => ({ count: b.count === undefined ? "" : text(b.count), note: (b.note as string | undefined) ?? "", problemFor: trapCountProblemFor(corrections!.messages) }),
+    { count: "text_or_number", note: "string" },
+    ["count"],
+    setTrapCount,
+    (r) => ({ outcome: r.outcome, effort: r.effort }),
   );
 
   endpoint(

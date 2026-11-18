@@ -124,6 +124,10 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
     let requestMs = 0;
     let refreshMs = 0;
     for (const projectId of opts.projects) {
+      // And between projects: a job that started during the last run has
+      // its own run queued ahead of this one. What this check has read so
+      // far is committed, and the job promotes it.
+      if (opts.jobRunning?.()) throw new SyncJobRunning();
       const r = await syncINat(conn, {
         projectId,
         userId: opts.userId,

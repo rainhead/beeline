@@ -461,9 +461,19 @@ export async function pipelineTail(
   sampleOverlayPath?: string,
   tiles: FetchTilesOptions & { demDir?: string; gazetteerPath?: string } = {},
 ): Promise<string> {
-  // After the runs, so the sightings each just wrote are the ones kept.
-  const forgotten = await ctx.step("forget repeated sightings", () => pruneSightings(ctx.conn));
-  if (forgotten > 0) parts.push(`${forgotten} repeated sightings forgotten`);
+  // After the runs, so the sightings each just wrote are the ones kept. It is
+  // housekeeping the next night repeats, so a failure is reported and the run
+  // goes on to promotion.
+  const forgotten = await tolerantStep(ctx, "forget repeated sightings", async (onFailure) => {
+    try {
+      const n = await pruneSightings(ctx.conn);
+      return n > 0 ? `${n} repeated sightings forgotten` : null;
+    } catch (err) {
+      onFailure();
+      return `repeated sightings not forgotten (${err instanceof Error ? err.message : String(err)})`;
+    }
+  });
+  if (forgotten !== null) parts.push(forgotten);
   parts.push(await tolerantStep(ctx, "fetch places", (onFailure) => refreshPlaces(ctx.conn, { signal: ctx.signal, onFailure })));
   const promoted = await ctx.step("promote observations", () =>
     promoteObservations(ctx.conn, { sampleOverlayPath, retry: { signal: ctx.signal } }),

@@ -1,6 +1,6 @@
 -- Observation history (restored from the sketch now that phase 3 builds it).
--- Append-only; the pipeline is a pure transform over these rows — that's
--- what makes it re-runnable. Both are entities (ADR 0002): findings and
+-- sync_run and observation_load are append-only; the pipeline is a pure
+-- transform over these rows — that's what makes it re-runnable. Both are entities (ADR 0002): findings and
 -- corrections about staged observations anchor on load rows.
 
 CREATE TABLE sync_run (
@@ -47,7 +47,7 @@ CREATE TABLE observation_seen (
   inat_id     BIGINT NOT NULL,
   PRIMARY KEY (sync_run_id, inat_id)
 );
-COMMENT ON TABLE observation_seen IS 'The observations each run returned, changed or not, kept until a later run of the same source returns them again: the latest sighting of each observation by each source. Loads are hash-deduped, so a missing load row cannot distinguish unchanged from gone — deletion detection (qc_rule_observation_missing_upstream) reads presence from here instead.';
+COMMENT ON TABLE observation_seen IS 'The observations each run returned, changed or not, kept until a later run of the same source has returned them again and the nightly has removed the earlier row: after a nightly, the latest sighting of each observation by each source. Loads are hash-deduped, so a missing load row cannot distinguish unchanged from gone — deletion detection (qc_rule_observation_missing_upstream) reads presence from here instead.';
 
 -- The other half of what a by-id run learns (beeline-wcc6). A sample can cite
 -- an observation no sync ever returned: the legacy records link 474 that were

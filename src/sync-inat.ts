@@ -246,12 +246,12 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
  * (qc_rule_observation_missing_upstream, schema/120) asks two things of
  * observation_seen: which sources have ever returned an observation, and when
  * any of them last did. The latest sighting by each source answers both, so
- * the earlier ones change no finding. Kept, they are what every page that
- * shows flags reads: a weekly sweep adds about 14,000, and two weeks after
+ * the earlier ones change no finding. Kept, they are read by every listing
+ * and front page: a weekly sweep adds about 14,000, and two weeks after
  * cutover 43,000 of production's 109,595 were of this kind.
  *
- * Two runs of a source can start at the same instant only in a test; the one
- * with the later id is then kept.
+ * Where two runs of a source started at the same instant, the one with the
+ * later id is kept.
  *
  * A statement of its own, after the runs and outside their transactions: it
  * deletes only rows that have a later sighting it can already see, so a run

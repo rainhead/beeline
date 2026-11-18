@@ -197,6 +197,18 @@ describe("drafts", () => {
     expect(cleared!.draft).toBeNull();
   });
 
+  it("take their turn, so a name and a sex sent at the same moment both stay (beeline-rt6h)", async () => {
+    const { db, ada, animal, spec } = await fixture();
+    const s = await spec("26000101");
+    const bombus = await animal("Bombus");
+    await Promise.all([
+      saveDrafts(db, ada, ada, [{ specimenId: s, animalId: bombus, ecdysisTid: null }]),
+      saveDrafts(db, ada, ada, [{ specimenId: s, sex: "female", caste: "worker" }]),
+    ]);
+    const [row] = await seasonRows(db, ada, ada, CURRENT_SEASON).then((rows) => rows.filter((r) => r.id === s));
+    expect(row!.draft).toMatchObject({ animalId: bombus, sex: "female", caste: "worker" });
+  });
+
   it("lay a part over the determination already made when there is no draft (beeline-rt6h)", async () => {
     const { db, ada, animal, spec } = await fixture();
     // 26000102 is already Ada's Bombus, female.

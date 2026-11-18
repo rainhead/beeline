@@ -38,7 +38,7 @@ export class RequestQueue {
   }
 }
 
-/** What a row says: the screen's copy of it, or what a change would make it. */
+/** What a row says: its name, as the tree's id or Ecdysis's, and its sex with the caste that belongs to it. */
 export interface RowValue {
   animalId: number | null;
   ecdysisTid?: number | null;
@@ -46,30 +46,41 @@ export interface RowValue {
   caste: string | null;
 }
 
+/** What a row should say after a change, and which parts of that the change gave. */
+export interface RowWrite extends RowValue {
+  specimenId: number;
+  /** The name was given: by this change, or by one before it that the store has not answered for. */
+  sendName: boolean;
+  /** The same for the sex. */
+  sendSex: boolean;
+}
+
 /**
- * The parts of a row to send: the name, the sex, both or neither, whichever
- * differ from the copy of the row the store last gave this page. The store
- * keeps the parts not sent as it has them (saveDrafts, src/app/determine.ts).
+ * What a save sends for one row: only the parts the person changed. The
+ * store keeps a part not sent as it has it, and judges the caste against
+ * the name itself (saveDrafts, src/app/determine.ts).
  *
  * Until beeline-rt6h a save sent the whole row as the screen showed it and
  * the store replaced the draft with that. A screen with an old copy of the
  * row (a second tab, a page the browser brought back) showed it without the
  * name given elsewhere, and a sex chosen there erased the name.
  *
- * A name is the tree's id or Ecdysis's, never both, and a caste belongs to a
- * sex, so each pair goes together.
+ * The parts are what was changed, not what differs from the screen's copy:
+ * a copy can be old, and choosing a name on an old copy clears the caste on
+ * screen without the person having said anything about the sex.
  */
-export function changedParts<V extends RowValue>(base: RowValue | null, value: V): Partial<Pick<V, "animalId" | "ecdysisTid" | "sex" | "caste">> {
-  const out: Partial<RowValue> = {};
-  if ((base?.animalId ?? null) !== value.animalId || (base?.ecdysisTid ?? null) !== (value.ecdysisTid ?? null)) {
-    out.animalId = value.animalId;
-    out.ecdysisTid = value.ecdysisTid ?? null;
-  }
-  if ((base?.sex ?? null) !== value.sex || (base?.caste ?? null) !== value.caste) {
-    out.sex = value.sex;
-    out.caste = value.caste;
-  }
-  return out as Partial<Pick<V, "animalId" | "ecdysisTid" | "sex" | "caste">>;
+export function sentParts(w: RowWrite): {
+  specimenId: number;
+  animalId?: number | null;
+  ecdysisTid?: number | null;
+  sex?: string | null;
+  caste?: string | null;
+} {
+  return {
+    specimenId: w.specimenId,
+    ...(w.sendName ? { animalId: w.animalId, ecdysisTid: w.ecdysisTid ?? null } : {}),
+    ...(w.sendSex ? { sex: w.sex, caste: w.caste } : {}),
+  };
 }
 
 /** The parts of a click that say whether it will take this tab to another page. */

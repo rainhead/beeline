@@ -401,12 +401,34 @@ const same = (a: EntryValue, b: EntryValue) =>
  * determination already made) removes the draft rather than keeping one.
  * Returns the rows as they now stand.
  */
-export async function saveDrafts(
+export function saveDrafts(
   db: Kysely<Database>,
   personId: number,
   determinerId: number,
   writes: readonly DraftWrite[],
   now: Date = new Date(),
+): Promise<EntryRow[]> {
+  // One at a time. A save reads the draft, lays its parts over it and writes
+  // the whole draft back, so two at once for one specimen (a name from one
+  // tab and a sex from another) could each read the draft before the other
+  // wrote, and the later would put back the part the earlier had changed.
+  // The app is the only process that writes the store (ADR 0005).
+  const mine = savingDrafts.then(() => saveDraftsInTurn(db, personId, determinerId, writes, now));
+  savingDrafts = mine.then(
+    () => undefined,
+    () => undefined,
+  );
+  return mine;
+}
+
+let savingDrafts: Promise<void> = Promise.resolve();
+
+async function saveDraftsInTurn(
+  db: Kysely<Database>,
+  personId: number,
+  determinerId: number,
+  writes: readonly DraftWrite[],
+  now: Date,
 ): Promise<EntryRow[]> {
   const ids = [...new Set(writes.map((w) => w.specimenId))];
   await assertReachable(db, personId, ids);

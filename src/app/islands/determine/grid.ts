@@ -20,7 +20,7 @@ import { NumberIndex, pastedList, type NumberProblem } from "../../../determinat
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
-import { changedParts, leavesPage, RequestQueue } from "./queue.js";
+import { leavesPage, RequestQueue, sentParts, type RowWrite } from "./queue.js";
 import { deselect, emptySelection, holdsWork, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
@@ -35,7 +35,8 @@ const CHUNK = 400;
  */
 const REQUEST_TIMEOUT_MS = 30_000;
 
-type Write = EntryValue & { specimenId: number };
+/** What a row should say, and which parts of that the store is to be told (queue.ts). */
+type Write = EntryValue & RowWrite;
 type TaxonInfo = { name: string; rank: string; castes: boolean };
 
 /** What picking a name writes: a node of the tree, or a name from Ecdysis the tree lacks (beeline-4wx3). */
@@ -270,10 +271,16 @@ class DetermineGrid extends LitElement {
   /** The value a row should take when part of it changes. */
   #next(r: EntryRow, patch: Partial<EntryValue>): Write {
     const v = { ...this.#current(r), ...patch };
+    // The parts this change gives, and any a change before it gave that the
+    // store has not yet answered for, or refused: sent again, they save even
+    // if that one never does.
+    const unsent = this.#pending.get(r.id) ?? this.failed.get(r.id);
+    const sendName = "animalId" in patch || "ecdysisTid" in patch || unsent?.sendName === true;
+    const sendSex = "sex" in patch || "caste" in patch || unsent?.sendSex === true;
     const social = this.#castes(v.animalId);
     if (!social) v.caste = null;
     else if (v.sex === "male") v.caste = "drone";
-    return { specimenId: r.id, ...v };
+    return { specimenId: r.id, ...v, sendName, sendSex };
   }
 
   /** Send writes in order, one request at a time, and take the server's word for the result. */
@@ -290,14 +297,11 @@ class DetermineGrid extends LitElement {
     };
     const run = async () => {
       try {
-        // Only what differs from the store's last word on each row, worked
-        // out now that every earlier request has been answered (changedParts).
-        const known = new Map(this.rows.map((r) => [r.id, r.draft ?? r.prior]));
         const res = await fetch("/determinations/drafts", {
           method: "POST",
           headers: { "content-type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ writes: writes.map((w) => ({ specimenId: w.specimenId, ...changedParts(known.get(w.specimenId) ?? null, w) })) }),
+          body: JSON.stringify({ writes: writes.map(sentParts) }),
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
         if (!res.ok) throw new Error(String(res.status));
@@ -331,7 +335,7 @@ class DetermineGrid extends LitElement {
 
   #bulk(patch: Partial<EntryValue>, text: string) {
     const rows = this.rows.filter((r) => this.selected.has(r.id));
-    this.lastBulk = { before: rows.map((r) => ({ specimenId: r.id, ...this.#current(r) })), text, selection: this.selection };
+    this.lastBulk = { before: rows.map((r) => ({ specimenId: r.id, ...this.#current(r), sendName: true, sendSex: true })), text, selection: this.selection };
     this.message = "";
     this.selection = markUsed(this.selection);
     void this.#write(rows, patch);
@@ -347,7 +351,7 @@ class DetermineGrid extends LitElement {
   /** Back to what the row said before today: its earlier determination, or nothing. */
   #undoRow(r: EntryRow) {
     const p = r.prior;
-    void this.#send([{ specimenId: r.id, animalId: p?.animalId ?? null, ecdysisTid: null, sex: p?.sex ?? null, caste: p?.caste ?? null }]);
+    void this.#send([{ specimenId: r.id, animalId: p?.animalId ?? null, ecdysisTid: null, sex: p?.sex ?? null, caste: p?.caste ?? null, sendName: true, sendSex: true }]);
   }
 
   /**

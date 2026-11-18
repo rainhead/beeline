@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changedParts, leavesPage, RequestQueue } from "../src/app/islands/determine/queue.js";
+import { leavesPage, RequestQueue, sentParts } from "../src/app/islands/determine/queue.js";
 
 /** A promise and the function that settles it, so a test decides when a request is answered. */
 const held = <T>() => {
@@ -69,30 +69,24 @@ describe("the requests Identify your specimens sends (beeline-rt6h)", () => {
 });
 
 describe("the parts of a row a save sends (beeline-rt6h)", () => {
-  const unnamed = { animalId: null, ecdysisTid: null, sex: null, caste: null };
+  const row = { specimenId: 1, animalId: 7, ecdysisTid: null, sex: "female", caste: null };
 
-  it("sends only the sex when only the sex differs from the store's last word, so the name there is left alone", () => {
-    expect(changedParts(unnamed, { ...unnamed, sex: "female" })).toEqual({ sex: "female", caste: null });
-    expect(changedParts(null, { ...unnamed, sex: "female" })).toEqual({ sex: "female", caste: null });
+  it("sends only the sex when only the sex was changed, so the name in the store is left alone", () => {
+    expect(sentParts({ ...row, animalId: null, sendName: false, sendSex: true })).toEqual({ specimenId: 1, sex: "female", caste: null });
   });
 
-  it("sends only the name when only the name differs, as the tree's id and Ecdysis's together", () => {
-    const sexed = { ...unnamed, sex: "male" };
-    expect(changedParts(sexed, { ...sexed, animalId: 7 })).toEqual({ animalId: 7, ecdysisTid: null });
-    expect(changedParts({ ...sexed, animalId: 7 }, { ...sexed, animalId: null, ecdysisTid: 90 })).toEqual({ animalId: null, ecdysisTid: 90 });
+  it("sends only the name when only the name was changed, though the screen cleared the caste beside it", () => {
+    // The screen's copy said worker, and naming it Andrena cleared that on screen. Another tab may have made it male since.
+    expect(sentParts({ ...row, sendName: true, sendSex: false })).toEqual({ specimenId: 1, animalId: 7, ecdysisTid: null });
+    expect(sentParts({ ...row, animalId: null, ecdysisTid: 90, sendName: true, sendSex: false })).toEqual({ specimenId: 1, animalId: null, ecdysisTid: 90 });
   });
 
-  it("sends a caste with its sex, and both parts when both differ", () => {
-    const worker = { animalId: 7, ecdysisTid: null, sex: "female", caste: "worker" };
-    expect(changedParts(worker, { ...worker, caste: "gyne" })).toEqual({ sex: "female", caste: "gyne" });
-    expect(changedParts(worker, unnamed)).toEqual(unnamed);
+  it("sends a sex cleared back to nothing, which on screen looks the same as one never set", () => {
+    expect(sentParts({ ...row, sex: null, sendName: false, sendSex: true })).toEqual({ specimenId: 1, sex: null, caste: null });
   });
 
-  it("sends nothing when the row already says it", () => {
-    const worker = { animalId: 7, ecdysisTid: null, sex: "female", caste: "worker" };
-    expect(changedParts(worker, { ...worker })).toEqual({});
-    // A determination already made carries no Ecdysis id at all.
-    expect(changedParts({ animalId: 7, sex: null, caste: null }, { animalId: 7, ecdysisTid: null, sex: null, caste: null })).toEqual({});
+  it("sends both parts when both were changed, as Undo does", () => {
+    expect(sentParts({ ...row, sendName: true, sendSex: true })).toEqual({ specimenId: 1, animalId: 7, ecdysisTid: null, sex: "female", caste: null });
   });
 });
 

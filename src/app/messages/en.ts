@@ -2020,6 +2020,7 @@ export const en = {
         answers: "Answers",
         name: "Name",
         meaning: "Meaning",
+        value: "Value",
         values: "Allowed values",
       },
       columns: {

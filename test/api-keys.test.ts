@@ -241,6 +241,18 @@ describe("the API page, /keys", () => {
     expect(html).toContain(`${ORIGIN}/api/v1`);
   });
 
+  it("heads a body table Value, and does not repeat a field's name in its row", async () => {
+    const { app } = await fixture({ admin: true });
+    const html = await (await app.request("/keys")).text();
+    const bodyTable = /<h4>JSON body<\/h4>[\s\S]*?<\/table>/.exec(html)![0];
+    expect(bodyTable).toContain("<th>Value</th>");
+    expect(bodyTable).not.toContain("<th>Meaning</th>");
+    expect(html).toContain("<td>an optional note of 1 to 500 characters");
+    expect(html).not.toContain("reference: an optional note");
+    // Query parameters keep Meaning.
+    expect(/<h4>Parameters<\/h4>[\s\S]*?<\/table>/.exec(html)![0]).toContain("<th>Meaning</th>");
+  });
+
   it("marks what a volunteer cannot make a key for, and still lists it", async () => {
     const { app } = await fixture({ admin: false });
     const html = await (await app.request("/keys")).text();

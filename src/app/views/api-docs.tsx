@@ -12,10 +12,21 @@ const NEEDED_SCOPE: Record<string, KeyScope> = { "any key": "read", "edit key": 
 const anchor = (method: string, path: string) => `${method}-${path}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "");
 
 /** `Param`s of an endpoint: a name, what it means, and the values it takes where that is a list. */
-function NameTable({ m, rows, withValues }: { m: Messages; rows: Array<[string, string, readonly string[] | undefined]>; withValues: boolean }) {
+function NameTable({
+  m,
+  rows,
+  withValues,
+  second = m.keys.docs.endpoints.meaning,
+}: {
+  m: Messages;
+  rows: Array<[string, string, readonly string[] | undefined]>;
+  withValues: boolean;
+  /** The heading of the second column: "Meaning" for what a parameter means, "Value" for what a body field holds. */
+  second?: string;
+}) {
   const d = m.keys.docs.endpoints;
   return (
-    <DataTable columns={withValues ? [d.name, d.meaning, d.values] : [d.name, d.meaning]}>
+    <DataTable columns={withValues ? [d.name, second, d.values] : [d.name, second]}>
       {rows.map(([name, meaning, values]) => (
         <tr>
           <td>
@@ -105,7 +116,12 @@ export function ApiDocs({ m, description, scopes }: { m: Messages; description: 
             (spec as { values?: readonly string[] }).values,
           ],
         );
-        const body = Object.entries(e.body ?? {}).map(([name, what]): [string, string, undefined] => [name, what, undefined]);
+        // The description's own text for a field sometimes starts with the field's name ("reference: an optional note..."), which the row already shows.
+        const body = Object.entries(e.body ?? {}).map(([name, what]): [string, string, undefined] => [
+          name,
+          what.startsWith(`${name}: `) ? what.slice(name.length + 2) : what,
+          undefined,
+        ]);
         return (
           <section class="api-endpoint" id={anchor(e.method, e.path)}>
             <h3>
@@ -134,7 +150,7 @@ export function ApiDocs({ m, description, scopes }: { m: Messages; description: 
             {body.length > 0 && (
               <>
                 <h4>{d.endpoints.body}</h4>
-                <NameTable m={m} rows={body} withValues={false} />
+                <NameTable m={m} rows={body} withValues={false} second={d.endpoints.value} />
               </>
             )}
             <h4>{d.endpoints.answers}</h4>

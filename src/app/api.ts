@@ -5,6 +5,7 @@ import type { Database } from "../model.js";
 import { hashKey, keyRateLimiter, keyRef, resolveKey, type KeyHolder } from "./api-keys.js";
 import { BadBody, check, parseObject, referenceOf, registerCorrectionRoutes, smallBody } from "./api-corrections.js";
 import { ReadQueue } from "./api-queue.js";
+import { registerPeopleRoutes, type PeopleDeps } from "./api-people.js";
 import { registerReadRoutes, type ReadDeps } from "./api-read.js";
 import { describeApi } from "./api-description.js";
 import { atlasOptions } from "./listings.js";
@@ -79,6 +80,8 @@ export interface ApiDeps {
   read?: ReadDeps;
   /** The job registry and the scheduler behind it; absent, the jobs endpoints list nothing and start nothing. */
   jobs?: ApiJobs;
+  /** What decisions about people need (src/app/api-people.ts). Absent, they answer 503. */
+  people?: PeopleDeps;
 }
 
 /** What the jobs endpoints need of the scheduler (src/app/jobs/framework.ts). */
@@ -141,6 +144,7 @@ export function createApi({
   readLimiter = keyRateLimiter({ limit: 60 }),
   readQueue = new ReadQueue(),
   jobs,
+  people,
   corrections,
   read,
 }: ApiDeps): Hono<ApiEnv> {
@@ -470,6 +474,9 @@ export function createApi({
 
   // The sample corrections (beeline-pnqr.6), in their own file.
   registerCorrectionRoutes(api, corrections);
+
+  // Decisions about people (beeline-4rta), in their own file.
+  registerPeopleRoutes(api, people);
 
   // After the key check on purpose: someone without a key learns nothing
   // about which paths exist.

@@ -9,7 +9,7 @@ import { cookieJar, SESSION_COOKIE } from "./cookies.js";
 import { html } from "hono/html";
 import type { Child } from "hono/jsx";
 import { sql, type Kysely } from "kysely";
-import type { Database, ReprintReason } from "../model.js";
+import { PROGRAM_MEMBERSHIP, type Database, type ReprintReason } from "../model.js";
 import { islandsSrc, styleVersion } from "./assets.js";
 import { registerAuthRoutes, signInHref, type AuthDeps, type InatClient } from "./auth.js";
 import { OLD_BEELINE_ORIGIN, registerOldBeelineRedirects } from "./old-beeline.js";
@@ -18,6 +18,7 @@ import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { createApi, refuseStrayCredentials, type ApiDeps } from "./api.js";
+import type { PeopleDeps } from "./api-people.js";
 import { createKey, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
 import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
@@ -552,6 +553,9 @@ export function createApp({
       isStaff,
       jobs: jobsDep,
       corrections: { deps: corrective, messages: messagesFor(null) },
+      // Called through, since the function is defined further down with the
+      // rest of the decisions about people.
+      people: { setMembership: (input) => setMembership(input) },
       read: { changesPath: samplePaths.log, origin: config.origin },
     });
   // The description answers at /api/v1/ too, which the router takes for another
@@ -2899,6 +2903,60 @@ export function createApp({
     if (outcome.problem !== null) return showPerson(c, undefined, outcome.problem);
     return showPerson(c, m.people.savedRebuild);
   };
+
+  /**
+   * Where a person belongs, set by a program holding a staff key
+   * (src/app/api-people.ts, beeline-4rta): the decision the membership form
+   * below makes, through the same `commitDecisions`, so the overlay row, the
+   * store and the person's history are the page's. What differs is the
+   * vocabulary and two answers. A program names Master Melittology by its
+   * code, `MM`, where the overlay writes `program`; it may only name what
+   * the page's menu offers; and a value the person already has is answered
+   * `unchanged` and writes nothing.
+   */
+  const setMembership: PeopleDeps["setMembership"] = (input) =>
+    oneDecisionAtATime(async () => {
+      const handle = parsePersonHandle(input.handle);
+      const id = handle === null ? null : await resolvePersonHandle(db, handle);
+      const person = id === null ? null : await personDetail(db, id);
+      if (person === null) return { ok: false, refusal: "not_found" };
+      const offered = ["MM", ...(await atlasOptions(db)).map((a) => a.code)];
+      if (input.belongsTo !== "" && !offered.includes(input.belongsTo)) {
+        return {
+          ok: false,
+          refusal: "invalid",
+          problem: `${JSON.stringify(input.belongsTo)} is not somewhere a person can belong. It is one of ${offered.join(", ")}, or an empty string for nothing recorded.`,
+        };
+      }
+      const was = person.membership === null ? "" : person.membership === PROGRAM_MEMBERSHIP ? "MM" : (person.atlas_code ?? "");
+      const answer = { person_id: person.person_id, was, belongs_to: input.belongsTo };
+      if (was === input.belongsTo) return { ok: true, outcome: "unchanged", ...answer };
+      let ref: string;
+      try {
+        ref = personRef({ ...person, nameIsUnique: await nameIsUnique(db, person.display_name) });
+      } catch (err) {
+        return { ok: false, refusal: "unresolved", problem: (err as Error).message };
+      }
+      const outcome = await commitDecisions({
+        rows: [
+          {
+            person_ref: ref,
+            field: "home_atlas",
+            value: input.belongsTo === "MM" ? PROGRAM_MEMBERSHIP : input.belongsTo,
+            author: input.author,
+            reason: input.reason,
+          },
+        ],
+        ref,
+        author: input.author,
+        reason: input.reason,
+        personId: person.person_id,
+        boundBefore: person.inat_user_id,
+        findAfter: async () => person.person_id,
+      });
+      if (outcome.problem !== null) return { ok: false, refusal: "unresolved", problem: outcome.problem };
+      return { ok: true, outcome: outcome.applied ? "saved" : "recorded_not_applied", ...answer };
+    });
 
   const text = (form: FormData, name: string) => String(form.get(name) ?? "").trim();
 

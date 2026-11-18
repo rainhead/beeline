@@ -341,6 +341,10 @@ describe("sample listing", () => {
     }
     expect(en.listings.scope.outside).toBe("At large");
     expect(menu).not.toContain(en.listings.scope.mine);
+    // While the listing is My records the menu says so, and does not read All programs.
+    const mine = await get((await listingApp("bob")).app, "/samples");
+    expect(mine).toContain(en.listings.scope.chooseProgram);
+    expect(page).not.toContain(en.listings.scope.chooseProgram);
     // The old value keeps working, and the people-facing words say At large.
     expect(await get(app, "/samples?scope=outside")).toContain("2 samples");
   });

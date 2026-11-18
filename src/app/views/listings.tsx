@@ -643,8 +643,12 @@ function atlasColumn({ m, path, query, label, programs }: WithPrograms): TableCo
         id="scope"
         name="scope"
         label={m.listings.scope.program}
-        value={query.scope}
+        // MM is shown as At large, which finds the same samples; and while
+        // the listing is "my records" the menu says so rather than showing
+        // All programs, which applying it would widen the listing to.
+        value={query.scope === CATCH_ALL ? OUTSIDE : query.scope}
         options={[
+          ...(query.scope === MINE ? [[MINE, m.listings.scope.chooseProgram] as const] : []),
           [ALL, m.listings.scope.allPrograms],
           ...programs.map((a) => [a.code, a.name] as const),
           [OUTSIDE, m.listings.scope.outside],

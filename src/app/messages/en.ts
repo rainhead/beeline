@@ -769,6 +769,8 @@ export const en = {
       /** The Atlas column menu's label, and the pill that names its choice: an atlas is one kind of program (beeline-t0rh). */
       program: "Program",
       allPrograms: "All programs",
+      /** Shown in the program menu only while the listing is My records, so that applying it unchanged keeps it so. */
+      chooseProgram: "Choose a program",
       /** Above a listing of other people's records, for anyone but staff. */
       withheldNote:
         "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not read the observation, or cannot find it on iNaturalist.",

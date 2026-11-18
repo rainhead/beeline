@@ -133,7 +133,7 @@ import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
 import { beesByYear, collectedOf, identificationBatches, taxaFound } from "./your-bees.js";
 import { TaxaFoundPage, YourBeesPage } from "./views/your-bees.js";
-import { checkObserver, deriveForObserver, lastChecked, nextCheckAt } from "./inat-check.js";
+import { checkObserver, deriveForObserver, lastChecked, nextCheckAt, SyncJobRunning } from "./inat-check.js";
 import { forgetPipelineJwt } from "../inat-jwt.js";
 import { recordPersonChanges } from "../person-change.js";
 import type { CheckNotice } from "./views/qc.js";
@@ -1032,8 +1032,11 @@ export function createApp({
     if (inatCheck === undefined || mintConn === undefined) return dashboardPage(c, { kind: "unavailable" });
     const account = await accountOf(c.get("acting").personId);
     if (account === null) return dashboardPage(c, { kind: "noAccount" });
-    // Both rewrite observation_field whole, so one of them would lose a write
-    // conflict; the nightly runs 2 to 5am, so refusing costs nobody much.
+    // Both rewrite observation_field whole, the job's promotion included, so
+    // one of them would lose a write conflict; and since sync runs go one at
+    // a time (oneSyncAtATime, src/sync-inat.ts), a check made now would wait
+    // behind the job's runs, a sweep's for minutes. The nightly runs 2 to
+    // 5am, so refusing costs nobody much.
     const syncing = () => {
       const running = jobsDep.running?.() ?? null;
       return running === "nightly-pipeline" || running === "weekly-sweep";
@@ -1069,6 +1072,7 @@ export function createApp({
       );
       return dashboardPage(c, { kind: "done", fetched: outcome.fetched, changed: outcome.changed });
     } catch (err) {
+      if (err instanceof SyncJobRunning) return dashboardPage(c, { kind: "busy" });
       // A stored token replaced since the cached JWT was minted: the next
       // check mints again.
       if (/\b401\b/.test((err as Error).message)) forgetPipelineJwt();

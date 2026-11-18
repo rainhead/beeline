@@ -249,6 +249,65 @@ describe("iNat sync", () => {
     expect(await missing()).toHaveLength(0);
   });
 
+  test("two runs started together, on two connections, run one after the other (beeline-amdt)", async () => {
+    // The jobs and the dashboard's check have a connection each. Both runs
+    // here load something, so both rewrite observation_field: at once, the
+    // second to write fails on the first's uncommitted rows.
+    const made = await createMemoryDb();
+    const jobs = made.conn;
+    const check = await made.instance.connect();
+    const pages: string[] = [];
+    const slowApi = (name: string, page: Array<Record<string, unknown>>): typeof fetch => {
+      let call = 0;
+      return (async () => {
+        pages.push(name);
+        await new Promise((r) => setTimeout(r, 20));
+        call += 1;
+        return new Response(JSON.stringify({ results: call === 1 ? page : [] }), { status: 200 });
+      }) as typeof fetch;
+    };
+    const [sweep, byId, checked] = await Promise.all([
+      syncINat(jobs, { ...base, fetchImpl: slowApi("sweep", [obs(1), obs(2)]) }),
+      fetchObservationsById(jobs, { ids: [7], token: "test-jwt", pageDelayMs: 0, fetchImpl: slowApi("by id", [obs(7)]) }),
+      syncINat(check, { ...base, userId: 100, fetchImpl: slowApi("check", [obs(3), obs(4)]) }),
+    ]);
+    expect([sweep.newLoads, byId.newLoads, checked.newLoads]).toEqual([2, 1, 2]);
+    // Each run asked for all its pages before the next asked for its first.
+    expect(pages).toEqual(["sweep", "sweep", "by id", "check", "check"]);
+    expect(await rows(jobs, "SELECT inat_id FROM observation_field ORDER BY 1")).toEqual([[1n], [2n], [3n], [4n], [7n]]);
+
+    // A run that fails does not hold up the ones behind it.
+    const failing: typeof fetch = async () => new Response("no", { status: 500 });
+    const [failed, after] = await Promise.allSettled([
+      syncINat(jobs, { ...base, fetchImpl: failing }),
+      syncINat(check, { ...base, fetchImpl: slowApi("after", [obs(5)]) }),
+    ]);
+    expect(failed.status).toBe("rejected");
+    expect(after.status).toBe("fulfilled");
+
+    // A run waiting its turn gives up as soon as its caller aborts, without
+    // waiting for the run ahead, and the run behind it still waits its turn.
+    pages.length = 0;
+    const stopping = new AbortController();
+    let aheadEnded = false;
+    const ahead = syncINat(check, { ...base, fetchImpl: slowApi("ahead", [obs(8), obs(11)]) }).finally(() => {
+      aheadEnded = true;
+    });
+    const waiting = syncINat(jobs, { ...base, signal: stopping.signal, fetchImpl: slowApi("waiting", [obs(9)]) });
+    const behind = syncINat(jobs, { ...base, fetchImpl: slowApi("behind", [obs(10)]) });
+    stopping.abort(new Error("shutting down"));
+    await expect(waiting).rejects.toThrow("shutting down");
+    expect(aheadEnded).toBe(false);
+    await Promise.all([ahead, behind]);
+    expect(pages).toEqual(["ahead", "ahead", "behind"]);
+
+    // And one whose caller had already aborted never starts.
+    await expect(
+      syncINat(jobs, { ...base, signal: AbortSignal.abort(new Error("stopped")), fetchImpl: slowApi("never", [obs(12)]) }),
+    ).rejects.toThrow("stopped");
+    expect(pages).not.toContain("never");
+  });
+
   test("forgetting repeated sightings keeps the latest by each source, and changes no finding (beeline-amdt)", async () => {
     await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
     const gone = await insertCleanSample(conn, { inat_observation_id: "42" });

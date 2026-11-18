@@ -10,7 +10,7 @@ import { createKysely } from "../src/db.js";
 import { ACTING_COOKIE, IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { en } from "../src/app/messages/en.js";
 import { lastSyncStart } from "../src/app/jobs/registry.js";
-import { resetCheckAttempts } from "../src/app/inat-check.js";
+import { checkObserver, nextCheckAt, resetCheckAttempts, SyncJobRunning } from "../src/app/inat-check.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { promoteObservations } from "../src/promote-observations.js";
@@ -225,6 +225,23 @@ describe("Check iNaturalist now", () => {
     const busy = await checkApp({ running: "nightly-pipeline" });
     expect(await (await check(busy.app)).text()).toContain("reading everybody&#39;s observations from iNaturalist right now");
     expect(busy.asked).toEqual([]);
+  });
+
+  it("refuses when a sync job started while the check waited its turn, and does not count the attempt", async () => {
+    // The route asks before the check queues behind a promotion under way;
+    // the check asks again when its turn comes (beeline-amdt).
+    resetCheckAttempts();
+    const { conn } = await createMemoryDb();
+    const asked: string[] = [];
+    const never: typeof fetch = async (input) => {
+      asked.push(String(input));
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    };
+    await expect(
+      checkObserver(conn, { userId: ADA, projects: [18521], token: async () => "jwt", fetchImpl: never, jobRunning: () => true }),
+    ).rejects.toBeInstanceOf(SyncJobRunning);
+    expect(asked).toEqual([]);
+    expect(nextCheckAt(ADA)).toBeNull();
   });
 
   it("says nothing changed when iNaturalist cannot be reached, records no run, and still counts the attempt", async () => {

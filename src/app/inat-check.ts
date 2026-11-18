@@ -89,12 +89,29 @@ export interface CheckOptions {
   jobRunning?: () => boolean;
 }
 
+/** A check that found the nightly or the weekly sweep running once its turn came. */
+export class SyncJobRunning extends Error {
+  constructor() {
+    super("a sync job is running");
+  }
+}
+
 export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions): Promise<CheckOutcome> {
   lastAttempt.set(String(opts.userId), (opts.now ?? Date.now)());
   // Waiting for a promotion already under way (the nightly's, or another
   // check's) is part of what the person waits for, so it is measured too.
   const asked = Date.now();
   return withPromotionLock(async () => {
+    // The route asked before queueing here, but a job can have started while
+    // this waited for a promotion already under way. Carrying on would put
+    // each of this check's runs behind one of the job's (src/sync-inat.ts),
+    // minutes for a sweep and holding the promotion lock throughout, and its
+    // last run could be loading while the job's promotion rewrites
+    // observation_field. The attempt is not counted against the person.
+    if (opts.jobRunning?.()) {
+      lastAttempt.delete(String(opts.userId));
+      throw new SyncJobRunning();
+    }
     const started = Date.now();
     const waitedMs = started - asked;
     const [[seasonStart]] = (await (
@@ -107,6 +124,10 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
     let requestMs = 0;
     let refreshMs = 0;
     for (const projectId of opts.projects) {
+      // And between projects: a job that started during the last run has
+      // its own run queued ahead of this one. What this check has read so
+      // far is committed, and the job promotes it.
+      if (opts.jobRunning?.()) throw new SyncJobRunning();
       const r = await syncINat(conn, {
         projectId,
         userId: opts.userId,

@@ -39,6 +39,7 @@ import { describeRefresh, refreshEcdysisTaxonomy } from "../../load-ecdysis-taxo
 import { join } from "node:path";
 import { fetchEcdysisTaxonomyInChild } from "../../fetch-ecdysis-taxonomy-child.js";
 import type { Job, JobContext } from "./framework.js";
+import { describeRegistrants, recordRegistrants } from "../../registrations.js";
 
 /** A fresh JWT per run (src/inat-jwt.ts); a failed mint aborts the job. */
 const mintJwt = () => mintPipelineJwt();
@@ -574,6 +575,7 @@ export function buildJobs(
         | "flyMetrics"
         | "ecdysis"
         | "ecdysisDir"
+        | "idealLogic"
         | "driveBackup"
         | "oldBeeline"
         | "backupsDir"
@@ -829,6 +831,28 @@ export function buildJobs(
         }
         if (failed) throw new Error(parts.join("; "));
         return parts.join("; ");
+      },
+    },
+    {
+      // Who has registered for Master Melittology, from Ideal Logic
+      // (beeline-w8ab.2). One request a night for the whole list. It keeps
+      // the registrations Beeline has a use for, without their email and
+      // home addresses, and links a person to theirs where the handle they
+      // typed and their name both agree (src/registrations.ts). At 1am,
+      // ahead of the 2am sync, since it reads people and writes nothing the
+      // sync reads. Its errors carry counts and a status only: this
+      // framework stores an error's message, and the response is addresses.
+      name: "ideal-logic-registrants",
+      schedule: { kind: "dailyLA", hour: 1 },
+      window: "night",
+      async run(ctx) {
+        if (!config.idealLogic) return "no Ideal Logic key (IDEAL_LOGIC_KEY) — nothing to fetch";
+        const client = config.idealLogic;
+        const registrants = await ctx.step("fetch registrations", () => client.fetchRegistrants({ signal: ctx.signal }));
+        const recorded = await ctx.step("record and link", () =>
+          recordRegistrants(ctx.db, registrants, { decidedBy: "ideal-logic-registrants" }),
+        );
+        return describeRegistrants(recorded);
       },
     },
     {

@@ -98,6 +98,8 @@ swap_size_mb = 1024
 #                           BEELINE_ORIGIN's /auth/inat/callback
 #   SENTRY_DSN, BEELINE_FEEDBACK_EMAIL, FLY_METRICS_TOKEN (a read-only org
 #   token), ECDYSIS_USERNAME / ECDYSIS_PASSWORD
+#   IDEAL_LOGIC_KEY         the key for Ideal Logic's registrations API (100
+#                           requests a day)
 # The nightly's pipeline token stays a file on the volume
 # (data/secrets/inat-oauth-token), which is where mintJwt reads it.
 

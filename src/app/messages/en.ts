@@ -2571,6 +2571,8 @@ export const en = {
         "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
       "ecdysis-fetch":
         "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from Ecdysis's own list of names where it accepts them, and the rest are listed in the run.",
+      "ideal-logic-registrants":
+        "Reads who has registered for Master Melittology from Ideal Logic, OSU Extension's registration system. It keeps each registrant's name, the atlases they named and the iNaturalist handle they typed, and never their email or home address. A person is linked to their registration when the handle they typed is their iNaturalist login and the name is theirs; the rest are left for staff.",
       "ecdysis-taxonomy":
         "Fetches Ecdysis's whole list of insect names again, so a name added there can be picked on Identify specimens and used by the Ecdysis import. Lists the names in Beeline whose standing in Ecdysis changed, curation decisions Ecdysis has moved from under, and volunteers' entries whose name Ecdysis no longer offers. A fetch much smaller than the last is not loaded.",
       "store-backup":

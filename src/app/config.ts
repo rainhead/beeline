@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { queryCopyConflict, queryCopyFolderConflict } from "../query-copy.js";
 import { parseServiceAccountKey, type ServiceAccountKey } from "../drive-service-account.js";
 import type { EcdysisCredentials } from "../fetch-ecdysis.js";
+import { createIdealLogicClient, type IdealLogicClient } from "../ideal-logic.js";
 import type { FlyMetricsTarget } from "../fly-usage.js";
 import type { OldBeelineCredentials } from "../legacy-copy.js";
 import { OLD_BEELINE_ORIGIN } from "./old-beeline.js";
@@ -123,6 +124,14 @@ export interface AppConfig {
    * session. From the environment because it is a credential.
    */
   ecdysis: EcdysisCredentials | null;
+  /**
+   * The client for Ideal Logic's registrations (beeline-w8ab.1), or null
+   * where no key is set: the nightly job then fetches nothing. The key is
+   * `IDEAL_LOGIC_KEY`, from the environment because it is a credential. One
+   * client for the whole process, so that the night's job and each download
+   * of a print run's addresses draw on one daily count of requests.
+   */
+  idealLogic: IdealLogicClient | null;
   /** Where the Ecdysis archive and its change-probe baseline are kept between runs. */
   ecdysisDir: string;
   /**
@@ -330,6 +339,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
         ? { token: env.FLY_METRICS_TOKEN.trim(), org: env.BEELINE_FLY_ORG?.trim() || "osu-mm", app: env.FLY_APP_NAME.trim() }
         : null,
     ecdysis: ecdysisUser !== null && ecdysisPassword !== null ? { username: ecdysisUser, password: ecdysisPassword } : null,
+    idealLogic: env.IDEAL_LOGIC_KEY?.trim() ? createIdealLogicClient({ key: env.IDEAL_LOGIC_KEY.trim() }) : null,
     ecdysisDir: env.BEELINE_ECDYSIS ?? "data/ecdysis",
     driveBackup,
     backupsDir: env.BEELINE_BACKUPS ?? "data/backups",

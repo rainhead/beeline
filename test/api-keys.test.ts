@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApi } from "../src/app/api.js";
+import { describedRoutes } from "../src/app/api-description.js";
 import {
   createKey,
   hashKey,
@@ -215,6 +216,38 @@ describe("making and revoking a key on /keys", () => {
     expect((await post(`/keys/${mine.ref}/revoke`, {}, acting)).status).toBe(403);
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM api_key`)).toEqual([[1]]);
     expect(await resolveKey(db, mine.key)).not.toBeNull();
+  });
+});
+
+describe("the API page, /keys", () => {
+  it("is headed API and documents every endpoint the description lists", async () => {
+    const { app } = await fixture({ admin: true });
+    const html = await (await app.request("/keys")).text();
+    expect(html).toContain("<title>API");
+    expect(html).toMatch(/<h1[^>]*>API<\/h1>/);
+    expect(html).toContain(">API</a>");
+    expect(html).not.toContain(">API keys</a>");
+    // Both halves are there: the person's keys and the form, then the documentation.
+    expect(html).toContain("Make a key");
+    expect(html).toContain("Authorization: Bearer");
+    // Drawn from the description, so a route added to it needs no change to the page.
+    const routes = describedRoutes();
+    expect(routes.length).toBeGreaterThan(10);
+    for (const route of routes) {
+      const [method, path] = route.split(" ") as [string, string];
+      const shown = `${method} /api/v1${path === "/" ? "" : path}`;
+      expect(html, shown).toContain(shown);
+    }
+    expect(html).toContain(`${ORIGIN}/api/v1`);
+  });
+
+  it("marks what a volunteer cannot make a key for, and still lists it", async () => {
+    const { app } = await fixture({ admin: false });
+    const html = await (await app.request("/keys")).text();
+    expect(html).toContain("POST /api/v1/samples/:id/coordinates");
+    expect(html).toContain("Not open to your keys");
+    const staff = await (await (await fixture({ admin: true })).app.request("/keys")).text();
+    expect(staff).not.toContain("Not open to your keys");
   });
 });
 

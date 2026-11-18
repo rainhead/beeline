@@ -1,5 +1,6 @@
 import type { Messages } from "../messages/index.js";
 import { KEY_LIFETIMES_DAYS, KEY_NAME_MAX, type CreateKeyProblem, type KeyListing, type KeyScope } from "../api-keys.js";
+import { ApiDocs, type ApiDescription } from "./api-docs.js";
 import { Button, Callout, Chip, DataTable, EmptyState, Meta, PageHeader, SelectField, TextField } from "./components/index.js";
 
 /**
@@ -61,7 +62,8 @@ export function KeysTable({
 }
 
 /**
- * A person's own API keys (beeline-pnqr.1): the keys they have made, a form
+ * The API page: a person's own API keys (beeline-pnqr.1), and below them the
+ * documentation of the API. The keys: the keys they have made, a form
  * to make another, and a button to revoke each. A new key is shown on the
  * page that answers the form and nowhere after, since the store keeps only
  * its hash.
@@ -77,9 +79,12 @@ export function KeysPage({
   problem,
   acting,
   now,
+  description,
 }: {
   m: Messages;
   keys: KeyListing[];
+  /** The description of the API (describeApi), which the documentation is drawn from. */
+  description: ApiDescription;
   /** The scopes this person may give a key. */
   scopes: readonly KeyScope[];
   /** The key just made, to be shown this once. */
@@ -92,7 +97,7 @@ export function KeysPage({
   const k = m.keys;
   return (
     <>
-      <PageHeader title={k.heading} lede={scopes.length > 1 ? k.introStaff : k.intro} />
+      <PageHeader title={k.title} lede={scopes.length > 1 ? k.introStaff : k.intro} />
       {created !== undefined && (
         <Callout tone="success">
           <p>{k.created.lead(created.name)}</p>
@@ -132,6 +137,7 @@ export function KeysPage({
           <Button>{k.create.submit}</Button>
         </form>
       )}
+      <ApiDocs m={m} description={description} scopes={scopes} />
     </>
   );
 }

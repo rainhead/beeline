@@ -1,7 +1,7 @@
 import type { Messages } from "../messages/index.js";
 import { AREA_TABS, type AreaGroup, type AreaGrouping, type AreaTab } from "../areas.js";
 import { ALL, EMPTY_QUERY, listingHref } from "../listings.js";
-import { DataTable, EmptyState, PageHeader, Tabs } from "./components/index.js";
+import { Absent, DataTable, EmptyState, PageHeader, Tabs } from "./components/index.js";
 
 /**
  * The areas (beeline-9jd4), as three pages a row of tabs moves between:
@@ -57,12 +57,17 @@ export function AreaIndex({ m, tab, groups: unordered }: { m: Messages; tab: Are
               {group.grouping.by === "kind" && a.kindNote[group.grouping.kind] !== undefined && (
                 <p>{a.kindNote[group.grouping.kind]}</p>
               )}
-              <DataTable columns={[a.colArea[tab], a.colActive, a.colSettled]}>
+              <DataTable
+                columns={tab === "properties" ? [a.colArea[tab], a.colWhere, a.colActive, a.colSettled] : [a.colArea[tab], a.colActive, a.colSettled]}
+              >
                 {group.areas.map((area) => (
                   <tr>
                     <td>
                       <a href={listingHref("/samples", EMPTY_QUERY, { scope: ALL, area: area.key })}>{area.name}</a>
                     </td>
+                    {tab === "properties" && (
+                      <td>{area.where === null ? <Absent label={m.absence.notRecorded} /> : area.where}</td>
+                    )}
                     <td>{m.format.number(area.active)}</td>
                     <td>{m.format.number(area.settled)}</td>
                   </tr>

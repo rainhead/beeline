@@ -1904,7 +1904,7 @@ export const en = {
       districts:
         "Every county and regional district that at least one sample was collected in, by its true coordinates, under its state or province.",
       properties:
-        "Every refuge, park, preserve and wildlife area unit that at least one sample was collected in, by its true coordinates. A sample is in every property its point lies inside, so one sample can count in two.",
+        "Every refuge, park, preserve and wildlife area unit that at least one sample was collected in, by its true coordinates. A sample is in every property its point lies inside, so one sample can count in two. Where says which county the samples were in, since two parks can share a name.",
       ecoregions: "Every EPA Level III ecoregion that at least one sample was collected in, by its true coordinates.",
     } satisfies Record<AreaTab, string>,
     tabsLabel: "Kinds of area",
@@ -1924,6 +1924,8 @@ export const en = {
       properties: "Property",
       ecoregions: "Ecoregion",
     } satisfies Record<AreaTab, string>,
+    /** Where a property is: its county and state, or its states where it spans counties. */
+    colWhere: "Where",
     colActive: "Samples, active seasons",
     colSettled: "Samples, settled seasons",
     /** The pill of the listings' area filter. */
@@ -1935,6 +1937,7 @@ export const en = {
       wildlife_area: "WDFW wildlife area units",
       nps_unit: "National Park Service units",
       state_park: "State and provincial parks",
+      city_park: "City and county parks",
       park: "Other parks and reserves",
       island: "Islands",
       wilderness: "Federal wildernesses",
@@ -1948,7 +1951,8 @@ export const en = {
       state_park:
         "Washington's state parks and British Columbia's provincial parks, protected areas and ecological reserves. Oregon's state parks are under Other parks and reserves.",
       park:
-        "Every other park or reserve that OpenStreetMap outlines: Oregon's state parks, county and city parks, land trust preserves. Some refuges and parks listed under their own kind appear here again, under OpenStreetMap's name for them.",
+        "Every other park or reserve that OpenStreetMap outlines: Oregon's state parks, land trust preserves, conservation areas.",
+      city_park: "Parks that OpenStreetMap maps for recreation and not as protected land: a city's, a county's or a neighbourhood's.",
     } as Partial<Record<AreaKind, string>>,
   },
 

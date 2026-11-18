@@ -188,13 +188,13 @@ describe("the Areas page (beeline-9jd4)", () => {
     expect(await listAreas(db, "districts")).toEqual([
       {
         grouping: { by: "state", state: "OR", country: "USA" },
-        areas: [{ key: "census:41003", name: "Benton County", active: 2, settled: 1 }],
+        areas: [{ key: "census:41003", name: "Benton County", where: null, active: 2, settled: 1 }],
       },
     ]);
     expect(await listAreas(db, "properties")).toEqual([
       {
         grouping: { by: "kind", kind: "refuge" },
-        areas: [{ key: REFUGE_KEY, name: "William L. Finley National Wildlife Refuge", active: 1, settled: 1 }],
+        areas: [{ key: REFUGE_KEY, name: "William L. Finley National Wildlife Refuge", where: "Benton County, OR", active: 1, settled: 1 }],
       },
     ]);
     const ecoregions = await listAreas(db, "ecoregions");

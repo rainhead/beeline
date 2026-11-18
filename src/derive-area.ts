@@ -171,7 +171,9 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
          AND ((table_name = 'wilderness' AND column_name = 'wid')
               OR (table_name = 'region' AND column_name = 'source_id')
               OR (table_name = 'ecoregion' AND column_name = 'code')
-              OR (table_name = 'named_area' AND column_name = 'source_id'))`,
+              OR (table_name = 'named_area' AND column_name = 'source_id')
+              OR (table_name = 'osm_area' AND column_name = 'is_city_park')
+              OR (table_name = 'osm_area' AND column_name = 'agency_share'))`,
       [G],
     );
     const has = new Set(present.map((r) => r.t));
@@ -185,7 +187,8 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
     // arrives. OpenStreetMap's parks and islands wait for it too, although
     // every gazetteer has them: before it, a park on a state line came once
     // from each state's extract under one id, and an area is keyed by that.
-    const places = has.has("named_area.source_id");
+    const places =
+      has.has("named_area.source_id") && has.has("osm_area.is_city_park") && has.has("osm_area.agency_share");
     const layers: Layers = { ecoregions, places };
     // Stamping named samples tests only them: whoever asks may not know
     // their collector's iNaturalist account, and may not have one to know.
@@ -243,13 +246,44 @@ interface Layers {
 }
 
 /**
+ * How much of an OpenStreetMap park must lie inside the agencies' areas
+ * (osm_area.agency_share, ingest/gazetteer.sql) for it to be the agency's
+ * place and no area of its own. Four fifths: the same park drawn by two
+ * hands never matches exactly, and a park that only laps over a refuge's
+ * edge stays.
+ */
+export const OSM_AGENCY_SHARE = 0.8;
+
+/**
  * The OpenStreetMap parks that are areas: every named one but a federal
  * wilderness, which Wilderness.net's outlines already are, more exactly. The
  * pattern is the locality step's (src/derive-locality.ts), for its reasons.
+ *
+ * Nor one whose name names no place (Peter, 2026-11-17, on finding "WA DNR"
+ * listed as a property). OpenStreetMap has outlines named only for whoever
+ * holds the land, "WA DNR" (12,590 ha of scattered state trust land) and
+ * "BLM" and "BLM - Farmington Field Office", and others named by a code or
+ * a sign: "PS001", "PARK_A", "OFF TRAIL TRAVEL PROHIBITED". So a name with
+ * no small letter in it is left out, and so is one that ends in "Field
+ * Office" or "District Office", which is the Bureau of Land Management's
+ * land under one office ("Cottonwood Field Office"). It costs one real park
+ * written in capitals in the gazetteer of October 2026, Chimney Heigts Park.
+ *
+ * Nor one that lies mostly inside the agencies' own areas (Peter,
+ * 2026-11-17, on finding North Cascades listed three times over):
+ * OpenStreetMap outlines a refuge or a national park as well, and its units
+ * and its complex, and the agency's own outline is the area. See
+ * OSM_AGENCY_SHARE.
  */
 const OSM_PARK = (o: string) =>
   `NOT ${o}.is_island AND ${o}.name IS NOT NULL
-   AND NOT regexp_matches(${o}.name, ' Wilderness( Area)?( - [^,]+ Unit)?$')`;
+   AND ${o}.agency_share < ${OSM_AGENCY_SHARE}
+   AND NOT regexp_matches(${o}.name, ' Wilderness( Area)?( - [^,]+ Unit)?$')
+   AND regexp_matches(${o}.name, '[a-z]')
+   AND NOT regexp_matches(${o}.name, ' (Field|District) Office$')`;
+
+/** The kind of area an OpenStreetMap outline (alias `o`) is: an island, a city's or county's park, or any other park or reserve. */
+const OSM_KIND = `CASE WHEN o.is_island THEN 'island' WHEN o.is_city_park THEN 'city_park' ELSE 'park' END`;
 
 /** Every area the gazetteer holds, in the store's terms. */
 const gazetteerAreas = (G: string, { ecoregions, places }: Layers) => `
@@ -261,7 +295,7 @@ const gazetteerAreas = (G: string, { ecoregions, places }: Layers) => `
   UNION ALL
   SELECT source, source_id, kind, name, geom FROM ${G}.named_area WHERE name IS NOT NULL
   UNION ALL
-  SELECT 'osm' AS source, o.osm_id AS source_id, CASE WHEN o.is_island THEN 'island' ELSE 'park' END AS kind, o.name, o.geom
+  SELECT 'osm' AS source, o.osm_id AS source_id, ${OSM_KIND} AS kind, o.name, o.geom
   FROM ${G}.osm_area o WHERE o.name IS NOT NULL` : ""}`;
 
 /** Replace one batch's areas; returns how many of its samples lie inside an area of each kind. */
@@ -355,7 +389,7 @@ ${places ? `    UNION ALL
     -- point the island within 300 m of it, to name it, but on production
     -- most of the 95 samples that near an island and not on one were on the
     -- bank of a river across from an island in it (Reed Island, 17).
-    SELECT DISTINCT b.sample_id, 'osm', o.osm_id, CASE WHEN o.is_island THEN 'island' ELSE 'park' END, FALSE
+    SELECT DISTINCT b.sample_id, 'osm', o.osm_id, ${OSM_KIND}, FALSE
     FROM area_batch b JOIN ${G}.osm_area o ON ST_Contains(o.geom, ST_Point(b.lon, b.lat))
     WHERE (o.is_island AND o.name IS NOT NULL) OR (${OSM_PARK("o")})` : ""}`);
   // Which points are at least COUNTY_EDGE_M inside a county: a square that

@@ -845,13 +845,15 @@ export interface SampleLocalitySuggestionCurrentView {
  * pages list, and under which tab, is TAB_KINDS in src/app/areas.ts. A county includes a BC regional district; an ecoregion is an
  * EPA Level III one (beeline-l5so); a wildlife_area is a unit of a WDFW
  * wildlife area; a state_park includes BC's provincial parks and reserves; a
- * park is any other park or reserve OpenStreetMap outlines.
+ * city_park is a city's or a county's park, as OpenStreetMap maps it; a park
+ * is any other park or reserve OpenStreetMap outlines.
  */
 export const AREA_KINDS = [
   "refuge",
   "wildlife_area",
   "nps_unit",
   "state_park",
+  "city_park",
   "park",
   "island",
   "wilderness",

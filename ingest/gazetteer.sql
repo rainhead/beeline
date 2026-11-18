@@ -188,15 +188,42 @@ WHERE ADMIN_AREA_NAME NOT LIKE '%Northern Rockies%';
 -- park or island on a state line is in both states' extracts, sometimes as a
 -- part in each: 143 ids came twice or three times in October 2026 (Chief
 -- Joseph Wildlife Area, Barnston Island). Their outlines are joined, and the
--- size is the larger part's, which understates a park cut in two; the size
+-- is_city_park says a park is a city's or a county's, by how OpenStreetMap
+-- maps it (ingest/gazetteer-osm.sql); the areas give those a kind of their
+-- own. The size is the larger part's, which understates a park cut in two; the size
 -- only orders the parks a point is inside, smallest first. The 100 ha test
 -- is still each part's own, as it was.
-CREATE TABLE osm_area AS
+--
+-- agency_share is how much of a park lies inside the agencies' own areas
+-- (named_area, above), from 0 to about 1; NULL for an island. OpenStreetMap
+-- outlines the agencies' land too, often several times over: North Cascades
+-- National Park is there as the park, as its south unit and as the "North
+-- Cascades National Park Complex", beside the National Park Service's own
+-- outline. The derive step leaves out a park that lies mostly inside the
+-- agencies' areas (src/derive-area.ts), so each such place is listed once,
+-- from the agency. Areas where two agencies' land overlaps are counted
+-- twice, which can only raise the share of a park that is inside both.
+CREATE TEMP TABLE osm_area_merged AS
 SELECT osm_id, min(name) AS name, max(area_ha) AS area_ha, bool_or(is_island) AS is_island,
+       bool_or(is_city_park) AS is_city_park,
        ST_MakeValid(ST_Union_Agg(ST_MakeValid(ST_GeomFromWKB(wkb)))) AS geom
 FROM osm_area_staged
 WHERE (is_island AND area_ha >= 100) OR (NOT is_island AND coalesce(protect_class, '') <> '6')
 GROUP BY osm_id;
+
+CREATE TEMP TABLE osm_agency_share AS
+SELECT o.osm_id, sum(ST_Area(ST_Intersection(o.geom, n.geom))) / any_value(ST_Area(o.geom)) AS share
+FROM osm_area_merged o JOIN named_area n ON ST_Intersects(o.geom, n.geom)
+WHERE NOT o.is_island AND ST_Area(o.geom) > 0
+GROUP BY o.osm_id;
+
+CREATE TABLE osm_area AS
+SELECT o.osm_id, o.name, o.area_ha, o.is_island, o.is_city_park,
+       CASE WHEN NOT o.is_island THEN coalesce(s.share, 0) END AS agency_share, o.geom
+FROM osm_area_merged o LEFT JOIN osm_agency_share s USING (osm_id);
+
+DROP TABLE osm_area_merged;
+DROP TABLE osm_agency_share;
 
 -- OpenStreetMap's named campgrounds, as points (beeline-4hxe).
 CREATE TABLE campground AS

@@ -244,9 +244,9 @@ export async function buildTestGazetteer(path: string, buildId: string): Promise
     CREATE TABLE nps_unit (unit TEXT, geom GEOMETRY);
     CREATE TABLE state_park (park TEXT, suffix TEXT, geom GEOMETRY);
     CREATE TABLE town_limits (name TEXT, kind TEXT, geom GEOMETRY);
-    CREATE TABLE osm_area (osm_id TEXT, name TEXT, area_ha DOUBLE, is_island BOOLEAN, geom GEOMETRY);
+    CREATE TABLE osm_area (osm_id TEXT, name TEXT, area_ha DOUBLE, is_island BOOLEAN, geom GEOMETRY, is_city_park BOOLEAN DEFAULT FALSE, agency_share DOUBLE DEFAULT 0);
     -- A made-up federal wilderness, which is never a locality.
-    INSERT INTO osm_area VALUES ('way/1', 'Alsea Wilderness', 4000, false, ${box(-123.65, 44.48, -123.55, 44.53)}),
+    INSERT INTO osm_area (osm_id, name, area_ha, is_island, geom) VALUES ('way/1', 'Alsea Wilderness', 4000, false, ${box(-123.65, 44.48, -123.55, 44.53)}),
       ('way/2', 'Ox Wilderness Area', 3000, false, ${box(-123.80, 44.48, -123.70, 44.53)});
     CREATE TABLE wilderness AS SELECT * FROM (VALUES
       ('9001', 'Alsea Wilderness', 'FS', ${box(-123.65, 44.48, -123.55, 44.53)}),

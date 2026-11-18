@@ -14,8 +14,10 @@ import { areaKey } from "./listings.js";
  *   name is not unique: Oregon and Washington each have a Benton County.
  * - **Properties** are land somebody holds and names: national wildlife
  *   refuges, WDFW wildlife area units, National Park Service units, state and
- *   provincial parks, and the other parks and reserves OpenStreetMap
- *   outlines, where land trust preserves are.
+ *   provincial parks, city and county parks, and the other parks and
+ *   reserves OpenStreetMap outlines, where land trust preserves are. Each
+ *   says where it is, because a park's name is not unique either: Seattle
+ *   and Bend each have a Discovery Park.
  * - **Ecoregions** are the EPA's Level III ecoregions.
  *
  * Two kinds the store holds are on none of them. A federal wilderness is
@@ -42,7 +44,7 @@ export const isAreaTab = (value: string): value is AreaTab => (AREA_TABS as read
 /** The kinds of area each page lists. */
 export const TAB_KINDS: Record<AreaTab, readonly AreaKind[]> = {
   districts: ["county"],
-  properties: ["refuge", "wildlife_area", "nps_unit", "state_park", "park"],
+  properties: ["refuge", "wildlife_area", "nps_unit", "state_park", "city_park", "park"],
   ecoregions: ["ecoregion"],
 };
 
@@ -51,6 +53,13 @@ export interface AreaSummary {
   key: string;
   /** As a page shows it (areaDisplayName). */
   name: string;
+  /**
+   * Where a property is, from the counties its samples' points are in:
+   * "King County, WA" where they are all in one, else the states ("OR, WA").
+   * Null for a district or an ecoregion, and for a property none of whose
+   * samples is in a county.
+   */
+  where: string | null;
   /** Samples inside it from the active seasons. */
   active: number;
   /** Samples inside it from settled seasons. */
@@ -69,6 +78,14 @@ export interface AreaGroup {
   areas: AreaSummary[];
 }
 
+/** Where a property's samples are: their one county, else their states. */
+function whereOf(r: { counties: string[] | null; states: string[] | null }): string | null {
+  const counties = r.counties ?? [];
+  if (counties.length === 1) return counties[0]!;
+  const states = r.states ?? [];
+  return states.length === 0 ? null : states.join(", ");
+}
+
 interface AreaRow {
   kind: AreaKind;
   source: string;
@@ -76,6 +93,8 @@ interface AreaRow {
   name: string;
   state: string | null;
   country: string | null;
+  counties: string[];
+  states: string[];
   active: number;
   settled: number;
 }
@@ -94,10 +113,16 @@ export async function listAreas(db: Kysely<Database>, tab: AreaTab): Promise<Are
     SELECT sac.kind, sac.source, sac.source_id, sac.name,
            CASE WHEN sac.kind = 'county' THEN min(d.state_province) END AS state,
            CASE WHEN sac.kind = 'county' THEN min(d.country) END AS country,
-           count(*) FILTER (WHERE ss.sample_id IS NULL)::INTEGER AS active,
-           count(ss.sample_id)::INTEGER AS settled
+           -- Where the area's samples are: each one's county, as its point
+           -- says, with the state, since a county's name needs one.
+           list_sort(list(DISTINCT concat(cty.name, ', ', d.state_province))
+                     FILTER (WHERE cty.name IS NOT NULL AND d.state_province IS NOT NULL)) AS counties,
+           list_sort(list(DISTINCT d.state_province) FILTER (WHERE d.state_province IS NOT NULL)) AS states,
+           count(DISTINCT sac.sample_id) FILTER (WHERE ss.sample_id IS NULL)::INTEGER AS active,
+           count(DISTINCT ss.sample_id)::INTEGER AS settled
     FROM sample_area_current sac
     JOIN sample_area_derivation d ON d.sample_id = sac.sample_id
+    LEFT JOIN sample_area_current cty ON cty.sample_id = sac.sample_id AND cty.kind = 'county'
     LEFT JOIN settled_sample ss ON ss.sample_id = sac.sample_id
     WHERE sac.kind IN (${sql.join(TAB_KINDS[tab])})
     GROUP BY sac.kind, sac.source, sac.source_id, sac.name`.execute(db);
@@ -112,6 +137,7 @@ export async function listAreas(db: Kysely<Database>, tab: AreaTab): Promise<Are
     group.areas.push({
       key: areaKey(r.source, r.source_id),
       name: areaDisplayName(r.name),
+      where: tab !== "properties" ? null : whereOf(r),
       active: Number(r.active),
       settled: Number(r.settled),
     });

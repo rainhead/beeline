@@ -265,10 +265,23 @@ describe("the places people collect in (beeline-9jd4)", () => {
     const instance = await openDuckDb(path);
     const g = await instance.connect();
     await loadSpatial(g);
-    await g.run(`INSERT INTO osm_area VALUES
-      ('way/3', 'Muddy Creek Natural Area', 500, false, ST_MakeEnvelope(-123.28, 44.38, -123.20, 44.45)),
-      ('relation/4', 'Kiger Island', 900, true, ST_MakeEnvelope(-123.24, 44.50, -123.20, 44.54)),
-      ('way/5', NULL, 20, false, ST_MakeEnvelope(-123.24, 44.50, -123.20, 44.54))`);
+    await g.run(`INSERT INTO osm_area (osm_id, name, area_ha, is_island, geom, is_city_park) VALUES
+      ('way/3', 'Muddy Creek Natural Area', 500, false, ST_MakeEnvelope(-123.28, 44.38, -123.20, 44.45), false),
+      ('relation/4', 'Kiger Island', 900, true, ST_MakeEnvelope(-123.24, 44.50, -123.20, 44.54), false),
+      ('way/5', NULL, 20, false, ST_MakeEnvelope(-123.24, 44.50, -123.20, 44.54), false),
+      ('way/6', 'Kiger Island Park', 5, false, ST_MakeEnvelope(-123.225, 44.515, -123.215, 44.525), true),
+      -- Outlines over everything here that name whoever holds the land, or
+      -- carry a code, and no place. 'WA DNR' and 'PS001' are names
+      -- OpenStreetMap has; the office is made up, after its
+      -- 'BLM - Farmington Field Office'.
+      ('relation/7', 'WA DNR', 90000, false, ST_MakeEnvelope(-124, 44, -122, 45), false),
+      ('relation/8', 'BLM - Alsea Field Office', 90000, false, ST_MakeEnvelope(-124, 44, -122, 45), false),
+      ('way/9', 'PS001', 90000, false, ST_MakeEnvelope(-124, 44, -122, 45), true)`);
+    // OpenStreetMap's own outline of the refuge, nearly all of it inside the
+    // Fish and Wildlife Service's: the agency's is the area.
+    await g.run(`INSERT INTO osm_area (osm_id, name, area_ha, is_island, geom, is_city_park, agency_share) VALUES
+      ('relation/10', 'William L. Finley National Wildlife Refuge', 4000, false,
+       ST_MakeEnvelope(-123.36, 44.38, -123.25, 44.45), false, 0.91)`);
     g.closeSync();
     instance.closeSync();
   }
@@ -280,7 +293,7 @@ describe("the places people collect in (beeline-9jd4)", () => {
     const refugeOnly = await insertCleanSample(conn, {}, REFUGE);
     // Inside the refuge and the park that laps over it: both.
     const both = await insertCleanSample(conn, { sample_number: "'2'" }, { latitude: "44.41", longitude: "-123.27" });
-    // On the island, where a park nobody named lies too.
+    // On the island, in its city park, where a park nobody named lies too.
     const island = await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "44.52", longitude: "-123.22" });
     // About 80 m west of the refuge's edge: outside it, with no allowance.
     const beside = await insertCleanSample(conn, { sample_number: "'4'" }, { latitude: "44.41", longitude: "-123.351" });
@@ -293,13 +306,14 @@ describe("the places people collect in (beeline-9jd4)", () => {
       [refugeOnly, "usfws", "99001", "refuge", "WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE"],
       [both, "osm", "way/3", "park", "Muddy Creek Natural Area"],
       [both, "usfws", "99001", "refuge", "WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE"],
+      [island, "osm", "way/6", "city_park", "Kiger Island Park"],
       [island, "osm", "relation/4", "island", "Kiger Island"],
     ]);
     expect(await places(conn)).not.toContainEqual(expect.arrayContaining([beside]));
     expect(await places(conn)).not.toContainEqual(expect.arrayContaining([wild]));
     // Only what a sample lies inside is copied in.
     expect(await rows(conn, `SELECT kind, count(*)::INTEGER FROM area GROUP BY kind ORDER BY kind`)).toEqual([
-      ["county", 1], ["ecoregion", 2], ["island", 1], ["park", 1], ["refuge", 1], ["wilderness", 1],
+      ["city_park", 1], ["county", 1], ["ecoregion", 2], ["island", 1], ["park", 1], ["refuge", 1], ["wilderness", 1],
     ]);
   });
 
@@ -323,7 +337,7 @@ describe("the places people collect in (beeline-9jd4)", () => {
     await loadSpatial(conn);
     for (const [source, kind] of [
       ["usfws", "refuge"], ["wdfw", "wildlife_area"], ["nps", "nps_unit"], ["wa-parks", "state_park"],
-      ["bc-parks", "state_park"], ["osm", "park"], ["osm", "island"],
+      ["bc-parks", "state_park"], ["osm", "city_park"], ["osm", "park"], ["osm", "island"],
     ]) {
       await conn.run(
         `INSERT INTO area VALUES ('${source}', '${kind}-1', '${kind}', 'A place', ST_MakeEnvelope(0, 0, 1, 1), 'b')`,

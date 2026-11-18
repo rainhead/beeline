@@ -6,6 +6,7 @@ import { apiError, type ApiEnv } from "./api.js";
 import {
   ALL,
   atlasOptions,
+  scopePrograms,
   COUNT_GROUPS,
   countSamples,
   countSpecimens,
@@ -16,6 +17,7 @@ import {
   listSpecimens,
   MEMBER_UNRECORDED,
   MINE,
+  CATCH_ALL,
   OUTSIDE,
   PAGE_SIZE,
   parseListingQuery,
@@ -132,6 +134,7 @@ function readQuery(
   atlasCodes: readonly string[],
   /** The sorts this listing has: a sort only the other listing has is refused, not quietly replaced by the default order. */
   sortKeys: readonly string[],
+  programCodes: readonly string[] = [],
 ): { query: ListingQuery; exact: ExactLookup } {
   const seen = new Set<string>();
   for (const [name] of params) {
@@ -146,7 +149,7 @@ function readQuery(
     if (v === null || (blank && v === "")) return;
     if (!values.includes(v)) throw new BadRequest(`${JSON.stringify(v)} is not a ${name}. Use one of: ${values.join(", ")}.`);
   };
-  oneOf("scope", [MINE, ALL, OUTSIDE, ...atlasCodes]);
+  oneOf("scope", [MINE, ALL, OUTSIDE, CATCH_ALL, ...atlasCodes, ...programCodes]);
   oneOf("member", [PROGRAM_MEMBERSHIP, MEMBER_UNRECORDED, ...atlasCodes]);
   oneOf("qc", QC_STATUSES);
   oneOf("flag", QC_RULE_NAMES);
@@ -181,7 +184,7 @@ function readQuery(
   }
   // The pages' own parser, with no remembered scope (there is no cookie here)
   // and no bulk action. Every value it would replace has been refused above.
-  const query = parseListingQuery(params, { atlasCodes });
+  const query = parseListingQuery(params, { atlasCodes, programCodes });
   return { query: { ...query, act: "" }, exact };
 }
 
@@ -378,6 +381,7 @@ export function registerReadRoutes(api: Hono<ApiEnv>, db: Kysely<Database>, read
 
   const params = (c: Context<ApiEnv>) => new URL(c.req.url).searchParams;
   const atlasCodes = async () => (await atlasOptions(db)).map((a) => a.code);
+  const programCodes = async () => (await scopePrograms(db)).map((a) => a.code);
 
   for (const kind of ["samples", "specimens"] as const) {
     const header = kind === "samples" ? SAMPLE_CSV_HEADER : SPECIMEN_CSV_HEADER;
@@ -389,7 +393,7 @@ export function registerReadRoutes(api: Hono<ApiEnv>, db: Kysely<Database>, read
       let parsed: ReturnType<typeof readQuery>;
       let pageSize: number;
       try {
-        parsed = readQuery(params(c), LISTING_PARAMETERS, await atlasCodes(), sortKeys);
+        parsed = readQuery(params(c), LISTING_PARAMETERS, await atlasCodes(), sortKeys, await programCodes());
         pageSize = readPageSize(params(c));
       } catch (err) {
         return refuse(c, err);
@@ -430,7 +434,7 @@ export function registerReadRoutes(api: Hono<ApiEnv>, db: Kysely<Database>, read
       let parsed: ReturnType<typeof readQuery>;
       let group: CountGroup | undefined;
       try {
-        parsed = readQuery(params(c), COUNT_PARAMETERS, await atlasCodes(), sortKeys);
+        parsed = readQuery(params(c), COUNT_PARAMETERS, await atlasCodes(), sortKeys, await programCodes());
         group = readGroup(params(c));
       } catch (err) {
         return refuse(c, err);

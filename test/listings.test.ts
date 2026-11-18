@@ -93,6 +93,17 @@ async function listingApp(
     date_end: "DATE '2026-07-14'",
     locality: "'Corvallis'",
   });
+  // A-1 fell inside Ankeny NWR: an Oregon Bee Atlas sample by state, and the
+  // National Wildlife Refuges program's by where its point lies (beeline-t0rh).
+  await conn.run(
+    `INSERT INTO area (source, source_id, kind, name, geom, gazetteer_build)
+     VALUES ('usfws', '13588', 'refuge', 'Ankeny NWR', 'POINT (0 0)'::GEOMETRY, 'test')`,
+  );
+  await conn.run(
+    `INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, rule_version, derived_at)
+     VALUES (${a1}, 44.5646, -123.2620, 'test', 1, current_timestamp)`,
+  );
+  await conn.run(`INSERT INTO sample_area (sample_id, area_source, area_source_id) VALUES (${a1}, 'usfws', '13588')`);
   // Alice, Oregon: no locality, so a blocking finding — and a different year.
   await insertCleanSample(conn, {
     collector_id: String(alice),
@@ -305,6 +316,41 @@ describe("sample listing", () => {
     expect(outside).toContain("B-3");
     expect(outside).toContain("C-1");
     expect(outside).not.toContain("B-2");
+  });
+
+  // An atlas is a kind of program, so the one dropdown lists them all
+  // (beeline-t0rh): choosing the refuge program finds A-1, and choosing OBA
+  // still finds it too, since a refuge sample is both.
+  it("scopes to the National Wildlife Refuges program, which is not an atlas, and its atlas still finds the sample", async () => {
+    const { app } = await listingApp("staffer");
+    const nwr = await get(app, "/samples?scope=NWR");
+    expect(nwr).toContain("1 sample");
+    expect(nwr).toContain("A-1");
+    expect(nwr).not.toContain("A-2");
+    expect(await get(app, "/samples?scope=OBA")).toContain("A-1");
+    const specimens = await get(app, "/specimens?scope=NWR");
+    expect(specimens).toContain("2 specimens");
+  });
+
+  it("offers every program in the Atlas menu, and At large in place of Outside the atlases, but not My records", async () => {
+    const { app } = await listingApp("staffer");
+    const page = await get(app, "/samples?scope=all");
+    const menu = page.slice(page.indexOf('<select id="scope"'), page.indexOf("</select>", page.indexOf('<select id="scope"')));
+    for (const name of ["Oregon Bee Atlas", "Washington Bee Atlas", "National Wildlife Refuges", "BLM surveys", en.listings.scope.outside]) {
+      expect(menu).toContain(name);
+    }
+    expect(en.listings.scope.outside).toBe("At large");
+    expect(menu).not.toContain(en.listings.scope.mine);
+    // The old value keeps working, and the people-facing words say At large.
+    expect(await get(app, "/samples?scope=outside")).toContain("2 samples");
+  });
+
+  it("does not find a refuge sample whose location the reader may not see", async () => {
+    const { app, conn } = await listingApp("bob");
+    await conn.run(`UPDATE sample SET geoprivacy = 'obscured' WHERE sample_number = 'A-1'`);
+    const page = await get(app, "/samples?scope=NWR");
+    expect(page).toContain("Nothing here yet");
+    expect(page).not.toContain("A-1");
   });
 
   it("filters by where the collector belongs, which is not where they collected", async () => {

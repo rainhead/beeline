@@ -7,6 +7,7 @@ import {
   MEMBER_ANY,
   MEMBER_UNRECORDED,
   MINE,
+  CATCH_ALL,
   OUTSIDE,
   PAGE_SIZE,
   QC_RULE_NAMES,
@@ -213,8 +214,8 @@ function activeFilters(
   const toggled = new Set([MINE, ALL, homeAtlas?.code]);
   if (!toggled.has(query.scope)) {
     out.push({
-      label: m.listings.samples.colAtlas,
-      value: query.scope === OUTSIDE ? m.listings.scope.outside : atlasName(query.scope),
+      label: m.listings.scope.program,
+      value: query.scope === OUTSIDE || query.scope === CATCH_ALL ? m.listings.scope.outside : atlasName(query.scope),
       clearHref: clear({ scope: ALL }),
     });
   }
@@ -493,6 +494,8 @@ export interface ListingProps<Row> {
   query: ListingQuery;
   page: Page<Row>;
   atlases: readonly AtlasOption[];
+  /** Every program the Atlas column's menu can scope to; the atlases when a caller gives no more. */
+  programs?: readonly AtlasOption[];
   /** Whether a staff member is looking: staff see every location, so the note about hidden ones is not theirs. */
   admin: boolean;
   /** The atlas the viewer belongs to, for the scope toggle; null when none is recorded. */
@@ -509,7 +512,8 @@ function Toolbar<Row>({
   path: string;
   props: ListingProps<Row>;
 }) {
-  const { m, query, atlases, admin } = props;
+  const { m, query, admin } = props;
+  const atlases = props.programs ?? props.atlases;
   const homeAtlas = props.homeAtlas ?? null;
   const filters = activeFilters(m, path, query, atlases, homeAtlas, props.page.area);
   return (
@@ -562,6 +566,7 @@ function dateColumn({ m, path, query, label }: Shared): TableColumn {
 }
 
 type WithAtlases = Shared & { atlases: readonly AtlasOption[] };
+type WithPrograms = Shared & { programs: readonly AtlasOption[] };
 
 function collectorsColumn({ m, path, query, label, atlases }: WithAtlases): TableColumn {
   const f = m.listings.filters;
@@ -620,8 +625,12 @@ function hostColumn({ m, path, query, label }: Shared): TableColumn {
   });
 }
 
-/** The atlas column narrows by setting scope: an atlas, or the ground outside every one. */
-function atlasColumn({ m, path, query, label, atlases }: WithAtlases): TableColumn {
+/**
+ * The atlas column narrows by setting scope: any program, or "at large", the
+ * ground outside every atlas (beeline-t0rh). "My records" is not here: it is
+ * the scope toggle's first position, which is where it is reached.
+ */
+function atlasColumn({ m, path, query, label, programs }: WithPrograms): TableColumn {
   return column({
     m,
     path,
@@ -633,13 +642,12 @@ function atlasColumn({ m, path, query, label, atlases }: WithAtlases): TableColu
       <SelectField
         id="scope"
         name="scope"
-        label={m.listings.scope.label}
+        label={m.listings.scope.program}
         value={query.scope}
         options={[
-          [ALL, m.listings.scope.all],
-          ...atlases.map((a) => [a.code, a.name] as const),
+          [ALL, m.listings.scope.allPrograms],
+          ...programs.map((a) => [a.code, a.name] as const),
           [OUTSIDE, m.listings.scope.outside],
-          [MINE, m.listings.scope.mine],
         ]}
       />
     ),
@@ -671,7 +679,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
   const col = { m, path, query };
   return (
     <>
-      <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
+      <PageHeader title={copy.heading} lede={lede(copy, query, props.programs ?? atlases)} />
       {props.mayEnterTrapSamples && (
         <p class="row">
           <LinkButton href="/trap-samples/new" variant="tonal">{m.trapSample.enterLink}</LinkButton>
@@ -777,7 +785,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                   </>
                 ),
               }),
-              atlasColumn({ ...col, label: copy.colAtlas, atlases }),
+              atlasColumn({ ...col, label: copy.colAtlas, programs: props.programs ?? atlases }),
               // Read aloud, never drawn: the column of links out.
               { label: copy.colLinks, hidden: true },
             ]}
@@ -986,7 +994,7 @@ export function SpecimenListing(
               {copy.ledeMine} <a href="/determinations">{copy.identify}</a>
             </>
           ) : (
-            lede(copy, query, atlases)
+            lede(copy, query, props.programs ?? atlases)
           )
         }
       />
@@ -1055,7 +1063,7 @@ export function SpecimenListing(
               // question it answers — what came back from the taxonomist
               // this winter — is asked by sorting, not by a window.
               column({ ...col, label: copy.colDetermined, sort: "determined", kind: "date" }),
-              atlasColumn({ ...col, label: copy.colAtlas, atlases }),
+              atlasColumn({ ...col, label: copy.colAtlas, programs: props.programs ?? atlases }),
             ]}
           >
             {page.rows.map((row) => (

@@ -533,7 +533,7 @@ the environment and the Fly deployment as the release:
   and kept past the rolling window `fly logs` shows — which is where the boot
   pass's `recorded N sample change(s)` line lives.
 - **Listing usage.** Each request to `/samples`, `/specimens` or `/people`,
-  page or CSV, is counted as the metric `listing.view` with the scope, sort,
+  page, CSV or Excel file, is counted as the metric `listing.view` with the scope, sort,
   page band and the filters in use as attributes — which filters, never what
   was typed in them — and whether the viewer was staff, a volunteer, or staff
   impersonating one. Query it in Sentry's metrics explorer, grouped by
@@ -545,7 +545,7 @@ the environment and the Fly deployment as the release:
   getting slower gets noticed. A request over a second also logs
   `[request] slow: GET /samples/:id took 2345ms (status 200, signed in as …)`,
   so search the log for `[request] slow` to see which pages and whose. It is
-  the time to a response; a listing's CSV fetches its rows after that, as the
+  the time to a response; a listing's CSV or Excel file fetches its rows after that, as the
   client reads, so that time is its own metric, `csv.generation` — the time
   its pages spent in the store, by listing and by whether the download
   completed, failed or was abandoned — with its own slow line past a second.

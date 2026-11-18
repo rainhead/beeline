@@ -18,6 +18,8 @@ import {
   SPECIMEN_SORT_KEYS,
 } from "../src/app/listings.js";
 import { gatherSample } from "../src/app/record.js";
+import { readXlsxHere } from "../src/app/xlsx-reader.js";
+import { SPECIMENS_LAYOUT } from "../src/app/upload-plan.js";
 import { createApp } from "../src/app/server.js";
 import { duckdbReader } from "../src/person-change.js";
 import { recordSampleChanges } from "../src/sample-change.js";
@@ -273,7 +275,7 @@ describe("the listings", () => {
     expect(first.url).toBe(`${ORIGIN}/specimens/${first.id}`);
   });
 
-  it("hold the CSV's values: the JSON and the download cannot disagree", async () => {
+  it("hold the downloads' values: the JSON and the samples CSV or the specimens Excel file cannot disagree", async () => {
     const w = await world();
     const queries = [
       "",
@@ -294,6 +296,25 @@ describe("the listings", () => {
         const header: readonly string[] = kind === "samples" ? SAMPLE_CSV_HEADER : SPECIMEN_CSV_HEADER;
         for (const q of queries) {
           const api = await w.json(w.keys[person], `/${kind}?${q}&page_size=500`);
+          if (kind === "specimens") {
+            // The specimens' one download is the Excel file for editing (beeline-kgyd.5): its columns, in its order.
+            w.who.current = person;
+            const res = await w.app.request(`/specimens.xlsx?${q}`);
+            expect(res.status, `${person} ${q}`).toBe(200);
+            const read = readXlsxHere(new Uint8Array(await res.arrayBuffer()));
+            if (!read.ok) throw new Error(read.refusal);
+            const [head, ...body] = read.sheet.rows.map((r) => [...r.cells.entries()].sort((a, b) => a[0] - b[0]));
+            expect(head!.map(([, c]) => c.text), `${kind} ${q}`).toEqual([...SPECIMENS_LAYOUT.headings]);
+            expect(api.rows.length, `${person} ${kind} ${q}`).toBe(body.length);
+            expect(api.total).toBe(body.length);
+            body.forEach((cells, i) => {
+              const text = new Map(cells.map(([at, c]) => [at, c.text]));
+              SPECIMENS_LAYOUT.headings.forEach((name, j) =>
+                expect(String(api.rows[i][name] ?? ""), `${person} ${kind} ${q} row ${i} ${name}`).toBe(text.get(j) ?? ""),
+              );
+            });
+            continue;
+          }
           const csv = parseCsv(await w.page(person, `/${kind}.csv?${q}`));
           expect(csv[0], `${kind} ${q}`).toEqual(header);
           const body = csv.slice(1).filter((r) => r.length > 1);

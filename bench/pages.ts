@@ -90,7 +90,7 @@ async function cases(bench: Bench): Promise<Case[]> {
     hostCommon ? { name: "samples, all, by host common name", who: "staff", path: `/samples?scope=all&host=${enc(hostCommon)}` } : null,
     hostCommon ? { name: "specimens, all, by host common name", who: "staff", path: `/specimens?scope=all&host=${enc(hostCommon)}` } : null,
     { name: "samples.csv, all", who: "staff", path: "/samples.csv?scope=all", onlyWhenNamed: true },
-    { name: "specimens.csv, all", who: "staff", path: "/specimens.csv?scope=all", onlyWhenNamed: true },
+    { name: "specimens.xlsx, all", who: "staff", path: "/specimens.xlsx?scope=all", onlyWhenNamed: true },
     { name: "specimens, all", who: "staff", path: "/specimens?scope=all" },
     genus ? { name: "specimens, all, by genus", who: "staff", path: `/specimens?scope=all&taxon=${enc(genus)}` } : null,
     { name: "specimens, all, undetermined", who: "staff", path: "/specimens?scope=all&det=undetermined" },

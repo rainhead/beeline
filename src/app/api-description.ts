@@ -299,6 +299,20 @@ const ENDPOINTS: Endpoint[] = [
     },
     answers: "{ person_id, outcome, was, ideal_logic_id, registrant } where registrant is the name on the registration, to check against the person",
   },
+  {
+    method: "POST",
+    route: "/people/:id/mailing",
+    summary:
+      "Say whether a person's printed labels are mailed or kept in the lab, as their page does. The id is the person's id or their iNaturalist login. Mailing is the default, so mail for a person not kept in the lab records nothing. Never send an address or an email address.",
+    needs: "staff key",
+    body: {
+      instruction: "mail or keep_in_lab",
+      note: "an optional note of up to 200 characters, such as ENT 499, picked up in class. One with an @ sign or a run of five or more digits is refused, so that an address is never stored",
+      reference:
+        "reference: an optional note of 1 to 500 characters pointing at the request behind the change, kept in the record of the key's use and on the decision itself. Never an address or a name",
+    },
+    answers: "{ person_id, outcome, was, instruction } where outcome is saved or unchanged and was is what the person had before",
+  },
 ];
 
 /** The routes the description lists, as the router names them: "GET /samples/:id". */

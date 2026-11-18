@@ -58,3 +58,28 @@ COMMENT ON COLUMN person_registration_event.evidence IS 'Why the two are taken f
 COMMENT ON COLUMN person_registration_event.decided_by IS 'The iNaturalist login of the member of staff, or the name of the job that linked them.';
 COMMENT ON COLUMN person_registration_event.decided_at IS 'When, in UTC.';
 COMMENT ON COLUMN person_registration_event.reference IS 'A pointer to the request behind a change made through the API, as api_key_use.reference: a message id or an issue link, never an address or a name.';
+
+-- Where a person's labels go when they are not mailed (beeline-w8ab.4): some
+-- collectors' labels are kept in the lab, students in a course and people who
+-- collect from the lab. An instruction to staff and not an address, so it may
+-- be kept; the address itself stays in Ideal Logic and is never stored.
+-- Events, as above, so that a bundle of labels left in a drawer can be traced
+-- to who said so. The latest row per person is the answer, which
+-- person_mailing_instruction (schema/105) reads.
+CREATE TABLE person_mailing_event (
+  entity_id   INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  person_id   INTEGER NOT NULL REFERENCES person(entity_id),
+  instruction TEXT NOT NULL CHECK (instruction IN ('mail', 'keep_in_lab')),
+  note        TEXT,
+  decided_by  TEXT NOT NULL,
+  decided_at  TIMESTAMP NOT NULL DEFAULT current_timestamp,
+  reference   TEXT
+);
+COMMENT ON TABLE person_mailing_event IS 'Decisions about whether a person''s printed labels are mailed or kept in the lab. Append-only; the latest row per person is the answer, which person_mailing_instruction reads. An instruction and an optional note, never an address or an email address.';
+COMMENT ON COLUMN person_mailing_event.entity_id IS 'Drawn from the one sequence, so a later decision has a higher id: the order decisions are read in, since two made in one transaction share a decided_at.';
+COMMENT ON COLUMN person_mailing_event.person_id IS 'The person whose labels the decision is about.';
+COMMENT ON COLUMN person_mailing_event.instruction IS 'mail, the default: the labels are mailed to the address Ideal Logic holds; keep_in_lab: they are not mailed, and the address download says so in place of an address.';
+COMMENT ON COLUMN person_mailing_event.note IS 'Free text from staff, at most 200 characters, such as "ENT 499, picked up in class". Free text could carry an email address or a street number, so src/mailing-instructions.ts refuses a note containing "@" or a run of five or more digits before it is stored. That refusal is what keeps an address out of this column, so a second way of writing here would need the same check.';
+COMMENT ON COLUMN person_mailing_event.decided_by IS 'The iNaturalist login of the member of staff who decided.';
+COMMENT ON COLUMN person_mailing_event.decided_at IS 'When, in UTC.';
+COMMENT ON COLUMN person_mailing_event.reference IS 'A pointer to the request behind a change made through the API, as api_key_use.reference: a message id or an issue link, never an address or a name.';

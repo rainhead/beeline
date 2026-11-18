@@ -64,6 +64,12 @@ async function world() {
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+  const sendMailing = (key: string, handle: string | number, body: unknown) =>
+    app.request(`/api/v1/people/${handle}/mailing`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
   const belongsTo = async (personId: number) =>
     (
       await rows(
@@ -76,6 +82,7 @@ async function world() {
     paths,
     send,
     sendRegistration,
+    sendMailing,
     belongsTo,
     people: { sam, vol, ada },
     keys: { staff: await keyFor(3, "staff"), samEdit: await keyFor(3, "edit"), vol: await keyFor(4, "edit") },
@@ -246,5 +253,65 @@ describe("POST /api/v1/people/:id/registration", () => {
     expect((await w.sendRegistration(w.keys.samEdit, w.people.ada, { ideal_logic_id: "QNN6-MX8" })).status).toBe(403);
     expect((await w.sendRegistration(w.keys.vol, w.people.ada, { ideal_logic_id: "QNN6-MX8" })).status).toBe(403);
     expect(await linked(w)).toEqual([]);
+  });
+});
+
+/**
+ * Whether a person's labels are mailed or kept in the lab, set through the
+ * API (beeline-w8ab.4): the load of the people the old register marks
+ * "keep in lab" goes through this route, by iNaturalist login.
+ */
+describe("POST /api/v1/people/:id/mailing", () => {
+  const instructions = (w: Awaited<ReturnType<typeof world>>) =>
+    rows(w.conn, `SELECT person_id, instruction, note, decided_by FROM person_mailing_instruction ORDER BY person_id`);
+
+  it("keeps a person's labels in the lab, credited to the key's person, with the reference kept", async () => {
+    const w = await world();
+    const res = await w.sendMailing(w.keys.staff, w.people.ada, { instruction: "keep_in_lab", note: "ENT 499, picked up in class", reference: "issue 4" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ person_id: w.people.ada, outcome: "saved", was: "mail", instruction: "keep_in_lab" });
+    expect(await instructions(w)).toEqual([[w.people.ada, "keep_in_lab", "ENT 499, picked up in class", "samstaff"]]);
+    expect(await rows(w.conn, `SELECT reference FROM person_mailing_event`)).toEqual([["issue 4"]]);
+    expect(await rows(w.conn, `SELECT route, subject, outcome, reference, status FROM api_key_use`)).toEqual([
+      ["/api/v1/people/:id/mailing", String(w.people.ada), "saved", "issue 4", 200],
+    ]);
+    // Nothing goes to the overlay, a file whose curated copy is public.
+    expect(await readOverlay(w.paths.personOverlayPath)).toEqual([]);
+  });
+
+  it("takes a person's iNaturalist login as the id, answers unchanged the second time, and mail puts them back", async () => {
+    const w = await world();
+    const first = await w.sendMailing(w.keys.staff, "vol", { instruction: "keep_in_lab" });
+    expect(await first.json()).toEqual({ person_id: w.people.vol, outcome: "saved", was: "mail", instruction: "keep_in_lab" });
+    expect(await (await w.sendMailing(w.keys.staff, "vol", { instruction: "keep_in_lab" })).json()).toMatchObject({ outcome: "unchanged", was: "keep_in_lab" });
+    expect(await (await w.sendMailing(w.keys.staff, "vol", { instruction: "mail" })).json()).toMatchObject({ outcome: "saved", was: "keep_in_lab", instruction: "mail" });
+    expect(await instructions(w)).toEqual([]);
+    // Mailing is the default: saying it for somebody nobody has decided about records nothing.
+    expect(await (await w.sendMailing(w.keys.staff, w.people.ada, { instruction: "mail" })).json()).toMatchObject({ outcome: "unchanged" });
+    expect(await rows(w.conn, `SELECT count(*) FROM person_mailing_event`)).toEqual([[2n]]);
+  });
+
+  it("refuses a note with an @ sign or a run of five digits, or a long one, before storing it, and does not repeat it", async () => {
+    const w = await world();
+    for (const note of ["ada@example.org", "Corvallis OR 97330", "x".repeat(201)]) {
+      const res = await w.sendMailing(w.keys.staff, w.people.ada, { instruction: "keep_in_lab", note });
+      expect(res.status).toBe(422);
+      const text = await res.text();
+      expect(text).not.toContain("example.org");
+      expect(text).not.toContain("97330");
+    }
+    expect((await w.sendMailing(w.keys.staff, w.people.ada, { instruction: "burn" })).status).toBe(422);
+    expect((await w.sendMailing(w.keys.staff, w.people.ada, { note: "no instruction" })).status).toBe(400);
+    expect(await rows(w.conn, `SELECT count(*) FROM person_mailing_event`)).toEqual([[0n]]);
+  });
+
+  it("refuses a key that is not a staff key held by staff, and a person who is not there", async () => {
+    const w = await world();
+    for (const key of [w.keys.samEdit, w.keys.vol]) {
+      expect((await w.sendMailing(key, w.people.ada, { instruction: "keep_in_lab" })).status).toBe(403);
+    }
+    expect((await w.sendMailing(w.keys.staff, 999999, { instruction: "keep_in_lab" })).status).toBe(404);
+    expect((await w.sendMailing(w.keys.staff, "nobody", { instruction: "keep_in_lab" })).status).toBe(404);
+    expect(await rows(w.conn, `SELECT count(*) FROM person_mailing_event`)).toEqual([[0n]]);
   });
 });

@@ -15,6 +15,7 @@ import { registerAuthRoutes, signInHref, type AuthDeps, type InatClient } from "
 import { OLD_BEELINE_ORIGIN, registerOldBeelineRedirects } from "./old-beeline.js";
 import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
+import { en } from "./messages/en.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { createApi, refuseStrayCredentials, type ApiDeps } from "./api.js";
@@ -134,6 +135,7 @@ import {
 } from "../person-change.js";
 import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import { decideRegistration } from "../registrations.js";
+import { decideMailing } from "../mailing-instructions.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
@@ -572,7 +574,11 @@ export function createApp({
       corrections: { deps: corrective, messages: messagesFor(null) },
       // Called through, since the function is defined further down with the
       // rest of the decisions about people.
-      people: { setMembership: (input) => setMembership(input), setRegistration: (input) => setRegistration(input) },
+      people: {
+        setMembership: (input) => setMembership(input),
+        setRegistration: (input) => setRegistration(input),
+        setMailing: (input) => setMailing(input),
+      },
       read: { changesPath: samplePaths.log, origin: config.origin },
     });
   // The description answers at /api/v1/ too, which the router takes for another
@@ -2552,7 +2558,9 @@ export function createApp({
               ? t.notes.incompleteAddress(note.missing.map((part) => t.notes.missing[part]).join(", "))
               : note.code === "unaccountedLabels"
                 ? t.notes.unaccountedLabels(note.labels)
-                : t.notes[note.code],
+                : note.code === "keepInLab"
+                  ? t.notes.keepInLab(note.note)
+                  : t.notes[note.code],
           )
           .join(" "),
       ]),
@@ -2752,6 +2760,13 @@ export function createApp({
           programs={await programOptions(db)}
           history={await history(person.person_id)}
           keys={person.inat_user_id === null ? [] : await listKeys(db, person.inat_user_id, "all")}
+          mailing={
+            (await db
+              .selectFrom("person_mailing_instruction")
+              .selectAll()
+              .where("person_id", "=", person.person_id)
+              .executeTakeFirst()) ?? null
+          }
           now={new Date()}
           notice={notice}
           problem={problem}
@@ -3147,6 +3162,34 @@ export function createApp({
       };
     });
 
+  /**
+   * Whether a person's labels are mailed or kept in the lab (beeline-w8ab.4),
+   * for the person's page and the API alike. It takes its turn with every
+   * other decision about a person. The note's own refusals are the module's;
+   * the answer never repeats the note, which may be what was typed by mistake.
+   */
+  const setMailing: PeopleDeps["setMailing"] = (input) =>
+    oneDecisionAtATime(async () => {
+      const handle = parsePersonHandle(input.handle);
+      const id = handle === null ? null : await resolvePersonHandle(db, handle);
+      if (id === null) return { ok: false, refusal: "not_found" };
+      if (input.instruction !== "mail" && input.instruction !== "keep_in_lab") {
+        return { ok: false, refusal: "invalid", problem: 'The instruction is "mail" or "keep_in_lab".' };
+      }
+      const decided = await decideMailing(db, {
+        personId: id,
+        instruction: input.instruction,
+        note: input.note,
+        decidedBy: input.author,
+        reference: input.reference,
+      });
+      if (!decided.ok) {
+        if (decided.refusal === "unknown_person") return { ok: false, refusal: "not_found" };
+        return { ok: false, refusal: "invalid", problem: en.people.labelsNoteProblem[decided.why] };
+      }
+      return { ok: true, outcome: decided.outcome, person_id: id, was: decided.was, instruction: input.instruction };
+    });
+
   const setMembership: PeopleDeps["setMembership"] = (input) =>
     oneDecisionAtATime(async () => {
       const handle = parsePersonHandle(input.handle);
@@ -3239,6 +3282,34 @@ export function createApp({
       }
       return decideInTurn(c, form, () => [["orcid", orcid]]);
     });
+  });
+
+  // Whether their labels are mailed or kept in the lab (beeline-w8ab.4).
+  // Admin only, and refused while viewing as somebody else, as every write is.
+  app.post("/people/:id/mailing", async (c) => {
+    if (c.get("acting").impersonating) return c.text(c.get("m").errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const form = await c.req.formData();
+    const decided = await setMailing({
+      handle: c.req.param("id") ?? "",
+      instruction: text(form, "instruction"),
+      note: text(form, "note"),
+      author: c.get("session").login,
+      reference: null,
+    });
+    if (!decided.ok) {
+      if (decided.refusal === "not_found") return errorResponse(c, "notFound", { message: m.people.notFound });
+      return showPerson(c, undefined, decided.problem);
+    }
+    return showPerson(
+      c,
+      decided.outcome === "unchanged"
+        ? m.people.labelsUnchanged
+        : decided.instruction === "mail"
+          ? m.people.labelsSavedMail
+          : m.people.labelsSavedKeep,
+    );
   });
 
   app.post("/people/:id/membership", (c) => decide(c, (form) => [["home_atlas", text(form, "home_atlas")]]));

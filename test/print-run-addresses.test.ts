@@ -506,6 +506,7 @@ describe("which collectors share a row", () => {
     printedAs: [],
     idealLogicId: ideal,
     collectorLineDiffers: false,
+    keptInLab: null,
   });
   const at = (id: string, city: string | null, postalCode: string | null): Registrant =>
     registrant(id, { street: "5 Pine Street", city, stateProvince: "OR", postalCode, country: "USA" });
@@ -553,6 +554,7 @@ describe("which collectors share a row: spellings and households with no street"
     printedAs: [],
     idealLogicId: ideal,
     collectorLineDiffers: false,
+    keptInLab: null,
   });
   const home = (id: string, street: string, city: string, postalCode: string): Registrant =>
     registrant(id, { street, city, stateProvince: "OR", postalCode, country: "USA" });
@@ -598,5 +600,127 @@ describe("which collectors share a row: spellings and households with no street"
   it("never writes a negative count of labels left out", () => {
     const got = addressRows({ collectors: [collector(1, "Ann Ames", null, 5)], totalLabels: 3 }, []);
     expect(got.map((r) => r.labels)).toEqual([5]);
+  });
+});
+
+describe("labels kept in the lab", () => {
+  const notes = en.printRuns.run.addresses.notes;
+  const keep = (f: Fixture, name: string, note: string | null) =>
+    f.conn.run(
+      `INSERT INTO person_mailing_event (person_id, instruction, note, decided_by) VALUES (${f.ids[name]}, 'keep_in_lab', ${note === null ? "NULL" : `'${note}'`}, 'test')`,
+    );
+
+  it("gives each such collector a row of their own, after the incomplete addresses and before those with none", async () => {
+    const { client } = fakeClient();
+    const s = await setup(client, "staffer", {
+      before: async (f) => {
+        // Ada and Bo share a home; kept in the lab, they still get a row each.
+        await keep(f, "Ada Ash", "ENT 499, picked up in class");
+        await keep(f, "Bo Birch", null);
+        await keep(f, "Di Dale", "course roster");
+      },
+    });
+    const out = lines(await (await s.post(`${s.runPath}/addresses.csv`)).text());
+    expect(out).toHaveLength(7);
+    // Cy is the only home left.
+    expect(out[1]).toMatch(/^Cy Cedar,3 Elm Road,/);
+    // Then the kept rows, by name: no address, the labels counted, the line as printed, and the note.
+    expect(out[2]).toBe(`Ada Ash,,,,,,,1,A.Ash,"${notes.keepInLab("ENT 499, picked up in class")}"`);
+    expect(out[3]).toBe(`Bo Birch,,,,,,,2,B.Birch,${notes.keepInLab(null)}`);
+    expect(out[4]).toBe(`Di Dale,,,,,,,4,D.Dale,${notes.keepInLab("course roster")}`);
+    // Di has no registration, but being kept in the lab is what the row says; then those with no address.
+    expect(out[5]).toMatch(/^Ed Elm,,,,,,,5,E\.Elm,/);
+    expect(out[5]).toContain(notes.noAddress);
+    expect(out[6]).toMatch(/^Flo Fir,/);
+  });
+
+  it("sorts them after an incomplete address", async () => {
+    const { client } = fakeClient({
+      registrants: [
+        registrant("HOUSE-1", { street: "12 Oak Street", city: "Corvallis", stateProvince: "OR", postalCode: "", country: "USA" }),
+        ...REGISTRANTS.slice(1),
+      ],
+    });
+    const s = await setup(client, "staffer", { before: (f) => keep(f, "Cy Cedar", "course roster").then(() => undefined) });
+    const out = lines(await (await s.post(`${s.runPath}/addresses.csv`)).text());
+    // Bo's address is whole; Ada's has no postal code; then Cy, kept in the lab.
+    expect(out[1]).toMatch(/^Bo Birch,/);
+    expect(out[2]).toMatch(/^Ada Ash,12 Oak Street,/);
+    expect(out[2]).toContain("no postal code");
+    const at = out.findIndex((l) => l.startsWith("Cy Cedar,"));
+    expect(at).toBe(3);
+    expect(out[at + 1]).toMatch(/^Di Dale,/);
+  });
+
+  it("does not look up their registration, and does not call Ideal Logic when nobody else has one", async () => {
+    const { client, fetchRegistrants } = fakeClient();
+    const s = await setup(client, "staffer", {
+      before: async (f) => {
+        // Every collector with a registration is kept in the lab; Di has none.
+        for (const name of ["Ada Ash", "Bo Birch", "Cy Cedar", "Ed Elm", "Flo Fir"]) await keep(f, name, null);
+      },
+    });
+    const res = await s.post(`${s.runPath}/addresses.csv`);
+    expect(res.status).toBe(200);
+    expect(fetchRegistrants).not.toHaveBeenCalled();
+    const out = lines(await res.text());
+    expect(out).toHaveLength(7);
+    expect(out.slice(1, 6).every((l) => l.includes(notes.keepInLab(null)))).toBe(true);
+    expect(out[6]).toContain(notes.noRegistration);
+  });
+
+  it("still asks Ideal Logic when somebody who is mailed has a registration", async () => {
+    const { client, fetchRegistrants } = fakeClient();
+    const s = await setup(client, "staffer", { before: (f) => keep(f, "Ada Ash", null).then(() => undefined) });
+    await s.post(`${s.runPath}/addresses.csv`);
+    expect(fetchRegistrants).toHaveBeenCalledTimes(1);
+  });
+
+  it("puts a collector back among the addresses once they are mailed again", async () => {
+    const { client } = fakeClient();
+    const s = await setup(client, "staffer", {
+      before: async (f) => {
+        await keep(f, "Cy Cedar", "course roster");
+        await f.conn.run(`INSERT INTO person_mailing_event (person_id, instruction, decided_by) VALUES (${f.ids["Cy Cedar"]}, 'mail', 'test')`);
+      },
+    });
+    const out = lines(await (await s.post(`${s.runPath}/addresses.csv`)).text());
+    expect(out[2]).toMatch(/^Cy Cedar,3 Elm Road,/);
+    expect(out.join("\n")).not.toContain(notes.keepInLab(null));
+  });
+
+  describe("in the rows", () => {
+    const collector = (id: number, name: string, ideal: string | null, keptInLab: RunCollector["keptInLab"]): RunCollector => ({
+      personId: id,
+      displayName: name,
+      familyName: name.split(" ")[1]!,
+      givenName: name.split(" ")[0]!,
+      labels: 2,
+      printedAs: [`${name[0]}.${name.split(" ")[1]}`],
+      idealLogicId: ideal,
+      collectorLineDiffers: false,
+      keptInLab,
+    });
+
+    it("never puts two people kept in the lab in one row, even on one registration", () => {
+      const got = addressRows(
+        {
+          collectors: [collector(1, "Ann Ames", "A", { note: null }), collector(2, "Ben Bell", "A", { note: "course roster" })],
+          totalLabels: 4,
+        },
+        [registrant("A", { street: "5 Pine Street", city: "Bend", stateProvince: "OR", postalCode: "97701", country: "USA" })],
+      );
+      expect(got.map((r) => [r.names, r.labels, r.hasAddress, r.line1])).toEqual([
+        [["Ann Ames"], 2, false, ""],
+        [["Ben Bell"], 2, false, ""],
+      ]);
+      expect(got[1]!.notes).toEqual([{ code: "keepInLab", note: "course roster" }]);
+    });
+
+    it("does not read a registration for them, so one that Ideal Logic did not return is no fault", () => {
+      const got = addressRows({ collectors: [collector(1, "Ann Ames", "MISSING", { note: null })], totalLabels: 2 }, []);
+      expect(got).toHaveLength(1);
+      expect(got[0]!.notes).toEqual([{ code: "keepInLab", note: null }]);
+    });
   });
 });

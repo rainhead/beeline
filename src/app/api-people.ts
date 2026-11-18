@@ -25,7 +25,24 @@ export type SetRegistrationResult =
   | { ok: false; refusal: "not_found" }
   | { ok: false; refusal: "invalid"; problem: string };
 
+export type SetMailingResult =
+  | { ok: true; outcome: "saved" | "unchanged"; person_id: number; was: "mail" | "keep_in_lab"; instruction: "mail" | "keep_in_lab" }
+  | { ok: false; refusal: "not_found" }
+  | { ok: false; refusal: "invalid"; problem: string };
+
 export interface PeopleDeps {
+  /**
+   * Record whether the person's printed labels are mailed or kept in the lab
+   * (src/mailing-instructions.ts). The note is free text: it is refused if it
+   * could hold an address, and never repeated back.
+   */
+  setMailing(input: {
+    handle: string;
+    instruction: string;
+    note: string;
+    author: string;
+    reference: string | null;
+  }): Promise<SetMailingResult>;
   /**
    * Record which Ideal Logic registration is the person's, or with an empty
    * `idealLogicId` that none is (src/registrations.ts). `evidence` is one of
@@ -96,6 +113,51 @@ export function registerPeopleRoutes(api: Hono<ApiEnv>, people: PeopleDeps | und
     }
     c.set("outcome", result.outcome);
     return c.json({ person_id: result.person_id, outcome: result.outcome, was: result.was, belongs_to: result.belongs_to });
+  });
+
+  // Whether a person's labels are mailed or kept in the lab (beeline-w8ab.4).
+  // An instruction and a note; never an address or an email address.
+  api.post("/people/:id/mailing", smallBody, async (c) => {
+    if (!c.get("staff")) {
+      c.set("outcome", "forbidden");
+      return apiError(c, 403, "forbidden", "This needs a staff key held by someone who is staff.");
+    }
+    if (people === undefined) {
+      c.set("outcome", "unavailable");
+      return apiError(c, 503, "unavailable", "This Beeline cannot record decisions about people.");
+    }
+    let instruction: string;
+    let note: string;
+    let reference: string | undefined;
+    try {
+      const body = check(parseObject(await c.req.text()), { instruction: "string", note: "string", reference: "string" }, ["instruction"]);
+      instruction = (body.instruction as string).trim();
+      note = typeof body.note === "string" ? body.note.trim() : "";
+      reference = referenceOf(body);
+      c.set("reference", reference);
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err;
+      c.set("outcome", "invalid_request");
+      return apiError(c, 400, "invalid_request", err.message);
+    }
+    let result: SetMailingResult;
+    try {
+      result = await people.setMailing({ handle: c.req.param("id"), instruction, note, author: c.get("key").login, reference: reference ?? null });
+    } catch (err) {
+      if (isWriteConflict(err)) {
+        c.set("outcome", "busy");
+        return apiError(c, 409, "busy", "Another write to the store got there first, and nothing was recorded. Send the same request again.");
+      }
+      throw err;
+    }
+    if (!result.ok) {
+      c.set("outcome", result.refusal);
+      return result.refusal === "not_found"
+        ? apiError(c, 404, "not found", "No such person.")
+        : apiError(c, 422, "invalid", result.problem);
+    }
+    c.set("outcome", result.outcome);
+    return c.json({ person_id: result.person_id, outcome: result.outcome, was: result.was, instruction: result.instruction });
   });
 
   // Which Ideal Logic registration is a person's (beeline-w8ab.1). The body

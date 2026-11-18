@@ -32,6 +32,8 @@ export interface RunCollector {
   idealLogicId: string | null;
   /** True where a label of theirs was printed with a collector line that is not what their sample would print today. */
   collectorLineDiffers: boolean;
+  /** Set where this person's labels are kept in the lab and not mailed (person_mailing_instruction), with the staff note, if any. */
+  keptInLab: { note: string | null } | null;
 }
 
 /** The collectors of a run, and how many labels the run holds in all. */
@@ -48,7 +50,8 @@ export type MissingPart = "city" | "postalCode" | "stateProvince" | "country";
 export type AddressNote =
   | { code: "noRegistration" | "noAddress" | "notInAnswer" | "collectorLineDiffers" }
   | { code: "incompleteAddress"; missing: MissingPart[] }
-  | { code: "unaccountedLabels"; labels: number };
+  | { code: "unaccountedLabels"; labels: number }
+  | { code: "keepInLab"; note: string | null };
 
 export interface AddressRow {
   names: string[];
@@ -65,7 +68,11 @@ export interface AddressRow {
   hasAddress: boolean;
 }
 
-/** Whether any primary collector of the run's labels is linked to a registration: a cheap check, made before Ideal Logic is asked. */
+/**
+ * Whether any primary collector of the run's labels is linked to a registration
+ * and is not kept in the lab: a cheap check, made before Ideal Logic is asked.
+ * A collector kept in the lab is given no address, so is not looked up.
+ */
 export async function runHasRegistration(db: Kysely<Database>, printRunId: number): Promise<boolean> {
   const found = await sql<{ one: number }>`
     SELECT 1 AS one
@@ -73,7 +80,8 @@ export async function runHasRegistration(db: Kysely<Database>, printRunId: numbe
     JOIN specimen sp ON sp.entity_id = pl.specimen_id
     JOIN sample_primary_collector pc ON pc.sample_id = sp.sample_id
     JOIN person_registration reg ON reg.person_id = pc.person_id
-    WHERE pl.print_run_id = ${printRunId}
+    LEFT JOIN person_mailing_instruction mi ON mi.person_id = pc.person_id
+    WHERE pl.print_run_id = ${printRunId} AND mi.person_id IS NULL
     LIMIT 1`.execute(db);
   return found.rows.length > 0;
 }
@@ -99,16 +107,19 @@ export async function runCollectors(db: Kysely<Database>, printRunId: number): P
       given_name: string | null;
       collector_text: string;
       ideal_logic_id: string | null;
+      kept_in_lab: boolean;
+      kept_note: string | null;
       primaries: number | bigint;
     }>`
       SELECT sp.sample_id, pc.person_id, p.display_name, p.family_name, p.given_name, pl.collector_text,
-             reg.ideal_logic_id,
+             reg.ideal_logic_id, mi.person_id IS NOT NULL AS kept_in_lab, mi.note AS kept_note,
              (SELECT count(*) FROM sample_primary_collector q WHERE q.sample_id = sp.sample_id) AS primaries
       FROM printed_label pl
       JOIN specimen sp ON sp.entity_id = pl.specimen_id
       JOIN sample_primary_collector pc ON pc.sample_id = sp.sample_id
       JOIN person p ON p.entity_id = pc.person_id
       LEFT JOIN person_registration reg ON reg.person_id = pc.person_id
+      LEFT JOIN person_mailing_instruction mi ON mi.person_id = pc.person_id
       WHERE pl.print_run_id = ${printRunId}
       ORDER BY pc.person_id, pl.collector_text`.execute(trx);
     // Everyone who collects each of those samples now, to say what the labels
@@ -149,6 +160,7 @@ export async function runCollectors(db: Kysely<Database>, printRunId: number): P
           printedAs: [],
           idealLogicId: r.ideal_logic_id,
           collectorLineDiffers: false,
+          keptInLab: r.kept_in_lab ? { note: r.kept_note } : null,
         };
         byPerson.set(id, c);
       }
@@ -182,8 +194,8 @@ const countryName = (country: "USA" | "CAN" | null) => (country === "CAN" ? "CAN
 const NO_ADDRESS = { line1: "", line2: "", city: "", stateProvince: "", postalCode: "", country: "" };
 
 /**
- * One row per home, then the rows with an incomplete address, then those with
- * none, then, if any of the run's labels are not in the file, one row saying
+ * One row per home, then the rows with an incomplete address, then one row for
+ * each collector kept in the lab, then those with no address, then, if any of the run's labels are not in the file, one row saying
  * how many.
  *
  * Collectors linked to the same registration always share a row, with or without a street. Collectors
@@ -205,7 +217,24 @@ export function addressRows({ collectors, totalLabels }: RunCollectors, registra
     if (same === undefined) unaddressed.set(key, { people: [c], code });
     else same.people.push(c);
   };
+  // One row each, never merged: two people kept in the lab are two bundles of
+  // labels, whatever registration they are linked to. Their registration is
+  // not looked up.
+  const keptInLabRows: AddressRow[] = [];
   for (const c of [...collectors].sort(byName)) {
+    if (c.keptInLab !== null) {
+      keptInLabRows.push({
+        names: [c.displayName],
+        ...NO_ADDRESS,
+        labels: c.labels,
+        printedAs: [...c.printedAs],
+        notes: c.collectorLineDiffers
+          ? [{ code: "keepInLab", note: c.keptInLab.note }, { code: "collectorLineDiffers" }]
+          : [{ code: "keepInLab", note: c.keptInLab.note }],
+        hasAddress: false,
+      });
+      continue;
+    }
     if (c.idealLogicId === null) {
       noted(c, "noRegistration");
       continue;
@@ -280,7 +309,7 @@ export function addressRows({ collectors, totalLabels }: RunCollectors, registra
     });
   }
 
-  const rows = [...complete, ...incomplete, ...noAddressRows];
+  const rows = [...complete, ...incomplete, ...keptInLabRows, ...noAddressRows];
   // Labels follow today's primary collector, so a sample that has none now, or
   // more than one, leaves a stack of labels out of this file.
   const inFile = collectors.reduce((n, c) => n + c.labels, 0);

@@ -89,6 +89,14 @@ type Judged = {
   top_holder: string | null;
 };
 
+/** What person_mailing_instruction says of a person whose labels are not mailed. */
+export interface MailingNow {
+  instruction: "mail" | "keep_in_lab";
+  note: string | null;
+  decided_by: string;
+  decided_at: Date;
+}
+
 /** A date, or the dash that means it never happened. */
 const when = (m: Messages, d: Date | string | null) =>
   d === null ? <Absent label={m.people.never} /> : <>{m.format.date(d)}</>;
@@ -570,6 +578,62 @@ function OrcidCard({ m, person, action }: { m: Messages; person: PersonDetail; a
   );
 }
 
+/**
+ * Whether the person's labels are mailed or kept in the lab (beeline-w8ab.4),
+ * who decided and when. The note is free text and the hint says never to put
+ * an address in it; the server refuses one that looks like it.
+ */
+function LabelsCard({
+  m,
+  person,
+  mailing,
+  action,
+}: {
+  m: Messages;
+  person: PersonDetail;
+  mailing: MailingNow | null;
+  action: string;
+}) {
+  const p = m.people;
+  return (
+    <Card>
+      <h2>{p.labelsHeading}</h2>
+      <Meta block>{p.labelsHint}</Meta>
+      <p id="labels-now">
+        {mailing === null ? (
+          p.labelsNowMail
+        ) : (
+          <>
+            {p.labelsNowKeep(mailing.decided_by, m.format.date(mailing.decided_at))}
+            {mailing.note !== null && (
+              <>
+                {" "}
+                {p.labelsNowKeepNote(mailing.note)}
+              </>
+            )}
+          </>
+        )}
+      </p>
+      <form method="post" action={`${action}/mailing`} class="form-column">
+        <SelectField
+          id="instruction"
+          name="instruction"
+          label={p.labelsChoice}
+          value={mailing === null ? "mail" : mailing.instruction}
+          options={[
+            ["mail", p.labelsMail] as const,
+            ["keep_in_lab", p.labelsKeep] as const,
+          ]}
+        />
+        <TextField id="mailing_note" name="note" label={p.labelsNote} value={mailing?.note ?? ""} hint={p.labelsNoteHint} />
+        <p class="row">
+          <Button>{p.saveLabels}</Button>
+        </p>
+      </form>
+    </Card>
+  );
+}
+
 function Reason({ m, id }: { m: Messages; id: string }) {
   return <TextField id={id} name="reason" label={m.people.reason} hint={m.people.reasonHint} />;
 }
@@ -581,6 +645,7 @@ export function PersonPage({
   programs,
   history,
   keys,
+  mailing = null,
   now,
   notice,
   problem,
@@ -593,6 +658,8 @@ export function PersonPage({
   history: readonly PersonChange[];
   /** The person's API keys, newest first, including the ones that no longer work. */
   keys: KeyListing[];
+  /** Set where the person's labels are kept in the lab; null where they are mailed. */
+  mailing?: MailingNow | null;
   now: Date;
   notice?: string;
   problem?: string;
@@ -732,6 +799,8 @@ export function PersonPage({
           </p>
         </form>
       </Card>
+
+      <LabelsCard m={m} person={person} mailing={mailing} action={action} />
 
       {/* Beside membership, which it is easily mistaken for and is not:
           where somebody belongs, against whose work they take up

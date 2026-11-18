@@ -131,6 +131,7 @@ import {
   recentChanges,
 } from "../person-change.js";
 import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
+import { decideRegistration } from "../registrations.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
@@ -564,7 +565,7 @@ export function createApp({
       corrections: { deps: corrective, messages: messagesFor(null) },
       // Called through, since the function is defined further down with the
       // rest of the decisions about people.
-      people: { setMembership: (input) => setMembership(input) },
+      people: { setMembership: (input) => setMembership(input), setRegistration: (input) => setRegistration(input) },
       read: { changesPath: samplePaths.log, origin: config.origin },
     });
   // The description answers at /api/v1/ too, which the router takes for another
@@ -2958,6 +2959,61 @@ export function createApp({
    * the page's menu offers; and a value the person already has is answered
    * `unchanged` and writes nothing.
    */
+  /**
+   * Which Ideal Logic registration is a person's (beeline-w8ab.1), for the
+   * API. It takes its turn with every other decision about a person, and is
+   * written to its own table and not to the overlay (schema/014 says why).
+   * Only the two kinds of evidence a person can give are accepted: the
+   * nightly job's `handle` and sign-in's `sign_in_email` are theirs to write.
+   */
+  const setRegistration: PeopleDeps["setRegistration"] = (input) =>
+    oneDecisionAtATime(async () => {
+      const handle = parsePersonHandle(input.handle);
+      const id = handle === null ? null : await resolvePersonHandle(db, handle);
+      if (id === null) return { ok: false, refusal: "not_found" };
+      if (input.evidence !== "staff" && input.evidence !== "register_email") {
+        return {
+          ok: false,
+          refusal: "invalid",
+          problem: `${JSON.stringify(input.evidence)} is not evidence a person can give. It is "staff" or "register_email".`,
+        };
+      }
+      const decided = await decideRegistration(db, {
+        personId: id,
+        idealLogicId: input.idealLogicId === "" ? null : input.idealLogicId,
+        evidence: input.evidence,
+        decidedBy: input.author,
+        reference: input.reference,
+      });
+      if (!decided.ok) {
+        if (decided.refusal === "unknown_person") return { ok: false, refusal: "not_found" };
+        if (decided.refusal === "name_differs") {
+          return {
+            ok: false,
+            refusal: "invalid",
+            problem:
+              "The name on that registration is not this person's name, so the link was not made. Whether it is the same person is for staff to decide.",
+          };
+        }
+        // The value is not repeated back: what was sent by mistake may be an
+        // address, and this text is the caller's to log.
+        return {
+          ok: false,
+          refusal: "invalid",
+          problem:
+            "That is not the id of a registration Beeline has seen. An id looks like QNN6-MX8 and is matched exactly; Beeline knows the registrations its nightly ideal-logic-registrants job kept. An empty string unlinks the person.",
+        };
+      }
+      return {
+        ok: true,
+        outcome: decided.outcome,
+        person_id: id,
+        was: decided.was ?? "",
+        ideal_logic_id: input.idealLogicId,
+        registrant: decided.registrant ?? "",
+      };
+    });
+
   const setMembership: PeopleDeps["setMembership"] = (input) =>
     oneDecisionAtATime(async () => {
       const handle = parsePersonHandle(input.handle);

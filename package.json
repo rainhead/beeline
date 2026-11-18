@@ -45,6 +45,7 @@
     "taxon:fetch-sheet": "tsx src/fetch-taxon-sheet.ts",
     "taxon:decide": "tsx src/taxon-decide.ts",
     "ecdysis:load": "tsx src/load-ecdysis.ts",
+    "ideal-logic:link-register": "tsx src/link-register-emails.ts",
     "fly:usage": "tsx src/fly-usage.ts",
     "worksheets:fetch": "tsx src/fetch-worksheets.ts",
     "worksheets:load": "tsx src/load-worksheets.ts",

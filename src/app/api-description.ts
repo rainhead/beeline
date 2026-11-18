@@ -276,6 +276,20 @@ const ENDPOINTS: Endpoint[] = [
     body: { belongs_to: "a program's code such as OBA, MM for Master Melittology itself with no atlas, or an empty string for nothing recorded", note: "string", reference: REFERENCE },
     answers: "{ person_id, outcome, was, belongs_to }",
   },
+  {
+    method: "POST",
+    route: "/people/:id/registration",
+    summary:
+      "Record which Ideal Logic registration is a person's, which is how Beeline finds where their labels are mailed. The id is the person's id or their iNaturalist login. Never send an address or an email address.",
+    needs: "staff key",
+    body: {
+      ideal_logic_id: "the registration's id in Ideal Logic, such as QNN6-MX8, or an empty string to unlink the person",
+      evidence: "staff (the default), or register_email where the old Beeline's register lists the registration's email address against this person's login",
+      reference:
+        "reference: an optional note of 1 to 500 characters pointing at the request behind the change, kept in the record of the key's use and on the decision itself. Never an address or a name",
+    },
+    answers: "{ person_id, outcome, was, ideal_logic_id, registrant } where registrant is the name on the registration, to check against the person",
+  },
 ];
 
 /** The routes the description lists, as the router names them: "GET /samples/:id". */

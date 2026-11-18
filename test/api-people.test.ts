@@ -58,6 +58,12 @@ async function world() {
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+  const sendRegistration = (key: string, handle: string | number, body: unknown) =>
+    app.request(`/api/v1/people/${handle}/registration`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
   const belongsTo = async (personId: number) =>
     (
       await rows(
@@ -69,6 +75,7 @@ async function world() {
     conn,
     paths,
     send,
+    sendRegistration,
     belongsTo,
     people: { sam, vol, ada },
     keys: { staff: await keyFor(3, "staff"), samEdit: await keyFor(3, "edit"), vol: await keyFor(4, "edit") },
@@ -157,5 +164,87 @@ describe("POST /api/v1/people/:id/membership", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("unresolved");
     expect(await w.belongsTo(w.people.ada)).toEqual([]);
+  });
+});
+
+/**
+ * Which Ideal Logic registration is a person's, set through the API
+ * (beeline-w8ab.1). Unlike membership it is written to its own table and not
+ * to the overlay, and it works for a person who shares a name and has no
+ * account, whom the overlay cannot name.
+ */
+describe("POST /api/v1/people/:id/registration", () => {
+  const linked = (w: Awaited<ReturnType<typeof world>>) =>
+    rows(w.conn, `SELECT person_id, ideal_logic_id, evidence, decided_by FROM person_registration ORDER BY person_id`);
+
+  /** Registrations the nightly job has seen; the API links only to one of these. */
+  const seen = (w: Awaited<ReturnType<typeof world>>) =>
+    w.conn.run(
+      `INSERT INTO ideal_logic_registrant (ideal_logic_id, given_name, family_name) VALUES ('QNN6-MX8', 'Ada', 'Bramble'), ('AB12-CDE3', 'Vi', 'Sedge'), ('AC00-XYZ1', 'Ada', 'Collector')`,
+    );
+
+  it("links a person to a registration, credited to the key's person, with the reference kept", async () => {
+    const w = await world();
+    await seen(w);
+    const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: "AC00-XYZ1", evidence: "register_email", reference: "issue 2" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ person_id: w.people.ada, outcome: "saved", was: "", ideal_logic_id: "AC00-XYZ1", registrant: "Ada Collector" });
+    expect(await linked(w)).toEqual([[w.people.ada, "AC00-XYZ1", "register_email", "samstaff"]]);
+    expect(await rows(w.conn, `SELECT reference FROM person_registration_event`)).toEqual([["issue 2"]]);
+    expect(await rows(w.conn, `SELECT route, subject, outcome, reference, status FROM api_key_use`)).toEqual([
+      ["/api/v1/people/:id/registration", String(w.people.ada), "saved", "issue 2", 200],
+    ]);
+    // Nothing goes to the overlay: it is a file whose curated copy is public.
+    expect(await readOverlay(w.paths.personOverlayPath)).toEqual([]);
+  });
+
+  it("takes staff as the evidence when none is given, answers unchanged the second time, and unlinks on an empty id", async () => {
+    const w = await world();
+    await seen(w);
+    await w.sendRegistration(w.keys.staff, "vol", { ideal_logic_id: "AB12-CDE3" });
+    expect(await linked(w)).toEqual([[w.people.vol, "AB12-CDE3", "staff", "samstaff"]]);
+    const again = await w.sendRegistration(w.keys.staff, "vol", { ideal_logic_id: "AB12-CDE3" });
+    expect(await again.json()).toMatchObject({ outcome: "unchanged", was: "AB12-CDE3" });
+    const cleared = await w.sendRegistration(w.keys.staff, "vol", { ideal_logic_id: "" });
+    expect(await cleared.json()).toEqual({ person_id: w.people.vol, outcome: "saved", was: "AB12-CDE3", ideal_logic_id: "", registrant: "" });
+    expect(await linked(w)).toEqual([]);
+  });
+
+  it("refuses register_email evidence when the registration's name is not the person's, and repeats neither name", async () => {
+    const w = await world();
+    await seen(w);
+    const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: "AB12-CDE3", evidence: "register_email" });
+    expect(res.status).toBe(422);
+    const said = JSON.stringify(await res.json());
+    expect(said).toContain("not this person's name");
+    for (const piece of ["Vi", "Sedge", "AB12-CDE3"]) expect(said).not.toContain(piece);
+    expect(await linked(w)).toEqual([]);
+  });
+
+  it("links a person who shares a name and has no account", async () => {
+    const w = await world();
+    await seen(w);
+    await w.conn.run(`INSERT INTO person (display_name) VALUES ('Ada Collector')`);
+    const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: "QNN6-MX8" });
+    expect(res.status).toBe(200);
+    expect(await linked(w)).toEqual([[w.people.ada, "QNN6-MX8", "staff", "samstaff"]]);
+  });
+
+  it("refuses evidence only a job can give, something that is not an id, an unknown person, and a key that is not staff", async () => {
+    const w = await world();
+    for (const evidence of ["handle", "sign_in_email", "a hunch"]) {
+      const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: "QNN6-MX8", evidence });
+      expect(res.status).toBe(422);
+    }
+    // An address or an email address sent by mistake is refused, not stored.
+    for (const id of ["ada@example.org", "12 Clover Lane", "QNN6 MX8"]) {
+      const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: id });
+      expect(res.status).toBe(422);
+    }
+    expect((await w.sendRegistration(w.keys.staff, 999999, { ideal_logic_id: "QNN6-MX8" })).status).toBe(404);
+    expect((await w.sendRegistration(w.keys.staff, w.people.ada, {})).status).toBe(400);
+    expect((await w.sendRegistration(w.keys.samEdit, w.people.ada, { ideal_logic_id: "QNN6-MX8" })).status).toBe(403);
+    expect((await w.sendRegistration(w.keys.vol, w.people.ada, { ideal_logic_id: "QNN6-MX8" })).status).toBe(403);
+    expect(await linked(w)).toEqual([]);
   });
 });

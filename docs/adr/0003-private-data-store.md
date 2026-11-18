@@ -42,6 +42,13 @@ arrived** (beeline-1kb.6). When they do, how to protect them is a new
 decision, made then from what they are and who reads them — not an
 assumption that this store's answer still holds.
 
+**That decision was made on 2026-11-18, and it is not to hold them** (Peter;
+epic beeline-w8ab). Ideal Logic, where people register, holds the addresses,
+and Beeline fetches the ones a print run needs at the moment staff download
+them, writing none to disk. What Beeline keeps is the link from a person to
+their registration
+([Registrations, from Ideal Logic](../architecture/ideal-logic.md)).
+
 ## What is actually in here (2026-08-28)
 
 The first of the three motivating data classes is gone. Beeline stored every

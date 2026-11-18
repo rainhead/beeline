@@ -76,6 +76,41 @@ export interface PersonAdminTable {
   granted_by: string | null;
 }
 
+/** schema/014: a registration in Ideal Logic as the nightly job last saw it. No email address, no home address: those are never stored. */
+export interface IdealLogicRegistrantTable {
+  ideal_logic_id: string;
+  given_name: string;
+  family_name: string;
+  /** Program codes joined with semicolons, or null where the registrant named none. */
+  atlases: string | null;
+  inat_handle: string | null;
+  first_seen_at: Generated<Date>;
+  last_seen_at: Generated<Date>;
+}
+
+export type RegistrationEvidence = "register_email" | "handle" | "sign_in_email" | "staff";
+
+/** schema/014: a decision about which registration is a person's; the latest per person is the answer. */
+export interface PersonRegistrationEventTable {
+  entity_id: Generated<number>;
+  person_id: number;
+  /** Null unlinks the person. */
+  ideal_logic_id: string | null;
+  evidence: RegistrationEvidence;
+  decided_by: string;
+  decided_at: Generated<Date>;
+  reference: string | null;
+}
+
+/** schema/104: the registration each person is linked to now. */
+export interface PersonRegistrationView {
+  person_id: number;
+  ideal_logic_id: string;
+  evidence: RegistrationEvidence;
+  decided_by: string;
+  decided_at: Date;
+}
+
 export interface PersonDelegateTable {
   person_id: number;
   acts_for_id: number;
@@ -1823,6 +1858,9 @@ export interface Database {
   person_membership: PersonMembershipTable;
   person_admin: PersonAdminTable;
   person_delegate: PersonDelegateTable;
+  ideal_logic_registrant: IdealLogicRegistrantTable;
+  person_registration_event: PersonRegistrationEventTable;
+  person_registration: PersonRegistrationView;
   program: ProgramTable;
   program_abbreviation: ProgramAbbreviationTable;
   program_lead: ProgramLeadTable;

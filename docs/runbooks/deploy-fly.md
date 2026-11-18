@@ -147,6 +147,12 @@ unset, it reports nothing and behaves exactly the same.
 `ecdysis-fetch` job signs in with ([Ecdysis](#ecdysis)); set both or neither,
 since half a login stops the app at boot.
 
+`IDEAL_LOGIC_KEY` is the key Ideal Logic issued for its registrations API,
+which the `ideal-logic-registrants` job reads each night
+([Registrations, from Ideal Logic](../architecture/ideal-logic.md)). Unset,
+the job fetches nothing and says so. The API allows 100 requests a day, so
+do not test the key in a loop.
+
 `BEELINE_DRIVE_KEY` is the service account's JSON key, whole, that the
 `store-backup` job writes with ([Backups](#backups)); `BEELINE_BACKUP_FOLDER`,
 in `fly.production.toml`, is the folder. Set both or neither, as with Ecdysis.

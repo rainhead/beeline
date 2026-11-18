@@ -20,7 +20,25 @@ export type SetMembershipResult =
   | { ok: false; refusal: "not_found" }
   | { ok: false; refusal: "invalid" | "unresolved"; problem: string };
 
+export type SetRegistrationResult =
+  | { ok: true; outcome: "saved" | "unchanged"; person_id: number; was: string; ideal_logic_id: string; registrant: string }
+  | { ok: false; refusal: "not_found" }
+  | { ok: false; refusal: "invalid"; problem: string };
+
 export interface PeopleDeps {
+  /**
+   * Record which Ideal Logic registration is the person's, or with an empty
+   * `idealLogicId` that none is (src/registrations.ts). `evidence` is one of
+   * the kinds `person_registration_event.evidence` allows a person to give:
+   * `staff` or `register_email`.
+   */
+  setRegistration(input: {
+    handle: string;
+    idealLogicId: string;
+    evidence: string;
+    author: string;
+    reference: string | null;
+  }): Promise<SetRegistrationResult>;
   /**
    * Set where the person a handle names belongs. The handle is the one the
    * person's page is at: an iNaturalist login or the person's id.
@@ -78,5 +96,70 @@ export function registerPeopleRoutes(api: Hono<ApiEnv>, people: PeopleDeps | und
     }
     c.set("outcome", result.outcome);
     return c.json({ person_id: result.person_id, outcome: result.outcome, was: result.was, belongs_to: result.belongs_to });
+  });
+
+  // Which Ideal Logic registration is a person's (beeline-w8ab.1). The body
+  // names the registration by Ideal Logic's id and says on what evidence;
+  // an empty id unlinks the person. No address and no email address is ever
+  // sent here: the evidence is its kind, never the value.
+  api.post("/people/:id/registration", smallBody, async (c) => {
+    if (!c.get("staff")) {
+      c.set("outcome", "forbidden");
+      return apiError(c, 403, "forbidden", "This needs a staff key held by someone who is staff.");
+    }
+    if (people === undefined) {
+      c.set("outcome", "unavailable");
+      return apiError(c, 503, "unavailable", "This Beeline cannot record decisions about people.");
+    }
+    let idealLogicId: string;
+    let evidence: string;
+    let reference: string | undefined;
+    try {
+      const body = check(
+        parseObject(await c.req.text()),
+        { ideal_logic_id: "string", evidence: "string", reference: "string" },
+        ["ideal_logic_id"],
+      );
+      idealLogicId = (body.ideal_logic_id as string).trim();
+      evidence = typeof body.evidence === "string" ? body.evidence.trim() : "staff";
+      reference = referenceOf(body);
+      c.set("reference", reference);
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err;
+      c.set("outcome", "invalid_request");
+      return apiError(c, 400, "invalid_request", err.message);
+    }
+    let result: SetRegistrationResult;
+    try {
+      result = await people.setRegistration({
+        handle: c.req.param("id"),
+        idealLogicId,
+        evidence,
+        author: c.get("key").login,
+        reference: reference ?? null,
+      });
+    } catch (err) {
+      // DuckDB has no row locks: a write that meets another fails. Nothing
+      // was recorded, since the decision is one transaction.
+      if (isWriteConflict(err)) {
+        c.set("outcome", "busy");
+        return apiError(c, 409, "busy", "Another write to the store got there first, and nothing was recorded. Send the same request again.");
+      }
+      throw err;
+    }
+    if (!result.ok) {
+      c.set("outcome", result.refusal);
+      return result.refusal === "not_found"
+        ? apiError(c, 404, "not found", "No such person.")
+        : apiError(c, 422, "invalid", result.problem);
+    }
+    c.set("outcome", result.outcome);
+    return c.json({
+      person_id: result.person_id,
+      outcome: result.outcome,
+      was: result.was,
+      ideal_logic_id: result.ideal_logic_id,
+      registrant: result.registrant,
+    });
   });
 }

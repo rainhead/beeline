@@ -912,7 +912,7 @@ export const en = {
       download: "Download as CSV",
       edit: "Download the Excel file for editing specimens",
       editNote:
-        "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. Every cell is kept as text, so Excel leaves it as it is. Staff can upload it back after you edit it.",
+        "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. The file holds what these filters select, so filter first, for example to one collection year. Every cell is kept as text, so Excel leaves it as it is. Only program staff can upload the file after you edit it. To name your bees yourself today, use Identify specimens.",
 
       note:
         "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +
@@ -2177,7 +2177,7 @@ export const en = {
       headingText: "What to know",
       purposeTopic: "What this file is for",
       purpose:
-        "This file is for editing specimens: giving them their names, and recording what became of them. Fill in the white columns, then upload it on the Edited downloads page. Beeline compares what you upload with what it says now and lists every difference. It does not change any record from a file yet. The grey columns are there to help you recognise each bee.",
+        "This file is for editing specimens: giving them their names, and recording what became of them. Fill in the white columns. Only program staff can upload the file today, on the Edited downloads page, so if you are not staff, name your bees on the Identify specimens page instead. When staff upload it, Beeline compares the file with what it says now and lists every difference. It does not change any record from a file yet. The grey columns are there to help you recognise each bee.",
       columnsTopic: "White and grey columns",
       columns:
         "Beeline reads the white columns when you upload the file, and their headings are in bold. The grey columns are for reference: Beeline ignores what is in them, and tells you if you changed one, apart from fieldNumber and the two named below. Leave fieldNumber as it is: Beeline checks it against the specimen the row is for, and sets the whole row aside if the two disagree. Nothing is locked, so you can still sort and filter on any column.",

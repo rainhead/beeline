@@ -304,6 +304,13 @@ describe("sheets beside the main one, warnings, suggestions and shading (beeline
     );
   });
 
+  it("writes each column's width: 16 unless the caller names one, and refuses a width for a column it does not have (beeline-kgyd.11)", () => {
+    const sheet = decode(writeXlsx({ sheetName: "s", header: ["a", "b"], widths: { b: 56 } }, [["1", "2"]]), "xl/worksheets/sheet1.xml");
+    expect(sheet).toMatch(/<col min="1" max="1" width="16"/);
+    expect(sheet).toMatch(/<col min="2" max="2" width="56"/);
+    expect(() => writeXlsx({ sheetName: "s", header: ["a"], widths: { z: 9 } }, [])).toThrow(/does not have: z/);
+  });
+
   it("shades the columns it is told to, bolds headings, and keeps the Text format on every cell", () => {
     const bytes = writeXlsx({ sheetName: "s", header: ["a", "b", "c"], shadedColumns: ["b"], boldHeadings: ["a"], sheets: [names] }, [["1", "2", null]]);
     const styles = decode(bytes, "xl/styles.xml");

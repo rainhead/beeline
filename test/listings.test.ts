@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { readXlsxHere as readXlsx } from "../src/app/xlsx-reader.js";
-import { MAX_SHEET_ROWS, columnIndex, columnName } from "../src/app/xlsx.js";
+import { MAX_SHEET_ROWS, columnIndex, columnName, writeXlsx } from "../src/app/xlsx.js";
 import * as XLSX from "xlsx";
 import { specimenWorkbook } from "../src/app/specimen-workbook.js";
 import { SPECIMEN_CHOICES, SPECIMENS_LAYOUT, columnRule } from "../src/app/upload-plan.js";
@@ -2020,6 +2020,9 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     expect(specimens).toMatch(/href="\/specimens\.xlsx\?[^"]*q=barnes/);
     expect(specimens).toContain(en.listings.csv.edit);
     expect(specimens).toContain(en.listings.csv.editNote);
+    // The note says the file follows the filters, and who can upload it (beeline-kgyd.9, .7).
+    expect(en.listings.csv.editNote).toContain("filter first");
+    expect(en.listings.csv.editNote).toContain("Only program staff can upload");
     const samples = await get(app, "/samples?scope=all");
     expect(samples).not.toContain(".xlsx");
     // The samples listing still offers its CSV.
@@ -2101,6 +2104,21 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       ["Bombus vosnesenskii", "species", "Apidae"],
       ["Hymenoptera", "order", null],
     ]);
+  });
+
+  it("draws associatedTaxa wide enough that its text does not run over the empty scientificName beside it (beeline-kgyd.11)", async () => {
+    const { db } = await tabsFixture();
+    const { options, header } = await specimenWorkbook(db, en, TODAY);
+    const width = (h: string) => options.widths?.[h] ?? 16;
+    // A typical host: the quoted relationship and a long binomial.
+    const typical = `"visits flowers of":"Eschscholzia californica"`;
+    expect(width("associatedTaxa")).toBeGreaterThanOrEqual(typical.length);
+    expect(width("associatedTaxa")).toBeGreaterThan(`"visits flowers of":"Astereae"`.length);
+    for (const h of Object.keys(options.widths ?? {})) expect(header).toContain(h);
+    const bytes = writeXlsx({ sheetName: "specimens", header, ...options }, []);
+    const sheet = strFromU8(unzipSync(bytes)["xl/worksheets/sheet1.xml"]!);
+    const at = header.indexOf("associatedTaxa") + 1;
+    expect(sheet).toContain(`<col min="${at}" max="${at}" width="${width("associatedTaxa")}"`);
   });
 
   it("lists people who identified a specimen in the last five years, as identifiedBy writes them, once each and sorted", async () => {
@@ -2230,6 +2248,9 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       expect(first).not.toContain("recordedBy");
       const text = (topic: string) => about.find((r) => r[0] === topic)![1]!;
       expect(text(en.workbook.about.purposeTopic)).toBe(en.workbook.about.purpose);
+      // Volunteers cannot upload yet, so the file says so (beeline-kgyd.7).
+      expect(en.workbook.about.purpose).toContain("Only program staff can upload");
+      expect(en.workbook.about.purpose).toContain("Identify specimens");
       expect(text(en.workbook.about.leaveTopic)).toBe(en.workbook.about.leave);
       for (const key of ["specimenId", "specimenVersion"]) expect(en.workbook.about.leaveTopic).toContain(key);
       // A name that is not on the identifiers tab is not a fault.

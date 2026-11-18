@@ -141,6 +141,14 @@ export interface XlsxWriterOptions {
   shadedColumns?: readonly string[];
   /** Headings to write in bold. */
   boldHeadings?: readonly string[];
+  /**
+   * Width, in characters, of a column by its heading; a column not named is
+   * 16 wide. A spreadsheet draws a text cell's overflow across the empty cell
+   * beside it, so a column too narrow for its text makes the text look like
+   * the next column's content (beeline-kgyd.11). The rows are streamed, so
+   * the writer cannot measure them: the caller says what fits.
+   */
+  widths?: Readonly<Record<string, number>>;
 }
 
 /** The most characters a list of choices may come to, commas included: the limit of a list written into the sheet itself. */
@@ -234,6 +242,7 @@ export function xlsxWriter(opts: XlsxWriterOptions): XlsxWriter {
   if (header.length === 0 || header.length > MAX_COLUMNS) throw new Error(`a sheet needs between 1 and ${MAX_COLUMNS} columns`);
   const shaded = new Set(opts.shadedColumns ?? []);
   const bold = new Set(opts.boldHeadings ?? []);
+  for (const heading of Object.keys(opts.widths ?? {})) if (!header.includes(heading)) throw new Error(`a width for a column the sheet does not have: ${heading}`);
   for (const heading of [...shaded, ...bold]) if (!header.includes(heading)) throw new Error(`styling for a column the sheet does not have: ${heading}`);
   // The style of each column's cells and of its heading.
   const bodyStyles = header.map((h) => (shaded.has(h) ? STYLE_GREY : STYLE_TEXT));
@@ -340,7 +349,7 @@ export function xlsxWriter(opts: XlsxWriterOptions): XlsxWriter {
         encoder.encode(
           `${XML_HEAD}<worksheet xmlns="${NS_MAIN}">` +
             `<cols>${header
-              .map((_, at) => `<col min="${at + 1}" max="${at + 1}" width="16" style="${bodyStyles[at]}" customWidth="1"/>`)
+              .map((_, at) => `<col min="${at + 1}" max="${at + 1}" width="${opts.widths?.[header[at]!] ?? 16}" style="${bodyStyles[at]}" customWidth="1"/>`)
               .join("")}</cols>` +
             `<sheetData>${row(header, headStyles)}`,
         ),

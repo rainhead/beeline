@@ -8,6 +8,7 @@ import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
 import {
   adoptSuggestedLocality,
+  mayHoldStaffPoint,
   setStaffCoordinates,
   setStaffLocality,
   standingLocalityAuthor,
@@ -567,13 +568,16 @@ export type StaffCoordinatesCorrectionResult =
     }
   | Common
   | StaffOnly
-  | Refused<"no_observation" | "busy">
+  | Refused<"no_observation" | "busy" | "in_print_run">
   | Invalid
   | Unresolved;
 
 /**
- * Staff put the true point in where the observation yields none, or take it
- * away (beeline-942). Staff only, refused while impersonating, and refused
+ * Staff put the true point in, or take it away (beeline-942): where the
+ * observation yields none or the wrong one, or on a sample with no
+ * observation, one built from old records or entered in Beeline
+ * (beeline-kgyd.4.2). Refused for a sample that is none of these, which has
+ * nothing to keep a point against. Staff only, refused while impersonating, and refused
  * while the nightly or the weekly sweep runs, since the job's own area step
  * may already have passed and the county and state would then wait a day
  * with nothing on the page saying so.
@@ -589,16 +593,19 @@ export function setCoordinates(
     if (!actor.staff) return refused("not_admin");
     const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
     if (sample === null) return refused("not_found");
-    if (sample.inat_observation_id === null) return refused("no_observation");
+    if (!(await mayHoldStaffPoint(deps, { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality }))) {
+      return refused("no_observation");
+    }
     if (deps.syncJobRunning()) return refused("busy");
     return { ready: sample };
   };
   return correct(sampleId, input, gates, async (sample, form): Promise<StaffCoordinatesCorrectionResult> => {
     const result = await setStaffCoordinates(
-      { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
+      { db: deps.db, conn: deps.conn, printWriter: deps.printWriter, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
       { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
       { ...form, author: actor.login },
     );
+    if (result.outcome === "in_print_run") return refused("in_print_run");
     const bad = overlayRefusal(result);
     if (bad !== null) return bad;
     let settled = true;
@@ -694,7 +701,7 @@ export type TakeObservationLocationCorrectionResult =
   | { ok: true; outcome: Outcome; settled: boolean }
   | Common
   | StaffOnly
-  | Refused<"unavailable" | "busy" | "not_moved">
+  | Refused<"unavailable" | "busy" | "not_moved" | "in_print_run">
   | Invalid
   | Unresolved;
 
@@ -725,10 +732,11 @@ export function takeLocation(
     const note = form.note.trim();
     const reason = note === "" ? form.defaultReason : note;
     const result = await takeObservationLocation(
-      { db: deps.db, conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
+      { db: deps.db, conn, printWriter: deps.printWriter, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
       { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
       { reason, author: actor.login },
     );
+    if (result.outcome === "in_print_run") return refused("in_print_run");
     const bad = overlayRefusal(result);
     if (bad !== null) return bad;
     if (result.outcome === "unchanged") return refused("not_moved");

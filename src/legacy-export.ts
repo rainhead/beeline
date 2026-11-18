@@ -230,6 +230,7 @@ disagreeing AS (
   const rowJoins = rowSource
     ? `LEFT JOIN disagreeing dg ON dg.sample_id = sp.sample_id
   LEFT JOIN sample_locality_override slo ON slo.sample_id = sp.sample_id
+  LEFT JOIN sample_location_override slc ON slc.sample_id = sp.sample_id
   LEFT JOIN (SELECT _id, ${[...ROW_FIELDS, ...END_FIELDS].map((f) => `CAST("${f}" AS VARCHAR) AS "${f}"`).join(", ")}
              FROM ${rowSource}) lr ON lr._id = lo._id`
     : "";
@@ -319,9 +320,11 @@ rows AS (
     ${t(ownRow("end_date", "endDayofYear", "CASE WHEN s.date_end > s.date_start THEN CAST(dayofyear(s.date_end) AS VARCHAR) END"))} AS "endDayofYear",
     -- The legacy file's country is the short name its places file gives a
     -- country — USA, but CA and NZ — where Beeline keeps ISO alpha-3 codes.
-    ${t(ownRow('"country"', "country", "CASE s.country WHEN 'CAN' THEN 'CA' WHEN 'NZL' THEN 'NZ' WHEN 'MEX' THEN 'MX' ELSE s.country END"))} AS "country",
-    ${t(ownRow('"stateProvince"', "stateProvince", "s.state_province"))} AS "stateProvince",
-    ${t(ownRow('"county"', "county", "s.county"))} AS "county",
+    -- Where staff set the sample's point, its country, state and county went
+    -- with it (src/derive-area.ts): the sample's, whatever each row said.
+    ${t(ownRow('"country" AND slc.sample_id IS NULL', "country", "CASE s.country WHEN 'CAN' THEN 'CA' WHEN 'NZL' THEN 'NZ' WHEN 'MEX' THEN 'MX' ELSE s.country END"))} AS "country",
+    ${t(ownRow('"stateProvince" AND slc.sample_id IS NULL', "stateProvince", "s.state_province"))} AS "stateProvince",
+    ${t(ownRow('"county" AND slc.sample_id IS NULL', "county", "s.county"))} AS "county",
     -- A locality staff set on the sample is the sample's, whatever its rows said.
     ${t(ownRow('"locality" AND slo.sample_id IS NULL', "locality", "s.locality"))} AS "locality",
     ${t(ofRowPoint("verbatimElevation", "loc.elevation_m", "loc.elevation_latitude", "loc.elevation_longitude"))} AS "verbatimElevation",

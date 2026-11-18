@@ -70,6 +70,45 @@ export async function resolveObservationSample(
   };
 }
 
+/** Whether this store holds the old Beeline's records at all: legacy promotion makes the table, the schema does not. */
+async function hasOldRecords(conn: DuckDBConnection): Promise<boolean> {
+  return (await rows(conn, `SELECT 1 FROM duckdb_tables() WHERE table_name = 'legacy_specimen_number' AND NOT temporary`)).length > 0;
+}
+
+/**
+ * The reference that names a sample built from old records: the id of its
+ * first record, the lowest (the record whose values the sample took, as
+ * promotion's arg_min over _id does). Null where this store holds no old
+ * records or none of them is in this sample.
+ */
+export async function firstOldRecordOf(conn: DuckDBConnection, sampleId: number): Promise<string | null> {
+  if (!(await hasOldRecords(conn))) return null;
+  const r = await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = $1`, [sampleId]);
+  const v = r[0]?.[0];
+  return v === null || v === undefined ? null : String(v);
+}
+
+/**
+ * The sample an old record went into, or why there is none. A store with no
+ * old records (one built from iNaturalist alone, or a developer's) says so
+ * and applies nothing: the row waits in the file for a store that has them,
+ * and the nightly reports it rather than stopping.
+ */
+export async function resolveOldRecordSample(
+  conn: DuckDBConnection,
+  legacyId: string,
+): Promise<{ sampleId: number } | { problem: string }> {
+  if (!(await hasOldRecords(conn))) return { problem: `this store holds no old Beeline records, so ${legacyId} names no sample` };
+  const found = await rows(conn, `SELECT sample_id FROM legacy_specimen_number WHERE _id = $1`, [legacyId]);
+  if (found.length === 1) return { sampleId: Number(found[0]![0]) };
+  return { problem: found.length === 0 ? `no sample holds old record ${legacyId}` : `${found.length} samples hold old record ${legacyId}` };
+}
+
+/** The sample a reference names, in whichever of its two forms. */
+async function resolveSampleRef(conn: DuckDBConnection, ref: NonNullable<ReturnType<typeof parseSampleRef>>) {
+  return "legacy_id" in ref ? resolveOldRecordSample(conn, ref.legacy_id) : resolveObservationSample(conn, ref.inat_observation_id);
+}
+
 /**
  * The base a new coordinate override records, in the overlay's own grammar:
  * what removal will restore. Where an override already stands, its recorded
@@ -152,9 +191,122 @@ export async function waiverProblem(conn: DuckDBConnection, ruleName: string, re
   return null;
 }
 
+/** The person an iNat login names, case-insensitively as the roster resolves logins; null where none. */
+export async function personOfLogin(conn: DuckDBConnection, login: string): Promise<number | null> {
+  const found = await rows(conn, `SELECT person_id FROM inat_account WHERE lower(login) = lower($1) LIMIT 1`, [login]);
+  return found[0] === undefined ? null : Number(found[0][0]);
+}
+
+/**
+ * Run `work` as one transaction when asked. A caller already inside one
+ * (observation promotion applies the overlay within its own) passes false;
+ * a page or an entered sample passes true, on a connection nothing else
+ * writes through (src/app/locality-override.ts), so that a failure part way
+ * through a save cannot leave a half-written point.
+ */
+async function atomically<T>(conn: DuckDBConnection, transactional: boolean, work: () => Promise<T>): Promise<T> {
+  if (!transactional) return work();
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    const result = await work();
+    await conn.run("COMMIT");
+    return result;
+  } catch (err) {
+    // The failure to report is the original one, not a rollback that has
+    // nothing to undo because the engine already ended the transaction.
+    await conn.run("ROLLBACK").catch(() => undefined);
+    throw err;
+  }
+}
+
+/**
+ * Apply one `coordinates` row to a sample already resolved: set the staff
+ * point, or (an empty value) take it away. Null if applied, else why not.
+ * Exported because a sample entered in Beeline is named by nothing a file
+ * could hold, so its point is written here directly (src/app/locality-override.ts).
+ *
+ * Only a sample with an observation has a removal (beeline-942): there it
+ * hands back what the sample held and lets the observation be followed
+ * again. A sample with none has no observation to follow, and putting back
+ * what an imported or entered sample held (its place, atlas, elevation) was
+ * found, in three review rounds, to need more of the past than the store
+ * keeps: staff correct a wrong point by setting the right one. The callers
+ * refuse a removal there; a removal row naming one is reported, not applied.
+ */
+export async function applyStaffPoint(
+  conn: DuckDBConnection,
+  sampleId: number,
+  row: Pick<SampleOverlayRow, "base_value" | "value" | "reason">,
+  setBy: number | null,
+  opts: { transactional?: boolean } = {},
+): Promise<string | null> {
+  const transactional = opts.transactional ?? false;
+  if (row.value === "") {
+    // Removal restores what the row held before the override — an imported
+    // point as readily as an observation's — unless the labels have printed
+    // since, in which case the point on paper stays. A sample that had no
+    // coordinates goes back to having none; if the observation yields some,
+    // the next promotion writes them.
+    const base = await rows(conn, `SELECT observed_latitude, observed_longitude, observed_uncertainty_m, observed_source
+                                   FROM sample_location_override WHERE sample_id = $1`, [sampleId]);
+    // The file keeps a removal row for good and every promotion replays
+    // it. With no override standing it has been applied already: there
+    // is nothing to take away or hand back, and the point promotion has
+    // since written from the observation stays.
+    if (base[0] === undefined) return null;
+    await atomically(conn, transactional, async () => {
+      await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [sampleId] as never);
+      const printed = (await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = $1`, [sampleId])).length > 0;
+      if (printed) return;
+      const b = base[0]!;
+      if (b[0] === null) {
+        await conn.run(`DELETE FROM sample_location WHERE sample_id = $1`, [sampleId] as never);
+      } else {
+        await writeLocation(
+          conn,
+          sampleId,
+          { latitude: Number(b[0]), longitude: Number(b[1]), coordinate_uncertainty_m: b[2] === null ? null : Number(b[2]), source: null },
+          String(b[3]),
+        );
+      }
+    });
+    return null;
+  }
+  const p = parsePoint(row.value);
+  if ("problem" in p) return p.problem;
+  const base = row.base_value === "" ? null : parsePoint(row.base_value);
+  const observed = base !== null && !("problem" in base) ? base : null;
+  await atomically(conn, transactional, async () => {
+    await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [sampleId] as never);
+    await conn.run(
+      `INSERT INTO sample_location_override (sample_id, latitude, longitude, coordinate_uncertainty_m,
+         observed_latitude, observed_longitude, observed_uncertainty_m, observed_source, set_by, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        sampleId, p.latitude, p.longitude, p.coordinate_uncertainty_m,
+        observed?.latitude ?? null, observed?.longitude ?? null, observed?.coordinate_uncertainty_m ?? null,
+        observed?.source ?? (observed === null ? null : "legacy_import"),
+        setBy, row.reason === "" ? null : row.reason,
+      ] as never,
+    );
+    await writeLocation(conn, sampleId, p, "staff_entry");
+    // The old records' disagreement about where the sample was is answered
+    // by the point staff chose, as a collector's edit answers one
+    // (src/app/sample-edit.ts). There is no removal to bring it back for.
+    await conn.run(
+      `DELETE FROM sample_promotion_finding
+       WHERE sample_id = $1 AND rule_name = 'within_sample_disagreement' AND details LIKE 'coordinates: %'`,
+      [sampleId] as never,
+    );
+  });
+  return null;
+}
+
 export async function applySampleOverlay(
   conn: DuckDBConnection,
   overlay: readonly SampleOverlayRow[],
+  /** Whether a point's write is its own transaction: not where the caller is inside one (promotion). */
+  opts: { transactional?: boolean } = {},
 ): Promise<ApplySampleResult> {
   const result: ApplySampleResult = { applied: 0, unresolved: [] };
   if (overlay.length === 0) {
@@ -175,7 +327,16 @@ export async function applySampleOverlay(
       result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "not a sample reference" });
       continue;
     }
-    const found = await resolveObservationSample(conn, ref.inat_observation_id);
+    if ("legacy_id" in ref && (row.field !== "coordinates" || row.value === "")) {
+      // Reported, never thrown: the file may hold one, and the nightly goes on.
+      result.unresolved.push({
+        sample_ref: row.sample_ref,
+        field: row.field,
+        reason: "an old record's reference carries only a point that is set; a sample with no observation has no removal",
+      });
+      continue;
+    }
+    const found = await resolveSampleRef(conn, ref);
     if ("problem" in found) {
       result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: found.problem });
       continue;
@@ -223,61 +384,9 @@ export async function applySampleOverlay(
     }
 
     if (row.field === "coordinates") {
-      if (row.value === "") {
-        // Removal restores what the row held before the override — an
-        // imported point as readily as an observation's — unless the labels
-        // have printed since, in which case the point on paper stays. A
-        // sample that had no coordinates goes back to having none; if the
-        // observation yields some, the next promotion writes them.
-        const base = await rows(conn, `SELECT observed_latitude, observed_longitude, observed_uncertainty_m, observed_source
-                                       FROM sample_location_override WHERE sample_id = $1`, [sampleId]);
-        // The file keeps a removal row for good and every promotion replays
-        // it. With no override standing it has been applied already: there
-        // is nothing to take away or hand back, and the point promotion has
-        // since written from the observation stays.
-        if (base[0] === undefined) {
-          result.applied++;
-          continue;
-        }
-        await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [sampleId] as never);
-        const printed = (await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = $1`, [sampleId])).length > 0;
-        if (!printed) {
-          const b = base[0];
-          if (b === undefined || b[0] === null) {
-            await conn.run(`DELETE FROM sample_location WHERE sample_id = $1`, [sampleId] as never);
-          } else {
-            await writeLocation(
-              conn,
-              sampleId,
-              { latitude: Number(b[0]), longitude: Number(b[1]), coordinate_uncertainty_m: b[2] === null ? null : Number(b[2]), source: null },
-              String(b[3]),
-            );
-          }
-        }
-        result.applied++;
-        continue;
-      }
-      const p = parsePoint(row.value);
-      if ("problem" in p) {
-        result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: p.problem });
-        continue;
-      }
-      const base = row.base_value === "" ? null : parsePoint(row.base_value);
-      const observed = base !== null && !("problem" in base) ? base : null;
-      await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [sampleId] as never);
-      await conn.run(
-        `INSERT INTO sample_location_override (sample_id, latitude, longitude, coordinate_uncertainty_m,
-           observed_latitude, observed_longitude, observed_uncertainty_m, observed_source, set_by, reason)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          sampleId, p.latitude, p.longitude, p.coordinate_uncertainty_m,
-          observed?.latitude ?? null, observed?.longitude ?? null, observed?.coordinate_uncertainty_m ?? null,
-          observed?.source ?? (observed === null ? null : "legacy_import"),
-          setBy, row.reason === "" ? null : row.reason,
-        ] as never,
-      );
-      await writeLocation(conn, sampleId, p, "staff_entry");
-      result.applied++;
+      const problem = await applyStaffPoint(conn, sampleId, row, setBy, { transactional: opts.transactional });
+      if (problem !== null) result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: problem });
+      else result.applied++;
       continue;
     }
 
@@ -365,7 +474,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const overlayPath = process.argv[3] ?? process.env.BEELINE_SAMPLE_OVERLAY ?? "data/sample-overlay.csv";
   const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
-  const result = await applySampleOverlay(conn, await readSampleOverlay(overlayPath));
+  const result = await applySampleOverlay(conn, await readSampleOverlay(overlayPath), { transactional: true });
   await conn.run("CHECKPOINT");
   conn.closeSync();
   console.log(JSON.stringify(result, null, 2));

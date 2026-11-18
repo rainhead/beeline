@@ -495,8 +495,9 @@ describe("what a refused correction is answered with", () => {
     const invalid = await json(await w.send(w.keys.sam, `/samples/${w.other}/hold`, {}));
     expect(invalid.message).toBe("a hold needs a reason");
     expect(await answer(w.keys.sam, `/samples/${w.other}/coordinates`, { latitude: "44.5" })).toEqual([422, "invalid", true]);
-    // no_observation: a sample with none has no observation to put a point on
-    expect(await answer(w.keys.sam, `/samples/${w.legacy}/coordinates`, { latitude: 44.5, longitude: -123.2 })).toEqual([409, "no_observation", true]);
+    // no_observation: a sample with no observation, no old record and no entry has nothing to keep a point against
+    const bare = await insertCleanSample(w.conn, { sample_number: "'BARE-1'" });
+    expect(await answer(w.keys.sam, `/samples/${bare}/coordinates`, { latitude: 44.5, longitude: -123.2 })).toEqual([409, "no_observation", true]);
     // not_moved: nothing to take where iNaturalist's point has not moved
     expect(await answer(w.keys.sam, `/samples/${w.other}/take-observation-location`, {})).toEqual([409, "not_moved", true]);
     // busy: while the nightly runs, a point does not change

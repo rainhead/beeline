@@ -87,7 +87,12 @@ const REFUSALS = {
   no_observation: {
     status: 409,
     error: "no_observation",
-    message: "This sample has no iNaturalist observation, and this correction is kept against the observation.",
+    message: "This sample has no iNaturalist observation, and this correction is kept against one. (A point can also be kept against old Beeline records or an entry in Beeline; this sample has neither.)",
+  },
+  in_print_run: {
+    status: 409,
+    error: "in_print_run",
+    message: "Labels for this sample are in a print run that has not printed yet, which holds the point it froze. Wait for the run to print or cancel it, then set the point.",
   },
   unavailable: { status: 503, error: "unavailable", message: "This Beeline cannot make this correction." },
 } as const satisfies Record<string, { status: ContentfulStatusCode; error: string; message: string }>;
@@ -127,6 +132,7 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "not_moved":
     case "no_staging":
     case "no_observation":
+    case "in_print_run":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
       return apiError(c, r.status, r.error, r.message);

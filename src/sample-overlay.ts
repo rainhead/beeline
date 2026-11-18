@@ -23,9 +23,12 @@ import { parseCsv } from "./corrections.js";
  *
  *   inat:301985221   the sample carrying that observation id
  *
- * is the only reference this file admits. A sample with no observation is
- * edited through the corrections overlay instead (src/app/sample-edit.ts),
- * which already knows how to name it; the staff screen hides the split.
+ * is the reference most rows use. A sample with no observation is edited
+ * through the corrections overlay instead (src/app/sample-edit.ts), which
+ * already knows how to name it; the staff screen hides the split. The one
+ * thing the corrections overlay cannot say is a staff point of its own, so
+ * a coordinates row may name such a sample by its first old record,
+ * `legacy:<_id>` (legacyRecordRef).
  *
  * Unlike the person overlay a row carries a `base_value`, because these
  * decisions author over UPSTREAM data (CONTEXT.md, Data handling): the
@@ -57,7 +60,7 @@ export const HELD = "held";
 export const WAIVED = "waived";
 
 export interface SampleOverlayRow {
-  /** `inat:<observation id>`. */
+  /** `inat:<observation id>`, or `legacy:<old record id>` for a sample with no observation. */
   sample_ref: string;
   field: SampleOverlayField;
   /**
@@ -81,10 +84,26 @@ export const sampleRowKey = (r: { sample_ref: string; field: string }) => `${r.s
 /** The reference for a sample carrying this observation. */
 export const observationRef = (inatObservationId: bigint | number | string) => `inat:${inatObservationId}`;
 
-/** `inat:301985221` → the observation id; null if malformed. */
-export function parseSampleRef(ref: string): { inat_observation_id: string } | null {
-  const m = /^inat:(\d+)$/.exec(ref);
-  return m === null ? null : { inat_observation_id: m[1]! };
+/**
+ * The reference for a sample built from old Beeline's records, which has no
+ * observation to be named by: the id of its first old record (the lowest,
+ * which is the record whose values the sample took), as the old system's
+ * database wrote it. Resolved through `legacy_specimen_number`, the table
+ * legacy promotion keeps of which record went into which sample. Not the
+ * collector, number and date, which staff can all correct; and not the
+ * sample's own id, which a rebuild redraws (beeline-kgyd.4.2).
+ */
+export const legacyRecordRef = (legacyId: string) => `legacy:${legacyId}`;
+
+/**
+ * `inat:301985221` → the observation id; `legacy:5f3c…` → the old record's
+ * id; null if neither. A caller that takes only one kind tests which it got.
+ */
+export function parseSampleRef(ref: string): { inat_observation_id: string } | { legacy_id: string } | null {
+  const inat = /^inat:(\d+)$/.exec(ref);
+  if (inat !== null) return { inat_observation_id: inat[1]! };
+  const legacy = /^legacy:([^\s,"]+)$/.exec(ref);
+  return legacy === null ? null : { legacy_id: legacy[1]! };
 }
 
 /**
@@ -168,7 +187,7 @@ export function parseSampleOverlay(text: string, where: string): SampleOverlayRo
     }
     const row = Object.fromEntries(COLUMNS.map((c, j) => [c, r[j]!])) as unknown as SampleOverlayRow;
     if (parseSampleRef(row.sample_ref) === null) {
-      throw new Error(`${where} line ${line}: '${row.sample_ref}' is not a sample reference (inat:…)`);
+      throw new Error(`${where} line ${line}: '${row.sample_ref}' is not a sample reference (inat:… or legacy:…)`);
     }
     if (!isSampleOverlayField(row.field)) {
       throw new Error(`${where} line ${line}: '${row.field}' is not a sample overlay field`);

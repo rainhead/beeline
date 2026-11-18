@@ -1715,6 +1715,8 @@ export function createApp({
         return errorResponse(c, "notFound");
       case "no_observation":
         return c.text(m.record.sample.staffCoordinates.noObservation, 409);
+      case "in_print_run":
+        return c.text(m.record.sample.staffCoordinates.inPrintRun, 409);
       case "busy":
         return c.text(m.record.sample.staffCoordinates.busy, 409);
       case "invalid":
@@ -1758,6 +1760,8 @@ export function createApp({
         return c.text(result.reason, 409);
       case "not_moved":
         return c.text(t.notMoved, 409);
+      case "in_print_run":
+        return c.text(m.record.sample.staffCoordinates.inPrintRun, 409);
       default:
         return unreachable(result);
     }

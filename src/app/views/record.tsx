@@ -386,19 +386,24 @@ export function WhereCollected({
   m,
   sample,
   admin = false,
+  canSetPoint = false,
   placePending = false,
 }: {
   m: Messages;
   sample: SampleDetail;
   admin?: boolean;
+  /** The sample can hold a staff point: it has an observation, old records, or was entered in Beeline. */
+  canSetPoint?: boolean;
   placePending?: boolean;
 }) {
   const w = m.record.sample.where;
   // The staff editor belongs on both branches, and matters most on the one
   // with no coordinates: an obscured observation with no trusted access
   // yields none and cannot print, and only a person can put the true point
-  // in (beeline-942). A sample with no observation is not offered it.
-  const edit = admin && sample.inat_observation_id !== null ? <CoordinatesEdit m={m} sample={sample} /> : null;
+  // in (beeline-942). A sample with no observation is offered it too when
+  // it is one that can hold a point: built from old records, or entered in
+  // Beeline (beeline-kgyd.4.2, `canSetPoint`).
+  const edit = admin && canSetPoint ? <CoordinatesEdit m={m} sample={sample} /> : null;
   // Staff never reach this: a withheld location is a volunteer reading
   // somebody else's protected sample (src/app/listings.ts `withheld`).
   if (sample.location_withheld) {
@@ -675,7 +680,7 @@ function CoordinatesEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
       save={t.save}
       cancel={m.listings.samples.placeEdit.cancel}
       after={
-        sample.location_override === null ? undefined : (
+        sample.location_override === null || sample.inat_observation_id === null ? undefined : (
           <form method="post" action={action}>
             <input type="hidden" name="remove" value="1" />
             <button type="submit" class="outlined compact-button">
@@ -685,7 +690,7 @@ function CoordinatesEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
         )
       }
     >
-      <Meta block>{t.hint}</Meta>
+      <Meta block>{sample.inat_observation_id === null ? t.hintNoObservation : t.hint}</Meta>
       {sample.printed ? <Meta block>{t.printed}</Meta> : null}
       <TextField id="staff-latitude" name="latitude" label={t.latitude} value={num(sample.latitude)} />
       <TextField id="staff-longitude" name="longitude" label={t.longitude} value={num(sample.longitude)} />
@@ -1054,7 +1059,13 @@ export function SamplePage({
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
       </Card>
       <Card>
-        <WhereCollected m={m} sample={sample} admin={admin} placePending={placePending} />
+        <WhereCollected
+          m={m}
+          sample={sample}
+          admin={admin}
+          canSetPoint={sample.inat_observation_id !== null || sample.from_old_records || entered}
+          placePending={placePending}
+        />
       </Card>
       <Card>
         <SampleFlags

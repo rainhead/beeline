@@ -385,6 +385,9 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
       // The satellites are replaced rather than updated: none is referenced,
       // and the sample row itself keeps its id (beeline-6e9).
       await conn.run(`DELETE FROM sample_collector WHERE sample_id = $1`, [id] as never);
+      // A point staff set from the sample's page goes with the location the
+      // form is rewriting, whose point is the new one (beeline-kgyd.4.2).
+      await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [id] as never);
       await conn.run(`DELETE FROM sample_location WHERE sample_id = $1`, [id] as never);
       await conn.run(`DELETE FROM sample_atlas WHERE sample_id = $1 AND assigned_by IS NULL`, [id] as never);
       await conn.run(

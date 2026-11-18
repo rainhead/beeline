@@ -128,7 +128,35 @@ async function readTokenFallback(): Promise<string | undefined> {
   }
 }
 
-export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promise<SyncResult> {
+/**
+ * One sync run at a time in this process (beeline-amdt). Each run is one
+ * transaction, and the app has two connections that start them: the jobs'
+ * (the nightly, the weekly sweep) and the one behind a volunteer's "Check
+ * iNaturalist now" (src/app/inat-check.ts). Two runs at once that both load
+ * something both rewrite observation_field whole, and DuckDB fails the
+ * second. The dashboard refuses a check while a sync job is running
+ * (src/app/server.tsx), which leaves the other order open: a job that starts
+ * while a check is part way through. Queued here, inside the two functions
+ * that make a run, so that no caller can start one outside the queue; a job
+ * then waits the few seconds a check takes.
+ *
+ * It also keeps a promise the rest of the store relies on: runs commit in the
+ * order they start, so "the latest run that returned this observation" means
+ * the same thing by start time as by what a later run could see.
+ */
+let syncs: Promise<unknown> = Promise.resolve();
+
+function oneSyncAtATime<T>(run: () => Promise<T>): Promise<T> {
+  const next = syncs.then(run);
+  syncs = next.catch(() => {});
+  return next;
+}
+
+export function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promise<SyncResult> {
+  return oneSyncAtATime(() => syncProject(conn, opts));
+}
+
+async function syncProject(conn: DuckDBConnection, opts: SyncOptions): Promise<SyncResult> {
   const token = opts.token === null ? undefined : (opts.token ?? (await readTokenFallback()));
   if (!token && !opts.anonymous) {
     throw new Error(
@@ -268,7 +296,11 @@ export interface FetchByIdResult {
  * trust is per project. What it is for is the observation's geoprivacy, which
  * decides whether another volunteer sees the sample's location.
  */
-export async function fetchObservationsById(conn: DuckDBConnection, opts: FetchByIdOptions): Promise<FetchByIdResult> {
+export function fetchObservationsById(conn: DuckDBConnection, opts: FetchByIdOptions): Promise<FetchByIdResult> {
+  return oneSyncAtATime(() => fetchById(conn, opts));
+}
+
+async function fetchById(conn: DuckDBConnection, opts: FetchByIdOptions): Promise<FetchByIdResult> {
   const token = opts.token === null ? undefined : (opts.token ?? (await readTokenFallback()));
   if (!token && !opts.anonymous) {
     throw new Error("no iNaturalist token — refusing to run silently anonymous");

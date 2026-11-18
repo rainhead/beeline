@@ -1026,8 +1026,9 @@ export function createApp({
     if (inatCheck === undefined || mintConn === undefined) return dashboardPage(c, { kind: "unavailable" });
     const account = await accountOf(c.get("acting").personId);
     if (account === null) return dashboardPage(c, { kind: "noAccount" });
-    // Both rewrite observation_field whole, so one of them would lose a write
-    // conflict; the nightly runs 2 to 5am, so refusing costs nobody much.
+    // Sync runs go one at a time (oneSyncAtATime, src/sync-inat.ts), so a
+    // check made now would wait behind the job's runs, a sweep's for minutes;
+    // the nightly runs 2 to 5am, so refusing costs nobody much.
     const syncing = () => {
       const running = jobsDep.running?.() ?? null;
       return running === "nightly-pipeline" || running === "weekly-sweep";

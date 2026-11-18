@@ -1,3 +1,5 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
@@ -8,6 +10,7 @@ import { ALL, EMPTY_QUERY, SPECIMEN_CSV_HEADER, STAFF_READER, hostNamesOnce, lis
 import { writeXlsx } from "../src/app/xlsx.js";
 import type { Layout } from "../src/app/upload-plan.js";
 import { createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
+import { openCopy, writeCopy } from "./promoted-store.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -16,18 +19,37 @@ const unusedInat: InatClient = {
 };
 
 /**
- * A store for the upload tests, built from the real schema: three specimens of
- * one sample from the current season (`a1` with an expert's determination,
- * `a2` with none, `a3` with a volunteer's and no field number) and one of a
- * sample from a settled season (`b1`). The app answers as staff, or as a
- * volunteer when asked, and `file()` is the Excel file for editing
- * specimens and `download()` every column of the CSV, which the tests edit.
+ * The store of the fixture, made from the real schema once for each kind and file, and copied for each test (0.2 s,
+ * where the schema takes 0.4 s). Each copy is a store of its own. The template is a file in the run's folder, which
+ * test/global-setup.ts removes.
  */
-export async function uploadFixture(
-  signedInAs: "staffer" | "volunteer" = "staffer",
-  /** `unprinted` adds a sample (UP-3) whose one specimen is in a print run that has not printed. */
-  options: { unprinted?: boolean; readLimits?: Partial<ReadLimits>; layout?: Layout } = {},
-) {
+const templates = new Map<boolean, Promise<string>>();
+async function storeOf(unprinted: boolean) {
+  let template = templates.get(unprinted);
+  if (template === undefined) {
+    template = (async () => {
+      const made = await buildStore(unprinted);
+      const path = join(await mkdtemp(join(tmpdir(), "upload-fixture-")), "store.duckdb");
+      try {
+        await writeCopy(made.conn, path);
+      } finally {
+        made.conn.closeSync();
+        made.instance.closeSync();
+      }
+      templateFacts.set(unprinted, made.facts);
+      return path;
+    })();
+    templates.set(unprinted, template);
+  }
+  const { instance, conn } = await openCopy(await template);
+  const facts = templateFacts.get(unprinted)!;
+  return { instance, conn, ...facts, ids: { ...facts.ids } };
+}
+const templateFacts = new Map<boolean, { staffer: number; volunteer: number; ids: FixtureIds }>();
+
+type FixtureIds = { a1: number; a2: number; a3: number; b1: number; sampleA: number; sampleB: number; c1?: number; sampleC?: number };
+
+async function buildStore(unprinted: boolean) {
   const { instance, conn } = await createMemoryDb();
   const person = async (name: string) => {
     const [given, family] = name.split(" ");
@@ -77,7 +99,7 @@ export async function uploadFixture(
   await determine(a3, false, "A Volunteer");
   await determine(b1, false, "A Volunteer");
 
-  const ids: { a1: number; a2: number; a3: number; b1: number; sampleA: number; sampleB: number; c1?: number; sampleC?: number } = {
+  const ids: FixtureIds = {
     a1,
     a2,
     a3,
@@ -85,7 +107,7 @@ export async function uploadFixture(
     sampleA,
     sampleB,
   };
-  if (options.unprinted) {
+  if (unprinted) {
     // A label in a run that has not printed, with its number minted by that run: not on paper (schema/101).
     const sampleC = await insertCleanSample(conn, { collector_id: String(volunteer), sample_number: "'UP-3'", specimen_count: "1", locality: "'Albany'" });
     const c1 = await specimen(sampleC, 1, "OBA10005");
@@ -104,6 +126,23 @@ export async function uploadFixture(
     ids.c1 = c1;
     ids.sampleC = sampleC;
   }
+  return { instance, conn, facts: { staffer, volunteer, ids } };
+}
+
+/**
+ * A store for the upload tests, built from the real schema: three specimens of
+ * one sample from the current season (`a1` with an expert's determination,
+ * `a2` with none, `a3` with a volunteer's and no field number) and one of a
+ * sample from a settled season (`b1`). The app answers as staff, or as a
+ * volunteer when asked, and `file()` is the Excel file for editing
+ * specimens and `download()` every column of the CSV, which the tests edit.
+ */
+export async function uploadFixture(
+  signedInAs: "staffer" | "volunteer" = "staffer",
+  /** `unprinted` adds a sample (UP-3) whose one specimen is in a print run that has not printed. */
+  options: { unprinted?: boolean; readLimits?: Partial<ReadLimits>; layout?: Layout } = {},
+) {
+  const { instance, conn, staffer, volunteer, ids } = await storeOf(options.unprinted === true);
   const resolved = signedInAs === "staffer" ? staffer : volunteer;
   const db = createKysely(instance);
   const paths = await scratchPaths();
@@ -114,11 +153,11 @@ export async function uploadFixture(
     // Sandbox, not development: development makes everyone an admin (beeline-6va).
     config: { environment: "sandbox" as const, origin: "http://localhost:3054", exportsDir: join(dirname(paths.uploadsDir), "exports") },
     inat: unusedInat,
-    uploadReadLimits: options.readLimits,
+    // In this thread, unless the test is about the worker and says `inThread: false`.
+    uploadReadLimits: { inThread: true, ...options.readLimits },
     uploadLayout: options.layout,
     resolveSession: async () => ({ personId: resolved, login: signedInAs, iconUrl: null }),
   });
-
   /** The Excel file for editing specimens, as the staff member asked for it. */
   const file = async () => new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer());
   /**
@@ -136,6 +175,24 @@ export async function uploadFixture(
     return writeXlsx({ sheetName: "specimens", header: SPECIMEN_CSV_HEADER }, page.rows.map((r) => specimenCsvRow(r, page).map(textCell)));
   };
   return { instance, conn, db, app, paths, staffer, volunteer, ids, download, file };
+}
+
+/**
+ * One store for every test in the file that only reads it (planning writes nothing), made on first use: the schema
+ * takes 0.4 s to build, which a test that changes nothing need not pay for itself. A test that changes the store, or
+ * wants the unprinted sample, makes its own with `uploadFixture`. Each test file has its own, since a file's modules
+ * are its own under Vitest. The two downloads are kept, which is safe because nothing changes the store they read.
+ */
+let shared: Promise<UploadFixture> | undefined;
+export function sharedUploadFixture(): Promise<UploadFixture> {
+  shared ??= uploadFixture().then((f) => {
+    const once = <T>(make: () => Promise<T>) => {
+      let kept: Promise<T> | undefined;
+      return () => (kept ??= make());
+    };
+    return { ...f, download: once(f.download), file: once(f.file) };
+  });
+  return shared;
 }
 
 export type UploadFixture = Awaited<ReturnType<typeof uploadFixture>>;

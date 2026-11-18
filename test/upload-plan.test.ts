@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe as describeInOrder, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
 import { DETERMINATION_CASTES, DETERMINATION_QUALIFIERS, DETERMINATION_SEXES } from "../src/model.js";
 import { DISPOSITIONS } from "../src/load-dispositions.js";
@@ -13,18 +13,24 @@ import {
   MAX_ROWS,
   UNIT_COLUMNS,
   comparePlan,
-  parseUpload,
-  planUpload,
+  parseUpload as parseUploadInWorker,
+  planUpload as planUploadInWorker,
   type Layout,
   type HeldItem,
   type UploadPlan,
 } from "../src/app/upload-plan.js";
 import { readXlsxHere } from "../src/app/xlsx-reader.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample } from "./helpers.js";
-import { bytesOf, edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
+import { bytesOf, edited, matrixOf, sharedUploadFixture, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 import { buildWorkbook, serialOf, serialOf1904, type TestCell } from "./workbook.js";
 
-/** The plan for a file's bytes; a refusal fails the test. */
+/**
+ * Both read the workbook in this thread, which spares each plan the 0.1 s it takes to start a worker. The worker is
+ * tested where it is the subject (test/xlsx.test.ts, test/uploads-app.test.ts) and once below, end to end.
+ */
+const parseUpload: typeof parseUploadInWorker = (bytes, limits, layout) => parseUploadInWorker(bytes, { inThread: true, ...limits }, layout);
+const planUpload: typeof planUploadInWorker = (db, bytes, options = {}) => planUploadInWorker(db, bytes, { ...options, limits: { inThread: true, ...options.limits } });
+
 /**
  * Today, for every comparison here that does not say otherwise: the last day of the current season's year, so that
  * the July days the fixtures use are in the past whatever day the suite runs on. The future-date rule has its own
@@ -42,6 +48,13 @@ const seen = new Set<string>();
  * upload that names them as read.
  */
 const allRead: Layout = { recognise: [], read: UNIT_COLUMNS, headings: [], shaded: [] };
+
+/**
+ * The groups run their tests at the same time: each test only reads the file's one store or has a store of its own,
+ * and DuckDB does its work on threads of its own, so the file takes about as long as its slowest group's slowest test
+ * and not the sum of its tests. The one test that reads what the others produced is in a group that runs in order.
+ */
+const describe = describeInOrder.concurrent;
 
 /** The plan for a file's bytes, read as though every unit's columns were read from it. */
 async function plan(f: UploadFixture, bytes: Uint8Array, today = DEFAULT_TODAY): Promise<UploadPlan> {
@@ -85,8 +98,16 @@ const DAY_A = `${CURRENT_SEASON}-07-14`;
 const onSample = (f: UploadFixture, set: Record<string, TestCell>) => [f.ids.a1, f.ids.a2, f.ids.a3].map((id) => ({ id, set }));
 
 describe("refusing a whole file", () => {
+  it("plans the same whether the workbook is read in a worker, as the app does, or in this thread", async () => {
+    const f = await sharedUploadFixture();
+    const bytes = edited(await f.download(), [{ id: f.ids.a1, set: { locality: "Elsewhere" } }]);
+    const inWorker = await planUploadInWorker(f.db, bytes, { today: DEFAULT_TODAY });
+    expect(inWorker.ok).toBe(true);
+    expect(inWorker).toEqual(await planUpload(f.db, bytes, { today: DEFAULT_TODAY }));
+  });
+
   it("refuses a file that cannot be read, and names why", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     expect(await refusal(f, new Uint8Array(MAX_FILE_BYTES + 1))).toBe("too_large");
     // A CSV, which is what the old upload took, and an empty file.
     expect(await refusal(f, bytesOf("specimenId,locality\n1,Corvallis\n"))).toBe("not_a_zip");
@@ -99,14 +120,14 @@ describe("refusing a whole file", () => {
   });
 
   it("refuses a file with too many rows, and takes one at the limit", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const rows = (n: number) => [["specimenId"], ...Array.from({ length: n }, (_, i) => [String(i + 1)])];
     expect(await refusal(f, buildWorkbook(rows(MAX_ROWS + 1)))).toBe("too_many_rows");
     expect(await refusal(f, buildWorkbook(rows(MAX_ROWS)))).toBeNull();
   });
 
   it("refuses a file with a column twice, and says which", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const result = await planUpload(f.db, buildWorkbook([["specimenId", "locality", "locality"], ["1", "a", "b"]]));
     expect(result).toEqual({ ok: false, refusal: "repeated_column", detail: "locality" });
     // Spaces round a heading do not make it another column.
@@ -114,7 +135,7 @@ describe("refusing a whole file", () => {
   });
 
   it("says when the specimenId heading is nearly right", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     expect(await planUpload(f.db, buildWorkbook([["specimen Id", "locality"], ["1", "a"]]))).toEqual({
       ok: false,
       refusal: "no_specimen_id_column",
@@ -125,7 +146,7 @@ describe("refusing a whole file", () => {
 
 describe("a file nobody has edited", () => {
   it("compares as no differences at all", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const unedited = await plan(f, await f.download());
     nothingDiffers(unedited);
     expect(unedited.unrecognised).toEqual([]);
@@ -147,7 +168,7 @@ describe("a file nobody has edited", () => {
   });
 
   it("compares as nothing however the file is laid out: columns in any order, columns left out, columns added", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const matrix = matrixOf(await f.download());
     nothingDiffers(await plan(f, buildWorkbook(matrix.map((r) => [...r].reverse()))));
     nothingDiffers(await plan(f, edited(await f.download(), [], { dropColumns: ["locality", "scientificName", "sex", "caste"] })));
@@ -155,7 +176,7 @@ describe("a file nobody has edited", () => {
   });
 
   it("is unchanged when the file's text is Beeline's, whatever the cell is: a date or a number the spreadsheet made of it", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1 } = f.ids;
     const p = await plan(
       f,
@@ -169,7 +190,7 @@ describe("a file nobody has edited", () => {
   });
 
   it("trims what the file says, and nothing else", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     nothingDiffers(await plan(f, edited(await f.download(), onSample(f, { locality: "  Corvallis  ".trimEnd() + " ", samplingProtocol: " net " }))));
     // Case, composed and decomposed characters, and a non-breaking space are differences now.
     const p = await plan(f, edited(await f.download(), onSample(f, { locality: "corvallis" })));
@@ -184,7 +205,7 @@ describe("a file nobody has edited", () => {
 
 describe("finding each row's specimen", () => {
   it("holds a row whose id is not a positive whole number, with the reason", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2 } = f.ids;
     const p = await plan(
       f,
@@ -199,14 +220,14 @@ describe("finding each row's specimen", () => {
   });
 
   it("reads a specimenId the spreadsheet stored as a number", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await plan(f, edited(await f.download(), [{ id: f.ids.a2, set: { specimenId: { number: String(f.ids.a2) }, scientificName: "Bombus" } }]));
     expect(heldOf(p, "no_id")).toEqual([]);
     expect(p.differences.map((c) => c.specimenId)).toEqual([f.ids.a2]);
   });
 
   it("holds every row of a specimen that is named twice", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2 } = f.ids;
     const p = await plan(f, edited(await f.download(), [{ id: a2, set: { specimenId: String(a1) } }]));
     expect(heldOf(p, "repeated").map((h) => h.row)).toEqual([2, 3]);
@@ -215,7 +236,7 @@ describe("finding each row's specimen", () => {
   });
 
   it("holds a row naming a specimen that does not exist, and compares nothing in it", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { specimenId: "987654", locality: "Elsewhere" } }]));
     expect(heldOf(p, "no_specimen")).toHaveLength(1);
     expect(p.differences).toEqual([]);
@@ -223,7 +244,7 @@ describe("finding each row's specimen", () => {
   });
 
   it("holds a row whose field number is not the specimen's, and lets a blank cell agree with no number", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a3 } = f.ids;
     const download = await f.download();
     nothingDiffers(await plan(f, download));
@@ -278,7 +299,7 @@ describe("numbers", () => {
   });
 
   it("accepts a cell the spreadsheet stored as a number, with an exponent only there", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const download = await f.download();
     const numeric = await plan(f, edited(download, onSample(f, { decimalLatitude: { number: "44.6" } })));
     expect(summary(numeric)).toEqual([["coordinates", "decimalLatitude"]]);
@@ -292,7 +313,7 @@ describe("numbers", () => {
   });
 
   it("holds a number column's cell that is not a plain decimal number, whole unit with it", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2, a3, b1 } = f.ids;
     for (const bad of ["forty-four", "44,5", "44.5.6", "44.5 N", "1e", "--1", "0x10", "Infinity", "NaN"]) {
       const p = await plan(f, edited(await f.download(), onSample(f, { decimalLatitude: bad, decimalLongitude: "-122.5" })));
@@ -317,7 +338,7 @@ describe("numbers", () => {
 
 describe("dates", () => {
   it("reads a collecting date as a day or two days, strictly", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const download = await f.download();
     const y = CURRENT_SEASON;
     const read = (value: TestCell) => plan(f, edited(download, onSample(f, { eventDate: value })));
@@ -357,7 +378,7 @@ describe("dates", () => {
   });
 
   it("reads a real date cell in a date column as that day, as it reads typed text (staff paste rows from other sheets)", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, b1 } = f.ids;
     const download = await f.download();
     const valueOf = (p: UploadPlan, column: string) => p.differences[0]!.cells.find((c) => c.column === column)!.value;
@@ -380,7 +401,7 @@ describe("dates", () => {
   });
 
   it("holds a date cell that carries a time of day, and a date cell in a column that is not a date column", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1 } = f.ids;
     const download = await f.download();
     // A time as well as a day: not a day.
@@ -403,14 +424,14 @@ describe("dates", () => {
   });
 
   it("holds nothing for an identifier Beeline does not know, nor for a name it has never seen", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { identifiedBy: "Nobody Anyone Knows" } }]));
     expect(p.held).toEqual([]);
     expect(summary(p)).toEqual([["determination", "identifiedBy"]]);
   });
 
   it("holds a cell the spreadsheet made a formula, a boolean or an error, each with its reason", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2, a3 } = f.ids;
     const download = await f.download();
     const p = await plan(
@@ -692,7 +713,7 @@ describe("what a plan carries for a later step", () => {
 
 describe("columns that were not read", () => {
   it("lists a heading that is not a column of the download, and says it was not read", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await plan(f, edited(await f.download(), onSample(f, { locality: "Albany" }), { addColumns: { myNotes: "see me" } }));
     expect(p.unrecognised).toEqual([{ letter: expect.stringMatching(/^[A-Z]+$/), header: "myNotes", probably: null }]);
     // What is in it is not a difference.
@@ -700,7 +721,7 @@ describe("columns that were not read", () => {
   });
 
   it("says which column a heading was probably meant for, when only case or spaces differ", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await plan(f, edited(await f.download(), [], { renameColumns: { scientificName: "Scientific Name", sex: "SEX", locality: "local ity", county: "Country" } }));
     expect(p.unrecognised.map((u) => [u.header, u.probably]).sort()).toEqual([
       ["Country", null],
@@ -713,7 +734,7 @@ describe("columns that were not read", () => {
   });
 
   it("does not list a heading that is only padded with spaces, and does not list a blank one", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const matrix = matrixOf(await f.download());
     matrix[0]![matrix[0]!.indexOf("locality")] = "  locality ";
     matrix[0]!.push("");
@@ -795,7 +816,7 @@ describe("a file edited against something Beeline no longer says", () => {
   });
 
   it("holds a sample whose version cell is blank on a row", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { sampleVersion: "", locality: "Elsewhere" } }, { id: f.ids.a2, set: { locality: "Elsewhere" } }, { id: f.ids.a3, set: { locality: "Elsewhere" } }]));
     expect(heldOf(p, "sample_changed_since")).toHaveLength(1);
   });
@@ -803,7 +824,7 @@ describe("a file edited against something Beeline no longer says", () => {
 
 describe("a held unit names every cell held with it", () => {
   it("lists, for a specimen, the cells of the unit that differ and the cell that caused the hold, with what the file says", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "male", dateIdentified: { date: serialOf("2025-07-01") + 0.5 } } }]));
     expect(p.differences).toEqual([]);
     const held = heldOf(p, "holds_time");
@@ -818,14 +839,14 @@ describe("a held unit names every cell held with it", () => {
   });
 
   it("lists, for an incomplete unit, the cell that makes it so even where it did not change", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     // a1 is female; a drone is male. The caste is edited and the sex is not, and both are listed.
     const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { caste: "drone" } }]));
     expect(heldOf(p, "caste_sex")[0]!.cells).toEqual([{ column: "caste", was: "", fileSays: "drone" }]);
   });
 
   it("lists, for a sample, the cells of the unit across its rows", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a2 } = f.ids;
     // The first row of the sample changes its date to a good one, and the second to one that cannot be read: the
     // cells shown are the second row's, the one that failed, not the first row's.
@@ -848,7 +869,7 @@ describe("a held unit names every cell held with it", () => {
   });
 
   it("holds a sample's unit whole when one of its rows has an unusable cell", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2, a3 } = f.ids;
     const p = await plan(
       f,
@@ -862,7 +883,7 @@ describe("a held unit names every cell held with it", () => {
 
 describe("saying what kind of change each cell is", () => {
   it("lists each unit whole, sorts every differing column into its kind, and leaves the keys out", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2, a3 } = f.ids;
     const p = await plan(
       f,
@@ -926,7 +947,7 @@ describe("saying what kind of change each cell is", () => {
   });
 
   it("lists a latitude with its longitude, and holds it when the file has no longitude", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const download = await f.download();
     const edits = onSample(f, { decimalLatitude: "44.6" });
     const whole = await plan(f, edited(download, edits));
@@ -944,7 +965,7 @@ describe("saying what kind of change each cell is", () => {
 
 describe("a sample's difference counted once", () => {
   it("is one difference for the sample, with how many of its specimens the file holds", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2, a3, sampleA } = f.ids;
     const p = await plan(f, edited(await f.download(), [a1, a2].map((id) => ({ id, set: { locality: "Elsewhere" } })), { dropRows: [a3] }));
     expect(p.sampleDifferences).toEqual([
@@ -974,7 +995,7 @@ describe("a sample's difference counted once", () => {
   });
 
   it("holds the difference when the rows of one sample do not say the same thing", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2 } = f.ids;
     const download = await f.download();
     // One row edited and its sample-mates left alone.
@@ -995,7 +1016,7 @@ describe("a sample's difference counted once", () => {
   });
 
   it("splits every count by active and settled season", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, b1 } = f.ids;
     const p = await plan(f, edited(await f.download(), [{ id: a1, set: { county: "Linn" } }, { id: b1, set: { county: "Linn" } }]));
     expect(p.counts.withDifferences).toEqual({ active: 1, settled: 1, unplaced: 0 });
@@ -1006,7 +1027,7 @@ describe("a sample's difference counted once", () => {
 
 describe("which sheet is read, and what else the workbook holds", () => {
   it("reads the sheet named specimens wherever it is, and lists the tabs it did not read", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const bytes = edited(await f.download(), onSample(f, { locality: "Albany" }), { sheets: { others: ["notes", "specimens (2)"], before: true } });
     const p = await plan(f, bytes);
     expect(p.otherSheets).toEqual(["notes", "specimens (2)"]);
@@ -1016,7 +1037,7 @@ describe("which sheet is read, and what else the workbook holds", () => {
   });
 
   it("compares an unedited specimens file with its tabs of Beeline's own as no difference, and lists none of them as a tab that was not read", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const download = await f.file();
     // The file as the app wrote it, untouched: the specimens tab and Beeline's four.
     const read = readXlsxHere(download);
@@ -1032,7 +1053,7 @@ describe("which sheet is read, and what else the workbook holds", () => {
   // which no library standing in for one is. CI has none, so the test says it was skipped there.
   const ssconvert = spawnSync("ssconvert", ["--version"]).status === 0;
   it.skipIf(!ssconvert)("compares the file as Gnumeric saves it again, untouched, as no difference (needs ssconvert)", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const dir = await mkdtemp(join(tmpdir(), "beeline-gnumeric-"));
     await writeFile(join(dir, "from-beeline.xlsx"), await f.file());
     const converted = spawnSync("ssconvert", [join(dir, "from-beeline.xlsx"), join(dir, "from-gnumeric.xlsx")], { timeout: 60_000 });
@@ -1050,14 +1071,14 @@ describe("which sheet is read, and what else the workbook holds", () => {
   });
 
   it("changing one of Beeline's own tabs changes nothing, and a tab of the person's own is still listed", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await planAsRead(f, edited(await f.file(), [], { sheets: { others: ["names", "identifiers", "words", "about", "my notes"] } }));
     nothingDiffers(p);
     expect(p.otherSheets).toEqual(["my notes"]);
   });
 
   it("reads the specimens file's identification and disposition columns as units", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2 } = f.ids;
     const download = await f.file();
     const p = await planAsRead(f, edited(download, [
@@ -1078,7 +1099,7 @@ describe("which sheet is read, and what else the workbook holds", () => {
   });
 
   it("reports an edit to a column that only helps recognise the bee as ignored, and makes no unit of it", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1 } = f.ids;
     const p = await planAsRead(f, edited(await f.file(), [{ id: a1, set: { eventDate: `${CURRENT_SEASON}-07-15`, locality: "Albany", recordedBy: "Somebody Else", fieldNumber: "OBA10001" } }]));
     expect(p.differences).toEqual([]);
@@ -1089,7 +1110,7 @@ describe("which sheet is read, and what else the workbook holds", () => {
   });
 
   it("still loads an older download with all the CSV's columns, and lists what differs in the columns it does not read", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1 } = f.ids;
     const p = await planAsRead(f, edited(await f.download(), [
       { id: a1, set: { scientificName: "Bombus", locality: "Albany", decimalLatitude: "44.6", samplingProtocol: "blue vane trap", county: "Linn" } },
@@ -1103,7 +1124,7 @@ describe("which sheet is read, and what else the workbook holds", () => {
   });
 
   it("holds a specimen's units whose specimenVersion is missing or no longer Beeline's, and needs no sampleVersion", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1 } = f.ids;
     const missing = await planAsRead(f, edited(await f.file(), [{ id: a1, set: { scientificName: "Bombus" } }], { dropColumns: ["specimenVersion"] }));
     expect(heldOf(missing, "column_missing").map((h) => [h.unit, h.detail])).toEqual([["determination", "specimenVersion"]]);
@@ -1115,7 +1136,7 @@ describe("which sheet is read, and what else the workbook holds", () => {
   });
 
   it("reaches each rule that waits for the samples upload through the comparison, given a file that names its columns as read", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const download = await f.download();
     const sampleOnly = async (set: Record<string, TestCell>) => plan(f, edited(download, onSample(f, set)));
     expect(summary(await sampleOnly({ samplingProtocol: "blue vane trap" }))).toEqual([["method_dates", "samplingProtocol"]]);
@@ -1125,20 +1146,20 @@ describe("which sheet is read, and what else the workbook holds", () => {
   });
 
   it("reads the only sheet whatever it is called", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await plan(f, edited(await f.download(), onSample(f, { locality: "Albany" }), { sheets: { name: "Sheet1" } }));
     expect(summary(p)).toEqual([["place", "locality"]]);
     expect(p.otherSheets).toEqual([]);
   });
 
   it("refuses several sheets none of which is named specimens, naming them", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const result = await planUpload(f.db, edited(await f.download(), [], { sheets: { name: "Sheet1", others: ["Sheet2"] } }), { today: DEFAULT_TODAY });
     expect(result).toEqual({ ok: false, refusal: "no_such_sheet", detail: JSON.stringify(["Sheet1", "Sheet2"]) });
   });
 
   it("refuses an old Office file, which is also what an encrypted workbook is", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     expect(await refusal(f, Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]))).toBe("protected_file");
   });
 });
@@ -1224,7 +1245,7 @@ describe("the versions name the specimen and the sample", () => {
 
 describe("a held sample shows the row that failed", () => {
   it("shows the bad row's own cell when it is not the first row that changed", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2, a3 } = f.ids;
     const p = await plan(f, edited(await f.download(), [{ id: a1, set: { decimalLatitude: "44.6" } }, { id: a2, set: { decimalLatitude: "north" } }, { id: a3, set: { decimalLatitude: "44.6" } }]));
     const held = heldOf(p, "number_unreadable");
@@ -1233,7 +1254,7 @@ describe("a held sample shows the row that failed", () => {
   });
 
   it("shows what each row says when the rows of a sample disagree", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1, a2, a3 } = f.ids;
     const p = await plan(f, edited(await f.download(), [{ id: a1, set: { locality: "X" } }, { id: a2, set: { locality: "Y" } }, { id: a3, set: { locality: "X" } }]));
     const held = heldOf(p, "rows_disagree");
@@ -1247,13 +1268,13 @@ describe("a held sample shows the row that failed", () => {
 
 describe("a row for a specimen Beeline does not have", () => {
   it("is held with no specimen to link to, and its id in the detail", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const p = await plan(f, edited(await f.download(), [{ id: f.ids.a1, set: { specimenId: "987654" } }]));
     expect(heldOf(p, "no_specimen").map((h) => [h.specimenId, h.detail])).toEqual([[null, "987654"]]);
   });
 });
 
-describe("the reasons", () => {
+describeInOrder("the reasons", () => {
   it("every reason a plan can hold for was produced by a test in this file", () => {
     // A partial run (one test by name) has not produced them all.
     if (seen.size < 10) return;
@@ -1263,7 +1284,7 @@ describe("the reasons", () => {
 
 describe("coordinates: the bounds of the store's column, and Beeline's own small numbers", () => {
   it("holds an uncertainty past what a 32-bit INTEGER column holds", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const download = await f.download();
     const unc = (value: TestCell) => plan(f, edited(download, onSample(f, { coordinateUncertaintyInMeters: value })));
     expect(summary(await unc("2147483647"))).toEqual([["coordinates", "coordinateUncertaintyInMeters"]]);

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { strToU8, unzipSync, zipSync } from "fflate";
-import { describe, expect, it } from "vitest";
+import { describe as describeInOrder, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
 import { MAX_FILE_BYTES, SPECIMENS_LAYOUT, UNIT_COLUMNS, type Layout } from "../src/app/upload-plan.js";
 import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
@@ -20,6 +20,12 @@ import { buildWorkbook, serialOf } from "./workbook.js";
 const WIDE: Layout = { ...SPECIMENS_LAYOUT, read: UNIT_COLUMNS };
 const wideFixture = (signedInAs?: Parameters<typeof uploadFixture>[0], options: Parameters<typeof uploadFixture>[1] = {}) =>
   uploadFixture(signedInAs, { layout: WIDE, ...options });
+
+/**
+ * The groups run their tests at the same time: each has a store and an app of its own, and DuckDB does its work on
+ * threads of its own. The group about the worker runs in order, since it tests a time limit and a memory limit.
+ */
+const describe = describeInOrder.concurrent;
 
 const ORIGIN = "http://localhost:3054";
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -490,7 +496,7 @@ describe("the preview", () => {
   });
 });
 
-describe("reading an upload in a worker", () => {
+describeInOrder("reading an upload in a worker", () => {
   const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
   it("shows two previews of one upload at once", async () => {
@@ -503,7 +509,7 @@ describe("reading an upload in a worker", () => {
   });
 
   it("refuses a file that takes longer than the limit, says so in plain words, and stores nothing", async () => {
-    const f = await wideFixture("staffer", { readLimits: { timeMs: 1 } });
+    const f = await wideFixture("staffer", { readLimits: { timeMs: 1, inThread: false } });
     const res = await upload(f, await f.download());
     expect(res.status).toBe(400);
     expect(await res.text()).toContain(esc(en.uploads.refused.took_too_long!));
@@ -512,7 +518,7 @@ describe("reading an upload in a worker", () => {
   });
 
   it("refuses a workbook that needs more memory than the reader has, and the app goes on answering", async () => {
-    const f = await wideFixture("staffer", { readLimits: { memoryMb: 24 } });
+    const f = await wideFixture("staffer", { readLimits: { memoryMb: 24, inThread: false } });
     const rows = Array.from({ length: 50_000 }, (_, i) => `<row r="${i + 1}"><c r="A${i + 1}" t="inlineStr"><is><t>${"x".repeat(400)}</t></is></c></row>`).join("");
     const bomb = zipSync({ ...unzipSync(buildWorkbook([["specimenId"]])), "xl/worksheets/sheet1.xml": strToU8(`<worksheet xmlns="${MAIN}"><sheetData>${rows}</sheetData></worksheet>`) });
     const res = await upload(f, bomb);

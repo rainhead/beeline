@@ -46,6 +46,11 @@ export interface ReadLimits {
   timeMs: number;
   /** The worker's heap, in megabytes. A 20,000-row, 47-column sheet needs well under half of this. */
   memoryMb: number;
+  /**
+   * Read in the calling thread, with no worker, no time limit and no memory limit. For tests that are about what the
+   * plan does with a workbook and not about the worker, which pay about 0.1 s for each spawn. The app never sets it.
+   */
+  inThread?: boolean;
 }
 
 export const DEFAULT_READ_LIMITS: ReadLimits = {
@@ -86,6 +91,7 @@ export async function readXlsx(bytes: Uint8Array, limits: Partial<ReadLimits> = 
   // A zip begins with a local file header, or is empty and begins with its end record. Anything else is not a workbook
   // this reads, and SheetJS would read a CSV as one.
   if (bytes.byteLength < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) return { ok: false, refusal: "not_a_zip" };
+  if (all.inThread === true) return readXlsxHere(bytes, all);
   let reply: WireReply;
   try {
     reply = await inWorker({ kind: "xlsx-read", bytes, limits: all });

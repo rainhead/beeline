@@ -73,7 +73,7 @@ import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
-import { addressRows, runCollectors } from "./print-run-addresses.js";
+import { addressRows, runCollectors, runHasRegistration } from "./print-run-addresses.js";
 import { IdealLogicError, type Registrant } from "../ideal-logic.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
@@ -2454,21 +2454,20 @@ export function createApp({
     const ideal = config.idealLogic;
     if (ideal == null) return errorResponse(c, "notFound", { message: t.notConfigured });
     const id = printRunId(c);
-    const run = await loadRun(db, id);
-    if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
-    if (run.state === "canceled") {
-      return errorResponse(c, "notFound", {
+    const canceled = () =>
+      errorResponse(c, "notFound", {
         status: 409,
         title: t.canceledTitle,
         heading: t.canceledHeading,
         message: t.canceledNoAddresses,
       });
-    }
-    const inRun = await runCollectors(db, id);
+    const run = await loadRun(db, id);
+    if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
+    if (run.state === "canceled") return canceled();
     // With nobody to look up, Ideal Logic is not asked: each request counts
     // against its limit for the day.
     let registrants: Registrant[] = [];
-    if (inRun.collectors.some((collector) => collector.idealLogicId !== null)) {
+    if (await runHasRegistration(db, id)) {
       try {
         registrants = await ideal.fetchRegistrants();
       } catch (err) {
@@ -2483,6 +2482,13 @@ export function createApp({
         });
       }
     }
+    // The fetch can take a minute. Read the run again afterwards, so that a
+    // run canceled meanwhile is refused, and read its collectors and their
+    // registration links only now, so the file reflects the store as it is.
+    const after = await loadRun(db, id);
+    if (after === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
+    if (after.state === "canceled") return canceled();
+    const inRun = await runCollectors(db, id);
     const rows = addressRows(inRun, registrants);
     // Who and how many, never a name or an address.
     console.log(

@@ -70,10 +70,11 @@ const REGISTRANTS: Registrant[] = [
 ];
 
 /** A client that has 41 requests left, and spends one on each fetch, a failed one too. */
-function fakeClient(opts: { fail?: IdealLogicError; registrants?: Registrant[] } = {}) {
+function fakeClient(opts: { fail?: IdealLogicError; registrants?: Registrant[]; hold?: Promise<void> } = {}) {
   let left = 41;
   const fetchRegistrants = vi.fn(async () => {
     left -= 1;
+    await opts.hold;
     if (opts.fail) throw opts.fail;
     return opts.registrants ?? REGISTRANTS;
   });
@@ -305,17 +306,59 @@ describe("a print run's mailing addresses", () => {
     };
     const client = createIdealLogicClient({ key: "k", fetchImpl, budget: new RequestBudget(5) });
     const s = await setup(client);
+    // Wait until both requests have reached the client, however long that
+    // takes, within a bound; release the held fetch even if the wait fails.
+    const reached = vi.spyOn(client, "fetchRegistrants");
     const first = s.post(`${s.runPath}/addresses.csv`);
     const second = s.post(`${s.runPath}/addresses.csv`);
-    // Both requests have read the store and are waiting on the one fetch.
-    await vi.waitFor(() => expect(asked).toHaveLength(1));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    release();
+    try {
+      await vi.waitFor(() => expect(reached).toHaveBeenCalledTimes(2), { timeout: 5000, interval: 5 });
+    } finally {
+      release();
+    }
     const [a, b] = await Promise.all([first, second]);
     expect(a.status).toBe(200);
     expect(b.status).toBe(200);
     expect(asked).toHaveLength(1);
     expect(client.remaining()).toBe(4);
+  });
+
+  it("refuses with 409 a run canceled while Ideal Logic was being asked", async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => (release = resolve));
+    const { client, fetchRegistrants } = fakeClient({ hold });
+    const s = await setup(client);
+    const pending = s.post(`${s.runPath}/addresses.csv`);
+    try {
+      await vi.waitFor(() => expect(fetchRegistrants).toHaveBeenCalledTimes(1), { timeout: 5000, interval: 5 });
+      expect((await s.post(`${s.runPath}/cancel`)).status).toBe(302);
+    } finally {
+      release();
+    }
+    const res = await pending;
+    expect(res.status).toBe(409);
+    expect(res.headers.get("content-disposition")).toBeNull();
+    expect(await res.text()).toContain(en.printRuns.run.addresses.canceledNoAddresses);
+  });
+
+  it("uses the registration link as it is when Ideal Logic answers, not as it was when the request began", async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => (release = resolve));
+    const { client, fetchRegistrants } = fakeClient({ hold });
+    const s = await setup(client);
+    const pending = s.post(`${s.runPath}/addresses.csv`);
+    try {
+      await vi.waitFor(() => expect(fetchRegistrants).toHaveBeenCalledTimes(1), { timeout: 5000, interval: 5 });
+      // Cy is moved from the Victoria registration to the household's.
+      await s.conn.run(
+        `INSERT INTO person_registration_event (person_id, ideal_logic_id, evidence, decided_by) VALUES (${s.ids["Cy Cedar"]}, 'HOUSE-1', 'staff', 'test')`,
+      );
+    } finally {
+      release();
+    }
+    const out = lines(await (await pending).text());
+    expect(out.some((l) => l.startsWith("Cy Cedar,3 Elm Road"))).toBe(false);
+    expect(out[1]).toMatch(/^Ada Ash and Cy Cedar and Bo Birch,12 Oak Street,/);
   });
 
   it("shows the button only where a client is configured", async () => {
@@ -395,12 +438,30 @@ describe("labels that follow today's primary collector", () => {
     // Ed now has 5 + 4 labels, printed as two different lines.
     const ed = out.find((l) => l.startsWith("Ed Elm"))!;
     expect(ed).toMatch(/^Ed Elm,,,,,,,9,D\.Dale; E\.Elm,/);
-    expect(ed).toContain(notes.collectorChanged);
+    expect(ed).toContain(notes.collectorLineDiffers);
     expect(out.some((l) => l.startsWith("Di Dale"))).toBe(false);
     expect(out.some((l) => l.startsWith("Flo Fir"))).toBe(false);
     // The last row has no names or address, and says how many labels are missing.
     expect(out.at(-1)).toMatch(/^,,,,,,,6,,/);
     expect(out.at(-1)).toContain(notes.unaccountedLabels(6));
+  });
+
+  it("counts a label towards nobody when its sample has two primary collectors, and never writes a negative count", async () => {
+    const { client } = fakeClient();
+    const { post, runPath, conn, ids } = await setup(client);
+    // The store asserts this state cannot arise; build it directly. Di's sample
+    // (4 labels) gets a second collector at position 1.
+    await conn.run(
+      `INSERT INTO sample_collector (sample_id, person_id, position)
+       SELECT sample_id, ${ids["Ed Elm"]}, 1 FROM sample_collector WHERE person_id = ${ids["Di Dale"]}`,
+    );
+    const out = lines(await (await post(`${runPath}/addresses.csv`)).text());
+    expect(out.some((l) => l.startsWith("Di Dale"))).toBe(false);
+    // Ed has only his own 5 labels, not a share of Di's 4.
+    expect(out.find((l) => l.startsWith("Ed Elm"))).toMatch(/^Ed Elm,,,,,,,5,/);
+    expect(out.at(-1)).toMatch(/^,,,,,,,4,,/);
+    expect(out.at(-1)).toContain(notes.unaccountedLabels(4));
+    for (const l of out.slice(1)) expect(l).not.toMatch(/,-\d/);
   });
 
   it("counts a reprint in a later run once, under the collector of its sample", async () => {
@@ -426,7 +487,7 @@ describe("labels that follow today's primary collector", () => {
 
     const found = await runCollectors(db, run.printRunId);
     expect(found.totalLabels).toBe(2);
-    expect(found.collectors.map((c) => [c.displayName, c.labels, c.changedAfterPrinting])).toEqual([
+    expect(found.collectors.map((c) => [c.displayName, c.labels, c.collectorLineDiffers])).toEqual([
       ["Ada Ash", 1, false],
       ["Bo Birch", 1, false],
     ]);
@@ -444,7 +505,7 @@ describe("which collectors share a row", () => {
     labels: 1,
     printedAs: [],
     idealLogicId: ideal,
-    changedAfterPrinting: false,
+    collectorLineDiffers: false,
   });
   const at = (id: string, city: string | null, postalCode: string | null): Registrant =>
     registrant(id, { street: "5 Pine Street", city, stateProvince: "OR", postalCode, country: "USA" });
@@ -479,5 +540,63 @@ describe("which collectors share a row", () => {
       [at("A", "Bend", "97701"), at("B", "Bend ", "97701"), at("C", "Sisters", "97701")],
     );
     expect(got.map((r) => r.names)).toEqual([["Ann Ames", "Ben Bell"], ["Cal Cox"]]);
+  });
+});
+
+describe("which collectors share a row: spellings and households with no street", () => {
+  const collector = (id: number, name: string, ideal: string | null, labels = 1): RunCollector => ({
+    personId: id,
+    displayName: name,
+    familyName: name.split(" ")[1]!,
+    givenName: name.split(" ")[0]!,
+    labels,
+    printedAs: [],
+    idealLogicId: ideal,
+    collectorLineDiffers: false,
+  });
+  const home = (id: string, street: string, city: string, postalCode: string): Registrant =>
+    registrant(id, { street, city, stateProvince: "OR", postalCode, country: "USA" });
+
+  it("keeps the boundary between numbers, so 12-14 Oak St and 1214 Oak St are two homes", () => {
+    const got = addressRows(
+      { collectors: [collector(1, "Ann Ames", "A"), collector(2, "Ben Bell", "B")], totalLabels: 2 },
+      [home("A", "12-14 Oak St", "Bend", "97701"), home("B", "1214 Oak St", "Bend", "97701")],
+    );
+    expect(got.map((r) => r.names)).toEqual([["Ann Ames"], ["Ben Bell"]]);
+  });
+
+  it("still joins a street typed with a trailing full stop or another case, and a postal code with or without a space", () => {
+    const got = addressRows(
+      { collectors: [collector(1, "Ann Ames", "A"), collector(2, "Ben Bell", "B")], totalLabels: 2 },
+      [home("A", "12 Oak St.", "Bend", "V8W 1P6"), home("B", "12 OAK st", "bend", "v8w1p6")],
+    );
+    expect(got.map((r) => r.names)).toEqual([["Ann Ames", "Ben Bell"]]);
+  });
+
+  it("gives collectors who share a registration with no street one row, and those with none each their own", () => {
+    const got = addressRows(
+      {
+        collectors: [
+          collector(1, "Ann Ames", "N", 2),
+          collector(2, "Ben Bell", "N", 3),
+          collector(3, "Cal Cox", null, 4),
+          collector(4, "Dee Day", null, 5),
+        ],
+        totalLabels: 14,
+      },
+      [registrant("N", null)],
+    );
+    expect(got.map((r) => [r.names, r.labels])).toEqual([
+      [["Ann Ames", "Ben Bell"], 5],
+      [["Cal Cox"], 4],
+      [["Dee Day"], 5],
+    ]);
+    expect(got[0]!.notes).toEqual([{ code: "noAddress" }]);
+    expect(got[1]!.notes).toEqual([{ code: "noRegistration" }]);
+  });
+
+  it("never writes a negative count of labels left out", () => {
+    const got = addressRows({ collectors: [collector(1, "Ann Ames", null, 5)], totalLabels: 3 }, []);
+    expect(got.map((r) => r.labels)).toEqual([5]);
   });
 });

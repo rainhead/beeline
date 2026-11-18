@@ -2783,8 +2783,8 @@ export const en = {
           noAddress: "No address: the registration in Ideal Logic has no street address.",
           notInAnswer:
             "No address: the registration this collector is linked to was not in Ideal Logic's answer, or Beeline could not read it.",
-          collectorChanged:
-            "The collector changed after printing: the collector line on the labels is not what this sample would print now.",
+          collectorLineDiffers:
+            "The collector line on this run's labels differs from what the sample would print today, so the labels may belong to someone else.",
           missing: {
             city: "no city",
             stateProvince: "no state or province",
@@ -2794,7 +2794,7 @@ export const en = {
           incompleteAddress: (missing: string) =>
             `Incomplete address: ${missing}. Finish it by hand before mailing.`,
           unaccountedLabels: (labels: number) =>
-            `${n(labels)} ${labels === 1 ? "label of this run is" : "labels of this run are"} not in this file, because the collector of their sample changed or was removed after printing. Find ${labels === 1 ? "it" : "them"} on the sheets.`,
+            `${n(labels)} ${labels === 1 ? "label of this run is" : "labels of this run are"} not in this file, because their sample no longer has exactly one primary collector, or has a different one. Find ${labels === 1 ? "it" : "them"} on the sheets.`,
         },
       },
       approve: "Approve",

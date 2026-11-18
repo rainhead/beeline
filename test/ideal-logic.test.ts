@@ -150,6 +150,44 @@ describe("fetching", () => {
     );
   });
 
+  test("a list with no count, or one that is not a number, fails without quoting it", async () => {
+    for (const total of [null, "", "many"]) {
+      const { fetchImpl } = fakeIdealLogic(JSON.stringify([OREGON]), { total });
+      const err = await createIdealLogicClient({ key: "k", fetchImpl })
+        .fetchRegistrants()
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(IdealLogicError);
+      expect((err as IdealLogicError).kind).toBe("incomplete");
+      expect((err as Error).message).toBe(
+        "Ideal Logic did not say how many registrants there are, so the list cannot be checked for completeness",
+      );
+    }
+  });
+
+  test("a response that never arrives gives up at the deadline", async () => {
+    const fetchImpl: IdealLogicFetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new Error("aborted with details")));
+      });
+    const err = await createIdealLogicClient({ key: "k", fetchImpl, timeoutMs: 20 })
+      .fetchRegistrants()
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IdealLogicError);
+    expect((err as IdealLogicError).kind).toBe("unreachable");
+    expect((err as Error).message).toBe("Ideal Logic could not be reached");
+  });
+
+  test("the caller's own abort is rethrown as it was", async () => {
+    const controller = new AbortController();
+    const fetchImpl: IdealLogicFetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new Error("caller stopped")));
+      });
+    const pending = createIdealLogicClient({ key: "k", fetchImpl }).fetchRegistrants({ signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toThrow("caller stopped");
+  });
+
   // The job framework stores an error's message in the store and logs its
   // stack, and JSON.parse quotes the text it failed on. So what is thrown
   // must never contain a piece of the response.
@@ -185,9 +223,9 @@ describe("fetching", () => {
 
   test("a few malformed records are left out; most of them malformed is a changed format", async () => {
     const eleven = Array.from({ length: 11 }, (_, i) => ({ ...BARE, id: `AA00-BBB${i}` }));
-    const few = fakeIdealLogic(JSON.stringify([...eleven, { id: "XX" }]));
+    const few = fakeIdealLogic(JSON.stringify([...eleven, { id: "XX" }]), { total: "12" });
     expect(await createIdealLogicClient({ key: "k", fetchImpl: few.fetchImpl }).fetchRegistrants()).toHaveLength(11);
-    const most = fakeIdealLogic(JSON.stringify([OREGON, { id: "XX" }, { id: "YY" }]));
+    const most = fakeIdealLogic(JSON.stringify([OREGON, { id: "XX" }, { id: "YY" }]), { total: "3" });
     await expect(createIdealLogicClient({ key: "k", fetchImpl: most.fetchImpl }).fetchRegistrants()).rejects.toThrow(
       "2 of Ideal Logic's 3 records lacked an id, a name or an email address",
     );

@@ -250,6 +250,20 @@ describe("a decision about one person", () => {
     ]);
   });
 
+  test("evidence from a register email is checked against the name held now; staff's is not", async () => {
+    // B-1 is Bo Sedge's registration; Ada Bramble is another person.
+    expect(await decideRegistration(db, { personId: id.Ada!, idealLogicId: "B-1", evidence: "register_email", decidedBy: "peter" })).toEqual({
+      ok: false,
+      refusal: "name_differs",
+    });
+    expect(await rows(conn, `SELECT count(*) FROM person_registration_event`)).toEqual([[0n]]);
+    expect(await decideRegistration(db, { personId: id.Ada!, idealLogicId: "B-1", evidence: "staff", decidedBy: "peter" })).toMatchObject({
+      ok: true,
+      outcome: "saved",
+    });
+    expect(await links()).toEqual([[id.Ada, "B-1", "staff", "peter"]]);
+  });
+
   test("saying what is already so records nothing", async () => {
     await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-1", evidence: "staff", decidedBy: "peter" });
     expect(await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-1", evidence: "staff", decidedBy: "arthur" })).toMatchObject({ outcome: "unchanged", was: "B-1" });

@@ -180,16 +180,16 @@ describe("POST /api/v1/people/:id/registration", () => {
   /** Registrations the nightly job has seen; the API links only to one of these. */
   const seen = (w: Awaited<ReturnType<typeof world>>) =>
     w.conn.run(
-      `INSERT INTO ideal_logic_registrant (ideal_logic_id, given_name, family_name) VALUES ('QNN6-MX8', 'Ada', 'Bramble'), ('AB12-CDE3', 'Vi', 'Sedge')`,
+      `INSERT INTO ideal_logic_registrant (ideal_logic_id, given_name, family_name) VALUES ('QNN6-MX8', 'Ada', 'Bramble'), ('AB12-CDE3', 'Vi', 'Sedge'), ('AC00-XYZ1', 'Ada', 'Collector')`,
     );
 
   it("links a person to a registration, credited to the key's person, with the reference kept", async () => {
     const w = await world();
     await seen(w);
-    const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: "QNN6-MX8", evidence: "register_email", reference: "issue 2" });
+    const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: "AC00-XYZ1", evidence: "register_email", reference: "issue 2" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ person_id: w.people.ada, outcome: "saved", was: "", ideal_logic_id: "QNN6-MX8", registrant: "Ada Bramble" });
-    expect(await linked(w)).toEqual([[w.people.ada, "QNN6-MX8", "register_email", "samstaff"]]);
+    expect(await res.json()).toEqual({ person_id: w.people.ada, outcome: "saved", was: "", ideal_logic_id: "AC00-XYZ1", registrant: "Ada Collector" });
+    expect(await linked(w)).toEqual([[w.people.ada, "AC00-XYZ1", "register_email", "samstaff"]]);
     expect(await rows(w.conn, `SELECT reference FROM person_registration_event`)).toEqual([["issue 2"]]);
     expect(await rows(w.conn, `SELECT route, subject, outcome, reference, status FROM api_key_use`)).toEqual([
       ["/api/v1/people/:id/registration", String(w.people.ada), "saved", "issue 2", 200],
@@ -207,6 +207,17 @@ describe("POST /api/v1/people/:id/registration", () => {
     expect(await again.json()).toMatchObject({ outcome: "unchanged", was: "AB12-CDE3" });
     const cleared = await w.sendRegistration(w.keys.staff, "vol", { ideal_logic_id: "" });
     expect(await cleared.json()).toEqual({ person_id: w.people.vol, outcome: "saved", was: "AB12-CDE3", ideal_logic_id: "", registrant: "" });
+    expect(await linked(w)).toEqual([]);
+  });
+
+  it("refuses register_email evidence when the registration's name is not the person's, and repeats neither name", async () => {
+    const w = await world();
+    await seen(w);
+    const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: "AB12-CDE3", evidence: "register_email" });
+    expect(res.status).toBe(422);
+    const said = JSON.stringify(await res.json());
+    expect(said).toContain("not this person's name");
+    for (const piece of ["Vi", "Sedge", "AB12-CDE3"]) expect(said).not.toContain(piece);
     expect(await linked(w)).toEqual([]);
   });
 

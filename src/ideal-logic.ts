@@ -35,6 +35,9 @@ export const IDEAL_LOGIC_URL = "https://apps.ideal-logic.com/api/f36e9b6c.json";
  */
 export const DAILY_REQUEST_BUDGET = 60;
 
+/** How long one request, with the reading of its body, may take before Beeline gives up. */
+export const REQUEST_TIMEOUT_MS = 60_000;
+
 /** A home address as Ideal Logic holds it. Never stored: see the head of this file. */
 export interface RegistrantAddress {
   /** May hold several lines. */
@@ -256,10 +259,13 @@ export function createIdealLogicClient(opts: {
   fetchImpl?: IdealLogicFetch;
   budget?: RequestBudget;
   url?: string;
+  /** How long the request and the reading of its body may take together. Defaults to `REQUEST_TIMEOUT_MS`. */
+  timeoutMs?: number;
 }): IdealLogicClient {
   const fetchImpl = opts.fetchImpl ?? (fetch as unknown as IdealLogicFetch);
   const budget = opts.budget ?? new RequestBudget();
   const url = opts.url ?? IDEAL_LOGIC_URL;
+  const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
 
   return {
     remaining: () => budget.remaining(),
@@ -267,8 +273,11 @@ export function createIdealLogicClient(opts: {
       budget.spend();
       let res: FetchResponse;
       let body: string;
+      // A stalled response must not hold the night's job: the caller's signal
+      // and a deadline are combined.
+      const limit = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
       try {
-        res = await fetchImpl(url, { headers: { Authorization: `Bearer ${opts.key}` }, signal });
+        res = await fetchImpl(url, { headers: { Authorization: `Bearer ${opts.key}` }, signal: limit });
         body = await res.text();
       } catch (err) {
         if (signal?.aborted) throw err;
@@ -298,7 +307,13 @@ export function createIdealLogicClient(opts: {
       // a job that took it for everybody would report registrants as gone.
       const header = res.headers.get("x-numresults");
       const total = header === null || header.trim() === "" ? NaN : Number(header);
-      if (Number.isInteger(total) && total !== parsed.length) {
+      if (!Number.isInteger(total)) {
+        throw new IdealLogicError(
+          "Ideal Logic did not say how many registrants there are, so the list cannot be checked for completeness",
+          "incomplete",
+        );
+      }
+      if (total !== parsed.length) {
         throw new IdealLogicError(
           `Ideal Logic returned ${parsed.length} registrants and said there are ${total}`,
           "incomplete",

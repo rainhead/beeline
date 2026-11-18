@@ -17,7 +17,9 @@ The rule shapes the code in places a reader might otherwise tidy away:
 
 ## The API
 
-`GET https://apps.ideal-logic.com/api/f36e9b6c.json` with the key as a bearer token returns everybody in one list (826 people on 2026-11-18). The header `X-NumResults` says how many there are, and the client refuses a list of a different length, so that a change in Ideal Logic's default paging cannot make registrants look gone. Every failure is a 404.
+`GET https://apps.ideal-logic.com/api/f36e9b6c.json` with the key as a bearer token returns everybody in one list (826 people on 2026-11-18). The header `X-NumResults` says how many there are, and the client refuses a list of a different length, so that a change in Ideal Logic's default paging cannot make registrants look gone. It also refuses an answer whose header is missing, empty or not a number, since without it the list cannot be checked. Every failure is a 404.
+
+The request and the reading of its body together have 60 seconds (`REQUEST_TIMEOUT_MS`, which `createIdealLogicClient` lets a test shorten), combined with the caller's own abort signal. A stalled response would otherwise hold the night's job; when the deadline passes, the client throws the same fixed "could not be reached" error as for a network failure.
 
 Ideal Logic allows **100 requests a day**. The list is fetched whole, never per person. The client counts its own attempts for the Pacific day and refuses the one that would pass 60 (`RequestBudget`), which leaves the rest for a person working by hand. The count is in memory; nothing fetches at boot, so a machine restarting in a loop makes no requests. The app holds one client (`config.idealLogic`), so the nightly job and the downloads draw on one count. The key is the secret `IDEAL_LOGIC_KEY`; without it the job fetches nothing and says so.
 
@@ -38,6 +40,8 @@ The handle a registrant types is the weakest evidence there is: of 142, seven we
 3. **Staff**, for everybody else, through `POST /api/v1/people/<id>/registration` ([The API and its keys](the-api-and-its-keys.md)) until the page for it exists (beeline-w8ab.2).
 
 The full name must agree, and not only the family name, because of households: two people who registered separately can share one login, which only one of them holds.
+
+The server checks that again for `register_email` evidence (`decideRegistration`, `src/registrations.ts`). The command-line tool matched on names from an exported file, and a login may have moved to another person since, so the server compares the registration's name with the person's display name as it is now, and refuses with `name_differs` if they disagree. The API answers 422 without repeating either name, and the link is left for staff to decide. Evidence of kind `staff` is not checked, since a person has already looked.
 
 ## The nightly job
 

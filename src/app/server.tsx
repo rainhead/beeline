@@ -2987,6 +2987,14 @@ export function createApp({
       });
       if (!decided.ok) {
         if (decided.refusal === "unknown_person") return { ok: false, refusal: "not_found" };
+        if (decided.refusal === "name_differs") {
+          return {
+            ok: false,
+            refusal: "invalid",
+            problem:
+              "The name on that registration is not this person's name, so the link was not made. Whether it is the same person is for staff to decide.",
+          };
+        }
         // The value is not repeated back: what was sent by mistake may be an
         // address, and this text is the caller's to log.
         return {

@@ -215,7 +215,7 @@ export function describeRegistrants(r: RegistrantsRecorded): string {
 
 export type RegistrationDecision =
   | { ok: true; outcome: "saved" | "unchanged"; was: string | null; registrant: string | null }
-  | { ok: false; refusal: "unknown_person" | "unknown_registration" };
+  | { ok: false; refusal: "unknown_person" | "unknown_registration" | "name_differs" };
 
 /**
  * Record that a person's registration is the one named, or with `null` that
@@ -237,7 +237,11 @@ export async function decideRegistration(
   input: { personId: number; idealLogicId: string | null; evidence: RegistrationEvidence; decidedBy: string; reference?: string | null },
 ): Promise<RegistrationDecision> {
   return db.transaction().execute(async (trx) => {
-    const person = await trx.selectFrom("person").select("entity_id").where("entity_id", "=", input.personId).executeTakeFirst();
+    const person = await trx
+      .selectFrom("person")
+      .select(["entity_id", "display_name"])
+      .where("entity_id", "=", input.personId)
+      .executeTakeFirst();
     if (person === undefined) return { ok: false, refusal: "unknown_person" } as const;
 
     let registrant: string | null = null;
@@ -248,6 +252,12 @@ export async function decideRegistration(
         .where("ideal_logic_id", "=", input.idealLogicId)
         .executeTakeFirst();
       if (row === undefined) return { ok: false, refusal: "unknown_registration" } as const;
+      // The caller that matched on names did so from an exported file; a login
+      // may have moved to another person since, so the names are compared again
+      // here against what Beeline holds now.
+      if (input.evidence === "register_email" && !namesAgree(person.display_name, `${row.given_name}${row.family_name}`)) {
+        return { ok: false, refusal: "name_differs" } as const;
+      }
       registrant = `${row.given_name} ${row.family_name}`;
     }
 

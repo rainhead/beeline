@@ -185,7 +185,7 @@ const ENDPOINTS: Endpoint[] = [
     needs: "any key",
     parameters: parametersOf(LISTING_PARAMETERS, SPECIMEN_SORT_KEYS),
     answers:
-      "{ total, page, page_size, pages, rows }. Each row has the columns of the specimens CSV (see columns.specimens; the host's id, current name, family and common name come last), plus id, url, sample_id, sample_url and location_withheld.",
+      "{ total, page, page_size, pages, rows }. Each row has the specimens' Darwin Core and Beeline columns (see columns.specimens; the host's id, current name, family and common name come last), plus id, url, sample_id, sample_url and location_withheld.",
   },
   {
     method: "GET",

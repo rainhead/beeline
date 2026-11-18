@@ -443,14 +443,25 @@ function ListingActions({
 }
 
 /**
- * Download, as a menu of the forms the rows can be had in — the CSV today,
- * and room for others (a KML has been mentioned) — with what a download
- * holds said inside it rather than as a paragraph above every table. The
- * header's <details class="menu">, so the menus island closes it on a click
- * elsewhere or Escape, and it works without scripting.
+ * Download. The samples listing offers a CSV in a menu, with what it holds
+ * said inside it rather than as a paragraph above every table (the header's
+ * <details class="menu">, so the menus island closes it on a click elsewhere
+ * or Escape, and it works without scripting). The specimens listing has one
+ * download, the Excel file for editing specimens (beeline-kgyd.5), so it is a
+ * button with its note beside it, the way a single file is offered elsewhere.
  */
 function DownloadMenu({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
   const d = m.listings.csv;
+  if (path === "/specimens") {
+    return (
+      <>
+        <LinkButton href={listingHref(`${path}.xlsx`, query, { page: 1 })} variant="tonal">
+          {d.edit}
+        </LinkButton>
+        <Meta>{d.editNote}</Meta>
+      </>
+    );
+  }
   return (
     <details class="menu download-menu">
       <summary class="button tonal">
@@ -459,13 +470,6 @@ function DownloadMenu({ m, path, query }: { m: Messages; path: string; query: Li
       <div class="menu-panel">
         <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{d.download}</a>
         <p class="meta download-note">{d.note}</p>
-        {/* The file to edit and upload back (beeline-kgyd): the specimens only, since only they have an upload. */}
-        {path === "/specimens" && (
-          <>
-            <a href={listingHref(`${path}.xlsx`, query, { page: 1 })}>{d.edit}</a>
-            <p class="meta download-note">{d.editNote}</p>
-          </>
-        )}
       </div>
     </details>
   );

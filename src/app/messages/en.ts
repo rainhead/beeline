@@ -906,11 +906,11 @@ export const en = {
       next: "Next →",
     },
 
-    /** The Download menu above a listing's table: each form the rows can be had in, and what a download holds. */
+    /** The download above a listing's table: the samples' menu with its CSV and what it holds, and the specimens' one Excel file for editing. */
     csv: {
       menu: "Download",
       download: "Download as CSV",
-      edit: "Excel file for editing specimens",
+      edit: "Download the Excel file for editing specimens",
       editNote:
         "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. Every cell is kept as text, so Excel leaves it as it is. Staff can upload it back after you edit it.",
 
@@ -2406,7 +2406,7 @@ export const en = {
     missing: "Not written yet. It appears after the next nightly run, or after running the legacy-export job on Jobs.",
     archives: "Darwin Core archives, by program and year",
     archivesIntro:
-      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got. Each program also has an archive of every year together, which states a licence only when all its years share one, and a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
+      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the specimen columns, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got. Each program also has an archive of every year together, which states a licence only when all its years share one, and a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
     archivesCaution:
       "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
     archivesMissing:

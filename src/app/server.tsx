@@ -1220,11 +1220,11 @@ export function createApp({
     );
   });
 
-  // The CSV and the Excel file are the same listing: the query, the reader,
-  // the paging and the host names are read once, here, so they cannot differ.
-  const specimenDownload = async (c: Context<AppEnv>, format: "csv" | "xlsx") => {
+  // The Excel file is the one download of the specimens listing (beeline-kgyd.5):
+  // the query, the reader, the paging and the host names are read here.
+  const specimenDownload = async (c: Context<AppEnv>) => {
     const { personId, reader, query } = await listingRequest(c);
-    countListingView(listingAttributes("specimens", format, query, viewer(c)));
+    countListingView(listingAttributes("specimens", "xlsx", query, viewer(c)));
     const hostNames = hostNamesOnce(db);
     return {
       fetch: async (limit: number, offset: number) =>
@@ -1233,20 +1233,15 @@ export function createApp({
     };
   };
 
-  app.get("/specimens.csv", async (c) => {
-    const { fetch, timing } = await specimenDownload(c, "csv");
-    return csv(c, csvStream(SPECIMEN_CSV_HEADER, fetch, specimenCsvRow, timing), "beeline-specimens");
-  });
-
   // The file to edit and upload back (beeline-kgyd): every cell is text, so a
   // spreadsheet cannot reformat what it holds.
   // The file for editing specimens, open to everyone since a later slice will let volunteers upload it. A few of the
-  // CSV's columns (SPECIMENS_LAYOUT); the samples will have a file of their own.
+  // specimen columns (SPECIMENS_LAYOUT); the samples will have a file of their own.
   app.get("/specimens.xlsx", async (c) => {
-    const { fetch, timing } = await specimenDownload(c, "xlsx");
-    // The tabs are read when the file is asked for; the CSV has none of this.
+    const { fetch, timing } = await specimenDownload(c);
+    // The tabs are read when the file is asked for.
     const workbook = await specimenWorkbook(db, c.get("m"));
-    // The same values the CSV writes for the same headings, a few of its columns.
+    // The values specimenCsvRow writes for the same headings, a few of its columns.
     const at = workbook.header.map((h) => SPECIMEN_CSV_HEADER.indexOf(h as (typeof SPECIMEN_CSV_HEADER)[number]));
     const toRow = (r: SpecimenRow, page: Page<SpecimenRow>) => {
       const written = specimenCsvRow(r, page);

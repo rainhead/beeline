@@ -10,7 +10,12 @@ import {
   csvStream,
   EMPTY_QUERY,
   SPECIMEN_CSV_HEADER,
+  STAFF_READER,
+  hostNamesOnce,
   listSamples,
+  listSpecimens,
+  specimenCsvRow,
+  textCell,
   listingHref,
   MINE,
   parseListingQuery,
@@ -197,6 +202,29 @@ const get = async (app: Awaited<ReturnType<typeof listingApp>>["app"], path: str
   return res.text();
 };
 
+/**
+ * The specimens a person is shown, as rows of text under every column heading, header first. The specimens listing
+ * has no CSV any more (beeline-kgyd.5), and its Excel file holds only a few columns, so a test of what the listing
+ * selects, withholds or says in a column the Excel file lacks reads it where the Excel file and the API's rows read it:
+ * the listing's own query and reader, and the row mapper both use (`specimenCsvRow`), as the person's session would.
+ */
+async function specimenTable(
+  fx: Pick<Awaited<ReturnType<typeof listingApp>>, "db" | "alice" | "bob" | "staffer">,
+  search: string,
+  as: "alice" | "bob" | "staffer" = "staffer",
+): Promise<string[][]> {
+  const personId = fx[as];
+  const reader = as === "staffer" ? STAFF_READER : { staff: false, personIds: [personId] };
+  const query = parseListingQuery(new URLSearchParams(search), { atlasCodes: ["OBA", "WaBA"] });
+  const page = await listSpecimens(fx.db, query, personId, reader, {
+    limit: 10_000,
+    offset: 0,
+    withTotal: false,
+    hostNames: await hostNamesOnce(fx.db)(),
+  });
+  return [[...SPECIMEN_CSV_HEADER], ...page.rows.map((r) => specimenCsvRow(r, page).map((v) => textCell(v) ?? ""))];
+}
+
 describe("sample listing", () => {
   it("shows every sample the signed-in person collected, and nobody else's", async () => {
     const { app } = await listingApp();
@@ -332,17 +360,22 @@ describe("sample listing", () => {
   });
 
   it("shows Washington as WABA, as the atlas writes it, while its scope stays WaBA (beeline-uiar)", async () => {
-    const { app } = await listingApp("staffer");
+    const fx = await listingApp("staffer");
+    const { app } = fx;
     const page = await get(app, "/samples?scope=WaBA");
     expect(page).toContain("B-2");
     expect(page).toContain(">WABA<");
-    // Every row's atlas column in both exports, which the archives share.
-    for (const path of ["/samples.csv?scope=WaBA", "/specimens.csv?scope=WaBA"]) {
-      const [header, ...lines] = (await (await app.request(path)).text()).trim().split("\n");
-      const atlas = header!.split(",").indexOf("atlas");
-      expect(atlas, path).toBeGreaterThanOrEqual(0);
-      expect(lines.length, path).toBeGreaterThan(0);
-      expect(new Set(lines.map((l) => l.split(",")[atlas])), path).toEqual(new Set(["WABA"]));
+    // Every row's atlas column in the samples CSV and the specimen columns, which the archives share.
+    const [sampleHead, ...sampleLines] = (await (await app.request("/samples.csv?scope=WaBA")).text()).trim().split("\n");
+    const [specimenHead, ...specimenRows] = await specimenTable(fx, "scope=WaBA");
+    const atlases = {
+      samples: { atlas: sampleHead!.split(",").indexOf("atlas"), rows: sampleLines.map((l) => l.split(",")) },
+      specimens: { atlas: specimenHead!.indexOf("atlas"), rows: specimenRows },
+    };
+    for (const [name, { atlas, rows }] of Object.entries(atlases)) {
+      expect(atlas, name).toBeGreaterThanOrEqual(0);
+      expect(rows.length, name).toBeGreaterThan(0);
+      expect(new Set(rows.map((l) => l[atlas])), name).toEqual(new Set(["WABA"]));
     }
     // Sorting by atlas sorts by what the column shows, on both listings.
     for (const path of ["/samples?scope=all&sort=atlas", "/specimens?scope=all&sort=atlas"]) expect(await get(app, path)).toContain(">WABA<");
@@ -763,8 +796,9 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(await get(app, "/samples?scope=all&host=lanata")).not.toContain(en.listings.filters.nearTrap);
   });
 
-  it("adds the host's id, current name, family and common name to the CSV, beside the name as observed", async () => {
-    const { app } = await hostApp();
+  it("adds the host's id, current name, family and common name to the samples CSV and the specimen columns, beside the name as observed", async () => {
+    const fx = await hostApp();
+    const { app } = fx;
     const sampleCsv = parseCsv(await (await app.request("/samples.csv?scope=all")).text());
     const head = sampleCsv[0]!;
     for (const h of ["associatedTaxa", "hostRank", "hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"]) expect(head).toContain(h);
@@ -783,7 +817,7 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(host("B-2")).toEqual(["4", "", "Familia alpha", ""]);
     expect(host("C-1")).toEqual(["", "", "", ""]);
 
-    const specimenCsv = parseCsv(await (await app.request("/specimens.csv?scope=all")).text());
+    const specimenCsv = await specimenTable(fx, "scope=all");
     const shead = specimenCsv[0]!;
     expect(shead.slice(-9, -4)).toEqual(["identifiedByExpert", "hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"]);
     const spec = specimenCsv.find((l) => l.includes("OBA00001"))!;
@@ -791,10 +825,11 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(spec[shead.indexOf("hostFamily")]).toBe("Familia alpha");
   });
 
-  it("ends the specimens CSV with what loading an edited copy back needs: caste, the specimen, its version, the sample's version (beeline-kgyd)", async () => {
-    const { app, conn } = await hostApp();
+  it("ends the specimen columns with what loading an edited copy back needs: caste, the specimen, its version, the sample's version (beeline-kgyd)", async () => {
+    const fx = await hostApp();
+    const { conn } = fx;
     const read = async () => {
-      const csv = parseCsv(await (await app.request("/specimens.csv?scope=all")).text());
+      const csv = await specimenTable(fx, "scope=all");
       const head = csv[0]!;
       const row = csv.find((l) => l.includes("OBA00001"))!;
       return { head, csv, cell: (h: string) => row[head.indexOf(h)]! };
@@ -951,10 +986,11 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
       }
     });
 
-    it("gives its id and nothing else in the CSV", async () => {
-      const { app } = await noNameApp();
+    it("gives its id and nothing else in the samples CSV and the specimen columns", async () => {
+      const fx = await noNameApp();
+      const { app } = fx;
       for (const [file, key] of [["samples", "fieldNumber"], ["specimens", "sampleNumber"]] as const) {
-        const csv = parseCsv(await (await app.request(`/${file}.csv?scope=all`)).text());
+        const csv = file === "samples" ? parseCsv(await (await app.request(`/${file}.csv?scope=all`)).text()) : await specimenTable(fx, "scope=all");
         const head = csv[0]!;
         for (const [n, id] of [["D-1", "20"], ["D-2", "21"], ["D-3", "888"]] as const) {
           const r = csv.find((l) => l[head.indexOf(key)] === n)!;
@@ -1045,7 +1081,13 @@ describe("the method column", () => {
 
 describe("the determination date column", () => {
   it("shows when the determination of record was made, and orders by it", async () => {
-    const { app, conn } = await listingApp("staffer");
+    const fx = await listingApp("staffer");
+    const { app, conn } = fx;
+    // The date the file carries, on the one specimen determined as Bombus cf. vosnesenskii.
+    const dateIdentified = async () => {
+      const [head, ...rows] = await specimenTable(fx, "scope=all");
+      return rows.find((r) => r[head!.indexOf("fieldNumber")] === "OBA00001")![head!.indexOf("dateIdentified")];
+    };
     await conn.run(`UPDATE determination SET determined_on = DATE '2025-04-28' WHERE verbatim_identification = 'Bombus cf. vosnesenskii'`);
     const body = await get(app, "/specimens?scope=all");
     expect(body).toContain("Determined</");
@@ -1054,16 +1096,15 @@ describe("the determination date column", () => {
     const sorted = await get(app, "/specimens?scope=all&sort=determined");
     expect(sorted.indexOf("OBA00001")).toBeLessThan(sorted.indexOf("WABA0001"));
     expect(sorted).toContain('aria-sort="descending"');
-    const csv = await (await app.request("/specimens.csv?scope=all")).text();
-    expect(csv.split("\n")[0]).toContain("identifiedBy,identifiedByID,dateIdentified");
-    expect(csv).toContain(",2025-04-28,");
+    expect((await specimenTable(fx, "scope=all"))[0]!.join(",")).toContain("identifiedBy,identifiedByID,dateIdentified");
+    expect(await dateIdentified()).toBe("2025-04-28");
 
     // A year-only date is the year, on the page and in the file (beeline-9ut).
     await conn.run(`UPDATE determination SET determined_on_precision = 'year' WHERE verbatim_identification = 'Bombus cf. vosnesenskii'`);
     const yearly = await get(app, "/specimens?scope=all");
     expect(yearly).toContain(">2025<");
     expect(yearly).not.toContain("Apr 28, 2025");
-    expect(await (await app.request("/specimens.csv?scope=all")).text()).toContain(",2025,");
+    expect(await dateIdentified()).toBe("2025");
   });
 });
 
@@ -1150,12 +1191,18 @@ describe("the toolbar", () => {
       const menus = body.match(/<details class="menu col-menu">/g) ?? [];
       expect(menus.length, path).toBeGreaterThan(5);
       // The Download menu above the table wears the same mark (Peter, 2026-10-31).
+      // The samples have it, with their one CSV; the specimens' one download is a button (beeline-kgyd.5), not a menu.
       const download = body.match(/<details class="menu download-menu">/g) ?? [];
-      expect(download, path).toHaveLength(1);
-      // It holds the CSV of exactly this listing, and what a download holds.
       const [listing, search] = path.split("?");
-      const item = `href="${listing}.csv?${search!.replaceAll("&", "&amp;")}">Download as CSV</a><p class="meta download-note">The CSV holds`;
-      expect(body.indexOf(item, body.indexOf(`<details class="menu download-menu">`)), path).toBeGreaterThan(0);
+      if (listing === "/samples") {
+        expect(download, path).toHaveLength(1);
+        // It holds the CSV of exactly this listing, and what a download holds.
+        const item = `href="${listing}.csv?${search!.replaceAll("&", "&amp;")}">Download as CSV</a><p class="meta download-note">The CSV holds`;
+        expect(body.indexOf(item, body.indexOf(`<details class="menu download-menu">`)), path).toBeGreaterThan(0);
+      } else {
+        expect(download, path).toHaveLength(0);
+        expect(body, path).toContain(`href="/specimens.xlsx?${search!.replaceAll("&", "&amp;")}"`);
+      }
       expect(body.match(new RegExp(CHEVRON.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")), path).toHaveLength(
         menus.length + download.length,
       );
@@ -1236,8 +1283,9 @@ describe("CSV export", () => {
     expect(lines[0]).toContain("Bob Barnes | Alice Adams");
   });
 
-  it("exports specimens with their determination", async () => {
-    const { app, conn } = await listingApp("staffer");
+  it("lists specimens with their determination in the specimen columns", async () => {
+    const fx = await listingApp("staffer");
+    const { conn } = fx;
     // The museum's number for one of them, as Ecdysis reported it.
     await conn.run(
       `INSERT INTO specimen_catalog_number (specimen_id, catalog_number)
@@ -1249,7 +1297,8 @@ describe("CSV export", () => {
        SELECT entity_id, 'missing', 'LOST SPECIMEN: No specimen in complete OR inventory.', 'Inez Inventory', DATE '2026-11-03', 'inventory.xlsx'
        FROM specimen WHERE field_number = 'OBA00002'`,
     );
-    const csv = await (await app.request("/specimens.csv?scope=OBA")).text();
+    // The columns as lines of text, a comma between cells, as the API's rows and the old CSV carry them.
+    const csv = (await specimenTable(fx, "scope=OBA")).map((r) => r.join(",")).join("\n");
     expect(csv).toContain("OBA00001");
     expect(csv).toContain("Bombus vosnesenskii");
     expect(csv).toContain("Radoszkowski, 1862");
@@ -1777,18 +1826,23 @@ describe("a location iNaturalist keeps from everyone but its observer, on the li
     expect(b1[header.indexOf("decimalLatitude")]).not.toBe("");
   });
 
-  it("is left out of the specimens download and listing too", async () => {
-    const { app, conn } = await listingApp("bob");
+  it("is left out of the specimens Excel file, the specimen columns and the listing too", async () => {
+    const fx = await listingApp("bob");
+    const { app, conn } = fx;
     // Alice's A-1, with its two specimens, made obscured by Alice.
     await conn.run(`UPDATE sample SET geoprivacy = 'obscured' WHERE sample_number = 'A-1'`);
-    const csv = await (await app.request("/specimens.csv?scope=all")).text();
-    const lines = csv.replace(/^\uFEFF/, "").split("\n");
-    const header = lines[0]!.split(",");
-    const fieldNumber = header.indexOf("fieldNumber");
-    const oba1 = lines.map((l) => l.split(",")).find((r) => r[fieldNumber] === "OBA00001")!;
-    expect(oba1[header.indexOf("locality")]).toBe("");
-    expect(oba1[header.indexOf("decimalLatitude")]).toBe("");
-    expect(oba1[header.indexOf("minimumElevationInMeters")] ?? "").toBe("");
+    // The Excel file, as Bob's session asks for it: its locality column is empty for the obscured sample's specimen.
+    const read = readXlsx(new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer()));
+    if (!read.ok) throw new Error(read.refusal);
+    const sheetHead = [...read.sheet.rows[0]!.cells.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c.text);
+    const sheetOba1 = read.sheet.rows.slice(1).find((r) => r.cells.get(sheetHead.indexOf("fieldNumber"))?.text === "OBA00001")!;
+    expect(sheetOba1.cells.get(sheetHead.indexOf("locality"))?.text ?? "").toBe("");
+    // The columns the Excel file does not carry, as the API's rows have them.
+    const [header, ...rows] = await specimenTable(fx, "scope=all", "bob");
+    const oba1 = rows.find((r) => r[header!.indexOf("fieldNumber")] === "OBA00001")!;
+    expect(oba1[header!.indexOf("locality")]).toBe("");
+    expect(oba1[header!.indexOf("decimalLatitude")]).toBe("");
+    expect(oba1[header!.indexOf("minimumElevationInMeters")] ?? "").toBe("");
     const listing = await get(app, "/specimens?scope=all");
     expect(listing).not.toContain("Corvallis");
     expect(listing).toContain(en.listings.locationHidden);
@@ -1878,35 +1932,6 @@ describe("listing queries", () => {
 });
 
 describe("the specimens Excel download (beeline-kgyd)", () => {
-  /** RFC 4180, enough for a comparison: quoted cells with doubled quotes and newlines inside. */
-  const csvRecords = (text: string): string[][] => {
-    const out: string[][] = [];
-    let record: string[] = [];
-    let cell = "";
-    let quoted = false;
-    const body = text.replace(/^﻿/, "");
-    for (let i = 0; i < body.length; i++) {
-      const ch = body[i]!;
-      if (quoted) {
-        if (ch === '"' && body[i + 1] === '"') {
-          cell += '"';
-          i++;
-        } else if (ch === '"') quoted = false;
-        else cell += ch;
-      } else if (ch === '"') quoted = true;
-      else if (ch === ",") {
-        record.push(cell);
-        cell = "";
-      } else if (ch === "\n") {
-        record.push(cell);
-        out.push(record);
-        record = [];
-        cell = "";
-      } else cell += ch;
-    }
-    return out;
-  };
-
   const sheetOf = async (res: Response) => {
     const read = readXlsx(new Uint8Array(await res.arrayBuffer()));
     if (!read.ok) throw new Error(read.refusal);
@@ -1915,12 +1940,14 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
 
   const IDENTIFYING = "/specimens.xlsx";
 
-  it("has the layout's headings in its order, and for each specimen the CSV's value for the same heading", async () => {
-    const { app, conn } = await listingApp("staffer");
-    // A value the CSV has to guard, which a text cell does not: the Excel file says it as it is.
+  it("has the layout's headings in its order, and for each specimen the specimen row's value for the same heading", async () => {
+    const fx = await listingApp("staffer");
+    const { app, conn } = fx;
+    // A value a CSV would have to guard, which a text cell does not: the Excel file says it as it is.
     await conn.run(`UPDATE determination SET determiner_name = '=Dee Determiner' WHERE determiner_name IS NOT NULL AND determiner_id IS NULL`);
     for (const query of ["scope=all", "scope=OBA", "scope=WaBA", "scope=all&q=barnes", "scope=all&sort=atlas&dir=desc", "scope=all&from=2026-01-01"]) {
-      const csv = csvRecords(await (await app.request(`/specimens.csv?${query}`)).text());
+      // The same query read through the listing and the row mapper the file is made from, one row for each specimen.
+      const csv = await specimenTable(fx, query);
       const res = await app.request(`${IDENTIFYING}?${query}`);
       expect(res.status, query).toBe(200);
       const sheet = await sheetOf(res);
@@ -1938,11 +1965,8 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
         const mine = csvOf.get(row.cells.get(heads.indexOf("specimenId"))!.text)!;
         expect(mine, `${query} row ${i + 2}`).toBeDefined();
         heads.forEach((heading, at) => {
-          // The CSV's guard, a quote before a leading =, +, -, @, tab or return, is not in the Excel file.
-          const value = mine[csvAt(heading)]!;
-          const unguarded = /^'[=+\-@\t\r]/.test(value) ? value.slice(1) : value;
-          // Null is a cell left out, and the CSV writes it as nothing.
-          expect(row.cells.get(at)?.text ?? "", `${query} row ${i + 2} ${heading}`).toBe(unguarded);
+          // Null is a cell left out, and the row says it as nothing.
+          expect(row.cells.get(at)?.text ?? "", `${query} row ${i + 2} ${heading}`).toBe(mine[csvAt(heading)]!);
         });
       });
     }
@@ -1962,18 +1986,18 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toMatch(/ s="[123]"/);
   });
 
-  it("is stamped as an Excel file, and answers who may have it as the CSV does", async () => {
+  it("is stamped as an Excel file, and gives each person the rows they are shown", async () => {
     const { app } = await listingApp("staffer");
     const res = await app.request(`${IDENTIFYING}?scope=all`);
     expect(res.headers.get("content-type")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     expect(res.headers.get("content-disposition")).toMatch(/^attachment; filename="beeline-specimens-\d{4}-\d{2}-\d{2}-\d{6}\.xlsx"$/);
-    // The same location rule as the CSV: what a volunteer may not see of a record is in neither file. The identifying file
-    // has no coordinates, so what is compared is the rows a volunteer is given.
+    // The location rule: what a volunteer may not see of a record is not in the file. The file has no coordinates,
+    // so what is compared is the rows a volunteer is given.
     const alice = await listingApp("alice");
-    const csv = csvRecords(await (await alice.app.request("/specimens.csv?scope=all")).text());
+    const rows = await specimenTable(alice, "scope=all", "alice");
     const xlsx = await sheetOf(await alice.app.request(`${IDENTIFYING}?scope=all`));
-    expect(xlsx.rows.length).toBe(csv.length);
-    // Nobody signed in is not served, by either.
+    expect(xlsx.rows.length).toBe(rows.length);
+    // Nobody signed in is not served.
     const anonymous = createApp({
       ...(await scratchPaths()),
       db: alice.db,
@@ -1982,20 +2006,39 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
       inat: unusedInat,
       resolveSession: async () => null,
     });
-    expect((await anonymous.request("/specimens.csv?scope=all")).status).toBe(401);
     expect((await anonymous.request(`${IDENTIFYING}?scope=all`)).status).toBe(401);
   });
 
-  it("is offered beside the CSV on the specimens page, as the file to edit and upload back, and not on the samples page", async () => {
+  it("is the one download the specimens page offers, as the file to edit and upload back, and not on the samples page (beeline-kgyd.5)", async () => {
     const { app } = await listingApp("staffer");
     const specimens = await get(app, "/specimens?scope=all&q=barnes");
-    expect(specimens).toContain(`href="/specimens.csv?`);
+    expect(specimens).not.toContain(".csv");
+    expect(specimens).not.toContain(en.listings.csv.download);
+    // A single button, not a menu of one.
+    expect(specimens).not.toContain("download-menu");
+    expect(specimens.match(/href="\/specimens\.[a-z]+\?/g)).toEqual(['href="/specimens.xlsx?']);
     expect(specimens).toMatch(/href="\/specimens\.xlsx\?[^"]*q=barnes/);
     expect(specimens).toContain(en.listings.csv.edit);
     expect(specimens).toContain(en.listings.csv.editNote);
-    expect(await get(app, "/samples?scope=all")).not.toContain(".xlsx");
+    const samples = await get(app, "/samples?scope=all");
+    expect(samples).not.toContain(".xlsx");
+    // The samples listing still offers its CSV.
+    expect(samples).toContain(`href="/samples.csv?`);
     // Everyone may download it, a volunteer too.
     expect(await get((await listingApp("alice")).app, "/specimens?scope=all")).toContain(`/specimens.xlsx?`);
+  });
+
+  it("no longer serves /specimens.csv: it is an address like any unknown one, with no redirect (beeline-kgyd.5)", async () => {
+    const { app } = await listingApp("staffer");
+    const gone = await app.request("/specimens.csv?scope=all");
+    const unknown = await app.request("/specimens.nothing?scope=all");
+    expect(gone.status).toBe(unknown.status);
+    expect(gone.status).toBe(404);
+    expect(gone.headers.get("location")).toBeNull();
+    expect(gone.headers.get("content-type")).not.toContain("text/csv");
+    expect(gone.headers.get("content-disposition")).toBeNull();
+    // The samples CSV is still served.
+    expect((await app.request("/samples.csv?scope=all")).headers.get("content-type")).toContain("text/csv");
   });
 });
 
@@ -2203,11 +2246,9 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       for (const [, words] of about) expect(words).not.toMatch(/correct|collecting date|coordinates/i);
     });
 
-    it("is the same for a volunteer, and the CSV is as it was: no tabs, no shading, the same columns", async () => {
+    it("is the same for a volunteer", async () => {
       const volunteer = await download("alice");
       expect(book(volunteer.bytes).SheetNames).toEqual(["specimens", "names", "identifiers", "words", "about"]);
-      const csv = await (await volunteer.app.request("/specimens.csv?scope=all")).text();
-      expect(csv.split("\n")[0]!.replace(/^﻿/, "")).toBe(SPECIMEN_CSV_HEADER.join(","));
     });
   });
 });

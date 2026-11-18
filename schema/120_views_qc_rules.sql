@@ -416,8 +416,9 @@ WHERE nullif(trim(f.specimen_count_raw), '') IS NOT NULL
 --
 -- It starts from the sample so that a page asking about one sample reads
 -- that sample's sightings and no others. What it cannot avoid, asked about
--- every sample, is reading all of observation_seen, which gains a row for
--- every observation each weekly sweep returns and is never pruned.
+-- every sample, is reading all of observation_seen, which is why that table
+-- keeps only the latest sighting of an observation by each source
+-- (schema/060, beeline-amdt).
 CREATE VIEW qc_rule_observation_missing_upstream AS
 SELECT o.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,

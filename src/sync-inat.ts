@@ -240,6 +240,39 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
   }
 }
 
+/**
+ * Forget every sighting that a later run of the same source has repeated
+ * (beeline-amdt), and say how many went. Deletion detection
+ * (qc_rule_observation_missing_upstream, schema/120) asks two things of
+ * observation_seen: which sources have ever returned an observation, and when
+ * any of them last did. The latest sighting by each source answers both, so
+ * the earlier ones change no finding. Kept, they are read by every listing
+ * and front page: a weekly sweep adds about 14,000, and two weeks after
+ * cutover 43,000 of production's 109,595 were of this kind.
+ *
+ * Where two runs of a source started at the same instant, the one with the
+ * later id is kept.
+ *
+ * A statement of its own, after the runs and outside their transactions: it
+ * deletes only rows that have a later sighting it can already see, so a run
+ * committing meanwhile, which adds rows under its own id, loses nothing.
+ */
+export async function pruneSightings(conn: DuckDBConnection): Promise<number> {
+  const result = await conn.run(
+    `DELETE FROM observation_seen
+     WHERE EXISTS (
+       SELECT 1
+       FROM sync_run this_run, observation_seen later
+       JOIN sync_run later_run ON later_run.entity_id = later.sync_run_id
+       WHERE this_run.entity_id = observation_seen.sync_run_id
+         AND later.inat_id = observation_seen.inat_id
+         AND later_run.source = this_run.source
+         AND (later_run.started_at > this_run.started_at
+              OR (later_run.started_at = this_run.started_at AND later_run.entity_id > this_run.entity_id)))`,
+  );
+  return Number(result.rowsChanged);
+}
+
 /** The source a by-id run records: it is no project's (schema/060 `fetched_by_id`). */
 export const BY_ID_SOURCE = "observation-ids";
 

@@ -21,7 +21,7 @@ export type SetMembershipResult =
   | { ok: false; refusal: "invalid" | "unresolved"; problem: string };
 
 export type SetRegistrationResult =
-  | { ok: true; outcome: "saved" | "unchanged"; person_id: number; was: string; ideal_logic_id: string }
+  | { ok: true; outcome: "saved" | "unchanged"; person_id: number; was: string; ideal_logic_id: string; registrant: string }
   | { ok: false; refusal: "not_found" }
   | { ok: false; refusal: "invalid"; problem: string };
 
@@ -129,13 +129,24 @@ export function registerPeopleRoutes(api: Hono<ApiEnv>, people: PeopleDeps | und
       c.set("outcome", "invalid_request");
       return apiError(c, 400, "invalid_request", err.message);
     }
-    const result = await people.setRegistration({
-      handle: c.req.param("id"),
-      idealLogicId,
-      evidence,
-      author: c.get("key").login,
-      reference: reference ?? null,
-    });
+    let result: SetRegistrationResult;
+    try {
+      result = await people.setRegistration({
+        handle: c.req.param("id"),
+        idealLogicId,
+        evidence,
+        author: c.get("key").login,
+        reference: reference ?? null,
+      });
+    } catch (err) {
+      // DuckDB has no row locks: a write that meets another fails. Nothing
+      // was recorded, since the decision is one transaction.
+      if (isWriteConflict(err)) {
+        c.set("outcome", "busy");
+        return apiError(c, 409, "busy", "Another write to the store got there first, and nothing was recorded. Send the same request again.");
+      }
+      throw err;
+    }
     if (!result.ok) {
       c.set("outcome", result.refusal);
       return result.refusal === "not_found"
@@ -143,6 +154,12 @@ export function registerPeopleRoutes(api: Hono<ApiEnv>, people: PeopleDeps | und
         : apiError(c, 422, "invalid", result.problem);
     }
     c.set("outcome", result.outcome);
-    return c.json({ person_id: result.person_id, outcome: result.outcome, was: result.was, ideal_logic_id: result.ideal_logic_id });
+    return c.json({
+      person_id: result.person_id,
+      outcome: result.outcome,
+      was: result.was,
+      ideal_logic_id: result.ideal_logic_id,
+      registrant: result.registrant,
+    });
   });
 }

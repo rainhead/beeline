@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
 import { createIdealLogicClient, IdealLogicError, type Registrant } from "./ideal-logic.js";
-import { foldName } from "./registrations.js";
+import { namesAgree } from "./registrations.js";
 
 /**
  * CLI: pnpm ideal-logic:link-register --people <people.json> [--register <usernames.csv>] [--apply --origin <url>]
@@ -14,13 +14,18 @@ import { foldName } from "./registrations.js";
  * register is a frozen file that no new registrant will ever be in, and one
  * that holds addresses, which Beeline's machine should not keep.
  *
- * The rule, all three parts required:
+ * The rule, all four parts required:
  *
  * 1. The registration's email address is in the register against exactly one
  *    iNaturalist login.
  * 2. Exactly one person in the store holds that login.
  * 3. The registration's full name, folded to letters and digits, is that
  *    person's display name.
+ * 4. No other registration reaches the same person by 1 to 3. A person who
+ *    registered twice is linked to neither.
+ *
+ * The nightly job must have run on the Beeline the links are sent to, since
+ * the API accepts only a registration Beeline has seen.
  *
  * The third is what keeps a household apart: two people who registered
  * separately can both be in the register against the one login they share,
@@ -29,8 +34,14 @@ import { foldName } from "./registrations.js";
  * middle initial, the other member of a household).
  *
  * Without --apply it prints what it would do. With it, each link is sent to
- * `POST /api/v1/people/<id>/registration` with evidence `register_email`,
- * which records who sent it; the key is `BEELINE_API_KEY`. Email addresses
+ * `POST /api/v1/people/<login>/registration` with evidence `register_email`,
+ * which records who sent it; the key is `BEELINE_API_KEY`. The person is
+ * addressed by iNaturalist login rather than store id: every link made here
+ * is to a person who holds a login (rule 2), and a store id can be renumbered
+ * when a store is rebuilt, which a login cannot. When the API answers 429
+ * (too many requests) the link is sent again after the number of seconds in
+ * its `Retry-After` header (5 if absent, at most 60), up to 5 tries, before it
+ * is counted as refused. Email addresses
  * are compared in memory and never printed, sent or written.
  *
  * `people.json` is the answer to this, from `pnpm store:query --json --rows 50000`:
@@ -46,7 +57,7 @@ export interface StorePerson {
 }
 
 export interface RegisterMatch {
-  links: Array<{ personId: number; displayName: string; idealLogicId: string }>;
+  links: Array<{ personId: number; login: string; displayName: string; idealLogicId: string }>;
   /** Registrations the register reaches but the rule does not link, by why. Counts only. */
   toStaff: { loginAmbiguous: number; loginUnheld: number; nameDiffers: number; alreadyMatched: number };
 }
@@ -80,7 +91,8 @@ export function matchByRegisterEmail(
   }
 
   const out: RegisterMatch = { links: [], toStaff: { loginAmbiguous: 0, loginUnheld: 0, nameDiffers: 0, alreadyMatched: 0 } };
-  const taken = new Set<number>();
+  // person id → every registration the rule reaches for them.
+  const reached = new Map<number, { person: StorePerson; ids: string[] }>();
   for (const r of registrants) {
     const logins = loginsByEmail.get(fold(r.email));
     if (logins === undefined) continue;
@@ -94,17 +106,23 @@ export function matchByRegisterEmail(
       continue;
     }
     const person = held[0]!;
-    if (foldName(person.display_name) !== foldName(`${r.givenName}${r.familyName}`)) {
+    if (!namesAgree(person.display_name, `${r.givenName}${r.familyName}`)) {
       out.toStaff.nameDiffers += 1;
       continue;
     }
-    // A person who registered twice: the second is for staff to choose between.
-    if (taken.has(person.entity_id)) {
-      out.toStaff.alreadyMatched += 1;
-      continue;
+    const at = reached.get(person.entity_id);
+    if (at) at.ids.push(r.id);
+    else reached.set(person.entity_id, { person, ids: [r.id] });
+  }
+  // A person the rule reaches twice registered twice, and neither
+  // registration is linked: which one holds the address their labels should
+  // go to is for staff to say, not for the order of Ideal Logic's list.
+  for (const { person, ids } of reached.values()) {
+    if (ids.length === 1) {
+      // A person reached has a login: rule 2 found them by it.
+      out.links.push({ personId: person.entity_id, login: person.login!, displayName: person.display_name, idealLogicId: ids[0]! });
     }
-    taken.add(person.entity_id);
-    out.links.push({ personId: person.entity_id, displayName: person.display_name, idealLogicId: r.id });
+    else out.toStaff.alreadyMatched += ids.length;
   }
   return out;
 }
@@ -145,7 +163,60 @@ const USAGE = `usage: pnpm ideal-logic:link-register --people <people.json> [--r
 
 IDEAL_LOGIC_KEY must be set, and BEELINE_API_KEY with --apply (a staff key).`;
 
-type Io = { env: NodeJS.ProcessEnv; out: (text: string) => void; err: (text: string) => void; fetchImpl?: typeof fetch };
+type Io = {
+  env: NodeJS.ProcessEnv;
+  out: (text: string) => void;
+  err: (text: string) => void;
+  fetchImpl?: typeof fetch;
+  /** Waits this many seconds; tests replace it so that they do not wait. */
+  sleep?: (seconds: number) => Promise<void>;
+};
+
+const MAX_TRIES = 5;
+const DEFAULT_RETRY_SECONDS = 5;
+const MAX_RETRY_SECONDS = 60;
+
+/** Seconds to wait after a 429, from its `Retry-After` header: 5 if it is missing or not a number, never more than 60. */
+export function retryAfterSeconds(header: string | null): number {
+  const n = header === null ? Number.NaN : Number(header.trim());
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_RETRY_SECONDS;
+  return Math.min(n, MAX_RETRY_SECONDS);
+}
+
+/**
+ * Send each link to the API, one at a time. Lists to `out` the ones refused;
+ * returns how many were saved by outcome, and how many were refused.
+ */
+export async function sendLinks(
+  links: RegisterMatch["links"],
+  opts: { origin: string; apiKey: string; reference: string | null },
+  io: Pick<Io, "out" | "fetchImpl" | "sleep">,
+): Promise<{ counts: Map<string, number>; failed: number }> {
+  const fetchImpl = io.fetchImpl ?? fetch;
+  const sleep = io.sleep ?? ((s: number) => new Promise<void>((resolve) => setTimeout(resolve, s * 1000)));
+  const counts = new Map<string, number>();
+  let failed = 0;
+  for (const l of links) {
+    let res: Response | null = null;
+    for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+      res = await fetchImpl(`${opts.origin}/api/v1/people/${encodeURIComponent(l.login)}/registration`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify({ ideal_logic_id: l.idealLogicId, evidence: "register_email", ...(opts.reference ? { reference: opts.reference } : {}) }),
+      });
+      if (res.status !== 429 || attempt === MAX_TRIES) break;
+      await sleep(retryAfterSeconds(res.headers.get("retry-after")));
+    }
+    if (res === null || res.status !== 200) {
+      failed += 1;
+      io.out(`${l.login}\t${l.displayName}\tHTTP ${res?.status}\n`);
+      continue;
+    }
+    const outcome = String(((await res.json()) as { outcome?: unknown }).outcome);
+    counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+  }
+  return { counts, failed };
+}
 
 export async function linkRegisterEmails(argv: readonly string[], io: Io): Promise<number> {
   let peoplePath: string | null = null;
@@ -188,31 +259,15 @@ export async function linkRegisterEmails(argv: readonly string[], io: Io): Promi
   io.err(
     `${registrants.length} registrations, ${people.length} people: ${match.links.length} to link; left for staff: ` +
       `${s.nameDiffers} whose name differs, ${s.loginUnheld} whose login nobody here holds, ` +
-      `${s.loginAmbiguous} whose email address the register lists under several logins, ${s.alreadyMatched} second registrations\n`,
+      `${s.loginAmbiguous} whose email address the register lists under several logins, ${s.alreadyMatched} that are one of several registrations for one person\n`,
   );
   if (!apply) {
-    for (const l of match.links) io.out(`${l.personId}\t${l.displayName}\t${l.idealLogicId}\n`);
+    for (const l of match.links) io.out(`${l.personId}\t${l.login}\t${l.displayName}\t${l.idealLogicId}\n`);
     io.err("Nothing was sent. Run again with --apply --origin <url> to send these.\n");
     return 0;
   }
 
-  const fetchImpl = io.fetchImpl ?? fetch;
-  const counts = new Map<string, number>();
-  let failed = 0;
-  for (const l of match.links) {
-    const res = await fetchImpl(`${origin}/api/v1/people/${l.personId}/registration`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ ideal_logic_id: l.idealLogicId, evidence: "register_email", ...(reference ? { reference } : {}) }),
-    });
-    if (res.status !== 200) {
-      failed += 1;
-      io.out(`${l.personId}\t${l.displayName}\tHTTP ${res.status}\n`);
-      continue;
-    }
-    const outcome = String(((await res.json()) as { outcome?: unknown }).outcome);
-    counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
-  }
+  const { counts, failed } = await sendLinks(match.links, { origin: origin!, apiKey: apiKey!, reference }, io);
   io.err(`${[...counts].map(([k, n]) => `${n} ${k}`).join(", ") || "none sent"}${failed > 0 ? `, ${failed} refused (listed above)` : ""}\n`);
   return failed > 0 ? 1 : 0;
 }

@@ -48,6 +48,12 @@ beforeEach(async () => {
 const links = () => rows(conn, `SELECT person_id, ideal_logic_id, evidence, decided_by FROM person_registration ORDER BY person_id`);
 const kept = () => rows(conn, `SELECT ideal_logic_id, atlases, inat_handle FROM ideal_logic_registrant ORDER BY ideal_logic_id`);
 const JOB = { decidedBy: "ideal-logic-registrants" };
+/** Registrations an earlier night's fetch kept, as (id, given name, family name). */
+const seen = async (...registrations: Array<[string, string, string]>) => {
+  for (const [idealLogicId, given, family] of registrations) {
+    await conn.run(`INSERT INTO ideal_logic_registrant (ideal_logic_id, given_name, family_name) VALUES ('${idealLogicId}', '${given}', '${family}')`);
+  }
+};
 
 describe("the nightly fetch", () => {
   test("links a person whose login was typed at registration under their own name, whatever its case", async () => {
@@ -69,8 +75,8 @@ describe("the nightly fetch", () => {
     expect(out).toMatchObject({ kept: 1, linked: 0, unlinked: 1 });
   });
 
-  test("does not link on a handle that is no login here, such as a display name", async () => {
-    await recordRegistrants(db, [registrant({ id: "B-1", givenName: "Bo", familyName: "Sedge", inatHandle: "Bo Sedge" })], JOB);
+  test("does not link on a handle that is no login here", async () => {
+    await recordRegistrants(db, [registrant({ id: "B-1", givenName: "Bo", familyName: "Sedge", inatHandle: "bo_sedge" })], JOB);
     expect(await links()).toEqual([]);
   });
 
@@ -117,7 +123,52 @@ describe("the nightly fetch", () => {
     expect(await rows(conn, `SELECT ideal_logic_id, last_seen_at = TIMESTAMP '2026-01-01 00:00:00' FROM ideal_logic_registrant`)).toEqual([["N-1", true]]);
   });
 
+  test("a row that stops qualifying is kept and goes on being dated, so a stale date means gone from Ideal Logic", async () => {
+    const nan = registrant({ id: "N-1", givenName: "Nan", familyName: "Newcomer", atlases: ["OBA"] });
+    await recordRegistrants(db, [nan], JOB);
+    await conn.run(`UPDATE ideal_logic_registrant SET last_seen_at = TIMESTAMP '2026-01-01 00:00:00'`);
+    // She cleared her atlas: no atlas, no handle, nobody's name.
+    const out = await recordRegistrants(db, [{ ...nan, atlases: [] }], JOB);
+    expect(out.kept).toBe(1);
+    expect(await rows(conn, `SELECT atlases, last_seen_at > TIMESTAMP '2026-01-01 00:00:00' FROM ideal_logic_registrant`)).toEqual([[null, true]]);
+  });
+
+  test("a person with two registrations that both qualify is linked to neither, whichever comes first", async () => {
+    const first = registrant({ id: "A-1", givenName: "Ada", familyName: "Bramble", inatHandle: "adabramble" });
+    const second = registrant({ id: "A-2", givenName: "Ada", familyName: "Bramble", inatHandle: "AdaBramble" });
+    for (const order of [
+      [first, second],
+      [second, first],
+    ]) {
+      const out = await recordRegistrants(db, order, JOB);
+      expect(out.linked).toBe(0);
+      expect(await links()).toEqual([]);
+    }
+  });
+
+  test("a login two people hold links neither", async () => {
+    await conn.run(`INSERT INTO person (display_name) VALUES ('Ada Bramble')`);
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) SELECT max(entity_id), 9, 'AdaBramble' FROM person`);
+    await recordRegistrants(db, [registrant({ id: "A-1", givenName: "Ada", familyName: "Bramble", inatHandle: "adabramble" })], JOB);
+    expect(await links()).toEqual([]);
+  });
+
+  test("a name with no ASCII letters agrees with nothing, since it folds to nothing", async () => {
+    await conn.run(`INSERT INTO person (display_name) VALUES ('李 雷')`);
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) SELECT max(entity_id), 8, 'lilei' FROM person`);
+    await recordRegistrants(db, [registrant({ id: "L-1", givenName: "韓", familyName: "梅梅", inatHandle: "lilei" })], JOB);
+    expect(await links()).toEqual([]);
+  });
+
+  test("the same id twice in one fetch is recorded once and does not fail the run", async () => {
+    const ada = registrant({ id: "A-1", givenName: "Ada", familyName: "Bramble", inatHandle: "adabramble" });
+    const out = await recordRegistrants(db, [ada, { ...ada, atlases: ["OBA"] }], JOB);
+    expect(out).toEqual({ seen: 2, kept: 1, firstSeen: 1, linked: 1, unlinked: 0 });
+    expect(await kept()).toEqual([["A-1", "OBA", "adabramble"]]);
+  });
+
   test("leaves a person staff have unlinked unlinked", async () => {
+    await seen(["OLD-1", "Ada", "Bramble"]);
     await decideRegistration(db, { personId: id.Ada!, idealLogicId: "OLD-1", evidence: "staff", decidedBy: "peter" });
     await decideRegistration(db, { personId: id.Ada!, idealLogicId: null, evidence: "staff", decidedBy: "peter" });
     const out = await recordRegistrants(db, [registrant({ id: "A-1", givenName: "Ada", familyName: "Bramble", inatHandle: "adabramble" })], JOB);
@@ -125,12 +176,34 @@ describe("the nightly fetch", () => {
     expect(out.linked).toBe(0);
   });
 
+  test("leaves alone a person staff have said has no registration, before any link was made", async () => {
+    expect(await decideRegistration(db, { personId: id.Ada!, idealLogicId: null, evidence: "staff", decidedBy: "peter" })).toEqual({
+      ok: true,
+      outcome: "saved",
+      was: null,
+      registrant: null,
+    });
+    const out = await recordRegistrants(db, [registrant({ id: "A-1", givenName: "Ada", familyName: "Bramble", inatHandle: "adabramble" })], JOB);
+    expect(out.linked).toBe(0);
+    expect(await links()).toEqual([]);
+  });
+
   test("keeps a linked registration even when it names no atlas, no handle and nobody's name", async () => {
     // A couple registered once, under a joint first name no person has.
+    await seen(["Y-1", "Cy and Dot", "Yarrow"]);
     await decideRegistration(db, { personId: id.Cy!, idealLogicId: "Y-1", evidence: "staff", decidedBy: "peter" });
     const out = await recordRegistrants(db, [registrant({ id: "Y-1", givenName: "Cy and Dot", familyName: "Yarrow" })], JOB);
     expect(await kept()).toEqual([["Y-1", null, null]]);
-    expect(out).toMatchObject({ kept: 1, unlinked: 0 });
+    expect(out).toMatchObject({ kept: 1, firstSeen: 0, unlinked: 0 });
+  });
+
+  test("never links a registration that staff already linked to somebody else", async () => {
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${id.Dot}, 4, 'dotyarrow')`);
+    await seen(["Y-1", "Dot", "Yarrow"]);
+    await decideRegistration(db, { personId: id.Cy!, idealLogicId: "Y-1", evidence: "staff", decidedBy: "peter" });
+    const out = await recordRegistrants(db, [registrant({ id: "Y-1", givenName: "Dot", familyName: "Yarrow", inatHandle: "dotyarrow" })], JOB);
+    expect(out.linked).toBe(0);
+    expect(await links()).toEqual([[id.Cy, "Y-1", "staff", "peter"]]);
   });
 
   test("says what it did in counts", () => {
@@ -144,6 +217,10 @@ describe("the nightly fetch", () => {
 });
 
 describe("a decision about one person", () => {
+  beforeEach(async () => {
+    await seen(["Y-1", "Cy and Dot", "Yarrow"], ["B-1", "Bo", "Sedge"], ["B-2", "Bo", "Sedge"]);
+  });
+
   test("two people may share a registration: a household registers once", async () => {
     await decideRegistration(db, { personId: id.Cy!, idealLogicId: "Y-1", evidence: "staff", decidedBy: "peter" });
     await decideRegistration(db, { personId: id.Dot!, idealLogicId: "Y-1", evidence: "staff", decidedBy: "peter" });
@@ -153,9 +230,19 @@ describe("a decision about one person", () => {
     ]);
   });
 
-  test("the latest decision is the answer, and the earlier ones are still there", async () => {
-    expect(await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-1", evidence: "register_email", decidedBy: "peter", reference: "issue 1" })).toEqual({ ok: true, outcome: "saved", was: null });
-    expect(await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-2", evidence: "staff", decidedBy: "arthur" })).toEqual({ ok: true, outcome: "saved", was: "B-1" });
+  test("the latest decision is the answer, the earlier ones are still there, and the answer names the registrant", async () => {
+    expect(await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-1", evidence: "register_email", decidedBy: "peter", reference: "issue 1" })).toEqual({
+      ok: true,
+      outcome: "saved",
+      was: null,
+      registrant: "Bo Sedge",
+    });
+    expect(await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-2", evidence: "staff", decidedBy: "arthur" })).toEqual({
+      ok: true,
+      outcome: "saved",
+      was: "B-1",
+      registrant: "Bo Sedge",
+    });
     expect(await links()).toEqual([[id.Bo, "B-2", "staff", "arthur"]]);
     expect(await rows(conn, `SELECT ideal_logic_id, evidence, decided_by, reference FROM person_registration_event ORDER BY entity_id`)).toEqual([
       ["B-1", "register_email", "peter", "issue 1"],
@@ -165,18 +252,35 @@ describe("a decision about one person", () => {
 
   test("saying what is already so records nothing", async () => {
     await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-1", evidence: "staff", decidedBy: "peter" });
-    expect(await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-1", evidence: "staff", decidedBy: "arthur" })).toEqual({ ok: true, outcome: "unchanged", was: "B-1" });
-    expect(await decideRegistration(db, { personId: id.Eve!, idealLogicId: null, evidence: "staff", decidedBy: "arthur" })).toEqual({ ok: true, outcome: "unchanged", was: null });
-    expect(await rows(conn, `SELECT count(*) FROM person_registration_event`)).toEqual([[1n]]);
+    expect(await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-1", evidence: "staff", decidedBy: "arthur" })).toMatchObject({ outcome: "unchanged", was: "B-1" });
+    await decideRegistration(db, { personId: id.Bo!, idealLogicId: null, evidence: "staff", decidedBy: "peter" });
+    expect(await decideRegistration(db, { personId: id.Bo!, idealLogicId: null, evidence: "staff", decidedBy: "arthur" })).toMatchObject({ outcome: "unchanged", was: null });
+    expect(await rows(conn, `SELECT count(*) FROM person_registration_event`)).toEqual([[2n]]);
   });
 
-  test("unlinking leaves the person with no registration", async () => {
-    await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-1", evidence: "staff", decidedBy: "peter" });
-    await decideRegistration(db, { personId: id.Bo!, idealLogicId: null, evidence: "staff", decidedBy: "peter" });
+  test("saying a person nobody has decided about has no registration is recorded, once", async () => {
+    expect(await decideRegistration(db, { personId: id.Eve!, idealLogicId: null, evidence: "staff", decidedBy: "arthur" })).toMatchObject({ outcome: "saved", was: null });
+    expect(await decideRegistration(db, { personId: id.Eve!, idealLogicId: null, evidence: "staff", decidedBy: "arthur" })).toMatchObject({ outcome: "unchanged" });
+    expect(await rows(conn, `SELECT ideal_logic_id FROM person_registration_event`)).toEqual([[null]]);
     expect(await links()).toEqual([]);
   });
 
-  test("refuses a person who is not here", async () => {
+  test("unlinking leaves the person with no registration, and linking again restores one", async () => {
+    await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-1", evidence: "staff", decidedBy: "peter" });
+    await decideRegistration(db, { personId: id.Bo!, idealLogicId: null, evidence: "staff", decidedBy: "peter" });
+    expect(await links()).toEqual([]);
+    await decideRegistration(db, { personId: id.Bo!, idealLogicId: "B-2", evidence: "staff", decidedBy: "peter" });
+    expect(await links()).toEqual([[id.Bo, "B-2", "staff", "peter"]]);
+  });
+
+  test("refuses a person who is not here, and a registration Beeline has not seen", async () => {
     expect(await decideRegistration(db, { personId: 999999, idealLogicId: "B-1", evidence: "staff", decidedBy: "peter" })).toEqual({ ok: false, refusal: "unknown_person" });
+    for (const idealLogicId of ["B-9", "b-1", "bo@example.org"]) {
+      expect(await decideRegistration(db, { personId: id.Bo!, idealLogicId, evidence: "staff", decidedBy: "peter" })).toEqual({
+        ok: false,
+        refusal: "unknown_registration",
+      });
+    }
+    expect(await rows(conn, `SELECT count(*) FROM person_registration_event`)).toEqual([[0n]]);
   });
 });

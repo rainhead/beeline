@@ -177,11 +177,18 @@ describe("POST /api/v1/people/:id/registration", () => {
   const linked = (w: Awaited<ReturnType<typeof world>>) =>
     rows(w.conn, `SELECT person_id, ideal_logic_id, evidence, decided_by FROM person_registration ORDER BY person_id`);
 
+  /** Registrations the nightly job has seen; the API links only to one of these. */
+  const seen = (w: Awaited<ReturnType<typeof world>>) =>
+    w.conn.run(
+      `INSERT INTO ideal_logic_registrant (ideal_logic_id, given_name, family_name) VALUES ('QNN6-MX8', 'Ada', 'Bramble'), ('AB12-CDE3', 'Vi', 'Sedge')`,
+    );
+
   it("links a person to a registration, credited to the key's person, with the reference kept", async () => {
     const w = await world();
+    await seen(w);
     const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: "QNN6-MX8", evidence: "register_email", reference: "issue 2" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ person_id: w.people.ada, outcome: "saved", was: "", ideal_logic_id: "QNN6-MX8" });
+    expect(await res.json()).toEqual({ person_id: w.people.ada, outcome: "saved", was: "", ideal_logic_id: "QNN6-MX8", registrant: "Ada Bramble" });
     expect(await linked(w)).toEqual([[w.people.ada, "QNN6-MX8", "register_email", "samstaff"]]);
     expect(await rows(w.conn, `SELECT reference FROM person_registration_event`)).toEqual([["issue 2"]]);
     expect(await rows(w.conn, `SELECT route, subject, outcome, reference, status FROM api_key_use`)).toEqual([
@@ -193,17 +200,19 @@ describe("POST /api/v1/people/:id/registration", () => {
 
   it("takes staff as the evidence when none is given, answers unchanged the second time, and unlinks on an empty id", async () => {
     const w = await world();
+    await seen(w);
     await w.sendRegistration(w.keys.staff, "vol", { ideal_logic_id: "AB12-CDE3" });
     expect(await linked(w)).toEqual([[w.people.vol, "AB12-CDE3", "staff", "samstaff"]]);
     const again = await w.sendRegistration(w.keys.staff, "vol", { ideal_logic_id: "AB12-CDE3" });
     expect(await again.json()).toMatchObject({ outcome: "unchanged", was: "AB12-CDE3" });
     const cleared = await w.sendRegistration(w.keys.staff, "vol", { ideal_logic_id: "" });
-    expect(await cleared.json()).toEqual({ person_id: w.people.vol, outcome: "saved", was: "AB12-CDE3", ideal_logic_id: "" });
+    expect(await cleared.json()).toEqual({ person_id: w.people.vol, outcome: "saved", was: "AB12-CDE3", ideal_logic_id: "", registrant: "" });
     expect(await linked(w)).toEqual([]);
   });
 
   it("links a person who shares a name and has no account", async () => {
     const w = await world();
+    await seen(w);
     await w.conn.run(`INSERT INTO person (display_name) VALUES ('Ada Collector')`);
     const res = await w.sendRegistration(w.keys.staff, w.people.ada, { ideal_logic_id: "QNN6-MX8" });
     expect(res.status).toBe(200);

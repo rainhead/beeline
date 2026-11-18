@@ -131,7 +131,7 @@ import {
   recentChanges,
 } from "../person-change.js";
 import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
-import { decideRegistration, IDEAL_LOGIC_ID } from "../registrations.js";
+import { decideRegistration } from "../registrations.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
@@ -2978,13 +2978,6 @@ export function createApp({
           problem: `${JSON.stringify(input.evidence)} is not evidence a person can give. It is "staff" or "register_email".`,
         };
       }
-      if (input.idealLogicId !== "" && !IDEAL_LOGIC_ID.test(input.idealLogicId)) {
-        return {
-          ok: false,
-          refusal: "invalid",
-          problem: `${JSON.stringify(input.idealLogicId)} is not an Ideal Logic id. One looks like QNN6-MX8; an empty string unlinks the person.`,
-        };
-      }
       const decided = await decideRegistration(db, {
         personId: id,
         idealLogicId: input.idealLogicId === "" ? null : input.idealLogicId,
@@ -2992,8 +2985,25 @@ export function createApp({
         decidedBy: input.author,
         reference: input.reference,
       });
-      if (!decided.ok) return { ok: false, refusal: "not_found" };
-      return { ok: true, outcome: decided.outcome, person_id: id, was: decided.was ?? "", ideal_logic_id: input.idealLogicId };
+      if (!decided.ok) {
+        if (decided.refusal === "unknown_person") return { ok: false, refusal: "not_found" };
+        // The value is not repeated back: what was sent by mistake may be an
+        // address, and this text is the caller's to log.
+        return {
+          ok: false,
+          refusal: "invalid",
+          problem:
+            "That is not the id of a registration Beeline has seen. An id looks like QNN6-MX8 and is matched exactly; Beeline knows the registrations its nightly ideal-logic-registrants job kept. An empty string unlinks the person.",
+        };
+      }
+      return {
+        ok: true,
+        outcome: decided.outcome,
+        person_id: id,
+        was: decided.was ?? "",
+        ideal_logic_id: input.idealLogicId,
+        registrant: decided.registrant ?? "",
+      };
     });
 
   const setMembership: PeopleDeps["setMembership"] = (input) =>

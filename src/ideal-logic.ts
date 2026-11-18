@@ -54,7 +54,7 @@ export interface Registrant {
   familyName: string;
   /** Program codes (`OBA`, `WaBA`, `BC`, `ID`, `NM`, `MM`), in the order given. Empty where the question was not answered. */
   atlases: string[];
-  /** The iNaturalist handle the registrant typed, trimmed, without a leading `@`. Unverified: people type display names and "yes". */
+  /** The iNaturalist handle the registrant typed, without a leading `@`, where it has the shape of a login; null otherwise. Unverified: "yes" has that shape. */
   inatHandle: string | null;
   /** Never stored: see the head of this file. */
   email: string;
@@ -108,6 +108,9 @@ const PROVINCE_BY_LETTER: Readonly<Record<string, string>> = {
   Y: "YT",
 };
 
+/** The shape of an iNaturalist login: a letter, then letters, digits, underscores and hyphens. No space, no dot, no @. */
+const INAT_LOGIN = /^[A-Za-z][A-Za-z0-9_-]{1,59}$/;
+
 const CANADIAN_POSTAL_CODE = /^([A-Za-z])\d[A-Za-z]\s*\d[A-Za-z]\d/;
 
 /** Whether a postal code has the shape of a Canadian one (`V8W 1P6`, `v8w1p6`). */
@@ -155,7 +158,12 @@ export function parseRegistrant(raw: unknown): Registrant | null {
     }
   }
 
-  const handle = text(r.cf_inaturalist_handle)?.replace(/^@+/, "").trim() ?? null;
+  // The question is free text, and what is typed there is kept in the store.
+  // So only something shaped like a login is taken for one: people have
+  // typed display names and "yes" (harmless), and could type an email
+  // address, which must not be stored.
+  const typed = text(r.cf_inaturalist_handle)?.replace(/^@+/, "").trim() ?? null;
+  const handle = typed !== null && INAT_LOGIN.test(typed) ? typed : null;
 
   const street = text(r.home_address_street);
   let address: RegistrantAddress | null = null;
@@ -172,7 +180,7 @@ export function parseRegistrant(raw: unknown): Registrant | null {
     };
   }
 
-  return { id, givenName, familyName, atlases, inatHandle: handle === "" ? null : handle, email, address };
+  return { id, givenName, familyName, atlases, inatHandle: handle, email, address };
 }
 
 type FetchResponse = {

@@ -22,6 +22,17 @@ import type { Registrant } from "./ideal-logic.js";
  */
 export const foldName = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/**
+ * Whether a folded name is enough of a name to agree with another. The fold
+ * keeps ASCII letters and digits only, so two names written wholly in another
+ * script both fold to nothing, and would "agree".
+ */
+export const MIN_FOLDED_NAME = 3;
+export const namesAgree = (a: string, b: string): boolean => {
+  const folded = foldName(a);
+  return folded.length >= MIN_FOLDED_NAME && folded === foldName(b);
+};
+
 /** A login as iNaturalist compares them: without regard to case. */
 const foldLogin = (login: string): string => login.trim().toLowerCase();
 
@@ -48,30 +59,52 @@ interface PersonRow {
  * Record a night's fetch.
  *
  * **What is kept.** A registration linked to a person, one that names an
- * atlas or an iNaturalist handle, or one whose name is a person's. On
- * 2026-11-18 that left out 386 of 826: people who registered for something
- * and have no relation to Beeline, whose names have no business in every
- * backup.
+ * atlas or an iNaturalist handle, one whose name is a person's, or one
+ * Beeline already has a row for. On 2026-11-18 that left out 386 of 826:
+ * people who registered for something and have no relation to Beeline, whose
+ * names have no business in every backup. A row is never dropped for ceasing
+ * to qualify, so `last_seen_at` falling behind means one thing only: Ideal
+ * Logic no longer returns the registration.
  *
- * **What is linked without asking.** A registration whose typed handle is the
- * login of exactly one person, where the registration's full name is that
- * person's, and nobody has decided anything about that person's registration
- * before. The name must agree because the handle is typed and nobody checks
- * it; a household sharing one login is why it must be the full name and not
- * the family name. A person staff have unlinked is left unlinked. Anything
- * weaker is for staff: on 2026-11-18 the rule linked 20 people beyond the 259
- * the old register's email addresses reach (`src/link-register-emails.ts`).
+ * **What is linked without asking.** A person, when exactly one registration
+ * has their login as its typed handle and their full name as its name, that
+ * login is held by nobody else, and nobody has decided anything about that
+ * person's registration before. The name must agree because the handle is
+ * typed and nobody checks it; a household sharing one login is why it must be
+ * the full name and not the family name. A person with two such
+ * registrations is not linked to the first: which one holds the address the
+ * labels should go to is for staff to say. A person staff have unlinked, or
+ * have said has no registration, is left alone. A registration that is
+ * already linked to somebody is never linked to a second person by the job;
+ * staff can still do that through `decideRegistration`, since a household
+ * shares one registration.
  *
  * **What is never done.** A link on a name alone. A registrant who shares a
  * collector's name is not thereby the collector, and a wrong link mails that
  * collector's labels to a stranger's home.
+ *
+ * Two transactions. The first records the registrants, which is hundreds of
+ * statements on the first night. The second links, and reads who has already
+ * been decided about at its own start: a decision staff made through the API
+ * while the first was running is seen and respected. A decision made in the
+ * moment the second is open is not, and the job's link, being later, would
+ * stand over it; that moment is a few statements long, at 1am.
  */
 export async function recordRegistrants(
   db: Kysely<Database>,
   registrants: readonly Registrant[],
   opts: { decidedBy: string },
 ): Promise<RegistrantsRecorded> {
-  return db.transaction().execute(async (trx) => {
+  // Ideal Logic's ids are distinct; were one ever repeated, the second would
+  // fail the primary key, and the job would fail the same way at every retry.
+  const fetched = [...new Map(registrants.map((r) => [r.id, r])).values()];
+  const out: RegistrantsRecorded = { seen: registrants.length, kept: 0, firstSeen: 0, linked: 0, unlinked: 0 };
+
+  // person id → the registrations that qualify for the handle rule.
+  const candidates = new Map<number, string[]>();
+  const keptIds: string[] = [];
+
+  await db.transaction().execute(async (trx) => {
     const people: PersonRow[] = await trx
       .selectFrom("person")
       .leftJoin("inat_account", "inat_account.person_id", "person.entity_id")
@@ -92,37 +125,24 @@ export async function recordRegistrants(
     const linkedIds = new Set(
       (await trx.selectFrom("person_registration").select("ideal_logic_id").execute()).map((r) => r.ideal_logic_id),
     );
-    // Anybody a decision has been made about, a later unlinking included.
-    const decided = new Set(
-      (await trx.selectFrom("person_registration_event").select("person_id").distinct().execute()).map((r) => r.person_id),
-    );
     const before = new Map(
       (await trx.selectFrom("ideal_logic_registrant").selectAll().execute()).map((r) => [r.ideal_logic_id, r]),
     );
 
-    const out: RegistrantsRecorded = { seen: registrants.length, kept: 0, firstSeen: 0, linked: 0, unlinked: 0 };
-    const keptIds: string[] = [];
+    for (const r of fetched) {
+      const name = `${r.givenName}${r.familyName}`;
+      const namesakes = foldName(name).length >= MIN_FOLDED_NAME ? (byName.get(foldName(name)) ?? []) : [];
 
-    for (const r of registrants) {
-      const name = foldName(`${r.givenName}${r.familyName}`);
-      const namesakes = byName.get(name) ?? [];
-
-      // The handle rule. The same registration may link more than one person
-      // only by a later decision of staff: a typed handle names one account.
       const holders = r.inatHandle === null ? [] : (byLogin.get(foldLogin(r.inatHandle)) ?? []);
-      const holder = holders.length === 1 ? holders[0]! : null;
-      if (holder !== null && foldName(holder.display_name) === name && !decided.has(holder.entity_id)) {
-        await trx
-          .insertInto("person_registration_event")
-          .values({ person_id: holder.entity_id, ideal_logic_id: r.id, evidence: "handle", decided_by: opts.decidedBy, reference: null })
-          .execute();
-        decided.add(holder.entity_id);
-        linkedIds.add(r.id);
-        out.linked += 1;
+      if (holders.length === 1 && namesAgree(holders[0]!.display_name, name)) {
+        const at = candidates.get(holders[0]!.entity_id);
+        if (at) at.push(r.id);
+        else candidates.set(holders[0]!.entity_id, [r.id]);
       }
 
-      const linked = linkedIds.has(r.id);
-      if (!linked && r.atlases.length === 0 && r.inatHandle === null && namesakes.length === 0) continue;
+      const was = before.get(r.id);
+      const wanted = linkedIds.has(r.id) || r.atlases.length > 0 || r.inatHandle !== null || namesakes.length > 0;
+      if (!wanted && was === undefined) continue;
 
       const row = {
         given_name: r.givenName,
@@ -130,7 +150,6 @@ export async function recordRegistrants(
         atlases: r.atlases.length > 0 ? r.atlases.join(";") : null,
         inat_handle: r.inatHandle,
       };
-      const was = before.get(r.id);
       if (was === undefined) {
         await trx.insertInto("ideal_logic_registrant").values({ ideal_logic_id: r.id, ...row }).execute();
         out.firstSeen += 1;
@@ -143,8 +162,6 @@ export async function recordRegistrants(
         await trx.updateTable("ideal_logic_registrant").set(row).where("ideal_logic_id", "=", r.id).execute();
       }
       keptIds.push(r.id);
-      out.kept += 1;
-      if (!linked) out.unlinked += 1;
     }
 
     // One statement for the date every kept registration shares. A row this
@@ -157,8 +174,34 @@ export async function recordRegistrants(
         .where("ideal_logic_id", "in", keptIds)
         .execute();
     }
-    return out;
   });
+  out.kept = keptIds.length;
+
+  await db.transaction().execute(async (trx) => {
+    // Anybody a decision has been made about: a link, an unlinking, or a
+    // statement that they have no registration.
+    const decided = new Set(
+      (await trx.selectFrom("person_registration_event").select("person_id").distinct().execute()).map((r) => r.person_id),
+    );
+    // Registrations already linked to anyone, read now so that a link staff
+    // made while the first transaction ran is seen.
+    const taken = new Set(
+      (await trx.selectFrom("person_registration").select("ideal_logic_id").execute()).map((r) => r.ideal_logic_id),
+    );
+    for (const [personId, ids] of candidates) {
+      if (ids.length !== 1 || decided.has(personId) || taken.has(ids[0]!)) continue;
+      await trx
+        .insertInto("person_registration_event")
+        .values({ person_id: personId, ideal_logic_id: ids[0]!, evidence: "handle", decided_by: opts.decidedBy, reference: null })
+        .execute();
+      out.linked += 1;
+    }
+    const linkedNow = new Set(
+      (await trx.selectFrom("person_registration").select("ideal_logic_id").execute()).map((r) => r.ideal_logic_id),
+    );
+    out.unlinked = keptIds.filter((id) => !linkedNow.has(id)).length;
+  });
+  return out;
 }
 
 /** What the nightly job's run says it did, for `job_run.detail`. Counts only. */
@@ -171,18 +214,23 @@ export function describeRegistrants(r: RegistrantsRecorded): string {
 }
 
 export type RegistrationDecision =
-  | { ok: true; outcome: "saved" | "unchanged"; was: string | null }
-  | { ok: false; refusal: "unknown_person" };
+  | { ok: true; outcome: "saved" | "unchanged"; was: string | null; registrant: string | null }
+  | { ok: false; refusal: "unknown_person" | "unknown_registration" };
 
 /**
  * Record that a person's registration is the one named, or with `null` that
  * they have none. The latest decision is the answer, so a second one
- * replaces the first without erasing it. Saying what is already so records
- * nothing.
+ * replaces the first without erasing it.
  *
- * The registration need not be one Beeline has a row for: a link loaded from
- * the old register's email addresses can name a registration the nightly job
- * has had no reason to keep, and the job keeps it from then on.
+ * Saying what is already so records nothing, with one exception: `null` for
+ * a person nobody has decided about is recorded. Without that row there is
+ * no way to say "this person has no registration", and the nightly job
+ * would link them as soon as a handle and a name agreed.
+ *
+ * The registration must be one Beeline has a row for, so that a mistyped id,
+ * or another registrant's, is refused and not stored. The answer carries the
+ * registrant's name, for the caller to see who was linked. So the nightly
+ * job has to have run before a link can be made.
  */
 export async function decideRegistration(
   db: Kysely<Database>,
@@ -191,13 +239,31 @@ export async function decideRegistration(
   return db.transaction().execute(async (trx) => {
     const person = await trx.selectFrom("person").select("entity_id").where("entity_id", "=", input.personId).executeTakeFirst();
     if (person === undefined) return { ok: false, refusal: "unknown_person" } as const;
+
+    let registrant: string | null = null;
+    if (input.idealLogicId !== null) {
+      const row = await trx
+        .selectFrom("ideal_logic_registrant")
+        .select(["given_name", "family_name"])
+        .where("ideal_logic_id", "=", input.idealLogicId)
+        .executeTakeFirst();
+      if (row === undefined) return { ok: false, refusal: "unknown_registration" } as const;
+      registrant = `${row.given_name} ${row.family_name}`;
+    }
+
     const now = await trx
       .selectFrom("person_registration")
       .select("ideal_logic_id")
       .where("person_id", "=", input.personId)
       .executeTakeFirst();
     const was = now?.ideal_logic_id ?? null;
-    if (was === input.idealLogicId) return { ok: true, outcome: "unchanged", was } as const;
+    if (was === input.idealLogicId) {
+      const everDecided =
+        was !== null ||
+        (await trx.selectFrom("person_registration_event").select("entity_id").where("person_id", "=", input.personId).limit(1).executeTakeFirst()) !==
+          undefined;
+      if (everDecided) return { ok: true, outcome: "unchanged", was, registrant } as const;
+    }
     await trx
       .insertInto("person_registration_event")
       .values({
@@ -208,9 +274,6 @@ export async function decideRegistration(
         reference: input.reference ?? null,
       })
       .execute();
-    return { ok: true, outcome: "saved", was } as const;
+    return { ok: true, outcome: "saved", was, registrant } as const;
   });
 }
-
-/** How an Ideal Logic id is written: letters and digits in groups joined by hyphens, such as `QNN6-MX8`. */
-export const IDEAL_LOGIC_ID = /^[A-Za-z0-9]{2,12}(-[A-Za-z0-9]{2,12}){0,3}$/;

@@ -287,7 +287,7 @@ const ENDPOINTS: Endpoint[] = [
       evidence: "staff (the default), or register_email where the old Beeline's register lists the registration's email address against this person's login",
       reference: REFERENCE,
     },
-    answers: "{ person_id, outcome, was, ideal_logic_id }",
+    answers: "{ person_id, outcome, was, ideal_logic_id, registrant } where registrant is the name on the registration, to check against the person",
   },
 ];
 

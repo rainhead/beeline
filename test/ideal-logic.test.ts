@@ -93,6 +93,18 @@ describe("reading a registration", () => {
     expect(parseRegistrant(BARE)).toMatchObject({ address: null, atlases: [], inatHandle: null });
   });
 
+  // The handle is the one free-text answer Beeline stores, so what is not
+  // shaped like a login is dropped: above all an email address.
+  test("a handle is kept only where it has the shape of a login", () => {
+    const handle = (typed: string) => parseRegistrant({ ...BARE, cf_inaturalist_handle: typed })?.inatHandle;
+    expect(handle("sundodger")).toBe("sundodger");
+    expect(handle("@neri_a")).toBe("neri_a");
+    expect(handle("bee-keeper2")).toBe("bee-keeper2");
+    for (const typed of ["cy@example.org", "sun dodger", "Cy Yarrow", "inaturalist.org/people/cy", "12 Clover Lane", "@", "x"]) {
+      expect(handle(typed)).toBeNull();
+    }
+  });
+
   test("'No Atlas Affiliation' is Master Melittology itself, and an atlas Beeline has no program for is left out", () => {
     expect(parseRegistrant({ ...BARE, cf_atlas: ["No Atlas Affiliation", "Atlantis"] })?.atlases).toEqual(["MM"]);
   });

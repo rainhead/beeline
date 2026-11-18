@@ -417,7 +417,7 @@ export type PlanResult = { ok: true; plan: UploadPlan; rowCount: number } | { ok
 const squashed = (header: string) => header.replace(/\s+/g, "").toLowerCase();
 
 /** Whether a file can be read at all, and if so its columns and rows. */
-export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits> = {}): Promise<Parsed> {
+export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits> = {}, layout: Layout = SPECIMENS_LAYOUT): Promise<Parsed> {
   // The sheet the download names, which is the one the person edits; a workbook with only one sheet is read whatever it is called.
   const read = await readXlsx(bytes, { maxBytes: MAX_FILE_BYTES, maxRows: MAX_ROWS + 1, sheetName: SHEET_NAME, ...limits });
   if (!read.ok) return { ok: false, refusal: read.refusal, ...(read.sheets === undefined ? {} : { detail: JSON.stringify(read.sheets) }) };
@@ -445,7 +445,7 @@ export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits>
   const rows = body.filter((r) => [...r.cells.values()].some((c) => c.text.trim() !== ""));
   if (rows.length > MAX_ROWS) return { ok: false, refusal: "too_many_rows" };
   if (rows.length === 0) return { ok: false, refusal: "no_rows" };
-  return { ok: true, upload: { layout: SPECIMENS_LAYOUT, columns, unrecognised, otherSheets: read.otherSheets.filter((n) => !(REFERENCE_TABS as readonly string[]).includes(n)), rows } };
+  return { ok: true, upload: { layout, columns, unrecognised, otherSheets: read.otherSheets.filter((n) => !(REFERENCE_TABS as readonly string[]).includes(n)), rows } };
 }
 
 // --- Reading a cell ---
@@ -785,8 +785,8 @@ interface MatchedRow {
 }
 
 /** The plan for a file's bytes: refused, or what differs and what is held. Writes nothing. */
-export async function planUpload(db: Kysely<Database>, bytes: Uint8Array, options: { today?: string; limits?: Partial<ReadLimits> } = {}): Promise<PlanResult> {
-  const parsed = await parseUpload(bytes, options.limits);
+export async function planUpload(db: Kysely<Database>, bytes: Uint8Array, options: { today?: string; limits?: Partial<ReadLimits>; layout?: Layout } = {}): Promise<PlanResult> {
+  const parsed = await parseUpload(bytes, options.limits, options.layout);
   if (!parsed.ok) return parsed;
   const plan = await comparePlan(db, parsed.upload, options);
   return { ok: true, plan, rowCount: parsed.upload.rows.length };

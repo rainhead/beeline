@@ -71,7 +71,7 @@ import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
-import { MAX_FILE_BYTES, comparePlan, parseUpload, type Parsed } from "./upload-plan.js";
+import { MAX_FILE_BYTES, comparePlan, parseUpload, type Layout as UploadLayout, type Parsed } from "./upload-plan.js";
 import type { ReadLimits } from "./xlsx-reader.js";
 import {
   listRuns,
@@ -307,6 +307,8 @@ export interface AppDeps {
   uploadsDir?: string;
   /** The reader's time and memory limits for an upload, which a test sets small; the defaults are src/app/xlsx-reader.ts's. */
   uploadReadLimits?: Partial<ReadLimits>;
+  /** Which columns an upload is read for; the specimens file's by default. A test of the page gives a wider one, since no file yet reads a sample's columns. */
+  uploadLayout?: UploadLayout;
   /** The registry mark each print run raises (config.registryMarkPath, src/registry-mark.ts). */
   registryMarkPath?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -346,6 +348,7 @@ export function createApp({
   printRunsDir,
   uploadsDir,
   uploadReadLimits,
+  uploadLayout,
   registryMarkPath,
   programGovernance,
   programContactsPath,
@@ -2155,7 +2158,7 @@ export function createApp({
     const keptAt = uploadFile(id);
     try {
       await writeFile(keptAt, bytes);
-      const parsed = await parseUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits);
+      const parsed = await parseUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits, uploadLayout);
       if (!parsed.ok) {
         await rm(uploadFolder(id), { recursive: true, force: true });
         return uploadForm(c, refusalText(m, parsed), 400);
@@ -2203,7 +2206,7 @@ export function createApp({
     if (createHash("sha256").update(bytes).digest("hex") !== row.sha256) {
       return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileAltered} />), 500);
     }
-    const parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits);
+    const parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, uploadLayout);
     if (!parsed.ok) {
       return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={refusalText(m, parsed)} />), 500);
     }

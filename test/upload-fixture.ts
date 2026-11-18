@@ -6,6 +6,7 @@ import { readXlsxHere, type ReadLimits } from "../src/app/xlsx-reader.js";
 import { buildWorkbook, type TestCell } from "./workbook.js";
 import { ALL, EMPTY_QUERY, SPECIMEN_CSV_HEADER, STAFF_READER, hostNamesOnce, listSpecimens, specimenCsvRow, textCell } from "../src/app/listings.js";
 import { writeXlsx } from "../src/app/xlsx.js";
+import type { Layout } from "../src/app/upload-plan.js";
 import { createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
@@ -25,7 +26,7 @@ const unusedInat: InatClient = {
 export async function uploadFixture(
   signedInAs: "staffer" | "volunteer" = "staffer",
   /** `unprinted` adds a sample (UP-3) whose one specimen is in a print run that has not printed. */
-  options: { unprinted?: boolean; readLimits?: Partial<ReadLimits> } = {},
+  options: { unprinted?: boolean; readLimits?: Partial<ReadLimits>; layout?: Layout } = {},
 ) {
   const { instance, conn } = await createMemoryDb();
   const person = async (name: string) => {
@@ -114,6 +115,7 @@ export async function uploadFixture(
     config: { environment: "sandbox" as const, origin: "http://localhost:3054", exportsDir: join(dirname(paths.uploadsDir), "exports") },
     inat: unusedInat,
     uploadReadLimits: options.readLimits,
+    uploadLayout: options.layout,
     resolveSession: async () => ({ personId: resolved, login: signedInAs, iconUrl: null }),
   });
 

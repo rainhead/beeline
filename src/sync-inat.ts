@@ -146,14 +146,30 @@ async function readTokenFallback(): Promise<string | undefined> {
  */
 let syncs: Promise<unknown> = Promise.resolve();
 
-function oneSyncAtATime<T>(run: () => Promise<T>): Promise<T> {
-  const next = syncs.then(run);
-  syncs = next.catch(() => {});
+/**
+ * A run waiting its turn gives up at once when its caller aborts (the
+ * scheduler, at shutdown, beeline-fth): it has done nothing yet, and the run
+ * ahead of it may be waiting on iNaturalist. The runs behind still wait for
+ * the one ahead, not for the one that gave up.
+ */
+function oneSyncAtATime<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const ahead = syncs;
+  const next = new Promise<T>((resolve, reject) => {
+    const giveUp = () => reject(signal?.reason);
+    if (signal?.aborted) giveUp();
+    else signal?.addEventListener("abort", giveUp, { once: true });
+    void ahead.then(() => {
+      signal?.removeEventListener("abort", giveUp);
+      if (signal?.aborted) return;
+      run().then(resolve, reject);
+    });
+  });
+  syncs = Promise.allSettled([ahead, next]);
   return next;
 }
 
 export function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promise<SyncResult> {
-  return oneSyncAtATime(() => syncProject(conn, opts));
+  return oneSyncAtATime(() => syncProject(conn, opts), opts.signal);
 }
 
 async function syncProject(conn: DuckDBConnection, opts: SyncOptions): Promise<SyncResult> {
@@ -297,7 +313,7 @@ export interface FetchByIdResult {
  * decides whether another volunteer sees the sample's location.
  */
 export function fetchObservationsById(conn: DuckDBConnection, opts: FetchByIdOptions): Promise<FetchByIdResult> {
-  return oneSyncAtATime(() => fetchById(conn, opts));
+  return oneSyncAtATime(() => fetchById(conn, opts), opts.signal);
 }
 
 async function fetchById(conn: DuckDBConnection, opts: FetchByIdOptions): Promise<FetchByIdResult> {

@@ -284,6 +284,18 @@ describe("iNat sync", () => {
     ]);
     expect(failed.status).toBe("rejected");
     expect(after.status).toBe("fulfilled");
+
+    // A run waiting its turn gives up as soon as its caller aborts, without
+    // waiting for the run ahead, and the run behind it still waits its turn.
+    pages.length = 0;
+    const stopping = new AbortController();
+    const ahead = syncINat(check, { ...base, fetchImpl: slowApi("ahead", [obs(8)]) });
+    const waiting = syncINat(jobs, { ...base, signal: stopping.signal, fetchImpl: slowApi("waiting", [obs(9)]) });
+    const behind = syncINat(jobs, { ...base, fetchImpl: slowApi("behind", [obs(10)]) });
+    stopping.abort(new Error("shutting down"));
+    await expect(waiting).rejects.toThrow("shutting down");
+    await Promise.all([ahead, behind]);
+    expect(pages).toEqual(["ahead", "behind"]);
   });
 
   test("an incremental (updated_since) run never claims coverage — and sends the param", async () => {

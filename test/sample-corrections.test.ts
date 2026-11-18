@@ -430,6 +430,7 @@ describe("sample corrections: a correction that saves", () => {
 });
 
 describe("setTrapCount", () => {
+  const problemFor = (p: string) => `problem: ${p}`;
   const trapSample = async (s: Awaited<ReturnType<typeof setup>>, extra: Record<string, string> = {}) =>
     insertCleanSample(s.conn, {
       collector_id: "(SELECT min(entity_id) FROM person)",
@@ -446,8 +447,8 @@ describe("setTrapCount", () => {
     const s = await setup();
     const id = await trapSample(s);
     await recordSampleChanges(duckdbReader(s.conn), s.deps.samplePaths, { source: "observation_promotion" });
-    expect(await setTrapCount(s.deps, s.sam, id, { count: "1", note: "recount" })).toEqual({ ok: true, outcome: "saved", effort: "1 vane trap" });
-    expect(await setTrapCount(s.deps, s.sam, id, { count: 8, note: "" })).toEqual({ ok: true, outcome: "saved", effort: "8 vane traps" });
+    expect(await setTrapCount(s.deps, s.sam, id, { count: "1", note: "recount", problemFor })).toEqual({ ok: true, outcome: "saved", effort: "1 vane trap" });
+    expect(await setTrapCount(s.deps, s.sam, id, { count: 8, note: "", problemFor })).toEqual({ ok: true, outcome: "saved", effort: "8 vane traps" });
     expect(await effortOf(s, id)).toBe("8 vane traps");
     const log = (await readSampleChanges(s.paths.sampleChangesPath)).filter((c) => c.field === "sampling_effort" && c.source !== "observation_promotion");
     expect(log.map((c) => [c.new_value, c.author, c.reason])).toEqual([
@@ -459,39 +460,39 @@ describe("setTrapCount", () => {
   it("answers unchanged for the count it already has, and clears on blank", async () => {
     const s = await setup();
     const id = await trapSample(s);
-    expect(await setTrapCount(s.deps, s.sam, id, { count: "6", note: "" })).toMatchObject({ ok: true, outcome: "unchanged" });
-    expect(await setTrapCount(s.deps, s.sam, id, { count: " ", note: "" })).toEqual({ ok: true, outcome: "removed", effort: null });
+    expect(await setTrapCount(s.deps, s.sam, id, { count: "6", note: "", problemFor })).toMatchObject({ ok: true, outcome: "unchanged" });
+    expect(await setTrapCount(s.deps, s.sam, id, { count: " ", note: "", problemFor })).toEqual({ ok: true, outcome: "removed", effort: null });
     expect(await effortOf(s, id)).toBeNull();
-    expect(await setTrapCount(s.deps, s.sam, id, { count: "", note: "" })).toMatchObject({ outcome: "unchanged" });
+    expect(await setTrapCount(s.deps, s.sam, id, { count: "", note: "", problemFor })).toMatchObject({ outcome: "unchanged" });
   });
 
   it("is for staff only, never while impersonating, and not for a missing sample", async () => {
     const s = await setup();
     const id = await trapSample(s);
-    expect(await setTrapCount(s.deps, s.alice, id, { count: "2", note: "" })).toEqual({ ok: false, refusal: "not_admin" });
-    expect(await setTrapCount(s.deps, { ...s.sam, impersonating: true }, id, { count: "2", note: "" })).toEqual({ ok: false, refusal: "impersonating" });
-    expect(await setTrapCount(s.deps, s.sam, 999999, { count: "2", note: "" })).toEqual({ ok: false, refusal: "not_found" });
+    expect(await setTrapCount(s.deps, s.alice, id, { count: "2", note: "", problemFor })).toEqual({ ok: false, refusal: "not_admin" });
+    expect(await setTrapCount(s.deps, { ...s.sam, impersonating: true }, id, { count: "2", note: "", problemFor })).toEqual({ ok: false, refusal: "impersonating" });
+    expect(await setTrapCount(s.deps, s.sam, 999999, { count: "2", note: "", problemFor })).toEqual({ ok: false, refusal: "not_found" });
     expect(await effortOf(s, id)).toBe("6 vane traps");
   });
 
   it("refuses a net sample, a sample with no method, and a count that is not a whole number", async () => {
     const s = await setup();
     const net = await insertCleanSample(s.conn, { sample_number: "'N-1'" });
-    expect(await setTrapCount(s.deps, s.sam, net, { count: "3", note: "" })).toMatchObject({ ok: false, refusal: "invalid", problem: expect.stringContaining("net sample") });
+    expect(await setTrapCount(s.deps, s.sam, net, { count: "3", note: "", problemFor })).toMatchObject({ ok: false, refusal: "invalid", problem: "problem: net" });
     const bare = await trapSample(s, { sample_number: "'T-2'", protocol: "NULL", sampling_effort: "NULL" });
-    expect(await setTrapCount(s.deps, s.sam, bare, { count: "3", note: "" })).toMatchObject({ refusal: "invalid", problem: expect.stringContaining("no method") });
+    expect(await setTrapCount(s.deps, s.sam, bare, { count: "3", note: "", problemFor })).toMatchObject({ refusal: "invalid", problem: "problem: method" });
     const id = await trapSample(s, { sample_number: "'T-3'" });
     for (const bad of ["0", "-2", "2.5", "six", "1e3"]) {
-      expect(await setTrapCount(s.deps, s.sam, id, { count: bad, note: "" })).toMatchObject({ refusal: "invalid" });
+      expect(await setTrapCount(s.deps, s.sam, id, { count: bad, note: "", problemFor })).toMatchObject({ refusal: "invalid" });
     }
     expect(await effortOf(s, id)).toBe("6 vane traps");
     // A blank count on a sample with nothing to clear is no change, not a refusal.
-    expect(await setTrapCount(s.deps, s.sam, bare, { count: "", note: "" })).toMatchObject({ ok: true, outcome: "unchanged" });
+    expect(await setTrapCount(s.deps, s.sam, bare, { count: "", note: "", problemFor })).toMatchObject({ ok: true, outcome: "unchanged" });
   });
 
   it("takes the method's plural as written", async () => {
     const s = await setup();
     const id = await trapSample(s, { sample_number: "'T-4'", protocol: "'pan traps'", sampling_effort: "NULL" });
-    expect(await setTrapCount(s.deps, s.sam, id, { count: "1", note: "" })).toMatchObject({ effort: "1 pan traps" });
+    expect(await setTrapCount(s.deps, s.sam, id, { count: "1", note: "", problemFor })).toMatchObject({ effort: "1 pan traps" });
   });
 });

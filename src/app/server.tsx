@@ -163,6 +163,7 @@ import {
   readerFor,
   recordTrapChange as recordTrapSampleChange,
   setCoordinates,
+  setTrapCount,
   setPlace,
   takeLocation,
   unreachable,
@@ -170,7 +171,7 @@ import {
   type Actor,
   type CorrectionDeps,
 } from "./sample-corrections.js";
-import { localityReasonFor, takeLocationDefaultReason } from "./correction-reasons.js";
+import { localityReasonFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import { setSampleMethod } from "./sample-method.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
@@ -1649,6 +1650,31 @@ export function createApp({
     if (result.outcome === "no_old_records") return c.text(t.noOldRecords, 409);
     if (result.outcome === "conflict") return c.text(t.conflict, 409);
     return c.redirect(sampleHref(sample.sample_id));
+  });
+
+  // How many traps a trap sample had (beeline-kgyd.4.1): staff only, on any
+  // trap sample, kept as the leading number of its effort.
+  app.post("/samples/:id/trap-count", async (c) => {
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const result = await setTrapCount(corrective, actorOf(c), id, async () => {
+      const body = await c.req.parseBody();
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+      return { count: field("count"), note: field("note"), problemFor: trapCountProblemFor(m) };
+    });
+    if (result.ok) return c.redirect(sampleHref(id));
+    switch (result.refusal) {
+      case "impersonating":
+        return c.text(m.errors.readOnlyImpersonating, 403);
+      case "not_admin":
+        return c.text("Admins only.", 403);
+      case "not_found":
+        return errorResponse(c, "notFound");
+      case "invalid":
+        return c.text(result.problem, 400);
+      default:
+        return unreachable(result);
+    }
   });
 
   // The coordinates, on the same terms (beeline-942). The one case a

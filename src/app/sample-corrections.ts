@@ -622,6 +622,8 @@ export interface TrapCountInput {
   /** The number of traps, a positive whole number as text or a number; blank takes the count away. */
   count: string | number;
   note: string;
+  /** The sentence for each way a count is refused, from the message catalogue (`trapCountProblemFor`). */
+  problemFor: (problem: "count" | "net" | "method") => string;
 }
 
 export type TrapCountResult =
@@ -660,10 +662,10 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
     const given = String(form.count).trim();
     let effort: string | null = null;
     if (given !== "") {
-      if (!/^[1-9]\d{0,5}$/.test(given)) return invalid("The trap count must be a whole number of one or more, or blank to take it away.");
-      if (sample.kind !== "trap") return invalid("This is a net sample, which has no trap count. Only a trap sample has one.");
+      if (!/^[1-9]\d{0,5}$/.test(given)) return invalid(form.problemFor("count"));
+      if (sample.kind !== "trap") return invalid(form.problemFor("net"));
       const method = (sample.protocol ?? "").trim();
-      if (method === "") return invalid("This sample has no method, and the count is kept with the kind of trap. Set the method first, then the count.");
+      if (method === "") return invalid(form.problemFor("method"));
       effort = trapEffort(Number(given), method);
     }
     if (effort === (sample.sampling_effort ?? null)) return { ok: true, outcome: "unchanged", effort };

@@ -73,6 +73,8 @@ import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
+import { addressRows, runCollectors, runHasRegistration } from "./print-run-addresses.js";
+import { IdealLogicError, type Registrant } from "../ideal-logic.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
 import { MAX_FILE_BYTES, comparePlan, parseUpload, type Layout as UploadLayout, type Parsed } from "./upload-plan.js";
@@ -250,7 +252,7 @@ export interface JobsDep {
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir">>;
+  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir" | "idealLogic">>;
   inat: InatClient;
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
@@ -797,9 +799,18 @@ export function createApp({
   const errorResponse = async (
     c: Context<AppEnv>,
     kind: ErrorKind,
-    { reference, err, message, heading }: { reference?: string; err?: Error; message?: string; heading?: string } = {},
+    {
+      reference,
+      err,
+      message,
+      heading,
+      status: statusOverride,
+      title: titleOverride,
+    }: { reference?: string; err?: Error; message?: string; heading?: string; status?: 404 | 409 | 429 | 503; title?: string } = {},
   ): Promise<Response> => {
-    const status = kind === "failed" ? 500 : 404;
+    // A page that knows more than "not found" (a canceled run, a day's
+    // requests spent) says so in the not-found layout, with its own status.
+    const status = statusOverride ?? (kind === "failed" ? 500 : 404);
     const m = c.get("m") ?? messagesFor(null);
     const url = new URL(c.req.url);
     const json =
@@ -831,7 +842,7 @@ export function createApp({
         ? { text: err.stack ?? err.message, staleStore: /Binder Error|Catalog Error/.test(err.message) }
         : null;
     const body = <ErrorPage m={m} kind={kind} reference={reference} message={message} heading={heading} back={back} dev={dev} />;
-    const title = m.errorPage[kind].title;
+    const title = titleOverride ?? m.errorPage[kind].title;
     try {
       if (c.get("session") !== undefined && c.get("acting") !== undefined) {
         c.set("errorReference", reference);
@@ -2442,7 +2453,7 @@ export function createApp({
     const run = await loadRun(db, id);
     if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
     const labels = await runLabels(db, id);
-    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_abbreviation), <PrintRun m={m} run={run} labels={labels} />));
+    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_abbreviation), <PrintRun m={m} run={run} labels={labels} canDownloadAddresses={config.idealLogic != null} />));
   };
 
   app.get("/print-runs/:id", async (c) => {
@@ -2471,6 +2482,89 @@ export function createApp({
     return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
       "content-type": "application/pdf",
       "content-disposition": `inline; filename="beeline-labels-run-${id}.pdf"`,
+    });
+  });
+
+  // The mailing addresses of the run's collectors (beeline-w8ab.3). Ideal
+  // Logic's, fetched while this request is answered and never written
+  // anywhere: not the store, not a log line, not an error message. A POST,
+  // since each answer spends one of Ideal Logic's requests for the day and a
+  // prefetch must not.
+  app.post("/print-runs/:id/addresses.csv", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const t = m.printRuns.run.addresses;
+    const ideal = config.idealLogic;
+    if (ideal == null) return errorResponse(c, "notFound", { message: t.notConfigured });
+    const id = printRunId(c);
+    const canceled = () =>
+      errorResponse(c, "notFound", {
+        status: 409,
+        title: t.canceledTitle,
+        heading: t.canceledHeading,
+        message: t.canceledNoAddresses,
+      });
+    const run = await loadRun(db, id);
+    if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
+    if (run.state === "canceled") return canceled();
+    // With nobody to look up, Ideal Logic is not asked: each request counts
+    // against its limit for the day.
+    let registrants: Registrant[] = [];
+    if (await runHasRegistration(db, id)) {
+      try {
+        registrants = await ideal.fetchRegistrants();
+      } catch (err) {
+        // The error's text is fixed and safe to show; anything else is a fault.
+        if (!(err instanceof IdealLogicError)) throw err;
+        c.header("cache-control", "no-store");
+        return errorResponse(c, "notFound", {
+          status: err.kind === "budget" ? 429 : 503,
+          title: t.failedTitle,
+          heading: t.failedHeading,
+          message: t.failed(err.message, ideal.remaining()),
+        });
+      }
+    }
+    // The fetch can take a minute. Read the run again afterwards, so that a
+    // run canceled meanwhile is refused, and read its collectors and their
+    // registration links only now, so the file reflects the store as it is.
+    const after = await loadRun(db, id);
+    if (after === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
+    if (after.state === "canceled") return canceled();
+    const inRun = await runCollectors(db, id);
+    const rows = addressRows(inRun, registrants);
+    // Who and how many, never a name or an address.
+    console.log(
+      `print-run addresses: person ${c.get("session").personId} downloaded run ${id}: ${rows.filter((r) => r.hasAddress).length} of ${rows.length} rows have an address`,
+    );
+    const h = t.headers;
+    const body = toCsv(
+      [h.names, h.line1, h.line2, h.city, h.stateProvince, h.postalCode, h.country, h.labels, h.printedAs, h.note],
+      rows.map((r) => [
+        r.names.join(" and "),
+        r.line1,
+        r.line2,
+        r.city,
+        r.stateProvince,
+        r.postalCode,
+        r.country,
+        r.labels,
+        r.printedAs.join("; "),
+        r.notes
+          .map((note) =>
+            note.code === "incompleteAddress"
+              ? t.notes.incompleteAddress(note.missing.map((part) => t.notes.missing[part]).join(", "))
+              : note.code === "unaccountedLabels"
+                ? t.notes.unaccountedLabels(note.labels)
+                : t.notes[note.code],
+          )
+          .join(" "),
+      ]),
+    );
+    return c.body(body, 200, {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="beeline-addresses-run-${id}.csv"`,
+      "cache-control": "no-store",
     });
   });
 

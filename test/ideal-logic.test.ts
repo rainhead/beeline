@@ -232,6 +232,50 @@ describe("fetching", () => {
   });
 });
 
+describe("a fetch under way", () => {
+  test("is shared with the calls that arrive meanwhile, and forgotten once it settles", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let asked = 0;
+    const fetchImpl: IdealLogicFetch = async () => {
+      asked += 1;
+      await gate;
+      return {
+        status: 200,
+        headers: { get: (name) => (name.toLowerCase() === "x-numresults" ? "1" : null) },
+        text: async () => JSON.stringify([OREGON]),
+      };
+    };
+    const client = createIdealLogicClient({ key: "k", fetchImpl, budget: new RequestBudget(5) });
+    const first = client.fetchRegistrants();
+    const second = client.fetchRegistrants();
+    release();
+    expect((await first).map((r) => r.id)).toEqual(["AB12-CDE3"]);
+    expect((await second).map((r) => r.id)).toEqual(["AB12-CDE3"]);
+    expect(asked).toBe(1);
+    expect(client.remaining()).toBe(4);
+
+    // Nothing was kept: the next call is a new request.
+    await client.fetchRegistrants();
+    expect(asked).toBe(2);
+    expect(client.remaining()).toBe(3);
+  });
+
+  test("a failure is shared too, and does not poison the next call", async () => {
+    let asked = 0;
+    const fetchImpl: IdealLogicFetch = async () => {
+      asked += 1;
+      return { status: 404, headers: { get: () => null }, text: async () => "no" };
+    };
+    const client = createIdealLogicClient({ key: "k", fetchImpl, budget: new RequestBudget(5) });
+    const both = await Promise.allSettled([client.fetchRegistrants(), client.fetchRegistrants()]);
+    expect(both.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+    expect(asked).toBe(1);
+    await expect(client.fetchRegistrants()).rejects.toThrow("refused");
+    expect(asked).toBe(2);
+  });
+});
+
 describe("the day's requests", () => {
   test("are counted whether or not they succeed, and refused past the limit", async () => {
     let now = new Date("2026-11-18T20:00:00Z");

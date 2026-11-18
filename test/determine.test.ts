@@ -180,6 +180,42 @@ describe("drafts", () => {
     expect(back!.draft).toBeNull();
   });
 
+  it("keep the part a write leaves out, so a screen with an old copy of the row cannot erase a name (beeline-rt6h)", async () => {
+    const { db, ada, animal, spec } = await fixture();
+    const s = await spec("26000101");
+    await saveDrafts(db, ada, ada, [{ specimenId: s, animalId: await animal("Bombus vosnesenskii") }]);
+    // A second tab, loaded before the name was given, shows the row unnamed and sets its sex.
+    const [sexed] = await saveDrafts(db, ada, ada, [{ specimenId: s, sex: "female", caste: "worker" }]);
+    expect(sexed!.draft).toMatchObject({ animalId: await animal("Bombus vosnesenskii"), sex: "female", caste: "worker" });
+    // And a name alone keeps the sex, with the caste judged against the new name.
+    const [renamed] = await saveDrafts(db, ada, ada, [{ specimenId: s, animalId: await animal("Andrena"), ecdysisTid: null }]);
+    expect(renamed!.draft).toMatchObject({ animalId: await animal("Andrena"), sex: "female", caste: null });
+    // A part given as nothing is taken away, which is what Undo sends.
+    const [unsexed] = await saveDrafts(db, ada, ada, [{ specimenId: s, sex: null, caste: null }]);
+    expect(unsexed!.draft).toMatchObject({ animalId: await animal("Andrena"), sex: null });
+    const [cleared] = await saveDrafts(db, ada, ada, [{ specimenId: s, animalId: null, ecdysisTid: null }]);
+    expect(cleared!.draft).toBeNull();
+  });
+
+  it("lay a part over the determination already made when there is no draft (beeline-rt6h)", async () => {
+    const { db, ada, animal, spec } = await fixture();
+    // 26000102 is already Ada's Bombus, female.
+    const s = await spec("26000102");
+    const [refined] = await saveDrafts(db, ada, ada, [{ specimenId: s, animalId: await animal("Bombus vosnesenskii"), ecdysisTid: null }]);
+    expect(refined!.draft).toMatchObject({ animalId: await animal("Bombus vosnesenskii"), sex: "female" });
+    const [same] = await saveDrafts(db, ada, ada, [{ specimenId: s, animalId: await animal("Bombus"), ecdysisTid: null }]);
+    expect(same!.draft).toBeNull();
+  });
+
+  it("over HTTP, a write with only a sex keeps the name saved before it (beeline-rt6h)", async () => {
+    const { json, animal, spec } = await appFixture();
+    const s = await spec("26000101");
+    await json("/determinations/drafts", { writes: [{ specimenId: s, animalId: await animal("Andrena"), ecdysisTid: null }] });
+    const res = await json("/determinations/drafts", { writes: [{ specimenId: s, sex: "male", caste: null }] });
+    const out = (await res.json()) as { rows: { draft: { animalId: number; sex: string } }[] };
+    expect(out.rows[0]!.draft).toMatchObject({ animalId: await animal("Andrena"), sex: "male" });
+  });
+
   it("refuse somebody else's specimen", async () => {
     const { db, ada, animal, spec } = await fixture();
     await expect(

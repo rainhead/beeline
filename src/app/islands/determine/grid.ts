@@ -20,13 +20,20 @@ import { NumberIndex, pastedList, type NumberProblem } from "../../../determinat
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
-import { leavesPage, RequestQueue } from "./queue.js";
+import { changedParts, leavesPage, RequestQueue } from "./queue.js";
 import { deselect, emptySelection, holdsWork, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
 const d = m.determine;
 
 const CHUNK = 400;
+
+/**
+ * How long a request may go unanswered before it counts as failed. Without
+ * a limit a request on a dead connection holds the queue, and with it every
+ * link on the page, for as long as the browser cares to wait.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 type Write = EntryValue & { specimenId: number };
 type TaxonInfo = { name: string; rank: string; castes: boolean };
@@ -140,6 +147,7 @@ class DetermineGrid extends LitElement {
     window.removeEventListener("resize", this.#clearPinned);
     document.removeEventListener("click", this.#holdLink);
     window.removeEventListener("beforeunload", this.#warnUnsaved);
+    window.removeEventListener("pageshow", this.#reloadIfRestored);
     document.documentElement.style.scrollPaddingTop = "";
   }
 
@@ -153,17 +161,34 @@ class DetermineGrid extends LitElement {
    * page stays, so it can be tried again.
    */
   async #afterSaves(go: () => void, stay: () => void = () => undefined) {
-    if (this.#queue.busy) {
-      this.message = d.leaving;
-      await this.#queue.idle();
+    if (!this.#queue.busy) {
+      // Nothing to wait for. If an earlier change failed, the browser asks
+      // (#warnUnsaved), which leaves a way out when it can never be saved.
+      go();
+      return;
     }
-    if (this.failed.size > 0) {
+    const failures = this.#failures;
+    this.message = d.leaving;
+    await this.#queue.idle();
+    if (this.failed.size > 0 || this.#failures !== failures) {
       this.message = d.leaveUnsaved;
       stay();
       return;
     }
     go();
   }
+
+  /** Requests that have failed, counted so that one failing while the page waits to leave keeps it open. */
+  #failures = 0;
+
+  /**
+   * A page the browser kept whole and brought back with Back still holds the
+   * rows as they were when it was left, so it is loaded again. `no-store`
+   * stops most browsers keeping it, and Chrome keeps some such pages anyway.
+   */
+  #reloadIfRestored = (e: PageTransitionEvent) => {
+    if (e.persisted) window.location.reload();
+  };
 
   /** A link clicked while changes are still being sent is followed once they have been. */
   #holdLink = (e: MouseEvent) => {
@@ -204,6 +229,7 @@ class DetermineGrid extends LitElement {
     });
     document.addEventListener("click", this.#holdLink);
     window.addEventListener("beforeunload", this.#warnUnsaved);
+    window.addEventListener("pageshow", this.#reloadIfRestored);
     loadTaxa()
       .then((list: PickerTaxon[]) => {
         for (const t of list) this.taxa.set(t.id, { name: t.name, rank: t.rank, castes: t.castes });
@@ -264,11 +290,15 @@ class DetermineGrid extends LitElement {
     };
     const run = async () => {
       try {
+        // Only what differs from the store's last word on each row, worked
+        // out now that every earlier request has been answered (changedParts).
+        const known = new Map(this.rows.map((r) => [r.id, r.draft ?? r.prior]));
         const res = await fetch("/determinations/drafts", {
           method: "POST",
           headers: { "content-type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ writes }),
+          body: JSON.stringify({ writes: writes.map((w) => ({ specimenId: w.specimenId, ...changedParts(known.get(w.specimenId) ?? null, w) })) }),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
         if (!res.ok) throw new Error(String(res.status));
         const { rows, taxa } = (await res.json()) as { rows: EntryRow[]; taxa?: Record<string, TaxonInfo> };
@@ -280,6 +310,7 @@ class DetermineGrid extends LitElement {
         for (const id of landed) failed.delete(id);
         this.failed = failed;
       } catch {
+        this.#failures++;
         const failed = new Map(this.failed);
         for (const w of settle()) failed.set(w.specimenId, w);
         this.failed = failed;
@@ -327,6 +358,14 @@ class DetermineGrid extends LitElement {
    * reopen it either.
    */
   #rowChanged(r: EntryRow) {
+    // The bar's Undo puts back what its rows said before the bar changed
+    // them. A row changed in its own cell since is no longer the bar's to
+    // put back: naming ten rows Bombus, refining three to species and then
+    // pressing Undo took the three species away as well.
+    if (this.lastBulk) {
+      const before = this.lastBulk.before.filter((w) => w.specimenId !== r.id);
+      this.lastBulk = before.length > 0 ? { ...this.lastBulk, before } : null;
+    }
     if (!this.selected.has(r.id)) return;
     if (this.lastBulk?.selection.ids === this.selection.ids) this.lastBulk = { ...this.lastBulk, selection: markUsed(this.lastBulk.selection) };
     this.selection = markUsed(this.selection);
@@ -358,18 +397,24 @@ class DetermineGrid extends LitElement {
    */
   async #batchRequest(body: object) {
     const out = await this.#queue.run(async () => {
-      const res = await fetch("/determinations/batch", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      return (await res.json()) as {
-        addition: null | { entries: { text: string; found: number; problem: NumberProblem | null }[]; added: number; already: number; named: number[] };
-        rows: EntryRow[];
-        taxa: Record<number, TaxonInfo>;
-      };
+      try {
+        const res = await fetch("/determinations/batch", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        return (await res.json()) as {
+          addition: null | { entries: { text: string; found: number; problem: NumberProblem | null }[]; added: number; already: number; named: number[] };
+          rows: EntryRow[];
+          taxa: Record<number, TaxonInfo>;
+        };
+      } catch (err) {
+        this.#failures++;
+        throw err;
+      }
     });
     for (const [id, t] of Object.entries(out.taxa)) this.taxa.set(Number(id), t);
     // The view links carry the count; keep it true without a reload.
@@ -383,7 +428,8 @@ class DetermineGrid extends LitElement {
     if (typed === "" || this.data.readOnly) return;
     try {
       const out = await this.#batchRequest({ add: typed });
-      input.value = "";
+      // Unless more was typed or scanned while this waited its turn.
+      if (input.value.trim() === typed) input.value = "";
       this.rows = out.rows;
       const a = out.addition!;
       this.problems = [
@@ -473,7 +519,7 @@ class DetermineGrid extends LitElement {
   /**
    * A number not in this year: ask the server, which looks in every year,
    * and open the year it is in with the specimen selected (beeline-mjml).
-   * Drafts save as they are made, so leaving the page loses nothing.
+   * It leaves only once every change here has been sent (#leaveFor).
    */
   async #locate(typed: string) {
     const search = this.#search;

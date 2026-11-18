@@ -38,6 +38,40 @@ export class RequestQueue {
   }
 }
 
+/** What a row says: the screen's copy of it, or what a change would make it. */
+export interface RowValue {
+  animalId: number | null;
+  ecdysisTid?: number | null;
+  sex: string | null;
+  caste: string | null;
+}
+
+/**
+ * The parts of a row to send: the name, the sex, both or neither, whichever
+ * differ from the copy of the row the store last gave this page. The store
+ * keeps the parts not sent as it has them (saveDrafts, src/app/determine.ts).
+ *
+ * Until beeline-rt6h a save sent the whole row as the screen showed it and
+ * the store replaced the draft with that. A screen with an old copy of the
+ * row (a second tab, a page the browser brought back) showed it without the
+ * name given elsewhere, and a sex chosen there erased the name.
+ *
+ * A name is the tree's id or Ecdysis's, never both, and a caste belongs to a
+ * sex, so each pair goes together.
+ */
+export function changedParts<V extends RowValue>(base: RowValue | null, value: V): Partial<Pick<V, "animalId" | "ecdysisTid" | "sex" | "caste">> {
+  const out: Partial<RowValue> = {};
+  if ((base?.animalId ?? null) !== value.animalId || (base?.ecdysisTid ?? null) !== (value.ecdysisTid ?? null)) {
+    out.animalId = value.animalId;
+    out.ecdysisTid = value.ecdysisTid ?? null;
+  }
+  if ((base?.sex ?? null) !== value.sex || (base?.caste ?? null) !== value.caste) {
+    out.sex = value.sex;
+    out.caste = value.caste;
+  }
+  return out as Partial<Pick<V, "animalId" | "ecdysisTid" | "sex" | "caste">>;
+}
+
 /** The parts of a click that say whether it will take this tab to another page. */
 export interface LinkClick {
   defaultPrevented: boolean;

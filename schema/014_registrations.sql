@@ -22,7 +22,7 @@ CREATE TABLE ideal_logic_registrant (
   last_seen_at   TIMESTAMP NOT NULL DEFAULT current_timestamp
 );
 COMMENT ON TABLE ideal_logic_registrant IS 'A registration in Ideal Logic, as the nightly ideal-logic-registrants job last saw it, without its email address and without its home address: those are never stored. Kept only for a registrant Beeline has a use for: one linked to a person, one who named an atlas or an iNaturalist handle, or one whose name is a person''s. A registration can be a household''s (one was made under the given name "Pete and Gretchen"), so it is not a person.';
-COMMENT ON COLUMN ideal_logic_registrant.ideal_logic_id IS 'Ideal Logic''s id for the registration, such as QNN6-MX8. Whether it names a person for good or one filling-in of the form is a question for OSU (beeline-w8ab).';
+COMMENT ON COLUMN ideal_logic_registrant.ideal_logic_id IS 'Ideal Logic''s id for the registration, such as QNN6-MX8. It names a person''s record in Ideal Logic, which keeps it as they update their details. A person with two records, under two email addresses, has two ids.';
 COMMENT ON COLUMN ideal_logic_registrant.given_name IS 'The first name as registered.';
 COMMENT ON COLUMN ideal_logic_registrant.family_name IS 'The last name as registered.';
 COMMENT ON COLUMN ideal_logic_registrant.atlases IS 'The atlases the registrant named, as program codes joined with semicolons in the order given (OBA;WaBA); MM for "No Atlas Affiliation". NULL where the question was not answered. A suggestion for staff: person_membership holds the one program a person belongs to.';

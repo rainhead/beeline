@@ -31,7 +31,8 @@ Two things the feed lacks. It has a field for a US state and none for a province
 
 - **Several people can share a registration.** A couple registered once, under the first name "Pete and Gretchen".
 - **The link is not in the person overlay.** The overlay exists to replay decisions onto a rebuilt store, and production is no longer rebuilt. It also cannot name a person who shares a name and has no account, and its curated copy is in this public repository.
-- **Whether an Ideal Logic id names a person for good is not known.** If people register again each year, a link would go on pointing at an old address. The evidence so far is against that: five names were registered twice on 2026-11-18, each pair under two different email addresses and none with two different addresses, which is what a record per account looks like. It is still a question for OSU (beeline-w8ab.5).
+- **An id names a person's record**, which Ideal Logic keeps as they update their details, so a link goes on finding their current address. A person can have two records under two email addresses: five names had two on 2026-11-18. The nightly job links neither of a person's two records; staff choose.
+- **Not everyone registered is a collector.** Ideal Logic also holds people who signed up only for a workshop, which is why the nightly job keeps a registration only when Beeline has a use for it.
 
 The handle a registrant types is the weakest evidence there is: of 142, seven were not the login Beeline holds for that person (typing slips, a display name, the word "yes"). So nothing links on a handle alone, and nothing links on a name alone, since 386 registrants have no relation to Beeline and any of them may share a collector's name. Three ways a link is made:
 

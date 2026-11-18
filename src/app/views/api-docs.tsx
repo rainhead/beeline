@@ -94,7 +94,7 @@ export function ApiDocs({ m, description, scopes }: { m: Messages; description: 
 
       <h2>{d.endpoints.heading}</h2>
       <p>
-        {d.endpoints.lede} {d.endpoints.base}: <code>{description.base_url}</code>
+        {d.endpoints.lede} {d.endpoints.base}: <code>{new URL(description.base_url).origin}</code>
       </p>
       {description.endpoints.map((e) => {
         const usable = scopes.includes(NEEDED_SCOPE[e.needs] ?? "staff");

@@ -2010,8 +2010,8 @@ export const en = {
       },
       endpoints: {
         heading: "Endpoints",
-        lede: "Every address below begins with the base address of the API.",
-        base: "Base address",
+        lede: "Each path below already begins with /api/v1: put the site's address in front of it, not the full address of the API.",
+        base: "Site address",
         needs: { "any key": "Works with any key", "edit key": "Needs an edit key", "staff key": "Needs a staff key" } as Record<string, string>,
         notForYou: "Not open to your keys",
         notForYouHint: "You cannot make this kind of key, so you cannot use this endpoint.",

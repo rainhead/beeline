@@ -83,6 +83,7 @@ export const LISTING_FILTERS = [
   "taxon",
   "host",
   "det",
+  "year",
   "labels",
   "kind",
   "qc",
@@ -159,6 +160,8 @@ function readQuery(
     const v = params.get(name);
     if (v !== null && v !== "" && !isIsoDay(v)) throw new BadRequest(`${name} must be a date as YYYY-MM-DD.`);
   }
+  const year = params.get("year");
+  if (year !== null && year !== "" && !/^(19|20)\d{2}$/.test(year)) throw new BadRequest("year must be a four-digit year, such as 2025.");
   const page = params.get("page");
   if (page !== null && !/^[1-9]\d{0,3}$|^10000$/.test(page)) throw new BadRequest("page must be a whole number from 1 to 10000.");
   // The pages cut these at 100 characters and carry on. A program is told

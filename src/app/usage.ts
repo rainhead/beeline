@@ -49,6 +49,7 @@ export function listingAttributes(
     taxon: q.taxon !== "",
     host: q.host !== "",
     det: q.det !== "any",
+    year: q.year !== null,
     kind: q.kind !== "any",
     qc: q.qc !== "any",
   };

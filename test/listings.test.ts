@@ -36,6 +36,8 @@ import { SPECIMEN_CHOICES, SPECIMENS_LAYOUT, columnRule } from "../src/app/uploa
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
 import { refreshPlantCommonNames } from "../src/plant-common-names.js";
+import { GENUS_ORDINAL, SPECIES_ORDINAL, rankBand } from "../src/app/listings.js";
+import { oregonToday } from "../src/oregon-today.js";
 import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
@@ -575,6 +577,105 @@ describe("what is still waiting for a name", () => {
     const flagged = await get(app, "/samples?scope=all&qc=flagged");
     expect(flagged).toContain("A-2");
     expect(flagged).toContain("1 sample");
+  });
+});
+
+describe("how far a specimen is named (beeline-o9rd)", () => {
+  // OBA00001 is named to species (Bombus vosnesenskii), WABA0001 to genus
+  // (Andrena), and OBA00002 has no name until a test gives it a family.
+  const nameOBA2AsFamily = (conn: Awaited<ReturnType<typeof listingApp>>["conn"]) =>
+    conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name)
+       SELECT sp.entity_id, an.entity_id, false, 'legacy_import', 'A Volunteer'
+       FROM specimen sp, animal an WHERE sp.field_number = 'OBA00002' AND an.scientific_name = 'Apidae'`,
+    );
+
+  it("splits the named by rank, and keeps the older states", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await nameOBA2AsFamily(conn);
+    const found = async (det: string) => {
+      const body = await get(app, `/specimens?scope=all&det=${det}`);
+      return ["OBA00001", "OBA00002", "WABA0001"].filter((n) => body.includes(n));
+    };
+    expect(await found("species")).toEqual(["OBA00001"]);
+    expect(await found("genus")).toEqual(["WABA0001"]);
+    expect(await found("coarse")).toEqual(["OBA00002"]);
+    expect(await found("from_genus")).toEqual(["OBA00001", "WABA0001"]);
+    expect(await found("determined")).toEqual(["OBA00001", "OBA00002", "WABA0001"]);
+    // Named only coarsely is not "not named".
+    expect(await found("undetermined")).toEqual([]);
+  });
+
+  it("on samples, finds a sample with at least one specimen named that far", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await nameOBA2AsFamily(conn);
+    const coarse = await get(app, "/samples?scope=all&det=coarse");
+    expect(coarse).toContain("A-1");
+    expect(coarse).not.toContain("B-1");
+    const genus = await get(app, "/samples?scope=all&det=genus");
+    expect(genus).toContain("B-1");
+    expect(genus).not.toContain("A-1");
+  });
+
+  it("puts every rank in a band, with nothing between subgenus and species", async () => {
+    const { conn } = await listingApp("staffer");
+    const ranks = (await rows(conn, `SELECT rank, ordinal FROM animal_rank ORDER BY ordinal`)) as [string, number][];
+    const band = (ordinal: number) => (ordinal < GENUS_ORDINAL ? "coarse" : ordinal < SPECIES_ORDINAL ? "genus" : "species");
+    expect(Object.fromEntries(ranks.map(([r, o]) => [r, band(o)]))).toEqual({
+      kingdom: "coarse",
+      phylum: "coarse",
+      class: "coarse",
+      order: "coarse",
+      suborder: "coarse",
+      superfamily: "coarse",
+      family: "coarse",
+      genus: "genus",
+      subgenus: "genus",
+      species: "species",
+      subspecies: "species",
+    });
+    // The SQL says the same as the constants.
+    expect(rankBand("genus")).toBe("ordinal >= 180 AND ordinal < 220");
+  });
+});
+
+describe("one collection year (beeline-kgyd.8)", () => {
+  it("narrows both listings to the samples whose first day is in that year", async () => {
+    const { app } = await listingApp("staffer");
+    const y25 = await get(app, "/samples?scope=all&year=2025");
+    expect(y25).toContain("A-2");
+    expect(y25).not.toContain("A-1");
+    const y26 = await get(app, "/specimens?scope=all&year=2026");
+    expect(y26).toContain("OBA00001");
+    expect(await get(app, "/specimens?scope=all&year=2025")).not.toContain("OBA00001");
+  });
+
+  it("is offered as a menu above the table, and shows as a pill when chosen", async () => {
+    const { app } = await listingApp("staffer");
+    const body = await get(app, "/specimens?scope=all&year=2025");
+    expect(body).toContain('<select id="year" name="year">');
+    expect(body).toContain(en.listings.filters.year);
+    // The menu keeps the other filters, so choosing a year does not drop them.
+    expect(body).toContain('<input type="hidden" name="scope" value="all"');
+  });
+});
+
+describe("one-click filters on the specimens listing (beeline-hkd4)", () => {
+  it("are links that set the query, this collection year read in Oregon", async () => {
+    const { app } = await listingApp("staffer");
+    const body = await get(app, "/specimens?scope=all");
+    const year = Number(oregonToday().slice(0, 4));
+    expect(body).toContain(`href="/specimens?scope=all&amp;year=${year}"`);
+    expect(body).toContain('href="/specimens?scope=all&amp;det=undetermined"');
+    expect(body).toContain('href="/specimens?scope=all&amp;det=coarse"');
+    // In force, a link takes its filter away again.
+    const on = await get(app, "/specimens?scope=all&det=coarse");
+    expect(on).toContain('<a href="/specimens?scope=all" aria-current="true">');
+  });
+
+  it("are not on the samples listing", async () => {
+    const { app } = await listingApp("staffer");
+    expect(await get(app, "/samples?scope=all")).not.toContain("quick-filters");
   });
 });
 

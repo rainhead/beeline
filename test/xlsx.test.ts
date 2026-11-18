@@ -309,8 +309,21 @@ describe("sheets beside the main one, warnings, suggestions and shading (beeline
     expect(sheet).toMatch(/<col min="1" max="1" width="16"/);
     expect(sheet).toMatch(/<col min="2" max="2" width="56"/);
     expect(() => writeXlsx({ sheetName: "s", header: ["a"], widths: { z: 9 } }, [])).toThrow(/does not have: z/);
+    for (const bad of [0, -3, NaN, Infinity]) expect(() => writeXlsx({ sheetName: "s", header: ["a"], widths: { a: bad } }, [])).toThrow(/positive number/);
     // A heading that is also a property of every object gets the default.
     expect(decode(writeXlsx({ sheetName: "s", header: ["constructor", "b"], widths: { b: 56 } }, []), "xl/worksheets/sheet1.xml")).toMatch(/<col min="1" max="1" width="16"/);
+  });
+
+  it("wraps the columns it is told to, in the Text format, with and without the grey, and refuses a column it does not have (beeline-kgyd.11)", () => {
+    const bytes = writeXlsx({ sheetName: "s", header: ["a", "b", "c"], shadedColumns: ["b"], wrappedColumns: ["b", "c"] }, [["1", "2", null]]);
+    const styles = decode(bytes, "xl/styles.xml");
+    const xfs = [...styles.matchAll(/<xf numFmtId="(\d+)" fontId="(\d)" fillId="(\d)"[^>]*?(?:\/>|>(<alignment wrapText="1"\/>)<\/xf>)/g)].map((m) => [m[1], m[3], m[4] !== undefined]);
+    expect(xfs.filter((x) => x[2])).toEqual([["49", "0", true], ["49", "2", true]]);
+    const sheet = decode(bytes, "xl/worksheets/sheet1.xml");
+    expect(sheet).toMatch(/<c r="A2" s="1"/);
+    expect(sheet).toMatch(/<c r="B2" s="5"/);
+    expect(sheet).toMatch(/<c r="C2" s="4"\/>/);
+    expect(() => writeXlsx({ sheetName: "s", header: ["a"], wrappedColumns: ["z"] }, [])).toThrow(/does not have: z/);
   });
 
   it("shades the columns it is told to, bolds headings, and keeps the Text format on every cell", () => {

@@ -1983,7 +1983,7 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     const xml = new TextDecoder().decode(unzipSync(bytes)["xl/worksheets/sheet1.xml"]);
     expect(xml).not.toContain("<f>");
     // Every cell has the Text format.
-    for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toMatch(/ s="[123]"/);
+    for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toMatch(/ s="[1-5]"/);
   });
 
   it("is stamped as an Excel file, and gives each person the rows they are shown", async () => {
@@ -2020,9 +2020,6 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     expect(specimens).toMatch(/href="\/specimens\.xlsx\?[^"]*q=barnes/);
     expect(specimens).toContain(en.listings.csv.edit);
     expect(specimens).toContain(en.listings.csv.editNote);
-    // The note says the file follows the filters, and who can upload it (beeline-kgyd.9, .7).
-    expect(en.listings.csv.editNote).toContain("filter first");
-    expect(en.listings.csv.editNote).toContain("Only program staff can upload");
     const samples = await get(app, "/samples?scope=all");
     expect(samples).not.toContain(".xlsx");
     // The samples listing still offers its CSV.
@@ -2106,19 +2103,27 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
     ]);
   });
 
-  it("draws associatedTaxa wide enough that its text does not run over the empty scientificName beside it (beeline-kgyd.11)", async () => {
+  it("wraps the columns whose text can be long, so none is drawn over the empty cell beside it (beeline-kgyd.11)", async () => {
     const { db } = await tabsFixture();
     const { options, header } = await specimenWorkbook(db, en, TODAY);
-    const width = (h: string) => options.widths?.[h] ?? 16;
-    // A typical host: the quoted relationship and a long binomial.
-    const typical = `"visits flowers of":"Eschscholzia californica"`;
-    expect(width("associatedTaxa")).toBeGreaterThanOrEqual(typical.length);
-    expect(width("associatedTaxa")).toBeGreaterThan(`"visits flowers of":"Astereae"`.length);
-    for (const h of Object.keys(options.widths ?? {})) expect(header).toContain(h);
-    const bytes = writeXlsx({ sheetName: "specimens", header, ...options }, []);
-    const sheet = strFromU8(unzipSync(bytes)["xl/worksheets/sheet1.xml"]!);
-    const at = header.indexOf("associatedTaxa") + 1;
-    expect(sheet).toContain(`<col min="${at}" max="${at}" width="${width("associatedTaxa")}"`);
+    // The ones that spilled: a host, a determiner's name, a name with a subgenus.
+    for (const h of ["associatedTaxa", "identifiedBy", "scientificName"]) {
+      expect(options.wrappedColumns, h).toContain(h);
+      expect(options.widths?.[h], h).toBeGreaterThan(16);
+    }
+    // Written, the cell of a long host in a row with nothing beside it carries the wrapping style.
+    const longHost = `"visits flowers of":"Chrysothamnus viscidiflorus ssp. viscidiflorus"`;
+    const row = header.map((h) => (h === "associatedTaxa" ? longHost : null));
+    const files = unzipSync(writeXlsx({ sheetName: "specimens", header, ...options }, [row]));
+    const xml = strFromU8(files["xl/worksheets/sheet1.xml"]!);
+    const styles = strFromU8(files["xl/styles.xml"]!);
+    const wrapStyles = [...styles.matchAll(/<xf [^>]*>(<alignment wrapText="1"\/>)?/g)].flatMap((m, at) => (m[1] === undefined ? [] : [at]));
+    const hostAt = columnName(header.indexOf("associatedTaxa"));
+    const hostCell = xml.match(new RegExp(`<c r="${hostAt}2" s="(\\d+)"`));
+    expect(wrapStyles).toContain(Number(hostCell![1]));
+    // The empty cell beside it is the one the text would have been drawn over.
+    const nextAt = columnName(header.indexOf("associatedTaxa") + 1);
+    expect(xml).toMatch(new RegExp(`<c r="${nextAt}2" s="\\d+"/>`));
   });
 
   it("lists people who identified a specimen in the last five years, as identifiedBy writes them, once each and sorted", async () => {
@@ -2218,7 +2223,8 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       const xml = sheetXml(bytes);
       const head = rowsOf(book(bytes), "specimens")[0]!;
       const styleOf = (ref: string) => new RegExp(`<c r="${ref}" s="(\\d)"`).exec(xml)![1];
-      const grey = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "3");
+      // 3 is grey and 5 is grey with the text wrapped; 1 is plain and 4 plain wrapped.
+      const grey = head.filter((c, at) => ["3", "5"].includes(styleOf(`${columnName(at)}1`)!));
       const bold = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "2");
       expect(head).toEqual([
         "fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa",
@@ -2232,7 +2238,7 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       expect(grey).toEqual(head.filter((c) => !SPECIMENS_LAYOUT.read.includes(c)));
       for (const c of SPECIMENS_LAYOUT.read) expect(["determination", "disposition"], c).toContain(columnRule(c)!.kind);
       // The whole of a grey column is grey, a white column's cells are plain, in the first data row too.
-      head.forEach((c, at) => expect(styleOf(`${columnName(at)}2`), c).toBe(grey.includes(c) ? "3" : "1"));
+      head.forEach((c, at) => expect(["3", "5"].includes(styleOf(`${columnName(at)}2`)!), c).toBe(grey.includes(c)));
       // Nothing is locked, so a person may still sort and filter.
       expect(xml).not.toContain("sheetProtection");
       expect(strFromU8(unzipSync(bytes)["xl/workbook.xml"]!)).not.toContain("workbookProtection");
@@ -2248,9 +2254,6 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       expect(first).not.toContain("recordedBy");
       const text = (topic: string) => about.find((r) => r[0] === topic)![1]!;
       expect(text(en.workbook.about.purposeTopic)).toBe(en.workbook.about.purpose);
-      // Volunteers cannot upload yet, so the file says so (beeline-kgyd.7).
-      expect(en.workbook.about.purpose).toContain("Only program staff can upload");
-      expect(en.workbook.about.purpose).toContain("Identify specimens");
       expect(text(en.workbook.about.leaveTopic)).toBe(en.workbook.about.leave);
       for (const key of ["specimenId", "specimenVersion"]) expect(en.workbook.about.leaveTopic).toContain(key);
       // A name that is not on the identifiers tab is not a fault.

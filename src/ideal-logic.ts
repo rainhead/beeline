@@ -19,7 +19,11 @@
  *   quotes the text it failed on, which here is somebody's record.
  * - A `Registrant` keeps the private fields under `email` and `address` and
  *   nowhere else, so that a reader can see where they go.
- * - Nothing is cached between calls.
+ * - Nothing is cached between calls. The one thing shared is a fetch that is
+ *   still under way: a second call that arrives meanwhile (a double click, a
+ *   download during the night's job) waits for that answer rather than
+ *   spending another request, and the answer is forgotten the moment the
+ *   fetch settles.
  *
  * Ideal Logic allows 100 requests a day, and one request returns everybody,
  * so the list is fetched whole and never per person or per page.
@@ -244,7 +248,10 @@ export class RequestBudget {
 }
 
 export interface IdealLogicClient {
-  /** Every registrant, in one request. Throws an `IdealLogicError`, whose message never quotes the response. */
+  /**
+   * Every registrant, in one request. Throws an `IdealLogicError`, whose message never quotes the response.
+   * A call made while another is still under way waits for that one's answer and costs nothing; the signal of the call that started the fetch governs it.
+   */
   fetchRegistrants(opts?: { signal?: AbortSignal }): Promise<Registrant[]>;
   /** How many requests Beeline may still make today. */
   remaining(): number;
@@ -267,74 +274,86 @@ export function createIdealLogicClient(opts: {
   const url = opts.url ?? IDEAL_LOGIC_URL;
   const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
 
+  const fetchOnce = async (signal: AbortSignal | undefined): Promise<Registrant[]> => {
+    budget.spend();
+    let res: FetchResponse;
+    let body: string;
+    // A stalled response must not hold the night's job: the caller's signal
+    // and a deadline are combined.
+    const limit = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
+    try {
+      res = await fetchImpl(url, { headers: { Authorization: `Bearer ${opts.key}` }, signal: limit });
+      body = await res.text();
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      // The cause is left off on purpose: a network error's text is not
+      // ours to vouch for, and the stack is logged.
+      throw new IdealLogicError("Ideal Logic could not be reached", "unreachable");
+    }
+    // Every failure is a 404 with a message, by Ideal Logic's own account.
+    // The message is not repeated: only the status is ours to store.
+    if (res.status !== 200) {
+      throw new IdealLogicError(`Ideal Logic refused the request (HTTP ${res.status})`, "refused");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      throw new IdealLogicError(
+        `Ideal Logic's answer could not be read as JSON (${body.length} characters)`,
+        "unreadable",
+      );
+    }
+    if (!Array.isArray(parsed)) {
+      throw new IdealLogicError("Ideal Logic's answer was not a list of registrants", "unreadable");
+    }
+    // Without paging parameters the answer holds everybody, and the header
+    // says how many that is. A shorter list means the default changed, and
+    // a job that took it for everybody would report registrants as gone.
+    const header = res.headers.get("x-numresults");
+    const total = header === null || header.trim() === "" ? NaN : Number(header);
+    if (!Number.isInteger(total)) {
+      throw new IdealLogicError(
+        "Ideal Logic did not say how many registrants there are, so the list cannot be checked for completeness",
+        "incomplete",
+      );
+    }
+    if (total !== parsed.length) {
+      throw new IdealLogicError(
+        `Ideal Logic returned ${parsed.length} registrants and said there are ${total}`,
+        "incomplete",
+      );
+    }
+    const registrants: Registrant[] = [];
+    let unreadable = 0;
+    for (const raw of parsed) {
+      const r = parseRegistrant(raw);
+      if (r === null) unreadable += 1;
+      else registrants.push(r);
+    }
+    // A few malformed records are Ideal Logic's to fix and not a reason to
+    // mail nobody; most of them malformed is a changed format.
+    if (unreadable > parsed.length / 10) {
+      throw new IdealLogicError(
+        `${unreadable} of Ideal Logic's ${parsed.length} records lacked an id, a name or an email address`,
+        "unreadable",
+      );
+    }
+    return registrants;
+  };
+
+  // The fetch under way, if any. Cleared when it settles, so that no answer
+  // outlives the request that needed it.
+  let inFlight: Promise<Registrant[]> | null = null;
   return {
     remaining: () => budget.remaining(),
-    async fetchRegistrants({ signal } = {}) {
-      budget.spend();
-      let res: FetchResponse;
-      let body: string;
-      // A stalled response must not hold the night's job: the caller's signal
-      // and a deadline are combined.
-      const limit = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
-      try {
-        res = await fetchImpl(url, { headers: { Authorization: `Bearer ${opts.key}` }, signal: limit });
-        body = await res.text();
-      } catch (err) {
-        if (signal?.aborted) throw err;
-        // The cause is left off on purpose: a network error's text is not
-        // ours to vouch for, and the stack is logged.
-        throw new IdealLogicError("Ideal Logic could not be reached", "unreachable");
-      }
-      // Every failure is a 404 with a message, by Ideal Logic's own account.
-      // The message is not repeated: only the status is ours to store.
-      if (res.status !== 200) {
-        throw new IdealLogicError(`Ideal Logic refused the request (HTTP ${res.status})`, "refused");
-      }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(body);
-      } catch {
-        throw new IdealLogicError(
-          `Ideal Logic's answer could not be read as JSON (${body.length} characters)`,
-          "unreadable",
-        );
-      }
-      if (!Array.isArray(parsed)) {
-        throw new IdealLogicError("Ideal Logic's answer was not a list of registrants", "unreadable");
-      }
-      // Without paging parameters the answer holds everybody, and the header
-      // says how many that is. A shorter list means the default changed, and
-      // a job that took it for everybody would report registrants as gone.
-      const header = res.headers.get("x-numresults");
-      const total = header === null || header.trim() === "" ? NaN : Number(header);
-      if (!Number.isInteger(total)) {
-        throw new IdealLogicError(
-          "Ideal Logic did not say how many registrants there are, so the list cannot be checked for completeness",
-          "incomplete",
-        );
-      }
-      if (total !== parsed.length) {
-        throw new IdealLogicError(
-          `Ideal Logic returned ${parsed.length} registrants and said there are ${total}`,
-          "incomplete",
-        );
-      }
-      const registrants: Registrant[] = [];
-      let unreadable = 0;
-      for (const raw of parsed) {
-        const r = parseRegistrant(raw);
-        if (r === null) unreadable += 1;
-        else registrants.push(r);
-      }
-      // A few malformed records are Ideal Logic's to fix and not a reason to
-      // mail nobody; most of them malformed is a changed format.
-      if (unreadable > parsed.length / 10) {
-        throw new IdealLogicError(
-          `${unreadable} of Ideal Logic's ${parsed.length} records lacked an id, a name or an email address`,
-          "unreadable",
-        );
-      }
-      return registrants;
+    fetchRegistrants({ signal } = {}) {
+      if (inFlight !== null) return inFlight;
+      const started = fetchOnce(signal).finally(() => {
+        if (inFlight === started) inFlight = null;
+      });
+      inFlight = started;
+      return started;
     },
   };
 }

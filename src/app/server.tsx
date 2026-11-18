@@ -794,9 +794,18 @@ export function createApp({
   const errorResponse = async (
     c: Context<AppEnv>,
     kind: ErrorKind,
-    { reference, err, message, heading }: { reference?: string; err?: Error; message?: string; heading?: string } = {},
+    {
+      reference,
+      err,
+      message,
+      heading,
+      status: statusOverride,
+      title: titleOverride,
+    }: { reference?: string; err?: Error; message?: string; heading?: string; status?: 404 | 409 | 429 | 503; title?: string } = {},
   ): Promise<Response> => {
-    const status = kind === "failed" ? 500 : 404;
+    // A page that knows more than "not found" (a canceled run, a day's
+    // requests spent) says so in the not-found layout, with its own status.
+    const status = statusOverride ?? (kind === "failed" ? 500 : 404);
     const m = c.get("m") ?? messagesFor(null);
     const url = new URL(c.req.url);
     const json =
@@ -828,7 +837,7 @@ export function createApp({
         ? { text: err.stack ?? err.message, staleStore: /Binder Error|Catalog Error/.test(err.message) }
         : null;
     const body = <ErrorPage m={m} kind={kind} reference={reference} message={message} heading={heading} back={back} dev={dev} />;
-    const title = m.errorPage[kind].title;
+    const title = titleOverride ?? m.errorPage[kind].title;
     try {
       if (c.get("session") !== undefined && c.get("acting") !== undefined) {
         c.set("errorReference", reference);
@@ -2447,22 +2456,37 @@ export function createApp({
     const id = printRunId(c);
     const run = await loadRun(db, id);
     if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
-    if (run.state === "canceled") return c.text(t.canceledNoAddresses, 409);
-    const collectors = await runCollectors(db, id);
-    let registrants: Registrant[];
-    try {
-      registrants = await ideal.fetchRegistrants();
-    } catch (err) {
-      // The error's text is fixed and safe to show; anything else is a fault.
-      if (!(err instanceof IdealLogicError)) throw err;
-      return c.text(t.failed(err.message, ideal.remaining()), err.kind === "budget" ? 429 : 503, {
-        "cache-control": "no-store",
+    if (run.state === "canceled") {
+      return errorResponse(c, "notFound", {
+        status: 409,
+        title: t.canceledTitle,
+        heading: t.canceledHeading,
+        message: t.canceledNoAddresses,
       });
     }
-    const rows = addressRows(collectors, registrants);
+    const inRun = await runCollectors(db, id);
+    // With nobody to look up, Ideal Logic is not asked: each request counts
+    // against its limit for the day.
+    let registrants: Registrant[] = [];
+    if (inRun.collectors.some((collector) => collector.idealLogicId !== null)) {
+      try {
+        registrants = await ideal.fetchRegistrants();
+      } catch (err) {
+        // The error's text is fixed and safe to show; anything else is a fault.
+        if (!(err instanceof IdealLogicError)) throw err;
+        c.header("cache-control", "no-store");
+        return errorResponse(c, "notFound", {
+          status: err.kind === "budget" ? 429 : 503,
+          title: t.failedTitle,
+          heading: t.failedHeading,
+          message: t.failed(err.message, ideal.remaining()),
+        });
+      }
+    }
+    const rows = addressRows(inRun, registrants);
     // Who and how many, never a name or an address.
     console.log(
-      `print-run addresses: person ${c.get("session").personId} downloaded run ${id}: ${rows.filter((r) => r.note === null).length} of ${rows.length} rows have an address`,
+      `print-run addresses: person ${c.get("session").personId} downloaded run ${id}: ${rows.filter((r) => r.hasAddress).length} of ${rows.length} rows have an address`,
     );
     const h = t.headers;
     const body = toCsv(
@@ -2477,7 +2501,15 @@ export function createApp({
         r.country,
         r.labels,
         r.printedAs.join("; "),
-        r.note === null ? "" : t.notes[r.note],
+        r.notes
+          .map((note) =>
+            note.code === "incompleteAddress"
+              ? t.notes.incompleteAddress(note.missing.map((part) => t.notes.missing[part]).join(", "))
+              : note.code === "unaccountedLabels"
+                ? t.notes.unaccountedLabels(note.labels)
+                : t.notes[note.code],
+          )
+          .join(" "),
       ]),
     );
     return c.body(body, 200, {

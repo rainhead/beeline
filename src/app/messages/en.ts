@@ -2756,12 +2756,16 @@ export const en = {
       /** The mailing addresses of the run's collectors, fetched from Ideal Logic as the file is made (beeline-w8ab.3). */
       addresses: {
         button: "Download the mailing addresses (CSV)",
-        hint: "For a mail merge onto address labels. The addresses come from Ideal Logic when you press the button and are not kept by Beeline. Each download uses one of the requests Ideal Logic allows each day.",
+        hint: "For a mail merge onto address labels. The addresses come from Ideal Logic when you press the button and are not kept by Beeline. Each download uses one of the requests Ideal Logic allows each day, so press it once and wait. Merge from the file itself: opening it in Excel first can drop the leading zero of a ZIP code.",
         notConfigured: "Beeline is not set up to read addresses from Ideal Logic.",
         canceledNoAddresses: "This run was canceled, so its labels will not be mailed.",
-        /** The message is the client's own fixed text. */
+        canceledTitle: "Run canceled",
+        canceledHeading: "This run has no addresses to download",
+        failedTitle: "No addresses downloaded",
+        failedHeading: "The mailing addresses could not be downloaded",
+        /** The reason is the client's own fixed text, which ends without a full stop. */
         failed: (reason: string, remaining: number) =>
-          `No file was made. ${reason} Beeline may make ${n(remaining)} more ${remaining === 1 ? "request" : "requests"} to Ideal Logic today.`,
+          `No file was made. ${reason}. Beeline may make ${n(remaining)} more ${remaining === 1 ? "request" : "requests"} to Ideal Logic today.`,
         headers: {
           names: "Names",
           line1: "Address line 1",
@@ -2777,7 +2781,20 @@ export const en = {
         notes: {
           noRegistration: "No address: this collector is not linked to a registration in Ideal Logic.",
           noAddress: "No address: the registration in Ideal Logic has no street address.",
-          notInAnswer: "No address: the registration this collector is linked to is no longer in Ideal Logic.",
+          notInAnswer:
+            "No address: the registration this collector is linked to was not in Ideal Logic's answer, or Beeline could not read it.",
+          collectorChanged:
+            "The collector changed after printing: the collector line on the labels is not what this sample would print now.",
+          missing: {
+            city: "no city",
+            stateProvince: "no state or province",
+            postalCode: "no postal code",
+            country: "country unknown",
+          },
+          incompleteAddress: (missing: string) =>
+            `Incomplete address: ${missing}. Finish it by hand before mailing.`,
+          unaccountedLabels: (labels: number) =>
+            `${n(labels)} ${labels === 1 ? "label of this run is" : "labels of this run are"} not in this file, because the collector of their sample changed or was removed after printing. Find ${labels === 1 ? "it" : "them"} on the sheets.`,
         },
       },
       approve: "Approve",

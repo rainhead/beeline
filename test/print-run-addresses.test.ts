@@ -1,3 +1,4 @@
+import type { DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -6,7 +7,17 @@ import type { InatClient } from "../src/app/auth.js";
 import { en } from "../src/app/messages/en.js";
 import { createApp } from "../src/app/server.js";
 import { createKysely } from "../src/db.js";
-import { IdealLogicError, type IdealLogicClient, type Registrant } from "../src/ideal-logic.js";
+import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
+import { addressRows, runCollectors, type RunCollector } from "../src/app/print-run-addresses.js";
+import {
+  createIdealLogicClient,
+  IdealLogicError,
+  RequestBudget,
+  type IdealLogicClient,
+  type IdealLogicFetch,
+  type Registrant,
+} from "../src/ideal-logic.js";
+import { approveRun, markPrinted, prepareRun, requestReprint } from "../src/print-run.js";
 import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
@@ -58,16 +69,29 @@ const REGISTRANTS: Registrant[] = [
   registrant("NOADDR-1", null),
 ];
 
+/** A client that has 41 requests left, and spends one on each fetch, a failed one too. */
 function fakeClient(opts: { fail?: IdealLogicError; registrants?: Registrant[] } = {}) {
+  let left = 41;
   const fetchRegistrants = vi.fn(async () => {
+    left -= 1;
     if (opts.fail) throw opts.fail;
     return opts.registrants ?? REGISTRANTS;
   });
-  const client: IdealLogicClient = { fetchRegistrants, remaining: () => 41 };
+  const client: IdealLogicClient = { fetchRegistrants, remaining: () => left };
   return { client, fetchRegistrants };
 }
 
-async function setup(client: IdealLogicClient | null, who: "staffer" | "volunteer" = "staffer") {
+interface Fixture {
+  conn: DuckDBConnection;
+  ids: Record<string, number>;
+  link: (personId: number, idealLogicId: string) => Promise<unknown>;
+}
+
+async function setup(
+  client: IdealLogicClient | null,
+  who: "staffer" | "volunteer" = "staffer",
+  opts: { linked?: boolean; before?: (f: Fixture) => Promise<void> } = {},
+) {
   const { instance, conn } = await createMemoryDb();
   const person = async (name: string) => {
     const [given, family] = name.split(" ");
@@ -89,11 +113,14 @@ async function setup(client: IdealLogicClient | null, who: "staffer" | "voluntee
     await insertCleanSample(conn, { collector_id: String(ids[name]), specimen_count: String(n), sample_number: "'1'" });
     n += 1;
   }
-  await link(ids["Ada Ash"]!, "HOUSE-1");
-  await link(ids["Bo Birch"]!, "HOUSE-2");
-  await link(ids["Cy Cedar"]!, "CAN-1");
-  await link(ids["Ed Elm"]!, "NOADDR-1");
-  await link(ids["Flo Fir"]!, "GONE-9");
+  if (opts.linked !== false) {
+    await link(ids["Ada Ash"]!, "HOUSE-1");
+    await link(ids["Bo Birch"]!, "HOUSE-2");
+    await link(ids["Cy Cedar"]!, "CAN-1");
+    await link(ids["Ed Elm"]!, "NOADDR-1");
+    await link(ids["Flo Fir"]!, "GONE-9");
+  }
+  await opts.before?.({ conn, ids, link });
   const dir = await mkdtemp(join(tmpdir(), "beeline-addresses-"));
   dirs.push(dir);
   const paths = await scratchPaths();
@@ -107,8 +134,8 @@ async function setup(client: IdealLogicClient | null, who: "staffer" | "voluntee
     printConn: conn,
     printRunsDir: dir,
   });
-  const post = (path: string, body: Record<string, string> = {}) =>
-    app.request(path, { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams(body) });
+  const post = (path: string, body: Record<string, string> = {}, headers: Record<string, string> = {}) =>
+    app.request(path, { method: "POST", headers: { origin: ORIGIN, ...headers }, body: new URLSearchParams(body) });
   const prepared = await post("/print-runs");
   const runPath = prepared.headers.get("location")!;
   asVolunteer = who === "volunteer";
@@ -195,21 +222,100 @@ describe("a print run's mailing addresses", () => {
   });
 
   it("answers 429 with no file when the day's requests are spent, and 503 when Ideal Logic cannot be reached", async () => {
-    const budget = fakeClient({ fail: new IdealLogicError("Today's requests to Ideal Logic are used up.", "budget") });
+    // The real errors have no closing full stop; the page adds the punctuation.
+    const budget = fakeClient({ fail: new IdealLogicError("Beeline has made 60 requests to Ideal Logic today", "budget") });
     const spent = await setup(budget.client);
     const res = await spent.post(`${spent.runPath}/addresses.csv`);
     expect(res.status).toBe(429);
     expect(res.headers.get("content-disposition")).toBeNull();
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(res.headers.get("cache-control")).toBe("no-store");
     const text = await res.text();
-    expect(text).toContain("Today's requests to Ideal Logic are used up.");
-    expect(text).toContain("41 more requests");
+    expect(text).toContain(en.printRuns.run.addresses.failedHeading);
+    expect(text).toContain("No file was made. Beeline has made 60 requests to Ideal Logic today. Beeline may make 40 more requests");
     expect(text).not.toContain("Ada");
+    expect(text).not.toContain("Corvallis");
 
     for (const kind of ["unreachable", "refused", "unreadable", "incomplete"] as const) {
-      const down = fakeClient({ fail: new IdealLogicError("Ideal Logic failed.", kind) });
+      const down = fakeClient({ fail: new IdealLogicError("Ideal Logic could not be reached", kind) });
       const s = await setup(down.client);
-      expect((await s.post(`${s.runPath}/addresses.csv`)).status).toBe(503);
+      const failed = await s.post(`${s.runPath}/addresses.csv`);
+      expect(failed.status).toBe(503);
+      // No file went out, and the reason is on the page, after the number was spent.
+      expect(failed.headers.get("content-type")).toContain("text/html");
+      expect(failed.headers.get("content-disposition")).toBeNull();
+      expect(await failed.text()).toContain("No file was made. Ideal Logic could not be reached. Beeline may make 40 more requests");
     }
+  });
+
+  it("answers a canceled run with the standard page and status 409", async () => {
+    const { client } = fakeClient();
+    const s = await setup(client);
+    await s.post(`${s.runPath}/cancel`);
+    const res = await s.post(`${s.runPath}/addresses.csv`);
+    expect(res.status).toBe(409);
+    const text = await res.text();
+    expect(text).toContain(en.printRuns.run.addresses.canceledNoAddresses);
+    expect(text).toContain(en.errorPage.home);
+  });
+
+  it("refuses staff who are viewing as somebody else", async () => {
+    const { client, fetchRegistrants } = fakeClient();
+    const s = await setup(client);
+    const res = await s.post(`${s.runPath}/addresses.csv`, {}, { cookie: `${IMPERSONATING_COOKIE}=${encodeURIComponent("Ada Ash")}` });
+    expect(res.status).toBe(403);
+    expect(fetchRegistrants).not.toHaveBeenCalled();
+  });
+
+  it("does not ask Ideal Logic when no collector in the run has a registration", async () => {
+    const { client, fetchRegistrants } = fakeClient();
+    const s = await setup(client, "staffer", { linked: false });
+    const res = await s.post(`${s.runPath}/addresses.csv`);
+    expect(res.status).toBe(200);
+    expect(fetchRegistrants).not.toHaveBeenCalled();
+    const out = lines(await res.text());
+    expect(out).toHaveLength(7);
+    for (const row of out.slice(1)) expect(row).toContain(en.printRuns.run.addresses.notes.noRegistration);
+  });
+
+  it("costs one request when the button is pressed twice at once", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const asked: string[] = [];
+    const fetchImpl: IdealLogicFetch = async (url) => {
+      asked.push(url);
+      await gate;
+      return {
+        status: 200,
+        headers: { get: (name) => (name.toLowerCase() === "x-numresults" ? "1" : null) },
+        text: async () =>
+          JSON.stringify([
+            {
+              id: "HOUSE-1",
+              first_name: "Invented",
+              last_name: "Person",
+              email_address: "house-1@example.org",
+              home_address_street: "12 Oak Street",
+              home_address_city: "Corvallis",
+              home_address_us_state: "OR",
+              home_address_postal_code: "97330",
+            },
+          ]),
+      };
+    };
+    const client = createIdealLogicClient({ key: "k", fetchImpl, budget: new RequestBudget(5) });
+    const s = await setup(client);
+    const first = s.post(`${s.runPath}/addresses.csv`);
+    const second = s.post(`${s.runPath}/addresses.csv`);
+    // Both requests have read the store and are waiting on the one fetch.
+    await vi.waitFor(() => expect(asked).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(asked).toHaveLength(1);
+    expect(client.remaining()).toBe(4);
   });
 
   it("shows the button only where a client is configured", async () => {
@@ -218,9 +324,160 @@ describe("a print run's mailing addresses", () => {
     const page = await (await withKey.app.request(withKey.runPath)).text();
     expect(page).toContain(`action="${withKey.runPath}/addresses.csv"`);
     expect(page).toContain(en.printRuns.run.addresses.button);
+    expect(page).toContain("drop the leading zero of a ZIP code");
 
     const without = await setup(null);
     const bare = await (await without.app.request(without.runPath)).text();
     expect(bare).not.toContain("addresses.csv");
+  });
+});
+
+const notes = en.printRuns.run.addresses.notes;
+
+describe("a row that cannot be delivered", () => {
+  it("says what is missing, keeps what is there, and sorts after the complete rows and before those with no address", async () => {
+    const extra = [
+      registrant("GUS-1", { street: "1 Ash Way", city: null, stateProvince: "OR", postalCode: "97331", country: "USA" }),
+      registrant("HAL-1", { street: "2 Beech Way", city: "Salem", stateProvince: null, postalCode: "12345", country: null }),
+      registrant("IVY-1", { street: "3 Cedar Way", city: "Iqaluit", stateProvince: null, postalCode: "X0A 0H0", country: "CAN" }),
+    ];
+    const { client } = fakeClient({ registrants: [...REGISTRANTS, ...extra] });
+    const { post, runPath } = await setup(client, "staffer", {
+      before: async ({ conn, ids, link }) => {
+        const added = [
+          ["Gus Gray", "GUS-1"],
+          ["Hal Hill", "HAL-1"],
+          ["Ivy Ives", "IVY-1"],
+        ] as const;
+        for (const [i, [name, reg]] of added.entries()) {
+          const [given, family] = name.split(" ");
+          const [[id]] = (await rows(
+            conn,
+            `INSERT INTO person (display_name, given_name, family_name) VALUES ('${name}', '${given}', '${family}') RETURNING entity_id`,
+          )) as [[number]];
+          ids[name] = id;
+          await insertCleanSample(conn, { collector_id: String(id), specimen_count: String(7 + i), sample_number: "'1'" });
+          await link(id, reg);
+        }
+      },
+    });
+    const out = lines(await (await post(`${runPath}/addresses.csv`)).text());
+    expect(out.map((l) => l.split(",")[0])).toEqual([
+      "Names",
+      "Ada Ash and Bo Birch",
+      "Cy Cedar",
+      "Gus Gray",
+      "Hal Hill",
+      "Ivy Ives",
+      "Di Dale",
+      "Ed Elm",
+      "Flo Fir",
+    ]);
+    // The parts that are present stay, so staff can finish the row by hand.
+    expect(out[3]).toMatch(/^Gus Gray,1 Ash Way,,,OR,97331,,7,/);
+    expect(out[3]).toContain("Incomplete address: no city. Finish it by hand before mailing.");
+    expect(out[4]).toMatch(/^Hal Hill,2 Beech Way,,Salem,,12345,,8,/);
+    expect(out[4]).toContain("Incomplete address: no state or province, country unknown.");
+    // A postal code starting with X names no single province.
+    expect(out[5]).toMatch(/^Ivy Ives,3 Cedar Way,,Iqaluit,,X0A 0H0,CANADA,9,/);
+    expect(out[5]).toContain("Incomplete address: no state or province.");
+  });
+});
+
+describe("labels that follow today's primary collector", () => {
+  it("marks a collector changed after printing, and counts the labels the file no longer holds", async () => {
+    const { client } = fakeClient();
+    const { post, runPath, conn, ids } = await setup(client);
+    // Di's sample (4 labels) is now Ed's, and Flo's (6 labels) has no collector.
+    await conn.run(`UPDATE sample_collector SET person_id = ${ids["Ed Elm"]} WHERE person_id = ${ids["Di Dale"]}`);
+    await conn.run(`DELETE FROM sample_collector WHERE person_id = ${ids["Flo Fir"]}`);
+    const out = lines(await (await post(`${runPath}/addresses.csv`)).text());
+    // Ed now has 5 + 4 labels, printed as two different lines.
+    const ed = out.find((l) => l.startsWith("Ed Elm"))!;
+    expect(ed).toMatch(/^Ed Elm,,,,,,,9,D\.Dale; E\.Elm,/);
+    expect(ed).toContain(notes.collectorChanged);
+    expect(out.some((l) => l.startsWith("Di Dale"))).toBe(false);
+    expect(out.some((l) => l.startsWith("Flo Fir"))).toBe(false);
+    // The last row has no names or address, and says how many labels are missing.
+    expect(out.at(-1)).toMatch(/^,,,,,,,6,,/);
+    expect(out.at(-1)).toContain(notes.unaccountedLabels(6));
+  });
+
+  it("counts a reprint in a later run once, under the collector of its sample", async () => {
+    const { instance, conn } = await createMemoryDb();
+    const db = createKysely(instance);
+    const person = async (display: string, given: string, family: string) =>
+      ((await rows(
+        conn,
+        `INSERT INTO person (display_name, given_name, family_name) VALUES ('${display}', '${given}', '${family}') RETURNING entity_id`,
+      )) as [[number]])[0][0];
+    const ash = await person("Ada Ash", "Ada", "Ash");
+    const birch = await person("Bo Birch", "Bo", "Birch");
+    const at = (day: number) => new Date(`2026-09-2${day}T16:00:00Z`);
+    const ashSample = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "2" });
+    const first = (await prepareRun(conn, { atlasId: null, personId: ash, now: at(1) }))!.printRunId;
+    await approveRun(conn, first, { personId: ash, now: at(1) });
+    await markPrinted(conn, first, { personId: ash, now: at(1) });
+    await insertCleanSample(conn, { collector_id: String(birch), specimen_count: "1", sample_number: "'7'" });
+    const [[second]] = (await rows(conn, `SELECT entity_id FROM specimen WHERE sample_id = ${ashSample} AND specimen_number = 2`)) as [[number]];
+    await requestReprint(conn, { specimenId: second }, { personId: ash, now: at(2), reason: "damaged" });
+    const run = (await prepareRun(conn, { atlasId: null, personId: ash, now: at(3) }))!;
+    expect(run).toMatchObject({ labels: 2, reprints: 1 });
+
+    const found = await runCollectors(db, run.printRunId);
+    expect(found.totalLabels).toBe(2);
+    expect(found.collectors.map((c) => [c.displayName, c.labels, c.changedAfterPrinting])).toEqual([
+      ["Ada Ash", 1, false],
+      ["Bo Birch", 1, false],
+    ]);
+    // Nothing is left out, so there is no row for missing labels.
+    expect(addressRows(found, []).map((r) => r.labels)).toEqual([1, 1]);
+  });
+});
+
+describe("which collectors share a row", () => {
+  const collector = (id: number, name: string, ideal: string): RunCollector => ({
+    personId: id,
+    displayName: name,
+    familyName: name.split(" ")[1]!,
+    givenName: name.split(" ")[0]!,
+    labels: 1,
+    printedAs: [],
+    idealLogicId: ideal,
+    changedAfterPrinting: false,
+  });
+  const at = (id: string, city: string | null, postalCode: string | null): Registrant =>
+    registrant(id, { street: "5 Pine Street", city, stateProvince: "OR", postalCode, country: "USA" });
+
+  it("keeps the same street in two cities apart when there is no postal code", () => {
+    const got = addressRows(
+      { collectors: [collector(1, "Ann Ames", "A"), collector(2, "Ben Bell", "B")], totalLabels: 2 },
+      [at("A", "Bend", null), at("B", "Burns", null)],
+    );
+    expect(got.map((r) => r.names)).toEqual([["Ann Ames"], ["Ben Bell"]]);
+  });
+
+  it("keeps even the same street and city apart with no postal code, unless it is one registration", () => {
+    const apart = addressRows(
+      { collectors: [collector(1, "Ann Ames", "A"), collector(2, "Ben Bell", "B")], totalLabels: 2 },
+      [at("A", "Bend", null), at("B", "Bend", null)],
+    );
+    expect(apart).toHaveLength(2);
+    const together = addressRows(
+      { collectors: [collector(1, "Ann Ames", "A"), collector(2, "Ben Bell", "A")], totalLabels: 2 },
+      [at("A", "Bend", null)],
+    );
+    expect(together.map((r) => r.names)).toEqual([["Ann Ames", "Ben Bell"]]);
+  });
+
+  it("keeps the same street and postal code apart when the city differs, and merges when everything agrees", () => {
+    const got = addressRows(
+      {
+        collectors: [collector(1, "Ann Ames", "A"), collector(2, "Ben Bell", "B"), collector(3, "Cal Cox", "C")],
+        totalLabels: 3,
+      },
+      [at("A", "Bend", "97701"), at("B", "Bend ", "97701"), at("C", "Sisters", "97701")],
+    );
+    expect(got.map((r) => r.names)).toEqual([["Ann Ames", "Ben Bell"], ["Cal Cox"]]);
   });
 });

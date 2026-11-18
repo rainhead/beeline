@@ -195,14 +195,14 @@ WHERE ADMIN_AREA_NAME NOT LIKE '%Northern Rockies%';
 -- is still each part's own, as it was.
 --
 -- agency_share is how much of a park lies inside the agencies' own areas
--- (named_area, above), from 0 to about 1; NULL for an island. OpenStreetMap
+-- (named_area, above), from 0 to 1; NULL for an island. OpenStreetMap
 -- outlines the agencies' land too, often several times over: North Cascades
 -- National Park is there as the park, as its south unit and as the "North
 -- Cascades National Park Complex", beside the National Park Service's own
 -- outline. The derive step leaves out a park that lies mostly inside the
 -- agencies' areas (src/derive-area.ts), so each such place is listed once,
--- from the agency. Areas where two agencies' land overlaps are counted
--- twice, which can only raise the share of a park that is inside both.
+-- from the agency. Where two agencies' land overlaps it is counted once: the
+-- parts inside each are joined before they are measured (CodeRabbit).
 CREATE TEMP TABLE osm_area_merged AS
 SELECT osm_id, min(name) AS name, max(area_ha) AS area_ha, bool_or(is_island) AS is_island,
        bool_or(is_city_park) AS is_city_park,
@@ -212,7 +212,7 @@ WHERE (is_island AND area_ha >= 100) OR (NOT is_island AND coalesce(protect_clas
 GROUP BY osm_id;
 
 CREATE TEMP TABLE osm_agency_share AS
-SELECT o.osm_id, sum(ST_Area(ST_Intersection(o.geom, n.geom))) / any_value(ST_Area(o.geom)) AS share
+SELECT o.osm_id, ST_Area(ST_Union_Agg(ST_Intersection(o.geom, n.geom))) / any_value(ST_Area(o.geom)) AS share
 FROM osm_area_merged o JOIN named_area n ON ST_Intersects(o.geom, n.geom)
 WHERE NOT o.is_island AND ST_Area(o.geom) > 0
 GROUP BY o.osm_id;

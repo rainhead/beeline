@@ -1926,8 +1926,9 @@ export const en = {
     } satisfies Record<AreaTab, string>,
     /** Where a property is: its county and state, or its states where it spans counties. */
     colWhere: "Where",
-    colActive: "Samples, active seasons",
-    colSettled: "Samples, settled seasons",
+    /** The current season's samples, and every earlier season's (Peter, 2026-11-17). */
+    colCurrent: (season: number) => `Samples in ${season}`,
+    colPast: "Samples in past seasons",
     /** The pill of the listings' area filter. */
     filter: "Area",
     /** In place of a name: the store holds no such area, or nothing in it that this reader may see. */

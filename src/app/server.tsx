@@ -1789,7 +1789,7 @@ export function createApp({
     const m = c.get("m");
     const tab = c.req.param("tab");
     if (!isAreaTab(tab)) return errorResponse(c, "notFound");
-    return c.html(await page(c, m.areas.title, <AreaIndex m={m} tab={tab} groups={await listAreas(db, tab)} />));
+    return c.html(await page(c, m.areas.title, <AreaIndex m={m} tab={tab} listing={await listAreas(db, tab)} />));
   });
 
   app.get("/programs/:code", async (c) => {

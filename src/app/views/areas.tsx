@@ -1,13 +1,13 @@
 import type { Messages } from "../messages/index.js";
-import { AREA_TABS, type AreaGroup, type AreaGrouping, type AreaTab } from "../areas.js";
+import { AREA_TABS, type AreaGroup, type AreaGrouping, type AreaListing, type AreaTab } from "../areas.js";
 import { ALL, EMPTY_QUERY, listingHref } from "../listings.js";
 import { Absent, DataTable, EmptyState, PageHeader, Tabs } from "./components/index.js";
 
 /**
  * The areas (beeline-9jd4), as three pages a row of tabs moves between:
  * administrative districts, properties and ecoregions (Peter, 2026-11-17).
- * Each area is a row with the samples inside it from the active seasons and
- * from settled ones. Staff only (src/app/areas.ts says why), so an area's
+ * Each area is a row with the samples inside it from the current season and
+ * from every earlier one. Staff only (src/app/areas.ts says why), so an area's
  * name links to the Samples listing filtered to exactly that area, across
  * every program.
  */
@@ -24,7 +24,8 @@ function heading(m: Messages, grouping: AreaGrouping): string {
 const anchor = (grouping: AreaGrouping) =>
   grouping.by === "kind" ? grouping.kind : `${grouping.country ?? "none"}-${grouping.state ?? "none"}`;
 
-export function AreaIndex({ m, tab, groups: unordered }: { m: Messages; tab: AreaTab; groups: AreaGroup[] }) {
+export function AreaIndex({ m, tab, listing }: { m: Messages; tab: AreaTab; listing: AreaListing }) {
+  const { season, groups: unordered } = listing;
   const a = m.areas;
   // Sections in alphabetical order of their headings (Peter, 2026-11-17),
   // the districts no state could be read for last.
@@ -58,7 +59,7 @@ export function AreaIndex({ m, tab, groups: unordered }: { m: Messages; tab: Are
                 <p>{a.kindNote[group.grouping.kind]}</p>
               )}
               <DataTable
-                columns={tab === "properties" ? [a.colArea[tab], a.colWhere, a.colActive, a.colSettled] : [a.colArea[tab], a.colActive, a.colSettled]}
+                columns={tab === "properties" ? [a.colArea[tab], a.colWhere, a.colCurrent(season), a.colPast] : [a.colArea[tab], a.colCurrent(season), a.colPast]}
               >
                 {group.areas.map((area) => (
                   <tr>
@@ -68,8 +69,8 @@ export function AreaIndex({ m, tab, groups: unordered }: { m: Messages; tab: Are
                     {tab === "properties" && (
                       <td>{area.where === null ? <Absent label={m.absence.notRecorded} /> : area.where}</td>
                     )}
-                    <td>{m.format.number(area.active)}</td>
-                    <td>{m.format.number(area.settled)}</td>
+                    <td>{m.format.number(area.current)}</td>
+                    <td>{m.format.number(area.past)}</td>
                   </tr>
                 ))}
               </DataTable>

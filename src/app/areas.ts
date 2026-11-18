@@ -32,8 +32,13 @@ import { areaKey } from "./listings.js";
  * for them a count and the listing it links to agree. Showing these pages to
  * anyone else needs the counts taken through that rule first.
  *
- * Counts are split by season, the active seasons against the settled ones
- * (settled_sample, schema/102), as every check count is.
+ * Counts are split by season: the current season against every earlier one
+ * (Peter, 2026-11-17: "Samples in 2026" and "Samples in past seasons"). A
+ * season is sample_season's, the calendar year of a sample's first day, and
+ * the current one is today's year in Oregon (season, schema/102), as on the
+ * Programs page. This is not the active and settled split the check counts
+ * use: in January and February last season is still active, and here it is
+ * already past.
  */
 
 export const AREA_TABS = ["districts", "properties", "ecoregions"] as const;
@@ -60,10 +65,10 @@ export interface AreaSummary {
    * samples is in a county.
    */
   where: string | null;
-  /** Samples inside it from the active seasons. */
-  active: number;
-  /** Samples inside it from settled seasons. */
-  settled: number;
+  /** Samples inside it from the current season. */
+  current: number;
+  /** Samples inside it from every earlier season. */
+  past: number;
 }
 
 /**
@@ -95,8 +100,14 @@ interface AreaRow {
   country: string | null;
   counties: string[];
   states: string[];
-  active: number;
-  settled: number;
+  current: number;
+  past: number;
+}
+
+export interface AreaListing {
+  /** The current season, which the first count is of. */
+  season: number;
+  groups: AreaGroup[];
 }
 
 /**
@@ -104,7 +115,9 @@ interface AreaRow {
  * properties by kind, the ecoregions as one. The view orders the sections;
  * each section's areas are by name.
  */
-export async function listAreas(db: Kysely<Database>, tab: AreaTab): Promise<AreaGroup[]> {
+export async function listAreas(db: Kysely<Database>, tab: AreaTab): Promise<AreaListing> {
+  const { rows: seasons } = await sql<{ year: number }>`SELECT current_season AS year FROM season`.execute(db);
+  const season = Number(seasons[0]!.year);
   // A district's state is what its samples' points say (sample_area_derivation,
   // beeline-rax1), not a fact stored about the district: nothing records that
   // a county lies inside a state (Peter, 2026-10-26). Every sample in a
@@ -118,12 +131,12 @@ export async function listAreas(db: Kysely<Database>, tab: AreaTab): Promise<Are
            list_sort(list(DISTINCT concat(cty.name, ', ', d.state_province))
                      FILTER (WHERE cty.name IS NOT NULL AND d.state_province IS NOT NULL)) AS counties,
            list_sort(list(DISTINCT d.state_province) FILTER (WHERE d.state_province IS NOT NULL)) AS states,
-           count(DISTINCT sac.sample_id) FILTER (WHERE ss.sample_id IS NULL)::INTEGER AS active,
-           count(DISTINCT ss.sample_id)::INTEGER AS settled
+           count(DISTINCT sac.sample_id) FILTER (WHERE ss.season = ${season})::INTEGER AS current,
+           count(DISTINCT sac.sample_id) FILTER (WHERE ss.season IS DISTINCT FROM ${season})::INTEGER AS past
     FROM sample_area_current sac
     JOIN sample_area_derivation d ON d.sample_id = sac.sample_id
     LEFT JOIN sample_area_current cty ON cty.sample_id = sac.sample_id AND cty.kind = 'county'
-    LEFT JOIN settled_sample ss ON ss.sample_id = sac.sample_id
+    JOIN sample_season ss ON ss.sample_id = sac.sample_id
     WHERE sac.kind IN (${sql.join(TAB_KINDS[tab])})
     GROUP BY sac.kind, sac.source, sac.source_id, sac.name`.execute(db);
   const collator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
@@ -138,8 +151,8 @@ export async function listAreas(db: Kysely<Database>, tab: AreaTab): Promise<Are
       key: areaKey(r.source, r.source_id),
       name: areaDisplayName(r.name),
       where: tab !== "properties" ? null : whereOf(r),
-      active: Number(r.active),
-      settled: Number(r.settled),
+      current: Number(r.current),
+      past: Number(r.past),
     });
   }
   for (const group of groups.values()) {
@@ -147,5 +160,5 @@ export async function listAreas(db: Kysely<Database>, tab: AreaTab): Promise<Are
     // Park): the key settles their order, so a reload does not swap them.
     group.areas.sort((a, b) => collator.compare(a.name, b.name) || a.key.localeCompare(b.key));
   }
-  return [...groups.values()];
+  return { season, groups: [...groups.values()] };
 }

@@ -8,7 +8,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { en } from "../src/app/messages/en.js";
 import { deriveAreas } from "../src/derive-area.js";
-import { SETTLED_SEASON, buildTestGazetteer, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
+import { CURRENT_SEASON, SETTLED_SEASON, buildTestGazetteer, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 import { areaDisplayName } from "../src/area-name.js";
 import { listAreas } from "../src/app/areas.js";
 
@@ -185,19 +185,20 @@ describe("the Areas page (beeline-9jd4)", () => {
   it("lists the areas a sample lies inside as districts, properties and ecoregions, with their samples split by season", async () => {
     const { db } = await withSettledRefugeSample();
     // A district is under the state its samples' points say it is in.
-    expect(await listAreas(db, "districts")).toEqual([
+    expect((await listAreas(db, "districts")).season).toBe(CURRENT_SEASON);
+    expect((await listAreas(db, "districts")).groups).toEqual([
       {
         grouping: { by: "state", state: "OR", country: "USA" },
-        areas: [{ key: "census:41003", name: "Benton County", where: null, active: 2, settled: 1 }],
+        areas: [{ key: "census:41003", name: "Benton County", where: null, current: 2, past: 1 }],
       },
     ]);
-    expect(await listAreas(db, "properties")).toEqual([
+    expect((await listAreas(db, "properties")).groups).toEqual([
       {
         grouping: { by: "kind", kind: "refuge" },
-        areas: [{ key: REFUGE_KEY, name: "William L. Finley National Wildlife Refuge", where: "Benton County, OR", active: 1, settled: 1 }],
+        areas: [{ key: REFUGE_KEY, name: "William L. Finley National Wildlife Refuge", where: "Benton County, OR", current: 1, past: 1 }],
       },
     ]);
-    const ecoregions = await listAreas(db, "ecoregions");
+    const { groups: ecoregions } = await listAreas(db, "ecoregions");
     expect(ecoregions.map((g) => g.grouping)).toEqual([{ by: "kind", kind: "ecoregion" }]);
     expect(ecoregions[0]!.areas.map((a) => a.name)).toEqual(["Coast Range", "Willamette Valley"]);
   });
@@ -218,6 +219,8 @@ describe("the Areas page (beeline-9jd4)", () => {
     const bob = appFor("bob");
     const districts = await (await bob.request("/areas/districts")).text();
     expect(districts).toContain(">OR, USA</h2>");
+    expect(districts).toContain(en.areas.colCurrent(CURRENT_SEASON));
+    expect(districts).toContain(en.areas.colPast);
     expect(districts).toContain(`href="/samples?scope=all&amp;area=census%3A41003"`);
     for (const tab of [en.areas.tab.districts, en.areas.tab.properties, en.areas.tab.ecoregions]) {
       expect(districts).toContain(tab);

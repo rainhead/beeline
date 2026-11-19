@@ -26,7 +26,7 @@ const parsed = async (bytes: Uint8Array): Promise<ParsedUpload> => {
   if (!p.ok) throw new Error(`refused: ${p.refusal}`);
   return p.upload;
 };
-const plan = async (f: UploadFixture, bytes: Uint8Array): Promise<SamplesPlan> => planSamples(f.db, f.conn, await parsed(bytes), { today: UPLOAD_TODAY });
+const plan = async (f: UploadFixture, bytes: Uint8Array): Promise<SamplesPlan> => planSamples(f.db, f.conn, await parsed(bytes), { today: UPLOAD_TODAY, obasChecked: true });
 const edit = (
   bytes: Uint8Array,
   edits: Array<{ id: number; set: Record<string, TestCell> }> = [],
@@ -296,12 +296,11 @@ describe("a new trap sample", () => {
     const p = await plan(f, edit(await download(f), [], { addRows: [{ ...ready, fieldNumber: "", samplingProtocol: "", decimalLatitude: "", decimalLongitude: "", coordinateUncertaintyInMeters: "" }] }));
     const r = p.rows.find((x) => x.kind === "new")!;
     expect(r.problems.map((x) => [x.reason, x.column])).toEqual([
-      ["new_row_problem", "fieldNumber"],
       ["new_row_problem", "samplingProtocol"],
       ["new_row_problem", "decimalLatitude"],
       ["new_row_problem", "decimalLongitude"],
     ]);
-    expect(r.problems.map((x) => x.detail)).toEqual(["A sample number is needed.", "Say what kind of trap.", "A latitude in decimal degrees is needed.", "A longitude in decimal degrees is needed."]);
+    expect(r.problems.map((x) => x.detail)).toEqual(["Say what kind of trap.", "A latitude in decimal degrees is needed.", "A longitude in decimal degrees is needed."]);
   });
 
   it("cannot use two new rows with one number, nor one whose number another trap sample has", async () => {
@@ -313,7 +312,7 @@ describe("a new trap sample", () => {
     );
     const added = p.rows.filter((r) => r.kind === "new");
     expect(added.map(reasons)).toEqual([["new_number_repeated"], ["new_number_repeated"], ["new_row_problem"]]);
-    expect(added[2]!.problems[0]!.detail).toBe("Trap sample OBAS-00019 is already in Beeline.");
+    expect(added[2]!.problems[0]!.detail).toContain("OBAS-00019 is already a trap sample in Beeline");
   });
 
   it("cannot use a new row whose number is a formula or a date, whatever text it shows", async () => {
@@ -407,7 +406,7 @@ describe("the upload page and the file with notes", () => {
     const { location, html } = await pageOf(f, bytes);
     const p = en.uploads.page;
     expect(html).toContain(esc(p.rows(4)));
-    expect(html).toContain(esc(p.samplesNew(1, p.split(1, 0, 0))));
+    expect(html).toContain(esc(p.samplesHeld(1, p.split(1, 0, 0))));
     expect(html).toContain(esc(p.samplesCantUse(2, p.split(1, 1, 0))));
     expect(html).toContain(esc(p.samplesDiffer(1, p.split(1, 0, 0))));
     expect(html).toContain(esc(p.samplesUnknownCollectors(p.samplesUnknownCollector("Zed Zebra", 1))));
@@ -437,7 +436,7 @@ describe("the upload page and the file with notes", () => {
     const n = en.uploads.notes;
     expect(noteOf("UP-1")).toBe(n.differs(n.cell("locality", '"Corvallis"', '"Albany"')));
     expect(noteOf("UP-2")).toBe(n.cantUse(n.reason.number_unreadable!));
-    expect(noteOf("OBAS-00011")).toBe(n.newTrap);
+    expect(noteOf("OBAS-00011")).toBe(n.newTrapObasHeld);
     expect(noteOf("OBAS-00012")).toContain("New trap sample, can't use: ");
     expect(noteOf("OBAS-00012")).toContain("Zed Zebra");
     for (const text of [noteOf("UP-1"), noteOf("UP-2"), noteOf("OBAS-00011"), noteOf("OBAS-00012")]) expect(text).not.toMatch(/\b(held|hold|holds|draft|drafts|plan|unit|reader|layout)\b/i);

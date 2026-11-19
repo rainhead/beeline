@@ -430,17 +430,20 @@ function ListingActions({
   path,
   query,
   total,
+  staff,
   children,
 }: {
   m: Messages;
   path: string;
   query: ListingQuery;
   total: number;
+  /** Staff's file carries the identification of record; anyone else's their own (beeline-kgyd.7). */
+  staff: boolean;
   children?: Child;
 }) {
   return (
     <div class="row listing-actions">
-      {total > 0 && <DownloadMenu m={m} path={path} query={query} />}
+      {total > 0 && <DownloadMenu m={m} path={path} query={query} staff={staff} />}
       {children}
     </div>
   );
@@ -454,7 +457,7 @@ function ListingActions({
  * download, the Excel file for editing specimens (beeline-kgyd.5), so it is a
  * button with its note beside it, the way a single file is offered elsewhere.
  */
-function DownloadMenu({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
+function DownloadMenu({ m, path, query, staff }: { m: Messages; path: string; query: ListingQuery; staff: boolean }) {
   const d = m.listings.csv;
   if (path === "/specimens") {
     return (
@@ -462,7 +465,7 @@ function DownloadMenu({ m, path, query }: { m: Messages; path: string; query: Li
         <LinkButton href={listingHref(`${path}.xlsx`, query, { page: 1 })} variant="tonal">
           {d.edit}
         </LinkButton>
-        <Meta>{d.editNote}</Meta>
+        <Meta>{staff ? d.editNote : d.editNoteVolunteer}</Meta>
       </>
     );
   }
@@ -773,7 +776,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
         </p>
       )}
       <Toolbar copy={copy} path={path} props={props} />
-      <ListingActions m={m} path={path} query={query} total={page.total} />
+      <ListingActions m={m} path={path} query={query} total={page.total} staff={admin} />
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (
@@ -1092,9 +1095,9 @@ export function SpecimenListing(
       {marking ? (
         <BulkModeNote m={m} path={path} query={query} />
       ) : (
-        <ListingActions m={m} path={path} query={query} total={page.total}>
+        <ListingActions m={m} path={path} query={query} total={page.total} staff={admin}>
           {admin && <BulkActions m={m} path={path} query={query} />}
-          {admin && <a href="/uploads">{m.uploads.linkFromSpecimens}</a>}
+          {path === "/specimens" && <a href="/uploads">{m.uploads.linkFromSpecimens}</a>}
         </ListingActions>
       )}
       {page.rows.length === 0 ? (

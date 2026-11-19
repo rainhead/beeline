@@ -30,3 +30,18 @@ COMMENT ON COLUMN upload.byte_size IS 'The file''s size in bytes.';
 COMMENT ON COLUMN upload.row_count IS 'How many data rows the file holds, the header row not counted.';
 COMMENT ON COLUMN upload.drive_file_id IS 'The Drive id of the copy kept in the "Beeline received files" folder (RECEIVED_FOLDER in src/received-files.ts), stored as the file arrived and before this row was written. NULL where the app keeps no copy in Drive (a workstation or a test, which have no key) and for uploads made before 2026-11-18.';
 COMMENT ON COLUMN upload.reference IS 'The request behind the file, so a change can be traced to who asked for it: an email''s message id or an issue link. Never an address or a name.';
+
+-- A volunteer's upload saved as drafts (beeline-kgyd.7): the identifications
+-- of their file become drafts on Identify specimens, which the overnight job
+-- commits. One row per upload, written in the same transaction as the drafts,
+-- so the key is what stops two submissions of one preview both saving.
+CREATE TABLE upload_applied (
+  upload_id   INTEGER PRIMARY KEY REFERENCES upload(entity_id),
+  applied_by  INTEGER NOT NULL REFERENCES person(entity_id),
+  applied_at  TIMESTAMPTZ NOT NULL,
+  draft_count INTEGER NOT NULL CHECK (draft_count >= 0)
+);
+COMMENT ON TABLE upload_applied IS 'An upload whose changes were saved: for a volunteer''s file, its identifications written as drafts on Identify specimens, which the overnight job commits (src/commit-determinations.ts). At most one row per upload, written in the same transaction as the drafts. No row means nothing from the file was saved.';
+COMMENT ON COLUMN upload_applied.applied_by IS 'The person signed in who saved them, who is the person the drafts are credited to.';
+COMMENT ON COLUMN upload_applied.applied_at IS 'When they were saved.';
+COMMENT ON COLUMN upload_applied.draft_count IS 'How many drafts were written: one for each identification the preview listed.';

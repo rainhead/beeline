@@ -27,8 +27,11 @@ const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").
  */
 export function buildWorkbook(
   rows: ReadonlyArray<ReadonlyArray<TestCell>>,
-  /** `name` is the sheet's name; `others` are the names of more sheets, each with one cell, put `before` the sheet or after it. */
-  options: { name?: string; others?: string[]; before?: boolean; date1904?: boolean } = {},
+  /**
+   * `name` is the sheet's name; `others` are the names of more sheets, each with one cell, put `before` the sheet or
+   * after it; `afterSheetData` is XML put after the sheet's cells, such as a data validation or a table part.
+   */
+  options: { name?: string; others?: string[]; before?: boolean; date1904?: boolean; afterSheetData?: string } = {},
 ): Uint8Array {
   const name = options.name ?? "specimens";
   const others = options.others ?? [];
@@ -44,7 +47,7 @@ export function buildWorkbook(
   const sheet =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>` +
     rows.map((r, i) => `<row r="${i + 1}">${r.map((v, at) => cell(v, `${columnName(at)}${i + 1}`)).join("")}</row>`).join("") +
-    `</sheetData></worksheet>`;
+    `</sheetData>${options.afterSheetData ?? ""}</worksheet>`;
   const main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
   const rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
   const own = `<sheet name="${esc(name)}" sheetId="1" r:id="rId1"/>`;

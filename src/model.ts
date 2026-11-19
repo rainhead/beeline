@@ -1269,6 +1269,14 @@ export interface UploadTable {
   drive_file_id: string | null;
 }
 
+/** An upload whose changes were saved: a volunteer's identifications written as drafts (schema/047, beeline-kgyd.7). */
+export interface UploadAppliedTable {
+  upload_id: number;
+  applied_by: number;
+  applied_at: Timestamped;
+  draft_count: number;
+}
+
 /** An old-Beeline record promotion set aside as a second print, tied to its specimen (beeline-iuva). */
 export interface LegacyDuplicateRecordTable {
   _id: string;
@@ -1919,6 +1927,7 @@ export interface Database {
   worksheet_determination: WorksheetDeterminationTable;
   legacy_duplicate_record: LegacyDuplicateRecordTable;
   upload: UploadTable;
+  upload_applied: UploadAppliedTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;
   determination_batch: DeterminationBatchTable;

@@ -55,6 +55,8 @@ import {
   removeFromBatch,
   rowTaxa,
   saveDrafts,
+  saveDraftsInTurn,
+  inDraftTurn,
   seasonOf,
   seasonRows,
   BadRequest,
@@ -77,7 +79,20 @@ import { addressRows, needsLookup, runCollectors, runHasRegistration, type RunCo
 import { IdealLogicError, type Registrant } from "../ideal-logic.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
-import { MAX_FILE_BYTES, comparePlan, parseUpload, type Layout as UploadLayout, type Parsed } from "./upload-plan.js";
+import {
+  MAX_FILE_BYTES,
+  SPECIMENS_LAYOUT,
+  VOLUNTEER_LAYOUT,
+  comparePlan,
+  parseUpload,
+  type Layout as UploadLayout,
+  type Parsed,
+  type ParsedUpload,
+} from "./upload-plan.js";
+import { draftPlan, draftState, fileSpecimenIds, type DraftWho } from "./upload-drafts.js";
+import { notesFile, staffNotes, volunteerNotes } from "./upload-notes.js";
+import { canAnnotate } from "./xlsx-annotate.js";
+import { ownIdentifications, ownVersion, withOwnIdentification } from "./own-identification.js";
 import type { ReadLimits } from "./xlsx-reader.js";
 import { keptName, type UploadArchive } from "./upload-archive.js";
 import {
@@ -333,6 +348,8 @@ export interface AppDeps {
    * workstation without the key. Absent ⇒ the file is kept on disk only.
    */
   uploadArchive?: UploadArchive | null;
+  /** For tests only: awaited when saving an upload, after what saving depends on is read and before the plan is worked out, so a test can act in between. */
+  uploadApplyPause?: (uploadId: number) => Promise<void>;
   /** The registry mark each print run raises (config.registryMarkPath, src/registry-mark.ts). */
   registryMarkPath?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -374,6 +391,7 @@ export function createApp({
   uploadReadLimits,
   uploadLayout,
   uploadArchive = null,
+  uploadApplyPause,
   registryMarkPath,
   programGovernance,
   programContactsPath,
@@ -1277,20 +1295,37 @@ export function createApp({
   };
 
   // The file to edit and upload back (beeline-kgyd): every cell is text, so a
-  // spreadsheet cannot reformat what it holds.
-  // The file for editing specimens, open to everyone since a later slice will let volunteers upload it. A few of the
-  // specimen columns (SPECIMENS_LAYOUT); the samples will have a file of their own.
+  // spreadsheet cannot reformat what it holds. A few of the specimen columns;
+  // the samples will have a file of their own. Staff's file carries the
+  // identification of record (SPECIMENS_LAYOUT). Anyone else's carries their
+  // own identification, the name, sex and caste they gave, and nothing of an
+  // expert's (VOLUNTEER_LAYOUT; Peter, 2026-11-18), which they upload back as
+  // drafts. "Their own" is whoever the drafts would be credited to, the person
+  // signed in, as on Identify specimens; while staff look as someone else it
+  // is that person's, so the view is theirs.
   app.get("/specimens.xlsx", async (c) => {
+    const staff = c.get("admin");
     const { fetch, timing } = await specimenDownload(c);
     // The tabs are read when the file is asked for.
-    const workbook = await specimenWorkbook(db, c.get("m"));
+    const workbook = await specimenWorkbook(db, c.get("m"), undefined, staff ? "staff" : "volunteer");
     // The values specimenCsvRow writes for the same headings, a few of its columns.
     const at = workbook.header.map((h) => SPECIMEN_CSV_HEADER.indexOf(h as (typeof SPECIMEN_CSV_HEADER)[number]));
+    const acting = c.get("acting");
+    const ownOf = acting.impersonating ? acting.personId : c.get("session").personId;
+    const versionAt = SPECIMEN_CSV_HEADER.indexOf("specimenVersion");
+    const rows = staff
+      ? fetch
+      : async (limit: number, offset: number) => {
+          const listed = await fetch(limit, offset);
+          const own = await ownIdentifications(db, ownOf, listed.rows.map((r) => r.specimen_id));
+          return { ...listed, rows: listed.rows.map((r) => withOwnIdentification(r, own.get(r.specimen_id))) };
+        };
     const toRow = (r: SpecimenRow, page: Page<SpecimenRow>) => {
       const written = specimenCsvRow(r, page);
+      if (!staff) written[versionAt] = ownVersion(r);
       return at.map((i) => written[i]);
     };
-    return c.body(xlsxStream("specimens", workbook.header, fetch, toRow, timing, workbook.options), 200, {
+    return c.body(xlsxStream("specimens", workbook.header, rows, toRow, timing, workbook.options), 200, {
       "content-type": XLSX_CONTENT_TYPE,
       "content-disposition": `attachment; filename="${exportFilename("beeline-specimens", new Date(), "xlsx")}"`,
     });
@@ -2194,14 +2229,18 @@ export function createApp({
   });
 
   // --- Comparing an edited copy of the specimens download (beeline-kgyd).
-  // Staff only, and refused while impersonating. The file is kept on disk
-  // under uploadsDir and compared with what Beeline says now; nothing is
-  // written to any record, and the page says so. ---
-  const uploadsGate = (c: Context<AppEnv>): Response | null => {
-    if (c.get("acting").impersonating) return c.text(c.get("m").errors.readOnlyImpersonating, 403);
-    if (!c.get("admin")) return c.text("Admins only.", 403);
-    return null;
-  };
+  // Anyone signed in, and refused while impersonating. The file is kept on
+  // disk under uploadsDir and compared with what Beeline says now. Staff's
+  // file changes no record yet, and the page says so. A volunteer's file
+  // (beeline-kgyd.7) is their own identifications, which they may save as
+  // drafts on Identify specimens (src/app/upload-drafts.ts): its specimens are
+  // those of the person acted for, and the drafts are credited to whoever is
+  // signed in, as on that page. Someone who is not staff sees only their own
+  // uploads; another's answers 404, as a specimen out of reach does. ---
+  const uploadsGate = (c: Context<AppEnv>): Response | null =>
+    c.get("acting").impersonating ? c.text(c.get("m").errors.readOnlyImpersonating, 403) : null;
+  /** The layout a person's file is read with: staff's, or a volunteer's own (VOLUNTEER_LAYOUT). */
+  const layoutFor = (staff: boolean): UploadLayout => (staff ? (uploadLayout ?? SPECIMENS_LAYOUT) : VOLUNTEER_LAYOUT);
   const uploadFolder = (id: number) => join(uploadsPath, String(id));
   // Always this name: what the person called the file is kept in the store and never reaches the file system.
   const uploadFile = (id: number) => join(uploadFolder(id), "upload.xlsx");
@@ -2224,7 +2263,11 @@ export function createApp({
   const uploadForm = async (c: Context<AppEnv>, refusal: string | null, status: 200 | 400 | 503) => {
     const m = c.get("m");
     return c.html(
-      await page(c, m.uploads.title, <Uploads m={m} uploads={await ownUploads(c.get("session").personId)} refusal={refusal} />),
+      await page(
+        c,
+        m.uploads.title,
+        <Uploads m={m} uploads={await ownUploads(c.get("session").personId)} refusal={refusal} staff={c.get("admin")} />,
+      ),
       status,
     );
   };
@@ -2246,7 +2289,9 @@ export function createApp({
     const form = await c.req.formData();
     const file = form.get("file");
     if (typeof file === "string" || file === null || file.size === 0) return uploadForm(c, m.uploads.refused.noFile!, 400);
-    const reference = String(form.get("reference") ?? "").trim() || null;
+    const staff = c.get("admin");
+    // The request behind a file is staff's bookkeeping; a volunteer's form does not ask for it.
+    const reference = staff ? String(form.get("reference") ?? "").trim() || null : null;
     const bytes = new Uint8Array(await file.arrayBuffer());
     // The bytes are on disk before anything reads them, in a folder named for
     // the id the upload will have. A refused file takes its folder with it.
@@ -2272,7 +2317,7 @@ export function createApp({
     let driveId: string | null = null;
     try {
       await writeFile(keptAt, bytes);
-      const parsed = await parseUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits, uploadLayout);
+      const parsed = await parseUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits, layoutFor(staff));
       if (!parsed.ok) {
         await rm(uploadFolder(id), { recursive: true, force: true });
         return uploadForm(c, refusalText(m, parsed), 400);
@@ -2323,36 +2368,218 @@ export function createApp({
     },
   );
 
-  app.get("/uploads/:id{[0-9]+}", async (c) => {
-    const refused = uploadsGate(c);
-    if (refused !== null) return refused;
-    const m = c.get("m");
-    const id = Number(c.req.param("id"));
+  /** An upload's row, if the person may see it: their own, or any for staff. */
+  const visibleUpload = async (c: Context<AppEnv>, id: number) => {
     const row = await db
       .selectFrom("upload as u")
       .innerJoin("person as p", "p.entity_id", "u.uploaded_by")
-      .select(["u.entity_id", "u.file_name", "u.uploaded_at", "u.row_count", "u.reference", "u.sha256", "u.drive_file_id", "p.display_name as uploader"])
+      .leftJoin("upload_applied as ua", "ua.upload_id", "u.entity_id")
+      .select([
+        "u.entity_id",
+        "u.file_name",
+        "u.uploaded_at",
+        "u.uploaded_by",
+        "u.row_count",
+        "u.reference",
+        "u.sha256",
+        "u.drive_file_id",
+        "p.display_name as uploader",
+        "ua.applied_at",
+        "ua.draft_count",
+      ])
       .where("u.entity_id", "=", id)
       .executeTakeFirst();
-    if (row === undefined) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    if (row === undefined) return null;
+    return c.get("admin") || row.uploaded_by === c.get("session").personId ? row : null;
+  };
+  type VisibleUpload = NonNullable<Awaited<ReturnType<typeof visibleUpload>>>;
+
+  /** The kept file, read again and checked against the hash that arrived, or the page that says why it cannot be. */
+  const readKept = async (c: Context<AppEnv>, row: VisibleUpload, layout: UploadLayout) => {
+    const m = c.get("m");
     let bytes: Buffer;
     try {
-      bytes = await readFile(uploadFile(id));
+      bytes = await readFile(uploadFile(row.entity_id));
     } catch {
-      return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileMissing} />), 500);
+      return { problem: c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileMissing} />), 500) };
     }
     // The kept file must be the file that arrived.
     if (createHash("sha256").update(bytes).digest("hex") !== row.sha256) {
-      return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileAltered} />), 500);
+      return { problem: c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileAltered} />), 500) };
     }
-    const parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, uploadLayout);
-    if (!parsed.ok) {
-      return c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={refusalText(m, parsed)} />), 500);
+    let parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, layout);
+    // Staff's file from someone who is no longer staff: read as staff's, compared and never saved (CodeRabbit).
+    let staffFile = layout !== VOLUNTEER_LAYOUT;
+    if (!parsed.ok && parsed.refusal === "staff_file") {
+      parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, layoutFor(true));
+      staffFile = true;
     }
-    const plan = await comparePlan(db, parsed.upload);
-    const { sha256: _kept, ...shown } = row;
+    if (!parsed.ok) return { problem: c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={refusalText(m, parsed)} />), 500) };
+    return { upload: parsed.upload, staffFile, bytes: new Uint8Array(bytes) };
+  };
+
+  /**
+   * Whose file it is, as the drafts see it. The uploader on their own page is
+   * who they are on this request: a delegate with the switch on reaches the
+   * household's specimens. Staff looking at a volunteer's upload see it as
+   * the volunteer alone would.
+   */
+  const draftWho = (c: Context<AppEnv>, row: VisibleUpload): { who: DraftWho; reader: Reader; theirs: boolean } => {
+    const theirs = row.uploaded_by === c.get("session").personId;
+    return theirs
+      ? { who: { personId: c.get("acting").personId, determinerId: row.uploaded_by }, reader: readerOf(c), theirs }
+      : { who: { personId: row.uploaded_by, determinerId: row.uploaded_by }, reader: { staff: false, personIds: [row.uploaded_by] }, theirs };
+  };
+
+  /** A volunteer's file, compared as they see it and worked out as drafts. */
+  const volunteerDrafts = async (c: Context<AppEnv>, row: VisibleUpload, upload: ParsedUpload) => {
+    const { who, reader } = draftWho(c, row);
+    const compared = await comparePlan(db, upload, { view: { reader, ownOf: who.determinerId } });
+    return draftPlan(db, compared, who);
+  };
+
+  /**
+   * What a kept file says, as the person looking should be told it: a volunteer's worked out as identifications to
+   * save, staff's compared, each with a note for every row. Staff's file from someone no longer staff is compared
+   * with their own reader, so nothing withheld from them now is shown (an independent review).
+   */
+  const uploadOutcome = async (c: Context<AppEnv>, row: VisibleUpload, kept: { upload: ParsedUpload; staffFile: boolean; bytes: Uint8Array }) => {
+    const m = c.get("m");
+    if (kept.staffFile) {
+      const plan = await comparePlan(db, kept.upload, c.get("admin") ? {} : { view: { reader: readerOf(c) } });
+      return { kind: "staff" as const, plan, noted: staffNotes(m, kept.upload, plan) };
+    }
+    const drafts = await volunteerDrafts(c, row, kept.upload);
+    return { kind: "volunteer" as const, drafts, plan: drafts.plan, noted: volunteerNotes(m, kept.upload, drafts) };
+  };
+  type UploadOutcome = Awaited<ReturnType<typeof uploadOutcome>>;
+
+  const previewPage = async (
+    c: Context<AppEnv>,
+    row: VisibleUpload,
+    kept: { upload: ParsedUpload; bytes: Uint8Array },
+    outcome: UploadOutcome,
+    changedSince = false,
+  ) => {
+    const m = c.get("m");
+    const { sha256: _kept, uploaded_by: _by, applied_at, draft_count, ...shown } = row;
     const upload: UploadDetail = shown;
-    return c.html(await page(c, m.uploads.page.title(row.file_name), <UploadPreview m={m} upload={upload} plan={plan} />));
+    const volunteer =
+      outcome.kind === "staff"
+        ? null
+        : {
+            summary: outcome.noted.summary,
+            digest: outcome.drafts.digest,
+            canSave: draftWho(c, row).theirs && applied_at === null && outcome.drafts.lines.length > 0,
+            applied: applied_at === null ? null : { at: applied_at, count: draft_count ?? 0 },
+            changedSince,
+          };
+    return c.html(
+      await page(
+        c,
+        m.uploads.page.title(row.file_name),
+        <UploadPreview
+          m={m}
+          upload={upload}
+          unrecognised={outcome.plan.unrecognised}
+          otherSheets={outcome.plan.otherSheets}
+          volunteer={volunteer}
+          staffSummary={outcome.kind === "staff" ? outcome.noted.summary : null}
+          staff={c.get("admin")}
+          notesCopy={!canAnnotate(kept.bytes, kept.upload.sheetName).ok}
+        />,
+      ),
+    );
+  };
+
+  /** The upload's row and its kept file read again, as the uploader's kind of file now, or the response that says why not. */
+  const openUpload = async (c: Context<AppEnv>) => {
+    const refused = uploadsGate(c);
+    if (refused !== null) return { response: refused };
+    const row = await visibleUpload(c, Number(c.req.param("id")));
+    if (row === null) return { response: errorResponse(c, "notFound", { message: c.get("m").uploads.page.notFound }) };
+    // Someone made staff since keeps a file whose versions are a volunteer's, so its rows read as changed since and
+    // none of it is saved; one no longer staff has staff's file, read as staff's.
+    const kept = await readKept(c, row, layoutFor(await isStaff(row.uploaded_by)));
+    if (kept.problem !== undefined) return { response: kept.problem };
+    return { row, kept };
+  };
+
+  app.get("/uploads/:id{[0-9]+}", async (c) => {
+    const opened = await openUpload(c);
+    if (opened.response !== undefined) return opened.response;
+    return previewPage(c, opened.row, opened.kept, await uploadOutcome(c, opened.row, opened.kept));
+  });
+
+  // The person's own file handed back with a note on each row, in a column added after its last, which an upload of
+  // the file does not read (src/app/upload-notes.ts, src/app/xlsx-annotate.ts). Worked out again each time, so after
+  // saving, the rows saved read as the same as Beeline has, and the rest keep their notes.
+  app.get("/uploads/:id{[0-9]+}/notes", async (c) => {
+    const opened = await openUpload(c);
+    if (opened.response !== undefined) return opened.response;
+    const { row, kept } = opened;
+    const outcome = await uploadOutcome(c, row, kept);
+    const reread = async (patched: Uint8Array) => {
+      const again = await parseUpload(patched, uploadReadLimits, kept.upload.layout);
+      return again.ok ? again.upload : null;
+    };
+    const { bytes } = await notesFile(db, c.get("m"), kept.bytes, kept.upload, outcome.noted.notes, outcome.kind === "staff" ? "staff" : "volunteer", reread);
+    return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
+      "content-type": XLSX_CONTENT_TYPE,
+      "content-disposition": `attachment; filename="beeline-upload-${row.entity_id}-with-notes.xlsx"`,
+    });
+  });
+
+  // Saving a volunteer's identifications. The plan is worked out before the drafts' turn, since for a file of
+  // thousands of rows that takes tens of seconds and the turn holds every save on Identify specimens; it is saved
+  // only if it is the plan the page showed (the form carries its digest). In the turn, what the plan read of the
+  // specimens it will write is read again (draftState), which is quick, and if any of it changed nothing is saved
+  // and the page shows how things stand now. The drafts and the row saying the upload was saved go in one
+  // transaction, whose key stops a second submission saving them twice.
+  app.post("/uploads/:id{[0-9]+}/apply", async (c) => {
+    const refused = uploadsGate(c);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    const row = await visibleUpload(c, Number(c.req.param("id")));
+    // Only the person who uploaded a volunteer's file saves it; staff applying a file is not built.
+    if (row === null || row.uploaded_by !== c.get("session").personId || (await isStaff(row.uploaded_by))) {
+      return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    }
+    if (row.applied_at !== null) return c.redirect(uploadHref(row.entity_id), 303);
+    const asked = String((await c.req.formData()).get("digest") ?? "");
+    const kept = await readKept(c, row, VOLUNTEER_LAYOUT);
+    if (kept.problem !== undefined) return kept.problem;
+    if (kept.staffFile) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    const { who } = draftWho(c, row);
+    const applied = async () =>
+      (await db.selectFrom("upload_applied").select("upload_id").where("upload_id", "=", row.entity_id).executeTakeFirst()) !== undefined;
+    // A second submission of the same page whose plan was worked out after the first saved sees the saved rows as the
+    // same as Beeline has, and a plan that changed: it is told what was saved, not that nothing was (an independent
+    // review).
+    const stale = async () =>
+      (await applied()) ? c.redirect(uploadHref(row.entity_id), 303) : previewPage(c, row, kept, await uploadOutcome(c, row, kept), true);
+    // What saving depends on, read before the plan is worked out, over every bee the file names: a change made on
+    // Identify specimens while the plan is worked out is then seen in the turn below (an independent review).
+    const ids = fileSpecimenIds(kept.upload);
+    const state = await draftState(db, who, ids);
+    await uploadApplyPause?.(row.entity_id);
+    const drafts = await volunteerDrafts(c, row, kept.upload);
+    if (drafts.digest !== asked || drafts.lines.length === 0) return stale();
+    const saved = await inDraftTurn(async () => {
+      // A second submission of the same page, which waited its turn behind the first: already saved.
+      if (await applied()) return true;
+      if ((await draftState(db, who, ids)) !== state) return false;
+      const now = new Date();
+      await db.transaction().execute(async (trx) => {
+        await trx
+          .insertInto("upload_applied")
+          .values({ upload_id: row.entity_id, applied_by: who.determinerId, applied_at: now.toISOString(), draft_count: drafts.lines.length })
+          .execute();
+        await saveDraftsInTurn(trx, who.personId, who.determinerId, drafts.lines.map((l) => l.write), now);
+      });
+      return true;
+    });
+    return saved ? c.redirect(uploadHref(row.entity_id), 303) : stale();
   });
 
   // One program-year's Darwin Core archive, as the dwc-archives job wrote

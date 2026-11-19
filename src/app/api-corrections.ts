@@ -11,6 +11,7 @@ import {
   actorFor,
   editSample,
   holdSample,
+  setCollectors,
   setCoordinates,
   setPlace,
   setSamplePlace,
@@ -21,6 +22,8 @@ import {
   waiveFlag,
   type Actor,
   type AdoptLocalityResult,
+  type CollectorsCorrectionInput,
+  type CollectorsCorrectionResult,
   type CorrectionDeps,
   type EditSampleInput,
   type EditSampleResult,
@@ -112,6 +115,23 @@ const REFUSALS = {
     message:
       "Your change is recorded against the sample's old Beeline records, but Beeline could not finish applying it to the sample because another write to the store got there first. Nothing applies it later on its own: send the same request again, which applies it now and does not record it twice. Like any correction, it replaces what the sample holds at that moment, so if someone else may have corrected the same thing since, check before you send it again.",
   },
+  number_taken: {
+    status: 409,
+    error: "number_taken",
+    message:
+      "The new first collector already has a sample with this number on this day, and a sample's number is its first collector's for the day. Nothing was done. Correct one of the two samples' numbers first.",
+  },
+  observation_tied: {
+    status: 409,
+    error: "observation_tied",
+    message:
+      "An iNaturalist observation is tied to this sample through its first collector, so Beeline cannot change who that is yet: another observation of theirs could be made into a second sample and its bees labelled twice. Nothing was done. Collectors after the first can still be added, removed and reordered.",
+  },
+  conflict: {
+    status: 409,
+    error: "conflict",
+    message: "The sample's collectors changed while this request was being worked out. Nothing was done. Read the sample again and send the list you mean.",
+  },
   unavailable: { status: 503, error: "unavailable", message: "This Beeline cannot make this correction." },
 } as const satisfies Record<string, { status: ContentfulStatusCode; error: string; message: string }>;
 
@@ -124,6 +144,7 @@ type AnyFailure = Extract<
   | SetPlaceResult
   | StaffCoordinatesCorrectionResult
   | SamplePlaceResult
+  | CollectorsCorrectionResult
   | TrapCountResult
   | SpecimenCountResult
   | TakeObservationLocationCorrectionResult
@@ -155,6 +176,9 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "in_print_run":
     case "follows_point":
     case "not_applied":
+    case "number_taken":
+    case "observation_tied":
+    case "conflict":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
       return apiError(c, r.status, r.error, r.message);
@@ -167,7 +191,10 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
 // --- Reading the body ------------------------------------------------------
 
 type Body = Record<string, unknown>;
-type Field = "string" | "boolean" | "text_or_number" | "strings";
+type Field = "string" | "boolean" | "text_or_number" | "strings" | "string_list";
+
+/** The most entries a list may have: more collectors than any sample has had, with room to spare. */
+const MAX_LIST_ENTRIES = 20;
 
 export class BadBody extends Error {}
 
@@ -228,7 +255,7 @@ function checkText(label: string, value: string, max: number, counted: string = 
 export function check(body: Body, fields: Record<string, Field>, required: string[] = []): Body {
   const takes = (name: string) => Object.hasOwn(fields, name);
   for (const name of Object.keys(body)) {
-    if (name === "dry_run" && !takes("dry_run")) throw new BadBody("Dry runs exist only for edit. Nothing was done.");
+    if (name === "dry_run" && !takes("dry_run")) throw new BadBody("Dry runs exist only for edit and collectors. Nothing was done.");
     if (!takes(name)) throw new BadBody(`${JSON.stringify(name)} is not a field of this request.`);
   }
   for (const name of required) if (!Object.hasOwn(body, name)) throw new BadBody(`${JSON.stringify(name)} is required.`);
@@ -242,9 +269,17 @@ export function check(body: Body, fields: Record<string, Field>, required: strin
           ? typeof value === "boolean"
           : kind === "text_or_number"
             ? typeof value === "string" || (typeof value === "number" && Number.isFinite(value))
-            : isStringMap(value);
+            : kind === "string_list"
+              ? Array.isArray(value) && value.every((x) => typeof x === "string")
+              : isStringMap(value);
     if (!ok) {
-      const wants = { string: "a string", boolean: "true or false", text_or_number: "a string or a number", strings: "an object whose values are strings" }[kind];
+      const wants = {
+        string: "a string",
+        boolean: "true or false",
+        text_or_number: "a string or a number",
+        strings: "an object whose values are strings",
+        string_list: "a list of strings",
+      }[kind];
       throw new BadBody(`${JSON.stringify(name)} must be ${wants}.`);
     }
     // Text is held to the same limits wherever it sits: a note is longer than a name.
@@ -252,6 +287,11 @@ export function check(body: Body, fields: Record<string, Field>, required: strin
     // A reference is counted once trimmed, since an empty one is none.
     if (typeof value === "string") checkText(JSON.stringify(name), value, limit, name === "reference" ? value.trim() : value);
     else if (typeof value === "number") continue;
+    else if (kind === "string_list") {
+      const list = value as string[];
+      if (list.length > MAX_LIST_ENTRIES) throw new BadBody(`${JSON.stringify(name)} may have at most ${MAX_LIST_ENTRIES} entries.`);
+      list.forEach((text, i) => checkText(`Entry ${i + 1} of ${JSON.stringify(name)}`, text, limit));
+    }
     else if (kind === "strings") {
       for (const [field, text] of Object.entries(value as Record<string, string>)) checkText(`${JSON.stringify(field)} in ${name}`, text, limit);
     }
@@ -449,6 +489,27 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     [],
     setSamplePlace,
     (r) => ({ outcome: r.outcome, changes: r.changes }),
+  );
+
+  // Who collected the sample, in order: staff only, the first collector included.
+  endpoint(
+    "collectors",
+    (b): CollectorsCorrectionInput => ({
+      collectors: b.collectors as string[],
+      note: (b.note as string | undefined) ?? "",
+      dryRun: b.dry_run === true,
+    }),
+    { collectors: "string_list", note: "string", dry_run: "boolean" },
+    ["collectors"],
+    setCollectors,
+    (r) => ({
+      outcome: r.outcome,
+      dry_run: r.dry_run,
+      collectors: r.collectors.map((c) => ({ position: c.position, person_id: c.person_id, name: c.name })),
+      first_changed: r.first_changed,
+      reprint_needed: r.reprint_needed,
+      warnings: r.warnings,
+    }),
   );
 
   endpoint(

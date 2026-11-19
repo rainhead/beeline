@@ -26,7 +26,17 @@
 -- apply as a no-op, and nothing retires a correction but a person replacing
 -- it (beeline-9z4). The correctable vocabulary
 -- is the identity/parse/label columns promotion reads — extend the three
--- lists below together when widening it.
+-- lists below together when widening it, and recreate the three views on a
+-- deployed store with a migration, since production is never promoted again
+-- (migrations/0109 did it for recordedBy). recordedBy is staff's correction of
+-- a sample's collectors (src/app/sample-collectors.ts, beeline-kgyd.4.5): who
+-- collected, in order, the first being the primary. Its firstName and
+-- lastName are left alone, because promotion groups records into samples by
+-- them, and so do the tools that still read the old records on production
+-- (carry-over, the held-back page, the repair of what promotion set aside).
+-- So a development store rebuilt from a correction that changes the first
+-- collector can make the old first collector the sample's primary again, with
+-- the new one beside them; production is never rebuilt.
 -- Two correction files share one vocabulary and one merge rule: the
 -- git-curated CSV (staff, reviewed in PRs) and the app-written store
 -- (data/corrections.csv — volunteers' in-app sample edits, beeline-2c3.8,
@@ -70,6 +80,7 @@ SELECT c.*,
     WHEN 'county' THEN coalesce(r.county, '') WHEN 'locality' THEN coalesce(r.locality, '')
     WHEN 'samplingProtocol' THEN coalesce(r.samplingProtocol, '')
     WHEN 'fieldNumber' THEN coalesce(r.fieldNumber, '')
+    WHEN 'recordedBy' THEN coalesce(r.recordedBy, '')
   END AS staged_value,
   CASE
     WHEN r._id IS NULL THEN 'orphaned'
@@ -104,7 +115,8 @@ SELECT _id,
   max(CASE WHEN field = 'county' THEN coalesce(new_value, '') END) AS county,
   max(CASE WHEN field = 'locality' THEN coalesce(new_value, '') END) AS locality,
   max(CASE WHEN field = 'samplingProtocol' THEN coalesce(new_value, '') END) AS samplingProtocol,
-  max(CASE WHEN field = 'fieldNumber' THEN coalesce(new_value, '') END) AS fieldNumber
+  max(CASE WHEN field = 'fieldNumber' THEN coalesce(new_value, '') END) AS fieldNumber,
+  max(CASE WHEN field = 'recordedBy' THEN coalesce(new_value, '') END) AS recordedBy
 FROM legacy_correction_state
 WHERE status IN ('applies', 'conflict')
 GROUP BY _id;
@@ -130,7 +142,8 @@ SELECT r.* REPLACE (
   coalesce(o.county, r.county) AS county,
   coalesce(o.locality, r.locality) AS locality,
   coalesce(o.samplingProtocol, r.samplingProtocol) AS samplingProtocol,
-  coalesce(o.fieldNumber, r.fieldNumber) AS fieldNumber
+  coalesce(o.fieldNumber, r.fieldNumber) AS fieldNumber,
+  coalesce(o.recordedBy, r.recordedBy) AS recordedBy
 )
 FROM legacy_occurrence r
 LEFT JOIN legacy_correction_pivot o ON o._id = r._id;

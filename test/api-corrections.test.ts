@@ -1257,6 +1257,48 @@ describe("taking the observation's location", () => {
   });
 });
 
+describe("a sample's collectors", () => {
+  it("lets a staff key add, reorder and put a new first collector, and refuses the rest", async () => {
+    const w = await world();
+    const path = `/samples/${w.legacy}/collectors`;
+    const dry = await w.send(w.keys.sam, path, { collectors: ["inat:alice", "Bea Trapper"], dry_run: true });
+    expect(await json(dry)).toMatchObject({ sample_id: w.legacy, outcome: "would_save", dry_run: true, first_changed: true, reprint_needed: 1 });
+    expect(await w.entries("OBAS-00657")).toEqual([]);
+    const saved = await w.send(w.keys.sam, path, { collectors: ["inat:alice", "Bea Trapper"], note: "Alice set them", reference: "ticket 3" });
+    expect(saved.status).toBe(200);
+    const body = await json(saved);
+    expect(body).toMatchObject({
+      sample_id: w.legacy,
+      outcome: "saved",
+      dry_run: false,
+      collectors: [
+        { position: 1, person_id: w.people.alice, name: "Alice Adams" },
+        { position: 2, person_id: w.people.bea, name: "Bea Trapper" },
+      ],
+      first_changed: true,
+      reprint_needed: 1,
+    });
+    expect((body.warnings as string[])[0]).toMatch(/^Alice Adams is now the first collector, in place of Bea Trapper/);
+    expect(await json(await w.send(w.keys.sam, path, { collectors: ["Alice Adams", "Bea Trapper"] }))).toMatchObject({ outcome: "unchanged" });
+    // A sample an observation cites keeps its first collector.
+    const tied = await w.send(w.keys.sam, `/samples/${w.linked}/collectors`, { collectors: ["Bob Barnes"] });
+    expect([tied.status, (await json(tied)).error]).toEqual([409, "observation_tied"]);
+    expect((await w.send(w.keys.sam, `/samples/${w.linked}/collectors`, { collectors: ["Alice Adams", "Bob Barnes"], note: "Bob helped" })).status).toBe(200);
+    // (A first collector who changes is followed in the history by the sample's id only on a store that was built: test/sample-collectors.test.ts.)
+    expect(await w.entries("A-1")).toEqual([{ field: "co_collectors", to: "name:Bob Barnes", author: "samstaff", reason: "Bob helped", source: "api" }]);
+    const unknown = await w.send(w.keys.sam, path, { collectors: ["Nobody Here"] });
+    expect([unknown.status, (await json(unknown)).message]).toEqual([422, "Beeline has nobody called Nobody Here; add them on /unclaimed or /people first."]);
+    expect((await w.send(w.keys.sam, path, { collectors: "Alice Adams" })).status).toBe(400);
+    expect((await w.send(w.keys.sam, path, { collectors: [1] })).status).toBe(400);
+    expect((await w.send(w.keys.sam, path, { collectors: Array.from({ length: 21 }, (_, i) => `P${i}`) })).status).toBe(400);
+    expect((await w.send(w.keys.sam, path, { note: "x" })).status).toBe(400);
+    expect((await w.send(w.keys.bea, path, { collectors: ["Bea Trapper"] })).status).toBe(403);
+    expect((await w.send(w.keys.samEdit, path, { collectors: ["Bea Trapper"] })).status).toBe(403);
+    expect((await w.send(w.keys.aliceRead, path, { collectors: ["Bea Trapper"] })).status).toBe(403);
+    expect(await rows(w.conn, `SELECT person_id FROM sample_collector WHERE sample_id = ${w.legacy} ORDER BY position`)).toEqual([[w.people.alice], [w.people.bea]]);
+  });
+});
+
 describe("a trap sample's specimen count", () => {
   it("sets it for a staff key, and refuses the rest", async () => {
     const w = await world();

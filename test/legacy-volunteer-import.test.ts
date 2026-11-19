@@ -107,6 +107,28 @@ describe("taking in the determinations volunteers enter in the old Beeline", () 
     expect(await tonight()).toMatchObject({ recorded: 0, unchanged: 2 });
   });
 
+  test("is credited to whom promotion read the old record's names as, not to whoever staff have since put first on the sample (beeline-kgyd.4.5)", async () => {
+    // Staff put Ada first on both of Bea's trap samples: bbbb2222 (Bea alone) and eeee5555 (Bea, then Ada).
+    const ada = ((await rows(conn, `SELECT entity_id FROM person WHERE display_name = 'Ada Collector'`)) as [[number]])[0][0];
+    const saved = await rows(conn, `SELECT sample_id, person_id, position FROM sample_collector`);
+    try {
+      await conn.run(`UPDATE sample_collector SET position = position + 10 WHERE sample_id IN (SELECT entity_id FROM sample WHERE sample_number IN ('OBAS-00657', 'OBAS-00658'))`);
+      await conn.run(`DELETE FROM sample_collector WHERE person_id = ${ada} AND position > 10`);
+      await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) SELECT entity_id, ${ada}, 1 FROM sample WHERE sample_number IN ('OBAS-00657', 'OBAS-00658')`);
+      set("bbbb2222", { speciesVolDet: "vosnesenskii" });
+      set("eeee5555", { speciesVolDet: "vosnesenskii" });
+      expect(await tonight()).toMatchObject({ recorded: 2 });
+      expect((await volunteerDets(await specimenOf("25000002"))).at(-1)).toEqual(["Bombus vosnesenskii", "female", null, "legacy_import", "Bea Trapper"]);
+      const pairSpecimen = ((await rows(conn, `SELECT sp.entity_id FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE s.sample_number = 'OBAS-00658'`)) as [[number]])[0][0];
+      expect((await volunteerDets(pairSpecimen)).at(-1)?.at(-1)).toBe("Bea Trapper");
+    } finally {
+      await conn.run(`DELETE FROM sample_collector`);
+      for (const [sample, person, position] of saved) {
+        await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${sample}, ${person}, ${position})`);
+      }
+    }
+  });
+
   test("a change of sex alone is a change, read by promotion's words", async () => {
     set("bbbb2222", { sexVolDet: "Male" });
     expect(await tonight()).toMatchObject({ recorded: 1 });

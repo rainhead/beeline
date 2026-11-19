@@ -1,3 +1,4 @@
+import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
@@ -33,5 +34,35 @@ export async function mirrorCorrections(db: Kysely<Database>, events: Correction
     await sql`
       INSERT INTO ${t} (_id, field, base_value, new_value, author, reason)
       SELECT * FROM (VALUES ${values}) v(_id, field, base_value, new_value, author, reason)`.execute(db);
+  }
+}
+
+/**
+ * The same, on a connection rather than through Kysely: for a write that runs
+ * its own transaction on the print connection (src/app/sample-collectors.ts),
+ * whose statements must all be on that one connection.
+ */
+export async function mirrorCorrectionsOn(conn: DuckDBConnection, events: CorrectionEvent[]): Promise<void> {
+  if (events.length === 0) return;
+  const tables = (
+    (await (
+      await conn.run(
+        `SELECT table_name FROM duckdb_tables()
+         WHERE table_name IN ('legacy_app_correction', 'legacy_correction') AND NOT temporary`,
+      )
+    ).getRows()) as [string][]
+  ).map(([t]) => t);
+  const params = events.flatMap((e) => [e._id, e.field, e.base_value, e.new_value, e.author, e.reason]);
+  const values = events.map((_, i) => `(${[1, 2, 3, 4, 5, 6].map((k) => `$${i * 6 + k}`).join(", ")})`).join(", ");
+  for (const table of tables) {
+    await conn.run(
+      `DELETE FROM ${table} WHERE (_id, field) IN (SELECT _id, field FROM (VALUES ${values}) v(_id, field, base_value, new_value, author, reason))`,
+      params as never,
+    );
+    await conn.run(
+      `INSERT INTO ${table} (_id, field, base_value, new_value, author, reason)
+       SELECT * FROM (VALUES ${values}) v(_id, field, base_value, new_value, author, reason)`,
+      params as never,
+    );
   }
 }

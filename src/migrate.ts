@@ -41,6 +41,34 @@ async function scalar(conn: DuckDBConnection, sql: string): Promise<bigint> {
   return v;
 }
 
+/**
+ * What a migration needs to exist before it can run, from a first line
+ * `-- needs: a, b`: tables or views that the schema does not make, such as
+ * the views legacy promotion leaves behind (ingest/promote-legacy.sql). A
+ * store without them has nothing for the migration to change, so it is
+ * recorded as applied without running, as a fresh build records every
+ * migration; a later promotion into that store makes the objects as they are
+ * now. Empty for a migration that names nothing.
+ */
+export function migrationNeeds(text: string): string[] {
+  const first = /^-- needs:(.*)$/m.exec(text.split("\n", 1)[0] ?? "");
+  if (first === null) return [];
+  return first[1]!
+    .split(",")
+    .map((n) => n.trim())
+    .filter((n) => n !== "");
+}
+
+async function hasAll(conn: DuckDBConnection, names: string[]): Promise<boolean> {
+  if (names.length === 0) return true;
+  const present = await scalar(
+    conn,
+    `SELECT count(DISTINCT table_name) FROM information_schema.tables
+     WHERE table_schema = 'main' AND table_name IN (${names.map(quote).join(", ")})`,
+  );
+  return Number(present) === new Set(names).size;
+}
+
 /** Every migration file, in apply order (filename order). */
 export async function migrationFiles(dir = MIGRATIONS_DIR): Promise<string[]> {
   return (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
@@ -93,7 +121,11 @@ export async function migrate(conn: DuckDBConnection, opts: MigrateOptions = {})
   for (const name of pending) {
     await conn.run("BEGIN TRANSACTION");
     try {
-      if (opts.baseline !== true) await conn.run(await readFile(join(dir, name), "utf8"));
+      if (opts.baseline !== true) {
+        const text = await readFile(join(dir, name), "utf8");
+        // A migration that needs what this store lacks has nothing to change in it.
+        if (await hasAll(conn, migrationNeeds(text))) await conn.run(text);
+      }
       await conn.run(`INSERT INTO schema_migration (name) VALUES (${quote(name)})`);
       await conn.run("COMMIT");
     } catch (err) {

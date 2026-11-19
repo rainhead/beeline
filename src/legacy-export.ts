@@ -66,6 +66,8 @@ const STAGED = [
   "speciesPlant", "taxonRankPlant", "url", "taxonomicNotes", "sex", "caste", "geoprivacy", "taxon_geoprivacy",
   "verbatimElevation", "phylum", "class", "order", "family", "genus", "subgenus", "specificEpithet",
   "scientificName", "taxonRank", "identifiedBy", "familyVolDet", "genusVolDet", "speciesVolDet", "sexVolDet", "casteVolDet",
+  // Not written as staged: read to tell a record whose collectors staff corrected.
+  "recordedBy",
 ] as const;
 
 const scalar = async (conn: DuckDBConnection, sql: string): Promise<number> => {
@@ -217,6 +219,9 @@ export function legacyExportSql(
   const END_FIELDS = ["verbatimEventDate", "day2", "month2", "year2", "startDayofYear", "endDayofYear"];
   const ownRow = (flag: string, col: string, model: string) =>
     rowSource ? `CASE WHEN dg.${flag} AND lr._id IS NOT NULL THEN lr."${col}" ELSE ${model} END` : model;
+  // Whether staff corrected this record's collectors: its recordedBy as
+  // corrected differs from the old record's (src/app/sample-collectors.ts).
+  const collectorsCorrected = rowSource ? `(lr._id IS NOT NULL AND lr."recordedBy" IS DISTINCT FROM lo."recordedBy")` : "false";
   const disagreeing = rowSource
     ? `,
 disagreeing AS (
@@ -231,7 +236,7 @@ disagreeing AS (
     ? `LEFT JOIN disagreeing dg ON dg.sample_id = sp.sample_id
   LEFT JOIN sample_locality_override slo ON slo.sample_id = sp.sample_id
   LEFT JOIN sample_location_override slc ON slc.sample_id = sp.sample_id
-  LEFT JOIN (SELECT _id, ${[...ROW_FIELDS, ...END_FIELDS].map((f) => `CAST("${f}" AS VARCHAR) AS "${f}"`).join(", ")}
+  LEFT JOIN (SELECT _id, ${[...ROW_FIELDS, ...END_FIELDS, "recordedBy"].map((f) => `CAST("${f}" AS VARCHAR) AS "${f}"`).join(", ")}
              FROM ${rowSource}) lr ON lr._id = lo._id`
     : "";
   const rows = `
@@ -297,8 +302,13 @@ rows AS (
     -- Beeline mints no occurrenceID (ADR 0008, amended 2026-10-23), so a
     -- specimen with no legacy row has none, and the legacy row's own is kept.
     ${t(`lo."occurrenceID"`)} AS "occurrenceID",
-    ${t(`coalesce(CAST(ia.inat_user_id AS VARCHAR), nullif(lo."userId", ''))`)} AS "userId",
-    ${t(`coalesce(ia.login, nullif(lo."userLogin", ''))`)} AS "userLogin",
+    -- The first collector's account, and the old record's own where they
+    -- have none, except on a record whose collectors staff corrected: its own
+    -- login was its old first collector's, so it says nothing of the new one
+    -- (beeline-kgyd.4.5).
+    ${t(`CASE WHEN ${collectorsCorrected} THEN CAST(ia.inat_user_id AS VARCHAR)
+               ELSE coalesce(CAST(ia.inat_user_id AS VARCHAR), nullif(lo."userId", '')) END`)} AS "userId",
+    ${t(`CASE WHEN ${collectorsCorrected} THEN ia.login ELSE coalesce(ia.login, nullif(lo."userLogin", '')) END`)} AS "userLogin",
     ${t("CASE WHEN c.n > 1 THEN c.given_names ELSE p.given_name END")} AS "firstName",
     ${t(`CASE WHEN c.n > 1 THEN c.initials
                WHEN ${labelInitials("p")} IS NOT NULL THEN ${labelInitials("p")}

@@ -14,6 +14,7 @@ import {
   setCoordinates,
   setPlace,
   setSamplePlace,
+  setSpecimenCount,
   setTrapCount,
   takeLocation,
   unreachable,
@@ -26,6 +27,7 @@ import {
   type QcDecisionCorrectionResult,
   type SamplePlaceResult,
   type SetPlaceResult,
+  type SpecimenCountResult,
   type StaffCoordinatesCorrectionResult,
   type TakeObservationLocationCorrectionResult,
   type TrapCountResult,
@@ -104,6 +106,12 @@ const REFUSALS = {
     message:
       "This sample's country, state and county follow its coordinates: Beeline writes them from the point each night, so a correction here would not last. Correct the coordinates instead.",
   },
+  follows_observation: {
+    status: 409,
+    error: "follows_observation",
+    message:
+      "This sample's count follows its iNaturalist observation until its labels are printed, so a correction here would not last. Correct the count on the observation.",
+  },
   not_applied: {
     status: 409,
     error: "recorded_not_applied",
@@ -122,6 +130,7 @@ type AnyFailure = Extract<
   | SetPlaceResult
   | StaffCoordinatesCorrectionResult
   | SamplePlaceResult
+  | SpecimenCountResult
   | TrapCountResult
   | TakeObservationLocationCorrectionResult
   | QcDecisionCorrectionResult,
@@ -152,6 +161,7 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "in_print_run":
     case "follows_point":
     case "not_applied":
+    case "follows_observation":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
       return apiError(c, r.status, r.error, r.message);
@@ -446,6 +456,23 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     [],
     setSamplePlace,
     (r) => ({ outcome: r.outcome, changes: r.changes }),
+  );
+
+  // How many specimens a trap sample holds, printed or not: staff only.
+  endpoint(
+    "specimen-count",
+    (b) => ({ count: text(b.count), note: (b.note as string | undefined) ?? "" }),
+    { count: "text_or_number", note: "string" },
+    ["count"],
+    setSpecimenCount,
+    (r) => ({
+      outcome: r.outcome,
+      specimen_count: r.specimen_count,
+      numbered: r.numbered,
+      unnumbered: r.unnumbered,
+      season_settled: r.season_settled,
+      count_mismatch: r.count_mismatch,
+    }),
   );
 
   endpoint(

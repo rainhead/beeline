@@ -21,6 +21,7 @@ import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { loadSample, type LocalitySuggestion } from "./record.js";
 import { applySampleEdit, loadEditableSample, planSampleEdit, type EditableFieldName, type EditableSample } from "./sample-edit.js";
 import { setStaffPlace, type PlaceChange, type PlaceField } from "./sample-place.js";
+import { setTrapSpecimenCount, type CountState } from "./specimen-count.js";
 import { onSample } from "./sample-queue.js";
 
 /**
@@ -743,6 +744,70 @@ export function setSamplePlace(deps: CorrectionDeps, actor: Actor, sampleId: num
       case "saved":
         await recordChange(deps, sampleId, actor, note || undefined, "place change");
         return { ok: true, outcome: "saved", changes: result.changes };
+      default:
+        return unreachable(result);
+    }
+  });
+}
+
+export interface SpecimenCountInput {
+  /** How many specimens, a whole number from 0, as text or a number. */
+  count: string | number;
+  note: string;
+}
+
+export type SpecimenCountResult =
+  | ({ ok: true; outcome: Outcome } & CountState)
+  | Common
+  | StaffOnly
+  | Refused<"follows_observation" | "busy">
+  | Invalid;
+
+/** The most specimens a count may say: about four times the largest sample on production (2,252, a trap sample). */
+const MAX_SPECIMEN_COUNT = 9999;
+
+/**
+ * Staff correct how many specimens a trap sample holds (beeline-kgyd.4.4),
+ * printed or not. Staff only, refused while impersonating. The rules are in
+ * src/app/specimen-count.ts; the answer says what printing will make of the
+ * count, and whether the observation still disagrees with it.
+ */
+export function setSpecimenCount(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<SpecimenCountInput>): Promise<SpecimenCountResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const found = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select("entity_id").executeTakeFirst();
+    if (found === undefined) return refused("not_found");
+    // Asked again in the queue turn: a job may have started while this waited for it (CodeRabbit).
+    if (deps.syncJobRunning()) return refused("busy");
+    return { ready: null };
+  };
+  return correct(sampleId, input, gates, async (_, form): Promise<SpecimenCountResult> => {
+    const invalid = (problem: string): Invalid => ({ ok: false, refusal: "invalid", problem });
+    const given = String(form.count).trim();
+    if (!/^\d{1,4}$/.test(given) || Number(given) > MAX_SPECIMEN_COUNT) {
+      return invalid(`The specimen count is a whole number from 0 to ${MAX_SPECIMEN_COUNT}.`);
+    }
+    const result = await setTrapSpecimenCount(deps.db, sampleId, Number(given));
+    switch (result.outcome) {
+      case "not_found":
+        return refused("not_found");
+      case "not_trap":
+        return invalid("This is a net sample, whose count is its observation's or its old records'. Only a trap sample's count is corrected here.");
+      case "follows_observation":
+        return refused("follows_observation");
+      case "below_numbered":
+        return invalid(
+          `Specimen ${result.highest} of this sample already has its field number, so the count cannot go below ${result.highest}.`,
+        );
+      // Nothing was recorded anywhere, so nothing was done: say so, as the trap count does.
+      case "conflict":
+        return refused("busy");
+      case "unchanged":
+        return { ok: true, outcome: "unchanged", ...result.state };
+      case "saved":
+        await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "specimen count change");
+        return { ok: true, outcome: "saved", ...result.state };
       default:
         return unreachable(result);
     }

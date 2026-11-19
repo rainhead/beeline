@@ -1209,6 +1209,31 @@ describe("taking the observation's location", () => {
     expect(((await rows(w.conn, `SELECT county FROM sample WHERE entity_id = ${w.legacy}`)) as string[][])[0]![0]).toBe("Walla Walla");
   });
 
+  it("corrects a trap sample's specimen count for a staff key, says what printing makes of it, and refuses the rest", async () => {
+    const w = await world();
+    const path = `/samples/${w.legacy}/specimen-count`;
+    const saved = await w.send(w.keys.sam, path, { count: 3, note: "two more pinned" });
+    expect(saved.status).toBe(200);
+    expect(await json(saved)).toEqual({
+      sample_id: w.legacy,
+      outcome: "saved",
+      specimen_count: 3,
+      numbered: 1,
+      unnumbered: 2,
+      season_settled: true,
+      count_mismatch: null,
+    });
+    expect(await w.entries("OBAS-00657")).toEqual([{ field: "specimen_count", to: "3", author: "samstaff", reason: "two more pinned", source: "api" }]);
+    const below = await w.send(w.keys.sam, path, { count: "0" });
+    expect([below.status, (await json(below)).error]).toEqual([422, "invalid"]);
+    expect((await w.send(w.keys.sam, `/samples/${w.linked}/specimen-count`, { count: 2 })).status).toBe(422);
+    expect((await w.send(w.keys.sam, path, {})).status).toBe(400);
+    expect((await w.send(w.keys.bea, path, { count: 2 })).status).toBe(403);
+    expect((await w.send(w.keys.samEdit, path, { count: 2 })).status).toBe(403);
+    expect((await w.send(w.keys.aliceRead, path, { count: 2 })).status).toBe(403);
+    expect(Number(((await rows(w.conn, `SELECT specimen_count FROM sample WHERE entity_id = ${w.legacy}`)) as number[][])[0]![0])).toBe(3);
+  });
+
   it("answers a lost write conflict on an old sample truthfully: recorded against the old records, applied only by sending it again", async () => {
     const w = await world();
     let fired = false;

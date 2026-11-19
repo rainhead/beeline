@@ -263,6 +263,16 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     method: "POST",
+    route: "/samples/:id/specimen-count",
+    summary:
+      "Correct how many specimens a trap sample holds, printed or not. A raised count makes the next print run number the extra specimens, if the sample's season still prints (season_settled false); a count below a specimen that already has its field number is refused (422). Refused (409 follows_observation) where the count still follows its iNaturalist observation.",
+    needs: "staff key",
+    body: { count: "whole number from 0, as text or number", note: "string", reference: REFERENCE },
+    answers:
+      "{ sample_id, outcome, specimen_count, numbered, unnumbered, season_settled, count_mismatch }: numbered specimens hold a place in the count, unnumbered places are what the next run would number, count_mismatch is the observation's disagreement where it still stands",
+  },
+  {
+    method: "POST",
     route: "/samples/:id/trap-count",
     summary: "Set how many traps a trap sample had, or take the count away with an empty one.",
     needs: "staff key",

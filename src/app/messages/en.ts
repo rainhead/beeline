@@ -2831,6 +2831,7 @@ export const en = {
           noAddress: "No address: the registration in Ideal Logic has no street address.",
           notInAnswer:
             "No address: the registration this collector is linked to was not in Ideal Logic's answer, or Beeline could not read it.",
+          keepInLab: "Keep in the lab.",
           collectorLineDiffers:
             "The collector line on this run's labels differs from what the sample would print today, so the labels may belong to someone else.",
           missing: {
@@ -3046,6 +3047,23 @@ export const en = {
     belongsToHint:
       "Where this person belongs — not where their samples fell. Master Melittology itself is an answer, not a blank: volunteers outside every member atlas work under OBA staff's auspices.",
     saveMembership: "Save membership",
+    /**
+     * Where the person's printed labels go (beeline-w8ab.4). There is no
+     * note: free text could hold an address.
+     */
+    labelsHeading: "Labels",
+    labelsHint:
+      "Staff mail each collector their labels after a print run. Choose keeping them in the lab for people whose labels are handed over there, such as students in a course. The run's address file then lists them with no address and says so.",
+    labelsChoice: "Their labels are",
+    labelsMail: "Mail them",
+    labelsKeep: "Keep them in the lab",
+    saveLabels: "Save labels",
+    labelsNowMail: "Mailed. Nothing is recorded to say otherwise.",
+    labelsNowKeep: (by: string, on: string) => `Kept in the lab. Decided by ${by} on ${on}.`,
+    labelsSavedMail: "Saved. Their labels will be mailed.",
+    labelsSavedKeep: "Saved. Their labels will be kept in the lab.",
+    labelsUnchanged: "Nothing changed: that is already so.",
+    labelsBadChoice: "Choose either mailing them or keeping them in the lab.",
     /** No row: nobody has answered. Distinct from having answered "no atlas". */
     membershipUnrecorded: "Not recorded",
     membershipProgram: "Master Melittology (no atlas)",

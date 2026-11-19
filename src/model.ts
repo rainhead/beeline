@@ -111,6 +111,27 @@ export interface PersonRegistrationView {
   decided_at: Date;
 }
 
+/** What is done with a person's printed labels: mailed (the default) or kept in the lab. */
+export type MailingInstruction = "mail" | "keep_in_lab";
+
+/** schema/014: a decision about whether a person's labels are mailed; the latest per person is the answer. */
+export interface PersonMailingEventTable {
+  entity_id: Generated<number>;
+  person_id: number;
+  instruction: MailingInstruction;
+  decided_by: string;
+  decided_at: Generated<Date>;
+  reference: string | null;
+}
+
+/** schema/105: the people whose labels are not mailed, from their latest decision. */
+export interface PersonMailingInstructionView {
+  person_id: number;
+  instruction: MailingInstruction;
+  decided_by: string;
+  decided_at: Date;
+}
+
 export interface PersonDelegateTable {
   person_id: number;
   acts_for_id: number;
@@ -1861,6 +1882,8 @@ export interface Database {
   ideal_logic_registrant: IdealLogicRegistrantTable;
   person_registration_event: PersonRegistrationEventTable;
   person_registration: PersonRegistrationView;
+  person_mailing_event: PersonMailingEventTable;
+  person_mailing_instruction: PersonMailingInstructionView;
   program: ProgramTable;
   program_abbreviation: ProgramAbbreviationTable;
   program_lead: ProgramLeadTable;

@@ -73,7 +73,7 @@ import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
-import { addressRows, runCollectors, runHasRegistration } from "./print-run-addresses.js";
+import { addressRows, needsLookup, runCollectors, runHasRegistration, type RunCollectors } from "./print-run-addresses.js";
 import { IdealLogicError, type Registrant } from "../ideal-logic.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
@@ -137,6 +137,7 @@ import {
 } from "../person-change.js";
 import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import { decideRegistration } from "../registrations.js";
+import { decideMailing } from "../mailing-instructions.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
@@ -575,7 +576,11 @@ export function createApp({
       corrections: { deps: corrective, messages: messagesFor(null) },
       // Called through, since the function is defined further down with the
       // rest of the decisions about people.
-      people: { setMembership: (input) => setMembership(input), setRegistration: (input) => setRegistration(input) },
+      people: {
+        setMembership: (input) => setMembership(input),
+        setRegistration: (input) => setRegistration(input),
+        setMailing: (input) => setMailing(input),
+      },
       read: { changesPath: samplePaths.log, origin: config.origin },
     });
   // The description answers at /api/v1/ too, which the router takes for another
@@ -2513,9 +2518,13 @@ export function createApp({
     // With nobody to look up, Ideal Logic is not asked: each request counts
     // against its limit for the day.
     let registrants: Registrant[] = [];
-    if (await runHasRegistration(db, id)) {
+    let fetched = false;
+    // Null when the fetch worked, else the page to answer with.
+    const fetchRegistrants = async (): Promise<Response | null> => {
       try {
         registrants = await ideal.fetchRegistrants();
+        fetched = true;
+        return null;
       } catch (err) {
         // The error's text is fixed and safe to show; anything else is a fault.
         if (!(err instanceof IdealLogicError)) throw err;
@@ -2527,14 +2536,32 @@ export function createApp({
           message: t.failed(err.message, ideal.remaining()),
         });
       }
+    };
+    if (await runHasRegistration(db, id)) {
+      const failed = await fetchRegistrants();
+      if (failed !== null) return failed;
     }
     // The fetch can take a minute. Read the run again afterwards, so that a
     // run canceled meanwhile is refused, and read its collectors and their
     // registration links only now, so the file reflects the store as it is.
-    const after = await loadRun(db, id);
-    if (after === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
-    if (after.state === "canceled") return canceled();
-    const inRun = await runCollectors(db, id);
+    const readRun = async (): Promise<Response | RunCollectors> => {
+      const after = await loadRun(db, id);
+      if (after === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
+      if (after.state === "canceled") return canceled();
+      return runCollectors(db, id);
+    };
+    let inRun = await readRun();
+    if (inRun instanceof Response) return inRun;
+    // Staff may have switched a collector from keeping the labels in the lab
+    // back to mailing them between the first check and that read. If nobody
+    // was looked up then and somebody needs it now, look them up now, and
+    // read the run again after that wait too, for the same reasons.
+    if (needsLookup(inRun) && !fetched) {
+      const failed = await fetchRegistrants();
+      if (failed !== null) return failed;
+      inRun = await readRun();
+      if (inRun instanceof Response) return inRun;
+    }
     const rows = addressRows(inRun, registrants);
     // Who and how many, never a name or an address.
     console.log(
@@ -2761,6 +2788,13 @@ export function createApp({
           programs={await programOptions(db)}
           history={await history(person.person_id)}
           keys={person.inat_user_id === null ? [] : await listKeys(db, person.inat_user_id, "all")}
+          mailing={
+            (await db
+              .selectFrom("person_mailing_instruction")
+              .selectAll()
+              .where("person_id", "=", person.person_id)
+              .executeTakeFirst()) ?? null
+          }
           registration={await registrationOf(db, person.person_id)}
           now={new Date()}
           notice={notice}
@@ -3157,6 +3191,29 @@ export function createApp({
       };
     });
 
+  /**
+   * Whether a person's labels are mailed or kept in the lab (beeline-w8ab.4),
+   * for the person's page and the API alike. It takes its turn with every
+   * other decision about a person.
+   */
+  const setMailing: PeopleDeps["setMailing"] = (input) =>
+    oneDecisionAtATime(async () => {
+      const handle = parsePersonHandle(input.handle);
+      const id = handle === null ? null : await resolvePersonHandle(db, handle);
+      if (id === null) return { ok: false, refusal: "not_found" };
+      if (input.instruction !== "mail" && input.instruction !== "keep_in_lab") {
+        return { ok: false, refusal: "invalid", problem: 'The instruction is "mail" or "keep_in_lab".' };
+      }
+      const decided = await decideMailing(db, {
+        personId: id,
+        instruction: input.instruction,
+        decidedBy: input.author,
+        reference: input.reference,
+      });
+      if (!decided.ok) return { ok: false, refusal: "not_found" };
+      return { ok: true, outcome: decided.outcome, person_id: id, was: decided.was, instruction: input.instruction };
+    });
+
   const setMembership: PeopleDeps["setMembership"] = (input) =>
     oneDecisionAtATime(async () => {
       const handle = parsePersonHandle(input.handle);
@@ -3249,6 +3306,33 @@ export function createApp({
       }
       return decideInTurn(c, form, () => [["orcid", orcid]]);
     });
+  });
+
+  // Whether their labels are mailed or kept in the lab (beeline-w8ab.4).
+  // Admin only, and refused while viewing as somebody else, as every write is.
+  app.post("/people/:id/mailing", async (c) => {
+    if (c.get("acting").impersonating) return c.text(c.get("m").errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const form = await c.req.formData();
+    const decided = await setMailing({
+      handle: c.req.param("id") ?? "",
+      instruction: text(form, "instruction"),
+      author: c.get("session").login,
+      reference: null,
+    });
+    if (!decided.ok) {
+      if (decided.refusal === "not_found") return errorResponse(c, "notFound", { message: m.people.notFound });
+      return showPerson(c, undefined, decided.problem);
+    }
+    return showPerson(
+      c,
+      decided.outcome === "unchanged"
+        ? m.people.labelsUnchanged
+        : decided.instruction === "mail"
+          ? m.people.labelsSavedMail
+          : m.people.labelsSavedKeep,
+    );
   });
 
   app.post("/people/:id/membership", (c) => decide(c, (form) => [["home_atlas", text(form, "home_atlas")]]));

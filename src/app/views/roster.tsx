@@ -90,6 +90,13 @@ type Judged = {
   top_holder: string | null;
 };
 
+/** What person_mailing_instruction says of a person whose labels are not mailed. */
+export interface MailingNow {
+  instruction: "mail" | "keep_in_lab";
+  decided_by: string;
+  decided_at: Date;
+}
+
 /** A date, or the dash that means it never happened. */
 const when = (m: Messages, d: Date | string | null) =>
   d === null ? <Absent label={m.people.never} /> : <>{m.format.date(d)}</>;
@@ -572,6 +579,55 @@ function OrcidCard({ m, person, action }: { m: Messages; person: PersonDetail; a
 }
 
 /**
+ * Whether the person's labels are mailed or kept in the lab (beeline-w8ab.4),
+ * who decided and when. There is no note: free text could hold an address,
+ * which Beeline never stores.
+ */
+function LabelsCard({
+  m,
+  person,
+  mailing,
+  action,
+}: {
+  m: Messages;
+  person: PersonDetail;
+  mailing: MailingNow | null;
+  action: string;
+}) {
+  const p = m.people;
+  return (
+    <Card>
+      <h2>{p.labelsHeading}</h2>
+      <Meta block>{p.labelsHint}</Meta>
+      <p id="labels-now">
+        {mailing === null ? (
+          p.labelsNowMail
+        ) : (
+          <>
+            {p.labelsNowKeep(mailing.decided_by, m.format.date(mailing.decided_at))}
+          </>
+        )}
+      </p>
+      <form method="post" action={`${action}/mailing`} class="form-column">
+        <SelectField
+          id="instruction"
+          name="instruction"
+          label={p.labelsChoice}
+          value={mailing === null ? "mail" : mailing.instruction}
+          options={[
+            ["mail", p.labelsMail] as const,
+            ["keep_in_lab", p.labelsKeep] as const,
+          ]}
+        />
+        <p class="row">
+          <Button>{p.saveLabels}</Button>
+        </p>
+      </form>
+    </Card>
+  );
+}
+
+/**
  * Which registration in Ideal Logic is this person's: the registrant's name
  * and Ideal Logic's id, never an address, which Beeline does not hold.
  */
@@ -652,6 +708,7 @@ export function PersonPage({
   programs,
   history,
   keys,
+  mailing = null,
   registration,
   now,
   notice,
@@ -667,6 +724,8 @@ export function PersonPage({
   history: readonly PersonChange[];
   /** The person's API keys, newest first, including the ones that no longer work. */
   keys: KeyListing[];
+  /** Set where the person's labels are kept in the lab; null where they are mailed. */
+  mailing?: MailingNow | null;
   /** Which Ideal Logic registration is theirs (beeline-w8ab.2). */
   registration: PersonRegistration;
   now: Date;
@@ -827,6 +886,8 @@ export function PersonPage({
           </p>
         </form>
       </Card>
+
+      <LabelsCard m={m} person={person} mailing={mailing} action={action} />
 
       {/* Beside membership, which it is easily mistaken for and is not:
           where somebody belongs, against whose work they take up

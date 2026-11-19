@@ -189,7 +189,8 @@ CREATE TABLE event (
   kind        TEXT NOT NULL CHECK (kind IN (
                 'field day', 'microscope session', 'talk', 'meeting', 'course',
                 'conference', 'outreach', 'deadline', 'other')),
-  collecting  BOOLEAN NOT NULL,                  -- bees are collected. Separate from kind:
+  collecting  BOOLEAN NOT NULL,                  -- held to collect bees, whether or not any
+                                                 -- are caught. Separate from kind:
                                                  -- 12 of 2026's field days were also trainings.
                                                  -- Only a collecting event takes samples.
   name        TEXT NOT NULL,                     -- 'Cottonwood Canyon, 12 Jun 2027'
@@ -258,10 +259,14 @@ CREATE TABLE event_conditions (
   event_id          INTEGER PRIMARY KEY REFERENCES event(id),
   habitat           TEXT,       -- grassland, sagebrush, riparian-wetland, pinyon-juniper, ...
   habitat_condition TEXT,
-  temperature_start DOUBLE,     -- also end, morning and afternoon; unit to settle (°F on paper)
+  temperature_start     DOUBLE, -- four readings on her form; unit to settle (°F on paper)
+  temperature_end       DOUBLE,
+  temperature_morning   DOUBLE,
+  temperature_afternoon DOUBLE,
   cloud_cover       TEXT,       -- full sun, 1/4, 1/2, 3/4, overcast
   precipitation     TEXT,
-  wind_morning      DOUBLE,     -- also afternoon; mph on paper
+  wind_morning      DOUBLE,     -- mph on paper
+  wind_afternoon    DOUBLE,
   weather_notes     TEXT
 );
 

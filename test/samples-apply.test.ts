@@ -102,7 +102,7 @@ describe("the Apply button", () => {
     const html = await pageAt(f, location);
     expect(html).toContain("apply-samples");
     expect(html).toContain(esc(en.uploads.page.samplesNothingChanged));
-    expect(html).toContain(esc(en.uploads.page.changeKind(en.uploads.page.changeKinds.place!, 1)));
+    expect(html).toContain(esc(en.uploads.page.changeKind(en.uploads.page.changeKinds.place!, 1, en.uploads.page.split(1, 0, 0))));
   });
 });
 
@@ -767,7 +767,7 @@ describe("what staff are told, and who sees what", () => {
     const queued = await offered(g, [looks(), newRow(2)]);
     await apply(g, queued.location, { digest: queued.digest });
     const [[detail]] = (await rows(g.conn, `SELECT detail FROM upload_sample_outcome WHERE outcome = 'skipped'`)) as [[string]];
-    expect(detail).toContain("upload the file again");
+    expect(detail).toContain("tick create anyway");
     await applyPending(deps(g));
     const [[later]] = (await rows(g.conn, `SELECT detail FROM upload_sample_outcome WHERE outcome = 'skipped'`)) as [[string]];
     expect(later).toBe(detail);

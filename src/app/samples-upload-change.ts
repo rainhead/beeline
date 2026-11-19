@@ -1,18 +1,16 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { kyselyReader } from "../person-change.js";
-import { withPrintRunLock } from "../print-run.js";
-import { recordSampleChanges } from "../sample-change.js";
-import { numberTaken, trapCountOf } from "../trap-sample.js";
+import { numberTaken, trapCountOf, trapEffort } from "../trap-sample.js";
 import { refusalSentence, type AnyFailure } from "./api-corrections.js";
 import { localityReasonFor, specimenCountProblemFor, trapCountProblemFor } from "./correction-reasons.js";
 import { NO_POINT_TO_TAKE_AWAY } from "./locality-override.js";
 import type { Messages } from "./messages/index.js";
-import { fromOldRecords, setSampleMethod } from "./sample-method.js";
+import { fromOldRecords } from "./sample-method.js";
 import {
   setCollectors,
   setCoordinates,
+  setMethod,
   setPlace,
   setSamplePlace,
   setSpecimenCount,
@@ -22,7 +20,6 @@ import {
 } from "./sample-corrections.js";
 import { setStaffCollectors } from "./sample-collectors.js";
 import { followsItsPoint, heldByUnprintedRun } from "./sample-place.js";
-import { onSample } from "./sample-queue.js";
 
 /**
  * Changing an existing sample from a row of an uploaded samples file (beeline-kgyd.4.11): what each kind of change is
@@ -59,6 +56,16 @@ export type UnitChange =
       single: boolean;
       protocolDiffers: boolean;
       startDiffers: boolean;
+      /** The method before, which an old sample's effort text names. */
+      wasProtocol: string;
+      /** What Beeline said when the file was downloaded, as the method page's form would show it: the bases a correction refuses a change against. */
+      bases: { protocol: string; start: string; end: string };
+      /**
+       * For a sample built from old records whose effort text is exactly its trap count and its old method: the text
+       * it becomes, since `setSampleMethod` does not rewrite it there and the job does after the method is applied.
+       * Null where nothing is rewritten.
+       */
+      effortBecomes: string | null;
     }
   | { unit: "trap_count"; /** Blank takes the count away. */ count: string }
   | { unit: "specimen_count"; count: string }
@@ -69,12 +76,13 @@ export type UnitChange =
   | { unit: "area"; values: Partial<AreaValues>; file: AreaValues }
   | { unit: "place"; locality: string };
 
-/** What is stored with a queued change: the file's version of the sample, the change, and the cells it came from, for the notes. */
+/**
+ * What is stored with a queued change: the change, and every cell of its kind that the file has, with what Beeline said
+ * when the file was downloaded (`was`). Each change is compared with what Beeline holds right before it is made.
+ */
 export interface QueuedUnit {
-  /** The sample's `sampleVersion` in the file, which the sample must still have when its row is first worked on. */
-  version: string;
   change: UnitChange;
-  cells: Array<{ column: string; was: string; fileSays: string }>;
+  cells: Array<{ column: string; was: string; fileSays: string; differs: boolean }>;
 }
 
 /** The metres between two points, by the haversine formula. */
@@ -88,8 +96,6 @@ export function distanceMetres(a: { latitude: number; longitude: number }, b: { 
 export const kindAfterMethod = (kind: "net" | "trap", entered: boolean, change: { single: boolean }): "net" | "trap" =>
   entered || kind === "trap" || !change.single ? "trap" : "net";
 
-// --- Predicting refusals ---------------------------------------------------
-
 /** What the preview knows of a sample before anything changes it. */
 export interface SampleFacts {
   id: number;
@@ -99,7 +105,47 @@ export interface SampleFacts {
   hasObservation: boolean;
   /** It was entered in Beeline. */
   entered: boolean;
+  /** The effort as the old records wrote it, or null. */
+  effort: string | null;
 }
+
+// --- Words for refusals ------------------------------------------------------
+
+/** A refusal as a correction gave it. */
+export type Refusal = { refusal: string; problem?: string; reason?: string; number?: string };
+
+/**
+ * The sentence a person reads for a refusal. The API's table is written for programs ("send the same request again", "this key"),
+ * so where it says something untrue to a person, the upload has its own.
+ */
+export function refusalFor(m: Messages, failure: Refusal, unit: ChangeUnit): string {
+  const w = m.uploads.changes;
+  switch (failure.refusal) {
+    case "invalid":
+      return failure.problem ?? "";
+    case "unresolved":
+      return failure.reason ?? "";
+    case "in_print_run":
+      return unit === "method_dates" ? m.record.sample.methodEdit.inPrintRun : refusalSentence({ ok: false, refusal: "in_print_run" });
+    case "number_taken":
+      return failure.number !== undefined ? m.record.sample.methodEdit.numberTaken(failure.number) : refusalSentence({ ok: false, refusal: "number_taken" });
+    case "no_old_records":
+      return m.record.sample.methodEdit.noOldRecords;
+    case "printed":
+      return w.localityPrinted;
+    case "impersonating":
+    case "not_admin":
+      return w.noLongerStaff;
+    case "not_found":
+      return w.sampleGone;
+    case "conflict":
+      return w.conflict;
+    default:
+      return refusalSentence({ ok: false, refusal: failure.refusal } as AnyFailure);
+  }
+}
+
+// --- Predicting refusals ---------------------------------------------------
 
 export interface PredictEnv {
   db: Kysely<Database>;
@@ -107,39 +153,65 @@ export interface PredictEnv {
   messages: Messages;
 }
 
+/** What the dry run of a collectors change says besides refusing: staff are warned when the first collector changes, and how many labels on paper print the old list. */
+export interface CollectorsPreview {
+  firstChanged: boolean;
+  reprint: number;
+  warnings: string[];
+}
+
+export interface Prediction {
+  /** The sentence a correction would refuse the change with, where that can be known without making it. Shown, never enforced: the job asks the correction itself. */
+  refusal: string | null;
+  collectors?: CollectorsPreview;
+}
+
 const isPrinted = async (db: Kysely<Database>, id: number): Promise<boolean> =>
   Boolean((await sql<{ e: boolean }>`SELECT EXISTS (SELECT 1 FROM printed_sample WHERE sample_id = ${id}) AS e`.execute(db)).rows[0]?.e);
 
-const failure = (refusal: string): string => refusalSentence({ ok: false, refusal } as AnyFailure);
+/** The effort text a method change rewrites a sample's to, or null where it rewrites nothing: only an old sample's effort that is exactly its count and its old method. */
+export async function effortBecomes(db: Kysely<Database>, facts: SampleFacts, change: Extract<UnitChange, { unit: "method_dates" }>): Promise<string | null> {
+  if (facts.entered || !change.protocolDiffers || change.protocol.trim() === "") return null;
+  const count = trapCountOf(facts.effort);
+  if (count === null || facts.effort !== trapEffort(count, facts.protocol)) return null;
+  return (await fromOldRecords(db, facts.id)) ? trapEffort(count, change.protocol.trim()) : null;
+}
 
 /**
  * What the corrections would say to each change of a row, where that can be known without making it: the same
- * predicates they ask, in the order the job applies the row. A change a correction would refuse is not queued, and its
- * sentence is shown. What depends on a write that has not happened (the collectors after new dates, the place after a
- * new point) is left to the job, which asks again as it goes. The method and the kind of sample a method change would
- * leave are carried along, since a trap count is refused on a net sample unless the dates make it a trap sample.
+ * predicates they ask, in the order the job applies the row, over the kinds that were ticked only (an unticked kind is
+ * not made, so it changes nothing for the rest). It is shown to people and never enforced: it ignores the writes of
+ * the row that have not happened (collectors are judged against dates a method change of the same row is about to
+ * move), and the job asks the correction itself. The kind of sample a method change would leave and the method are
+ * carried along, since a trap count is refused on a net sample unless the dates make it a trap sample.
  */
-export async function predictRefusals(env: PredictEnv, facts: SampleFacts, changes: readonly UnitChange[]): Promise<Map<ChangeUnit, string | null>> {
+export async function predictRefusals(env: PredictEnv, facts: SampleFacts, changes: readonly UnitChange[], chosen: (unit: ChangeUnit) => boolean): Promise<Map<ChangeUnit, Prediction>> {
   const { db, conn, messages } = env;
-  const out = new Map<ChangeUnit, string | null>();
+  const out = new Map<ChangeUnit, Prediction>();
   let kind = facts.kind;
   let protocol = facts.protocol;
   const byUnit = new Map(changes.map((c) => [c.unit, c]));
   const inRun = () => heldByUnprintedRun(db, facts.id);
+  const say = (refusal: string, unit: ChangeUnit) => refusalFor(messages, { refusal }, unit);
   for (const unit of APPLY_ORDER) {
     const change = byUnit.get(unit);
     if (change === undefined) continue;
+    if (!chosen(unit)) {
+      out.set(unit, { refusal: null });
+      continue;
+    }
     let refusal: string | null = null;
+    let collectors: CollectorsPreview | undefined;
     switch (change.unit) {
       case "method_dates": {
         const problems = messages.record.sample.methodEdit.problems;
         const oldRecords = facts.entered ? false : await fromOldRecords(db, facts.id);
-        if (!facts.entered && !oldRecords) refusal = messages.record.sample.methodEdit.noOldRecords;
+        if (!facts.entered && !oldRecords) refusal = say("no_old_records", unit);
         else if (change.startDiffers && facts.hasObservation) refusal = problems.start_observation;
         else if (facts.entered && change.protocol.trim() === "") refusal = problems.method_required;
-        else if (await inRun()) refusal = messages.uploads.changes.methodInPrintRun;
+        else if (await inRun()) refusal = say("in_print_run", unit);
         else if (!facts.entered && kind === "net" && kindAfterMethod(kind, facts.entered, change) === "trap" && (await numberTaken(conn, facts.number, facts.id))) {
-          refusal = messages.uploads.changes.becomesTrapNumberTaken(facts.number);
+          refusal = messages.record.sample.methodEdit.numberTaken(facts.number);
         }
         if (refusal === null) {
           kind = kindAfterMethod(kind, facts.entered, change);
@@ -167,29 +239,30 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
         // The correction's own dry run, on the people the names came to.
         const planned = await setStaffCollectors({ conn, correctionsPath: "" }, facts.id, { collectors: change.ids.map(String), note: "", author: "", dryRun: true });
         if (planned.outcome === "invalid") refusal = planned.problem;
-        else if (planned.outcome === "in_print_run" || planned.outcome === "number_taken" || planned.outcome === "observation_tied") refusal = failure(planned.outcome);
+        else if (planned.outcome === "in_print_run" || planned.outcome === "number_taken" || planned.outcome === "observation_tied") refusal = say(planned.outcome, unit);
+        else if (planned.outcome === "planned") collectors = { firstChanged: planned.first_changed, reprint: planned.reprint_needed, warnings: planned.warnings };
         break;
       }
       case "coordinates": {
         // A point is kept against an observation, old records or an entry in Beeline, and a sample with none has nothing to keep it against.
-        if (!facts.hasObservation && !facts.entered && !(await fromOldRecords(db, facts.id))) refusal = failure("no_observation");
+        if (!facts.hasObservation && !facts.entered && !(await fromOldRecords(db, facts.id))) refusal = say("no_observation", unit);
         else if (change.remove && !facts.hasObservation) refusal = NO_POINT_TO_TAKE_AWAY;
-        else if (await inRun()) refusal = failure("in_print_run");
+        else if (await inRun()) refusal = say("in_print_run", unit);
         break;
       }
       case "area": {
         // Where the point changes too, the place follows the new point and the job says so; it is not asked here.
-        if (byUnit.has("coordinates") && out.get("coordinates") === null) break;
-        if (await inRun()) refusal = failure("in_print_run");
-        else if (await followsItsPoint(db, facts.id)) refusal = failure("follows_point");
+        if (byUnit.has("coordinates") && chosen("coordinates") && out.get("coordinates")?.refusal === null) break;
+        if (await inRun()) refusal = say("in_print_run", unit);
+        else if (await followsItsPoint(db, facts.id)) refusal = say("follows_point", unit);
         break;
       }
       case "place": {
-        if (facts.entered && ((await inRun()) || (await isPrinted(db, facts.id)))) refusal = failure("printed");
+        if (facts.entered && ((await inRun()) || (await isPrinted(db, facts.id)))) refusal = say("printed", unit);
         break;
       }
     }
-    out.set(unit, refusal);
+    out.set(unit, { refusal, collectors });
   }
   return out;
 }
@@ -198,10 +271,17 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
 
 /** What happened to a change: made, nothing to do, refused with a sentence, left alone with one, or the run must stop. */
 export type UnitResult =
-  | { outcome: "applied" | "unchanged" }
+  | {
+      outcome: "applied";
+      /** What the correction said besides saving, for the note (the collectors' warnings). */
+      detail?: string;
+      /** Work that follows the change once it is recorded as made. It never stops the run: it returns a sentence for the change's note, or null. */
+      followUp?: () => Promise<string | null>;
+    }
+  | { outcome: "unchanged" }
   | { outcome: "refused" | "skipped"; detail: string }
   /** A lost write conflict or a running sync job: not a refusal. The change stays pending and the upload stops there. */
-  | { outcome: "stop"; why: string };
+  | { outcome: "stop"; why: "busy" | "not_applied" };
 
 export interface ApplyEnv {
   corrective: CorrectionDeps;
@@ -220,70 +300,38 @@ export interface UnitContext {
 }
 
 /** A correction's answer as the outcome of a change. */
-function fromCorrection(result: { ok: true; outcome: string } | { ok: false; refusal: string }): UnitResult {
+function fromCorrection(env: ApplyEnv, unit: ChangeUnit, result: { ok: true; outcome: string } | ({ ok: false } & Refusal)): UnitResult {
   if (result.ok) return { outcome: result.outcome === "unchanged" ? "unchanged" : "applied" };
   if (result.refusal === "busy" || result.refusal === "not_applied") return { outcome: "stop", why: result.refusal };
-  return { outcome: "refused", detail: refusalSentence(result as AnyFailure) };
+  return { outcome: "refused", detail: refusalFor(env.messages, result, unit) };
 }
 
 const placeText = (p: { country: string | null; state_province: string | null; county: string | null }, m: Messages) =>
   m.uploads.changes.placeName((p.country ?? "").trim(), (p.state_province ?? "").trim(), (p.county ?? "").trim());
 
-/** The method and dates, in the sample's turn and behind the print runs' lock, with the history entry taken before the turn ends. */
-async function applyMethod(env: ApplyEnv, ctx: UnitContext, change: Extract<UnitChange, { unit: "method_dates" }>): Promise<UnitResult> {
-  const { db, correctionsPath, samplePaths } = env.corrective;
-  const id = ctx.sampleId;
+/**
+ * After a method change on an old sample, write its effort again with the new method, but only where it is exactly its
+ * count and its old method (so "45 minutes" is left alone). Called after the method change is recorded as made, and
+ * never stops the run: a failure is a sentence in the method change's note.
+ */
+async function rewriteEffort(env: ApplyEnv, ctx: UnitContext, change: Extract<UnitChange, { unit: "method_dates" }>): Promise<string | null> {
+  const deps = env.corrective;
   const m = env.messages;
-  return onSample(id, () =>
-    withPrintRunLock(async (): Promise<UnitResult> => {
-      const now = await db.selectFrom("sample").where("entity_id", "=", id).select(["kind", "sample_number"]).executeTakeFirst();
-      if (now === undefined) return { outcome: "refused", detail: m.uploads.changes.sampleGone };
-      // setSampleMethod asks neither: a method change is refused while a run that has not printed holds the sample.
-      if (await heldByUnprintedRun(db, id)) return { outcome: "refused", detail: m.uploads.changes.methodInPrintRun };
-      const entered = (await db.selectFrom("sample_entry").where("sample_id", "=", id).select("sample_id").executeTakeFirst()) !== undefined;
-      const kind = now.kind === "trap" ? "trap" : "net";
-      // A single day on a trap sample is sent as start and end both, so it stays a trap sample: a blank end makes a net sample.
-      const stays = entered || kind === "trap" || !change.single;
-      // A net sample that the dates make a trap sample must not take a trap sample's number.
-      const writer = env.corrective.printWriter ?? env.corrective.conn;
-      if (writer === undefined) throw new Error("applying a change of method needs a connection");
-      if (!entered && kind === "net" && stays && (await numberTaken(writer, now.sample_number, id))) {
-        return { outcome: "refused", detail: m.uploads.changes.becomesTrapNumberTaken(now.sample_number) };
-      }
-      const saved = await setSampleMethod(db, correctionsPath, id, {
-        protocol: change.protocol,
-        dateStart: change.start,
-        dateEnd: stays ? change.end : "",
-        note: ctx.note,
-        author: ctx.actor.login,
-        today: env.today,
-      });
-      switch (saved.outcome) {
-        case "saved":
-          try {
-            await recordSampleChanges(kyselyReader(db), samplePaths, { source: "upload", author: ctx.actor.login, reason: ctx.note, where: `s.entity_id = ${id}` });
-          } catch (err) {
-            console.warn(`could not record the method change: ${(err as Error).message}`);
-          }
-          return { outcome: "applied" };
-        case "unchanged":
-          return { outcome: "unchanged" };
-        case "invalid":
-          return { outcome: "refused", detail: m.record.sample.methodEdit.problems[saved.problem] };
-        case "no_old_records":
-          return { outcome: "refused", detail: m.record.sample.methodEdit.noOldRecords };
-        case "conflict":
-          return { outcome: "refused", detail: m.record.sample.methodEdit.conflict };
-        case "not_applied":
-          return { outcome: "stop", why: "not_applied" };
-      }
-    }),
-  );
+  try {
+    const effort = (await deps.db.selectFrom("sample").where("entity_id", "=", ctx.sampleId).select("sampling_effort").executeTakeFirst())?.sampling_effort ?? null;
+    const count = trapCountOf(effort);
+    if (count === null || effort !== trapEffort(count, change.wasProtocol) || change.effortBecomes === null) return null;
+    const again = await setTrapCount(deps, ctx.actor, ctx.sampleId, { count: String(count), note: ctx.note, problemFor: trapCountProblemFor(m) });
+    if (again.ok) return m.uploads.changes.effortRewritten(change.effortBecomes);
+    return m.uploads.changes.effortNotRewritten(again.refusal === "busy" ? m.uploads.changes.effortBusy : again.refusal === "invalid" ? again.problem : refusalFor(m, again, "trap_count"));
+  } catch {
+    return m.uploads.changes.effortNotRewritten(m.uploads.changes.unexpected);
+  }
 }
 
 /**
  * Apply one queued change through its correction, from outside any turn of the sample's queue (the corrections take
- * their own, and the queue does not nest). The method is the exception that is given a turn here, as its route does.
+ * their own, and the queue does not nest).
  */
 export async function applyUnit(env: ApplyEnv, ctx: UnitContext, change: UnitChange): Promise<UnitResult> {
   const deps = env.corrective;
@@ -291,28 +339,34 @@ export async function applyUnit(env: ApplyEnv, ctx: UnitContext, change: UnitCha
   const m = env.messages;
   switch (change.unit) {
     case "method_dates": {
-      const result = await applyMethod(env, ctx, change);
-      if (result.outcome !== "applied" && result.outcome !== "unchanged") return result;
-      // An old sample's effort is not rewritten by a method change: write the count again so that its words name the new method.
-      if (change.protocolDiffers && (await fromOldRecords(deps.db, id))) {
-        const effort = (await deps.db.selectFrom("sample").where("entity_id", "=", id).select("sampling_effort").executeTakeFirst())?.sampling_effort ?? null;
-        const count = trapCountOf(effort);
-        if (count !== null) {
-          const again = await setTrapCount(deps, ctx.actor, id, { count: String(count), note: ctx.note, problemFor: trapCountProblemFor(m) });
-          // Best effort: a refusal (a net sample has no count) leaves the effort as it was; a conflict stops the upload as any does.
-          if (!again.ok && again.refusal === "busy") return { outcome: "stop", why: "busy" };
-        }
-      }
-      return result;
+      const result = await setMethod(deps, ctx.actor, id, {
+        protocol: change.protocol,
+        dateStart: change.start,
+        // One day is a blank end, which keeps a trap sample a trap sample and a net sample a net sample.
+        dateEnd: change.single ? "" : change.end,
+        keepTrap: true,
+        note: ctx.note,
+        today: env.today,
+        bases: { protocol: change.bases.protocol, dateStart: change.bases.start, dateEnd: change.bases.end },
+        problemFor: (problem) => m.record.sample.methodEdit.problems[problem],
+      });
+      const done = fromCorrection(env, "method_dates", result);
+      return done.outcome === "applied" && change.effortBecomes !== null ? { outcome: "applied", followUp: () => rewriteEffort(env, ctx, change) } : done;
     }
     case "trap_count":
-      return fromCorrection(await setTrapCount(deps, ctx.actor, id, { count: change.count, note: ctx.note, problemFor: trapCountProblemFor(m) }));
+      return fromCorrection(env, "trap_count", await setTrapCount(deps, ctx.actor, id, { count: change.count, note: ctx.note, problemFor: trapCountProblemFor(m) }));
     case "specimen_count":
-      return fromCorrection(await setSpecimenCount(deps, ctx.actor, id, { count: change.count, note: ctx.note, problemFor: specimenCountProblemFor(m) }));
-    case "collectors":
-      return fromCorrection(await setCollectors(deps, ctx.actor, id, { collectors: change.ids.map(String), note: ctx.note }));
+      return fromCorrection(env, "specimen_count", await setSpecimenCount(deps, ctx.actor, id, { count: change.count, note: ctx.note, problemFor: specimenCountProblemFor(m) }));
+    case "collectors": {
+      const result = await setCollectors(deps, ctx.actor, id, { collectors: change.ids.map(String), note: ctx.note });
+      const done = fromCorrection(env, "collectors", result);
+      // What the real call said: who is now first and how many labels on paper print the old list.
+      return done.outcome === "applied" && result.ok && result.warnings.length > 0 ? { outcome: "applied", detail: result.warnings.join(" ") } : done;
+    }
     case "coordinates":
       return fromCorrection(
+        env,
+        "coordinates",
         await setCoordinates(deps, ctx.actor, id, { latitude: change.latitude, longitude: change.longitude, uncertainty: change.uncertainty, remove: change.remove, note: ctx.note }),
       );
     case "area": {
@@ -325,10 +379,10 @@ export async function applyUnit(env: ApplyEnv, ctx: UnitContext, change: UnitCha
         const agrees = same(now.country, change.file.country) && same(now.state_province, change.file.state_province) && same(now.county, change.file.county);
         return { outcome: "skipped", detail: m.uploads.changes.areaFollowsPoint(placeText(now, m), agrees ? "" : placeText(change.file, m)) };
       }
-      return fromCorrection(await setSamplePlace(deps, ctx.actor, id, { values: change.values, note: ctx.note }));
+      return fromCorrection(env, "area", await setSamplePlace(deps, ctx.actor, id, { values: change.values, note: ctx.note }));
     }
     case "place":
-      return fromCorrection(await setPlace(deps, ctx.actor, id, { locality: change.locality, reasonFor: localityReasonFor(m), note: ctx.note }));
+      return fromCorrection(env, "place", await setPlace(deps, ctx.actor, id, { locality: change.locality, reasonFor: localityReasonFor(m), note: ctx.note }));
   }
 }
 
@@ -342,9 +396,8 @@ export function readQueuedUnit(payload: string | null): QueuedUnit | { unreadabl
     return { unreadable: `not JSON: ${(err as Error).message}` };
   }
   const q = parsed as Partial<QueuedUnit> | null;
-  if (typeof q?.version !== "string" || q.version === "") return { unreadable: "no version" };
-  const change = q.change as { unit?: unknown } | undefined;
+  const change = q?.change as { unit?: unknown } | undefined;
   if (typeof change !== "object" || change === null || !(APPLY_ORDER as readonly unknown[]).includes(change.unit)) return { unreadable: "no change" };
-  if (!Array.isArray(q.cells)) return { unreadable: "no cells" };
+  if (!Array.isArray(q?.cells) || !q.cells.every((c) => typeof c?.column === "string" && typeof c.was === "string" && typeof c.fileSays === "string")) return { unreadable: "no cells" };
   return q as QueuedUnit;
 }

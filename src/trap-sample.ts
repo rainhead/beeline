@@ -225,7 +225,7 @@ export async function seriesNumberHolder(conn: DuckDBConnection, sampleNumber: s
 
 /** What a series number that another sample already has is told, with how to compare the row with that sample. */
 export const seriesNumberHeldProblem = (sampleNumber: string, holder: { sampleId: number; kind: string }) =>
-  `${sampleNumber} is already a ${holder.kind} sample in Beeline, sampleId ${holder.sampleId}. To change that sample instead, put its sampleId in the row; otherwise give the new sample another number.`;
+  `${sampleNumber} is already a ${holder.kind} sample in Beeline, sampleId ${holder.sampleId}. To change that sample instead, edit its row in a fresh download, which carries its sampleId, sampleVersion and fieldNumber; otherwise give the new sample another number.`;
 
 /** How near a new sample's point must be to an existing sample's, in metres, for the two to look like one sample. */
 export const LOOKALIKE_METRES = 100;

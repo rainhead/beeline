@@ -3,11 +3,11 @@ import type { Database } from "../model.js";
 import type { Messages } from "./messages/en.js";
 import { samplesWorkbook } from "./sample-workbook.js";
 import { type OutcomeRow } from "./samples-upload-apply.js";
-import type { QueuedUnit } from "./samples-upload-change.js";
+import { readQueuedUnit } from "./samples-upload-change.js";
 import { SAMPLES_UNITS, countRows, isHeld, type SampleRowResult, type SamplesCounts, type SamplesPlan, type SamplesUnit, type UnknownCollector } from "./samples-upload-plan.js";
 import { specimenWorkbook, type Audience } from "./specimen-workbook.js";
 import type { DraftPlan } from "./upload-drafts.js";
-import { NOTE_COLUMN, type HeldItem, type ParsedUpload, type UploadPlan } from "./upload-plan.js";
+import { NOTE_COLUMN, type HeldItem, type ParsedUpload, type SeasonSplit, type UploadPlan } from "./upload-plan.js";
 import { writeXlsx, type XlsxWriterOptions } from "./xlsx.js";
 import { annotateWorkbook } from "./xlsx-annotate.js";
 
@@ -73,13 +73,16 @@ export interface OutcomeSummary {
 
 /** What applying would do to existing samples, for the page before the file is applied. */
 export interface ChangesPreview {
-  /** Samples with a change that can be queued. */
-  samples: number;
+  /** Samples with a change. */
+  samples: SeasonSplit;
   /** Each kind of change that some sample has, how many samples have one, and whether it is ticked. In the order the page lists them. */
-  kinds: Array<{ unit: SamplesUnit; samples: number; chosen: boolean }>;
-  points: { moving: number; far: number; largest: number };
-  /** Changes a correction would refuse, which are not queued. */
-  cantApply: number;
+  kinds: Array<{ unit: SamplesUnit; samples: SeasonSplit; chosen: boolean }>;
+  points: { moving: SeasonSplit; far: SeasonSplit; largest: number };
+  /** Changes of the ticked kinds that a correction may refuse: shown, and tried all the same. */
+  mayNot: SeasonSplit;
+  /** Collectors changes of the ticked kind that give a sample another first collector, and the labels on paper that print an old list. */
+  firstCollector: SeasonSplit;
+  reprint: number;
 }
 
 /** The rows whose number is in the OBAS series, or blank, which wait for the one box "I've checked these OBAS numbers". */
@@ -225,17 +228,18 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
   for (const o of outcomes) (done.get(o.row_number) ?? done.set(o.row_number, []).get(o.row_number)!).push(o);
   /** What applying did to one change of an existing sample's row. */
   const changeNote = (o: OutcomeRow): string => {
-    const queued = o.payload === null ? null : (JSON.parse(o.payload) as Partial<QueuedUnit>);
     switch (o.outcome) {
       case "applied": {
+        // A payload that cannot be read must not break the download of the notes: the change's label stands in for its cells.
+        const queued = readQueuedUnit(o.payload);
         const said = (v: string) => (v === "" ? n.nothing : `"${v}"`);
-        const cells = (queued?.cells ?? []).map((c) => n.appliedCell(c.column, said(c.was), said(c.fileSays)));
-        return n.unitApplied(cells.length > 0 ? cells.join("; ") : label(o.unit));
+        const cells = "unreadable" in queued ? [] : queued.cells.filter((c) => c.differs !== false).map((c) => n.appliedCell(c.column, said(c.was), said(c.fileSays)));
+        return n.unitApplied(cells.length > 0 ? cells.join("; ") : label(o.unit), o.detail ?? "");
       }
       case "unchanged":
         return n.unitUnchanged(label(o.unit));
       case "pending":
-        return n.waiting;
+        return o.detail === null ? n.waiting : `${n.waiting} ${o.detail}`;
       default:
         return n.unitNotApplied(label(o.unit), o.detail ?? "");
     }
@@ -284,7 +288,9 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
       if (changed.length > 0) parts.push(n.differs(changed.join("; ")));
       for (const d of r.differences) {
         if (d.metres !== null && d.metres > 0) parts.push(n.moves(n.distance(d.metres)));
-        if (d.refusal !== null) parts.push(n.cantApply(label(d.unit), d.refusal));
+        if (d.change.unit === "method_dates" && d.change.effortBecomes !== null) parts.push(n.effortBecomes(d.change.effortBecomes));
+        if (d.collectors !== undefined && d.collectors.warnings.length > 0) parts.push(n.collectorsWarning(d.collectors.warnings.join(" ")));
+        if (d.refusal !== null) parts.push(n.mayNot(label(d.unit), d.refusal));
       }
     }
     notes.set(row, parts.join(" "));
@@ -307,18 +313,21 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
       ? null
       : { rows: seriesRows.length, lowest: given[0] ?? null, highest: given.at(-1) ?? null, blank: plan.numbering.blank, from: plan.numbering.from, to: plan.numbering.to };
   const labelsReady = done.size > 0 ? 0 : toMake.filter((r) => r.season === "active" && Number(r.create!.form.specimen_count) > 0).length;
+  const total = (x: SeasonSplit) => x.active + x.settled + x.unplaced;
   const changes: ChangesPreview | null =
-    done.size > 0 || (plan.changes.samples === 0 && plan.changes.cantApply === 0)
+    done.size > 0 || total(plan.changes.samples) === 0
       ? null
       : {
           samples: plan.changes.samples,
-          kinds: SAMPLES_UNITS.filter((u) => plan.changes.byUnit[u] > 0).map((unit) => ({
+          kinds: SAMPLES_UNITS.filter((u) => total(plan.changes.byUnit[u]) > 0).map((unit) => ({
             unit,
             samples: plan.changes.byUnit[unit],
-            chosen: plan.rows.some((r) => r.differences.some((d) => d.unit === unit && d.refusal === null && d.chosen)),
+            chosen: plan.rows.some((r) => r.differences.some((d) => d.unit === unit && d.chosen)),
           })),
           points: plan.changes.points,
-          cantApply: plan.changes.cantApply,
+          mayNot: plan.changes.mayNot,
+          firstCollector: plan.changes.firstCollector,
+          reprint: plan.changes.reprint,
         };
   return {
     notes,

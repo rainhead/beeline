@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
 import { recordSampleChanges, type SampleChangeSource } from "../sample-change.js";
-import { loadTrapSample, mayEditTrapSample, setTrapSampleLocality, trapEffort } from "../trap-sample.js";
+import { loadTrapSample, mayEditTrapSample, numberTaken, setTrapSampleLocality, trapEffort } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
 import {
@@ -22,7 +22,8 @@ import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { loadSample, type LocalitySuggestion } from "./record.js";
 import { applySampleEdit, loadEditableSample, planSampleEdit, type EditableFieldName, type EditableSample } from "./sample-edit.js";
 import { setStaffCollectors, type CollectorLine } from "./sample-collectors.js";
-import { setStaffPlace, type PlaceChange, type PlaceField } from "./sample-place.js";
+import { heldByUnprintedRun, setStaffPlace, type PlaceChange, type PlaceField } from "./sample-place.js";
+import { setSampleMethod, type MethodInput, type MethodResult } from "./sample-method.js";
 import { onSample } from "./sample-queue.js";
 
 /**
@@ -515,7 +516,8 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
       return { ok: true, outcome: "unchanged" };
     } else if (suggestion !== undefined) {
       if (standing !== null && standing !== actor.login && !admin) return refused("set_by_other");
-      reason = form.reasonFor(suggestion.basis);
+      // The adoption's own reason, with the caller's note beside it where there is one (the samples upload names itself).
+      reason = [form.reasonFor(suggestion.basis), form.note?.trim() ? `(${form.note.trim()})` : ""].filter((x) => x !== "").join(" ");
       result = await adoptSuggestedLocality(writeDeps, target, { suggestion: suggestion.locality, reason, author: actor.login });
     } else {
       if (!admin) return refused("only_offered");
@@ -708,6 +710,97 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
     await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "trap count change");
     return { ok: true, outcome: effort === null ? "removed" : "saved", effort };
   });
+}
+
+// ---------------------------------------------------------------------------
+// How and when a sample was collected
+
+export type MethodProblem = Extract<MethodResult, { outcome: "invalid" }>["problem"];
+
+export interface SetMethodInput {
+  /** The method in words; blank for none. */
+  protocol: string;
+  /** The day collecting ended; blank for a net sample collected on one day. */
+  dateEnd: string;
+  /** The day collecting started; absent where the caller does not offer it. */
+  dateStart?: string;
+  note: string;
+  /** Today where the program is, YYYY-MM-DD. */
+  today: string;
+  /** What the caller saw, so that a touched field somebody changed since is refused (`setSampleMethod`). */
+  bases?: MethodInput["bases"];
+  /**
+   * A blank end on a trap sample (or one entered in Beeline) means one day, so that the sample stays a trap sample:
+   * the end is the start. Without it a blank end makes an old sample a net sample, as the method page's form does.
+   */
+  keepTrap?: boolean;
+  /** The sentence for each way the method or dates are refused as invalid. */
+  problemFor: (problem: MethodProblem) => string;
+}
+
+export type SetMethodResult =
+  | { ok: true; outcome: "saved" | "unchanged" }
+  | Common
+  | StaffOnly
+  | Refused<"in_print_run" | "no_old_records" | "conflict" | "not_applied">
+  | (Refused<"number_taken"> & { number: string })
+  | Invalid;
+
+/**
+ * Staff correct how a sample was collected, from the method page or from an uploaded samples file: the method's words
+ * and the days. The rules are in src/app/sample-method.ts; what is added here is what its callers each did for
+ * themselves: the sample's turn of the queue with the history entry before the turn ends, the print runs' lock, a
+ * refusal while a print run that has not printed holds the sample (its labels froze the method and dates), and a
+ * refusal when a net sample would become a trap sample whose number another trap sample already has. Staff only.
+ */
+export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<SetMethodInput>): Promise<SetMethodResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const found = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select("entity_id").executeTakeFirst();
+    if (found === undefined) return refused("not_found");
+    return { ready: null };
+  };
+  return correct(sampleId, input, gates, (_, form): Promise<SetMethodResult> =>
+    withPrintRunLock(async (): Promise<SetMethodResult> => {
+      const { db } = deps;
+      const now = await db.selectFrom("sample").where("entity_id", "=", sampleId).select(["kind", "sample_number", "date_start"]).executeTakeFirst();
+      if (now === undefined) return refused("not_found");
+      if (await heldByUnprintedRun(db, sampleId)) return refused("in_print_run");
+      const entered = (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
+      const liveStart = now.date_start.toISOString().slice(0, 10);
+      const blankEnd = form.dateEnd.trim() === "";
+      const stays = form.keepTrap === true && blankEnd && (entered || now.kind === "trap");
+      const dateEnd = stays ? (form.dateStart?.trim() || liveStart) : form.dateEnd;
+      // A net sample given an end day becomes a trap sample, and a trap sample's number is the program's, one for each.
+      const writer = deps.printWriter ?? deps.conn;
+      if (!entered && now.kind !== "trap" && dateEnd.trim() !== "" && writer !== undefined && (await numberTaken(writer, now.sample_number, sampleId))) {
+        return { ok: false, refusal: "number_taken", number: now.sample_number };
+      }
+      const saved = await setSampleMethod(db, deps.correctionsPath, sampleId, {
+        protocol: form.protocol,
+        dateStart: form.dateStart,
+        dateEnd,
+        note: form.note,
+        author: actor.login,
+        today: form.today,
+        bases: form.bases,
+      });
+      switch (saved.outcome) {
+        case "saved":
+          await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "method change");
+          return { ok: true, outcome: "saved" };
+        case "unchanged":
+          return { ok: true, outcome: "unchanged" };
+        case "invalid":
+          return { ok: false, refusal: "invalid", problem: form.problemFor(saved.problem) };
+        case "no_old_records":
+        case "conflict":
+        case "not_applied":
+          return refused(saved.outcome);
+      }
+    }),
+  );
 }
 
 export interface SamplePlaceInput {

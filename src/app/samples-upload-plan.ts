@@ -5,7 +5,7 @@ import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
 import { en } from "./messages/en.js";
 import type { Messages } from "./messages/index.js";
-import { distanceMetres, predictRefusals, type AreaValues, type ChangeUnit, type SampleFacts, type UnitChange } from "./samples-upload-change.js";
+import { distanceMetres, effortBecomes, predictRefusals, type AreaValues, type ChangeUnit, type CollectorsPreview, type SampleFacts, type UnitChange } from "./samples-upload-change.js";
 import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, findLookalikes, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, seriesNumberHeldProblem, seriesNumberHolder, seriesNumberProblem, type Lookalike, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
@@ -123,8 +123,14 @@ export interface SampleUnitDifference {
   cells: UnitCell[];
   /** What applying the unit would write, worked out and checked: kept with the unit so that applying writes exactly this. */
   change: UnitChange;
-  /** The sentence a correction would refuse it with, where that can be known without making it; such a unit is not queued. */
+  /**
+   * The sentence a correction would refuse it with, where that can be known without making it, judged over the kinds
+   * ticked. A prediction is shown ("may not be applied") and never enforced: the change is queued all the same, and the
+   * job asks the correction itself.
+   */
   refusal: string | null;
+  /** For a collectors change: whether the first collector changes, how many labels on paper print the old list, and what staff are warned of. */
+  collectors?: CollectorsPreview;
   /** The kind of change was ticked, so applying makes it. Not part of the digest: a tick is the person's own answer. */
   chosen: boolean;
   /** For coordinates: how far the point moves, in metres; null where the file or Beeline has no point. */
@@ -185,16 +191,19 @@ export interface SampleRowResult {
   fileVersion: string | null;
 }
 
-/** What applying would do to existing samples, over the rows with nothing wrong in the way. */
+/** What applying would do to existing samples, over the rows with nothing wrong in the way, each count split by season. */
 export interface ChangesSummary {
-  /** Existing samples with at least one change that can be queued. */
-  samples: number;
-  /** For each kind of change, how many samples have one that can be queued. */
-  byUnit: Record<SamplesUnit, number>;
+  /** Existing samples with at least one change. */
+  samples: SeasonSplit;
+  /** For each kind of change, how many samples have one. */
+  byUnit: Record<SamplesUnit, SeasonSplit>;
   /** Points that would move, how many by more than 100 metres, and the largest move in metres. */
-  points: { moving: number; far: number; largest: number };
-  /** Changes a correction would refuse, which are not queued. */
-  cantApply: number;
+  points: { moving: SeasonSplit; far: SeasonSplit; largest: number };
+  /** Changes of the ticked kinds that a correction would refuse, shown as "may not be applied". */
+  mayNot: SeasonSplit;
+  /** Collectors changes of the ticked kind that change the first collector, and the labels on paper that print an old list. */
+  firstCollector: SeasonSplit;
+  reprint: number;
 }
 
 export interface SamplesCounts {
@@ -281,6 +290,7 @@ export async function readNow(db: Kysely<Database>, ids: number[], reader: Reade
           protocol: (r.protocol ?? "").trim(),
           hasObservation: r.inat_observation_id !== null,
           entered: r.entered,
+          effort: r.sampling_effort,
         },
       });
     }
@@ -368,13 +378,14 @@ function pointMoves(full: Map<string, Evaluated>): number | null {
  * What applying a unit would write: the file's values, as the correction takes them. Null where the file cannot say it
  * (a date cell that is not days). The collectors are the people their names came to.
  */
-function changeFor(unit: SamplesUnit, full: Map<string, Evaluated>, cells: Map<string, Evaluated>, collectorIds: number[]): UnitChange | null {
+function changeFor(unit: SamplesUnit, full: Map<string, Evaluated>, cells: Map<string, Evaluated>, collectorIds: number[], kind: "net" | "trap"): UnitChange | null {
   const text = (c: string) => full.get(c)!.fileText;
   switch (unit) {
     case "method_dates": {
       const days = full.get("eventDate")!.value;
       if (days.kind !== "days") return null;
-      const [nowStart] = full.get("eventDate")!.nowText.split("/");
+      const [nowStart, nowEnd] = full.get("eventDate")!.nowText.split("/");
+      const was = full.get("samplingProtocol")!.nowText;
       return {
         unit,
         protocol: text("samplingProtocol"),
@@ -383,6 +394,10 @@ function changeFor(unit: SamplesUnit, full: Map<string, Evaluated>, cells: Map<s
         single: days.start === days.end,
         protocolDiffers: cells.get("samplingProtocol")?.differs === true,
         startDiffers: days.start !== (nowStart ?? ""),
+        wasProtocol: was,
+        // What the method page's form shows: the end day of a trap sample, blank for a net sample.
+        bases: { protocol: was, start: nowStart ?? "", end: kind === "trap" ? (nowEnd ?? nowStart ?? "") : "" },
+        effortBecomes: null,
       };
     }
     case "trap_count":
@@ -640,7 +655,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         hold("sample_changed_since", touchedCells[0]!, cellResults.get(touchedCells[0]!)!.fileText);
         continue;
       }
-      const change = changeFor(unit, full, cellResults, collectorIds);
+      const change = changeFor(unit, full, cellResults, collectorIds, known!.facts.kind);
       if (change === null) {
         hold("column_missing", touchedCells[0]!, UNIT_COLUMNS[unit].join(", "));
         continue;
@@ -652,10 +667,14 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         metres: unit === "coordinates" ? pointMoves(full) : null,
       });
     }
-    // What each correction would say to the row's changes, in the order they are applied.
+    // What each correction would say to the row's changes, in the order they are applied, over the kinds ticked.
     if (queued.length > 0) {
-      const refusals = await predictRefusals({ db, conn, messages }, known!.facts, queued.map((q) => q.change));
-      for (const q of queued) result.differences.push({ ...q, refusal: refusals.get(q.unit as ChangeUnit) ?? null, chosen: kinds.has(q.unit) });
+      for (const q of queued) if (q.change.unit === "method_dates") q.change.effortBecomes = await effortBecomes(db, known!.facts, q.change);
+      const predicted = await predictRefusals({ db, conn, messages }, known!.facts, queued.map((q) => q.change), (u) => kinds.has(u));
+      for (const q of queued) {
+        const p = predicted.get(q.unit as ChangeUnit);
+        result.differences.push({ ...q, refusal: p?.refusal ?? null, collectors: p?.collectors, chosen: kinds.has(q.unit) });
+      }
     }
   }
 
@@ -719,18 +738,29 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   const unknownCollectors = [...unknown]
     .map(([name, { rows: at, problem }]) => ({ name, rows: at.size, problem }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const changes: ChangesSummary = { samples: 0, byUnit: Object.fromEntries(SAMPLES_UNITS.map((u) => [u, 0])) as Record<SamplesUnit, number>, points: { moving: 0, far: 0, largest: 0 }, cantApply: 0 };
+  const split = () => emptySplit();
+  const changes: ChangesSummary = {
+    samples: split(),
+    byUnit: Object.fromEntries(SAMPLES_UNITS.map((u) => [u, split()])) as Record<SamplesUnit, SeasonSplit>,
+    points: { moving: split(), far: split(), largest: 0 },
+    mayNot: split(),
+    firstCollector: split(),
+    reprint: 0,
+  };
   for (const r of results) {
-    const queueable = r.differences.filter((d) => d.refusal === null);
-    changes.cantApply += r.differences.length - queueable.length;
-    if (queueable.length > 0) changes.samples++;
-    for (const d of queueable) {
-      changes.byUnit[d.unit]++;
+    if (r.differences.length > 0) changes.samples[r.season]++;
+    for (const d of r.differences) {
+      changes.byUnit[d.unit][r.season]++;
+      // How far a point would move is said whether or not coordinates are ticked: it is what staff tick them by.
       if (d.metres !== null && d.metres > 0) {
-        changes.points.moving++;
-        if (d.metres > 100) changes.points.far++;
+        changes.points.moving[r.season]++;
+        if (d.metres > 100) changes.points.far[r.season]++;
         changes.points.largest = Math.max(changes.points.largest, d.metres);
       }
+      if (!d.chosen) continue;
+      if (d.refusal !== null) changes.mayNot[r.season]++;
+      if (d.collectors?.firstChanged) changes.firstCollector[r.season]++;
+      changes.reprint += d.collectors?.reprint ?? 0;
     }
   }
   return { kind: "samples", counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, rows: results, unknownCollectors, numbering, changes };

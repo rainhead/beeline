@@ -109,6 +109,8 @@ export interface SamplesPreview {
   stoppedRow: number | null;
   /** Staff may choose Try again for a stopped upload. */
   canRetry: boolean;
+  /** What the change the job stopped at says, such as that the corrections file already holds it. */
+  stoppedNote: string | null;
   /** Staff may delete the samples this upload made (the job is not working on it, and it made some that still exist). */
   canUndo: boolean;
 }
@@ -156,6 +158,9 @@ export function UploadPreview({
   notesCopy?: boolean;
 }) {
   const p = m.uploads.page;
+  const total = (of: SeasonSplit) => of.active + of.settled + of.unplaced;
+  // Each count says how many of its rows are in the active seasons and how many in settled ones.
+  const split = (of: SeasonSplit) => p.split(of.active, of.settled, of.unplaced);
   const rows = volunteer?.summary.rows ?? staffSummary?.rows ?? samplesSummary?.rows ?? upload.row_count;
   // Only the counts that are not zero: a line that says nothing is left off.
   const lines: string[] = [];
@@ -174,9 +179,6 @@ export function UploadPreview({
   }
   if (samplesSummary !== null) {
     const c = samplesSummary.counts;
-    const total = (split: SeasonSplit) => split.active + split.settled + split.unplaced;
-    // Each count says how many of its rows are in the active seasons and how many in settled ones.
-    const split = (of: SeasonSplit) => p.split(of.active, of.settled, of.unplaced);
     const o = samplesSummary.outcomes;
     if (o !== null) {
       if (o.pending > 0) lines.push(p.samplesApplying(o.total - o.pending, o.total));
@@ -225,6 +227,7 @@ export function UploadPreview({
       {samplesSummary !== null && samples?.stoppedRow != null && (
         <Callout tone="warning">
           {p.samplesStopped(samples.stoppedRow)}
+          {samples.stoppedNote !== null && <p>{samples.stoppedNote}</p>}
           {samples.canRetry && (
             <form method="post" action={`${uploadHref(upload.entity_id)}/apply-samples/retry`}>
               <Button>{p.samplesTryAgain}</Button>
@@ -276,28 +279,35 @@ export function UploadPreview({
           {samplesSummary.changes !== null && (
             <>
               <h2>{p.changesHeading}</h2>
-              {samplesSummary.changes.samples > 0 && <p>{p.changesLine(samplesSummary.changes.samples)}</p>}
-              {samplesSummary.changes.points.moving > 0 && (
-                <p>{p.pointsLine(samplesSummary.changes.points.moving, samplesSummary.changes.points.far, m.uploads.notes.distance(samplesSummary.changes.points.largest))}</p>
+              <p>{p.changesLine(total(samplesSummary.changes.samples), split(samplesSummary.changes.samples))}</p>
+              {total(samplesSummary.changes.points.moving) > 0 && (
+                <p>
+                  {p.pointsLine(
+                    total(samplesSummary.changes.points.moving),
+                    total(samplesSummary.changes.points.far),
+                    m.uploads.notes.distance(samplesSummary.changes.points.largest),
+                    split(samplesSummary.changes.points.moving),
+                    split(samplesSummary.changes.points.far),
+                  )}
+                </p>
               )}
-              {samplesSummary.changes.cantApply > 0 && <p>{p.cantApplyLine(samplesSummary.changes.cantApply)}</p>}
-              {samplesSummary.changes.kinds.length > 0 && (
-                <>
-                  <p>{p.changesChoose}</p>
-                  {/* Posted with the button, so that the kinds left unticked are told apart from a form that sent none. */}
-                  <input type="hidden" name="kinds_shown" value="1" />
-                  <ul>
-                    {samplesSummary.changes.kinds.map((k) => (
-                      <li>
-                        <label>
-                          <input type="checkbox" name="kind" value={k.unit} checked={k.chosen} /> {p.changeKind(p.changeKinds[k.unit] ?? k.unit, k.samples)}
-                        </label>
-                      </li>
-                    ))}
-                  </ul>
-                  {samplesSummary.changes.kinds.some((k) => k.unit === "coordinates") && <Meta block>{p.changeCoordinatesNote}</Meta>}
-                </>
+              {total(samplesSummary.changes.firstCollector) > 0 && (
+                <p>{p.firstCollectorLine(total(samplesSummary.changes.firstCollector), split(samplesSummary.changes.firstCollector), samplesSummary.changes.reprint)}</p>
               )}
+              {total(samplesSummary.changes.mayNot) > 0 && <p>{p.mayNotLine(total(samplesSummary.changes.mayNot), split(samplesSummary.changes.mayNot))}</p>}
+              <p>{p.changesChoose}</p>
+              {/* Posted with the button, so that the kinds left unticked are told apart from a form that sent none. */}
+              <input type="hidden" name="kinds_shown" value="1" />
+              <ul>
+                {samplesSummary.changes.kinds.map((k) => (
+                  <li>
+                    <label>
+                      <input type="checkbox" name="kind" value={k.unit} checked={k.chosen} /> {p.changeKind(p.changeKinds[k.unit] ?? k.unit, total(k.samples), split(k.samples))}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              {samplesSummary.changes.kinds.some((k) => k.unit === "coordinates") && <Meta block>{p.changeCoordinatesNote}</Meta>}
             </>
           )}
           {samplesSummary.obas !== null && (

@@ -190,6 +190,7 @@ import {
   readerFor,
   recordTrapChange as recordTrapSampleChange,
   setCoordinates,
+  setMethod,
   setTrapCount,
   setPlace,
   takeLocation,
@@ -199,7 +200,6 @@ import {
   type CorrectionDeps,
 } from "./sample-corrections.js";
 import { localityReasonFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
-import { setSampleMethod } from "./sample-method.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
 import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
@@ -1787,36 +1787,41 @@ export function createApp({
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const base = (name: string) => (typeof body[`base:${name}`] === "string" ? (body[`base:${name}`] as string) : undefined);
     const note = field("note").trim();
-    // The save and its entry in the change log, one at a time for the sample.
-    const result = await onSample(sample.sample_id, async () => {
-      const saved = await setSampleMethod(db, corrections, sample.sample_id, {
-        bases: { protocol: base("protocol"), dateEnd: base("date_end"), dateStart: base("date_start") },
-        protocol: field("protocol"),
-        dateEnd: field("date_end"),
-        // Offered only on a sample with no observation; absent, it is not touched.
-        ...(typeof body.date_start === "string" ? { dateStart: body.date_start } : {}),
-        note,
-        author: session.login,
-        today: new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date()),
-      });
-      if (saved.outcome === "saved") {
-        try {
-          await recordSampleChanges(kyselyReader(db), samplePaths, {
-            source: "app",
-            author: session.login,
-            reason: note || undefined,
-            where: `s.entity_id = ${sample.sample_id}`,
-          });
-        } catch (err) {
-          console.warn(`could not record the method change: ${(err as Error).message}`);
-        }
-      }
-      return saved;
+    // The save and its entry in the change log, one at a time for the sample: a correction like the rest.
+    const result = await setMethod(corrective, actorOf(c), sample.sample_id, {
+      bases: { protocol: base("protocol"), dateEnd: base("date_end"), dateStart: base("date_start") },
+      protocol: field("protocol"),
+      dateEnd: field("date_end"),
+      // Offered only on a sample with no observation; absent, it is not touched.
+      ...(typeof body.date_start === "string" ? { dateStart: body.date_start } : {}),
+      note,
+      today: new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date()),
+      problemFor: (problem) => t.problems[problem],
     });
-    if (result.outcome === "invalid") return c.text(t.problems[result.problem], 400);
-    if (result.outcome === "no_old_records") return c.text(t.noOldRecords, 409);
-    if (result.outcome === "conflict") return c.text(t.conflict, 409);
-    if (result.outcome === "not_applied") return c.text(c.get("m").sampleEdit.notApplied, 409);
+    if (!result.ok) {
+      switch (result.refusal) {
+        case "invalid":
+          return c.text(result.problem, 400);
+        case "no_old_records":
+          return c.text(t.noOldRecords, 409);
+        case "conflict":
+          return c.text(t.conflict, 409);
+        case "not_applied":
+          return c.text(c.get("m").sampleEdit.notApplied, 409);
+        case "in_print_run":
+          return c.text(t.inPrintRun, 409);
+        case "number_taken":
+          return c.text(t.numberTaken(result.number), 409);
+        case "impersonating":
+          return c.text(m.errors.readOnlyImpersonating, 403);
+        case "not_admin":
+          return c.text("Admins only.", 403);
+        case "not_found":
+          return errorResponse(c, "notFound");
+        default:
+          return unreachable(result);
+      }
+    }
     return c.redirect(sampleHref(sample.sample_id));
   });
 
@@ -2614,12 +2619,13 @@ export function createApp({
               applied_at === null &&
               (() => {
                 const k = outcome.noted.summary.counts;
-                return k.newReady.active + k.newReady.settled + k.newReady.unplaced + k.newHeld.active + k.newHeld.settled + k.newHeld.unplaced > 0 || (outcome.noted.summary.changes?.samples ?? 0) > 0;
+                return k.newReady.active + k.newReady.settled + k.newReady.unplaced + k.newHeld.active + k.newHeld.settled + k.newHeld.unplaced > 0 || (() => { const x = outcome.noted.summary.changes?.samples; return x !== undefined && x.active + x.settled + x.unplaced > 0; })();
               })(),
             applied: applied_at === null ? null : { at: applied_at, by: row.uploader },
             notice: samplesNotice,
             stoppedRow: stopped_row,
             canRetry: c.get("admin") && stopped_row !== null,
+            stoppedNote: stopped_row === null ? null : (outcome.outcomes.find((o) => o.outcome === "pending" && o.detail !== null)?.detail ?? null),
             // Not while the job is still working on it: rows pending and the upload not stopped.
             canUndo:
               c.get("admin") &&

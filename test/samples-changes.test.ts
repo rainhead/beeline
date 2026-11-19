@@ -5,7 +5,7 @@ import { createKysely } from "../src/db.js";
 import type { Database } from "../src/model.js";
 import { en } from "../src/app/messages/en.js";
 import { APPLY_ORDER } from "../src/app/samples-upload-change.js";
-import { applyPending, applyWaiting, clearStopped } from "../src/app/samples-upload-apply.js";
+import { applyPending, applyWaiting, clearStopped, settleUndone } from "../src/app/samples-upload-apply.js";
 import { SAMPLES_UNITS } from "../src/app/samples-upload-plan.js";
 import { parseSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { duckdbReader } from "../src/person-change.js";
@@ -25,6 +25,7 @@ const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 const day = (n: number, month = "07") => `${CURRENT_SEASON}-${month}-${String(n).padStart(2, "0")}`;
 const esc = (text: string) => text.replaceAll("'", "&#39;");
 const c = en.uploads.changes;
+const in1 = en.uploads.page.split(1, 0, 0);
 const n = en.uploads.notes;
 
 const download = async (f: UploadFixture) => new Uint8Array(await (await f.app.request("/samples.xlsx?scope=all")).arrayBuffer());
@@ -122,7 +123,7 @@ async function oldRecords(f: UploadFixture, sampleId: number, record: string, pr
 }
 
 /** A Kysely whose first update loses a write conflict, as a store write racing another does. */
-function losingOnce(db: Kysely<Database>): Kysely<Database> {
+function losingOnce(db: Kysely<Database>, what: "updateTable" | "transaction" = "updateTable", table?: string): Kysely<Database> {
   let fired = false;
   const losing = <T extends object>(builder: T): T =>
     new Proxy(builder, {
@@ -138,9 +139,14 @@ function losingOnce(db: Kysely<Database>): Kysely<Database> {
     });
   return new Proxy(db, {
     get(target, prop) {
-      if (prop === "updateTable" && !fired) {
-        fired = true;
-        return (...args: unknown[]) => losing((target.updateTable as (...a: unknown[]) => object)(...args));
+      if (prop === what && !fired) {
+        if (what === "transaction") return () => ((fired = true), { execute: async () => Promise.reject(new Error("TransactionContext Error: Conflict on update!")) });
+        return (...args: unknown[]) => {
+          const built = (target.updateTable as (...a: unknown[]) => object)(...args);
+          if (table !== undefined && args[0] !== table) return built;
+          fired = true;
+          return losing(built);
+        };
       }
       const value = Reflect.get(target, prop, target);
       return typeof value === "function" ? value.bind(target) : value;
@@ -160,7 +166,7 @@ describe("a changed existing row", () => {
         set: { eventDate: `${day(2)}/${day(9)}`, samplingProtocol: "pan trap", trapCount: "8", specimenCount: "4", recordedBy: "Vera Volunteer | Sam Staff", locality: "Albany" },
       },
     ]);
-    expect(html).toContain(esc(en.uploads.page.changesLine(1)));
+    expect(html).toContain(esc(en.uploads.page.changesLine(1, in1)));
     expect((await apply(f, location, { digest })).status).toBe(303);
     expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, applied: 5 });
     const row = await rowOf(f, t);
@@ -211,7 +217,7 @@ describe("a changed existing row", () => {
     const t = await trapSample(f);
     // 0.0288 degrees of latitude is 3.2 km.
     const { location, html, digest } = await offered(f, [{ id: t, set: { decimalLatitude: "44.5934", locality: "Albany" } }]);
-    expect(html).toContain(esc(en.uploads.page.pointsLine(1, 1, "3.2 km")));
+    expect(html).toContain(esc(en.uploads.page.pointsLine(1, 1, "3.2 km", in1, in1)));
     expect(html).toMatch(/name="kind" value="coordinates"\/>/);
     expect(html).toMatch(/name="kind" value="place" checked=""\/>/);
     expect(html).toContain(esc(en.uploads.page.changeCoordinatesNote));
@@ -275,23 +281,31 @@ describe("a changed existing row", () => {
 });
 
 describe("a change a correction would refuse", () => {
-  it("is shown in the preview with the correction's sentence, is not queued, and is recorded as refused", async () => {
+  it("is shown in the preview as one that may not be applied, is queued all the same, and is recorded as refused with the correction's own sentence", async () => {
     const f = await uploadFixture();
     // A net sample: it has no trap count and no specimen count to correct.
     const { location, html, digest } = await offered(f, [{ id: f.ids.sampleA, set: { trapCount: "5", specimenCount: "9" } }], [
       { fieldNumber: "OBAS-00011", recordedBy: "Vera Volunteer", eventDate: day(10), samplingProtocol: "vane trap", trapCount: "6", specimenCount: "2", decimalLatitude: "44.9", decimalLongitude: "-123.2", coordinateUncertaintyInMeters: "50", countryCode: "US", stateProvince: "OR", county: "Benton", locality: "Fir Butte" },
     ]);
-    expect(html).toContain(esc(en.uploads.page.cantApplyLine(2)));
-    expect(await noteOf(f, location, f.ids.sampleA)).toContain(n.cantApply("trap count", en.record.sample.trapCount.problems.net));
+    expect(html).toContain(esc(en.uploads.page.mayNotLine(2, en.uploads.page.split(2, 0, 0))));
+    expect(await noteOf(f, location, f.ids.sampleA)).toContain(n.mayNot("trap count", en.record.sample.trapCount.problems.net));
     expect((await apply(f, location, { digest })).status).toBe(303);
-    // Settled when the file was applied: nothing for the job to do for them.
+    // Queued: a prediction is shown and not enforced, so the correction decides.
     const row = await rowOf(f, f.ids.sampleA);
+    expect(byUnit(await outcomesOf(f, row))).toEqual({ trap_count: ["pending", null], specimen_count: ["pending", null] });
+    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 2, skipped: 0, stopped: 0 });
     expect(byUnit(await outcomesOf(f, row))).toEqual({
       trap_count: ["refused", en.record.sample.trapCount.problems.net],
       specimen_count: ["refused", en.record.sample.specimenCount.problems.net],
     });
-    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 0, skipped: 0, stopped: 0 });
     expect(await rows(f.conn, `SELECT specimen_count FROM sample WHERE entity_id = ${f.ids.sampleA}`)).toEqual([[3]]);
+  });
+
+  it("predicts only over the kinds that are ticked", async () => {
+    const f = await uploadFixture();
+    // Coordinates on a sample nothing can keep a point against would be refused, but they are not ticked.
+    const { html } = await offered(f, [{ id: f.ids.sampleA, set: { decimalLatitude: "44.6", locality: "Albany" } }]);
+    expect(html).not.toContain(esc(en.uploads.page.mayNotLine(1, in1)));
   });
 
   it("is predicted for a start date on a sample with an observation, a method on a sample nothing backs, a print run and a number taken", async () => {
@@ -312,10 +326,10 @@ describe("a change a correction would refuse", () => {
       { id: f.ids.sampleC!, set: { samplingProtocol: "pan trap" } },
       { id: f.ids.sampleB, set: { samplingProtocol: "pan trap" } },
     ]);
-    expect(await noteOf(f, location, withObservation)).toContain(n.cantApply("method and dates", en.record.sample.methodEdit.problems.start_observation));
-    expect(await noteOf(f, location, net)).toContain(n.cantApply("method and dates", c.becomesTrapNumberTaken("N-2")));
-    expect(await noteOf(f, location, f.ids.sampleC!)).toContain(n.cantApply("method and dates", c.methodInPrintRun));
-    expect(await noteOf(f, location, f.ids.sampleB)).toContain(n.cantApply("method and dates", en.record.sample.methodEdit.noOldRecords));
+    expect(await noteOf(f, location, withObservation)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.problems.start_observation));
+    expect(await noteOf(f, location, net)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.numberTaken("N-2")));
+    expect(await noteOf(f, location, f.ids.sampleC!)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.inPrintRun));
+    expect(await noteOf(f, location, f.ids.sampleB)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
   });
 
   it("is predicted for a specimen count below the highest specimen number already given", async () => {
@@ -323,9 +337,10 @@ describe("a change a correction would refuse", () => {
     const t = await trapSample(f, { specimen_count: "3" });
     for (const k of [1, 2, 3]) await f.conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${t}, ${k}, NULL)`);
     const { location, digest } = await offered(f, [{ id: t, set: { specimenCount: "1", trapCount: "8" } }]);
-    expect(await noteOf(f, location, t)).toContain(n.cantApply("specimen count", en.record.sample.specimenCount.problems.numbered(3)));
+    expect(await noteOf(f, location, t)).toContain(n.mayNot("specimen count", en.record.sample.specimenCount.problems.numbered(3)));
     expect((await apply(f, location, { digest })).status).toBe(303);
-    expect(byUnit(await outcomesOf(f))).toMatchObject({ specimen_count: ["refused", en.record.sample.specimenCount.problems.numbered(3)] });
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0, applied: 1 });
+    expect(byUnit(await outcomesOf(f))).toMatchObject({ specimen_count: ["refused", en.record.sample.specimenCount.problems.numbered(3)], trap_count: ["applied", null] });
   });
 
   it("is recorded with the correction's own sentence when the job meets it: a locality on a sample with no record to keep it against", async () => {
@@ -350,7 +365,7 @@ describe("a change a correction refuses only when the job meets it", () => {
     expect((await apply(f, location, { digest })).status).toBe(303);
     await trapSample(f, { sample_number: "'N-3'" });
     expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
-    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", c.becomesTrapNumberTaken("N-3")] });
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", en.record.sample.methodEdit.numberTaken("N-3")] });
     expect(await rows(f.conn, `SELECT kind FROM sample WHERE entity_id = ${net}`)).toEqual([["net"]]);
   });
 
@@ -369,35 +384,32 @@ describe("a change a correction refuses only when the job meets it", () => {
        VALUES (${label[0]}, ${c1}, ${label[1]}, ${label[2]}, '${label[3]}', '${label[4]}', '${label[5]}', '${label[6]}', '${label[7]}', '${label[8]}', ${label[9]}, ${label[10]}, DATE '${label[11]}', DATE '${label[12]}')`,
     );
     expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
-    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", c.methodInPrintRun] });
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", en.record.sample.methodEdit.inPrintRun] });
     expect(await rows(f.conn, `SELECT protocol FROM sample WHERE entity_id = ${f.ids.sampleC}`)).toEqual([["vane trap"]]);
   });
 });
 
-describe("the row's version", () => {
-  it("is checked once, before the row's first change: a sample changed in Beeline since the download has every change refused", async () => {
+describe("what Beeline holds right before a change", () => {
+  it("is compared with what the file was downloaded against: a cell changed since refuses that change and not the row", async () => {
     const f = await uploadFixture();
     const t = await trapSample(f);
     const { location, digest } = await offered(f, [{ id: t, set: { trapCount: "8", locality: "Albany" } }]);
     expect((await apply(f, location, { digest })).status).toBe(303);
-    // Somebody corrects the sample between the button and the job.
-    await f.conn.run(`UPDATE sample SET specimen_count = 5 WHERE entity_id = ${t}`);
-    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 2, skipped: 0, stopped: 0 });
-    expect(byUnit(await outcomesOf(f))).toEqual({ trap_count: ["refused", c.versionChanged], place: ["refused", c.versionChanged] });
-    expect(await rows(f.conn, `SELECT sampling_effort, locality FROM sample WHERE entity_id = ${t}`)).toEqual([["6 vane traps", "Corvallis"]]);
+    // Somebody corrects the locality between the button and the job.
+    await f.conn.run(`UPDATE sample SET locality = 'Elsewhere' WHERE entity_id = ${t}`);
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0, applied: 1 });
+    expect(byUnit(await outcomesOf(f))).toEqual({ trap_count: ["applied", null], place: ["refused", c.changedSince("locality", "Elsewhere")] });
+    expect(await rows(f.conn, `SELECT sampling_effort, locality FROM sample WHERE entity_id = ${t}`)).toEqual([["8 vane traps", "Elsewhere"]]);
   });
 
-  it("is not checked again for a row resumed after a stop, whose own earlier writes changed it", async () => {
+  it("does not refuse a later change of the row for the row's own earlier writes", async () => {
     const f = await uploadFixture();
     const t = await trapSample(f);
-    const { location, digest } = await offered(f, [{ id: t, set: { trapCount: "8", specimenCount: "4" } }]);
+    // The method rewrites the effort text of an entered sample, which the trap count's cell then reads.
+    const { location, digest } = await offered(f, [{ id: t, set: { samplingProtocol: "pan trap", trapCount: "8", specimenCount: "4" } }]);
     expect((await apply(f, location, { digest })).status).toBe(303);
-    // The first change was made before the run stopped.
-    await f.conn.run(`UPDATE sample SET sampling_effort = '8 vane traps' WHERE entity_id = ${t}`);
-    await f.conn.run(`UPDATE upload_sample_outcome SET outcome = 'applied' WHERE unit = 'trap_count'`);
-    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, applied: 1 });
-    expect(byUnit(await outcomesOf(f))).toEqual({ trap_count: ["applied", null], specimen_count: ["applied", null] });
-    expect(await rows(f.conn, `SELECT specimen_count FROM sample WHERE entity_id = ${t}`)).toEqual([[4]]);
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, applied: 3 });
+    expect(await rows(f.conn, `SELECT sampling_effort, specimen_count FROM sample WHERE entity_id = ${t}`)).toEqual([["8 pan traps", 4]]);
   });
 
   it("refuses the apply, writing nothing, when a sample changed between the page and the button", async () => {
@@ -427,7 +439,8 @@ describe("a change that is neither made nor refused", () => {
     expect(await (await f.app.request(location)).text()).toContain(esc(en.uploads.page.samplesStopped(await rowOf(f, t))));
     expect(await clearStopped(f.db, await uploadId(f))).toBe(true);
     expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, applied: 2 });
-    expect(byUnit(await outcomesOf(f))).toEqual({ collectors: ["applied", null], place: ["applied", null] });
+    // The collectors' own warnings are kept with the change that made them.
+    expect(byUnit(await outcomesOf(f))).toEqual({ collectors: ["applied", expect.stringContaining("now has what its collectors have")], place: ["applied", null] });
   });
 
   it("is left pending when the store write loses a conflict, and sending it again applies it", async () => {
@@ -436,7 +449,8 @@ describe("a change that is neither made nor refused", () => {
     const { location, digest } = await offered(f, [{ id: t, set: { samplingProtocol: "pan trap" } }]);
     expect((await apply(f, location, { digest })).status).toBe(303);
     await expect(applyPending(deps(f, { db: losingOnce(createKysely(f.instance)) }))).rejects.toThrow(/was not done: not_applied/);
-    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["pending", null] });
+    // Nothing was kept elsewhere for a sample entered in Beeline, and the note says so.
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["pending", c.notAppliedNothingKept] });
     expect(await rows(f.conn, `SELECT protocol FROM sample WHERE entity_id = ${t}`)).toEqual([["vane trap"]]);
     expect(await clearStopped(f.db, await uploadId(f))).toBe(true);
     expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, applied: 1 });
@@ -470,5 +484,135 @@ describe("a file with new rows and changes", () => {
     expect(await rows(f.conn, `SELECT locality FROM sample WHERE entity_id = ${t}`)).toEqual([["Albany"]]);
     expect(await noteOf(f, location, t)).toContain(n.unitApplied(n.appliedCell("locality", '"Corvallis"', '"Albany"')));
     expect(SAMPLES_UNITS.length).toBe(7);
+  });
+});
+
+describe("the effort text after a method change on an old sample", () => {
+  const oldTrap = async (f: UploadFixture, effort: string) => {
+    const o = await trapSample(f, { sample_number: "'O-5'", protocol: "'pan trap'", sampling_effort: `'${effort}'` }, false);
+    await oldRecords(f, o, "rec-5", "pan trap");
+    return o;
+  };
+
+  it("is rewritten, with the new text shown in the preview, when it is exactly its count and its old method, even with the trap count unticked", async () => {
+    const f = await uploadFixture();
+    const o = await oldTrap(f, "6 pan traps");
+    const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "vane trap" } }]);
+    expect(await noteOf(f, location, o)).toContain(n.effortBecomes("6 vane traps"));
+    expect((await apply(f, location, { digest, kinds: ["method_dates"] })).status).toBe(303);
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, applied: 1 });
+    expect(await rows(f.conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${o}`)).toEqual([["vane trap", "6 vane traps"]]);
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["applied", c.effortRewritten("6 vane traps")] });
+  });
+
+  it("is left alone when it says something else, such as how long the traps were out", async () => {
+    const f = await uploadFixture();
+    const o = await oldTrap(f, "45 minutes");
+    const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "vane trap" } }]);
+    expect(await noteOf(f, location, o)).not.toContain("effort text");
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    await applyPending(deps(f));
+    expect(await rows(f.conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${o}`)).toEqual([["vane trap", "45 minutes"]]);
+  });
+
+  it("settles the method change as made before the rewrite, and a failed rewrite is a sentence in its note, not a stop", async () => {
+    const f = await uploadFixture();
+    const o = await oldTrap(f, "6 pan traps");
+    const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "vane trap" } }]);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    // The count's correction cannot be reached: the rewrite fails as a lost write conflict would.
+    const result = await applyPending(deps(f, { db: losingOnce(createKysely(f.instance), "updateTable", "sample") }));
+    expect(result).toMatchObject({ applied: 1, stopped: 0 });
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["applied", c.effortNotRewritten(c.effortBusy)] });
+  });
+});
+
+describe("a stop that left the corrections file holding the change", () => {
+  it("says so on the change and the page, and a retry that finds the sample changed says the file holds an event the store never got", async () => {
+    const f = await uploadFixture();
+    const o = await trapSample(f, { sample_number: "'O-6'" }, false);
+    await oldRecords(f, o, "rec-6", "vane trap");
+    const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "pan trap" } }]);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    await expect(applyPending(deps(f, { db: losingOnce(createKysely(f.instance), "transaction") }))).rejects.toThrow(/not_applied/);
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["pending", c.notAppliedPending] });
+    expect(await (await f.app.request(location)).text()).toContain(esc(c.notAppliedPending));
+    // The sample changed meanwhile, so the retry is refused, and its note says what is left over.
+    await f.conn.run(`UPDATE sample SET protocol = 'malaise trap' WHERE entity_id = ${o}`);
+    expect(await clearStopped(f.db, await uploadId(f))).toBe(true);
+    await applyPending(deps(f));
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", `${c.changedSince("samplingProtocol", "malaise trap")} ${c.notAppliedRefused}`] });
+  });
+});
+
+describe("collectors", () => {
+  it("warn in the preview when the first collector changes, and the applied change records the real call's warnings", async () => {
+    const f = await uploadFixture();
+    const t = await trapSample(f);
+    const { location, html, digest } = await offered(f, [{ id: t, set: { recordedBy: "Sam Staff | Vera Volunteer" } }]);
+    expect(html).toContain(esc(en.uploads.page.firstCollectorLine(1, in1, 0)));
+    const note = await noteOf(f, location, t);
+    expect(note).toContain("Sam Staff is now the first collector, in place of Vera Volunteer");
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, applied: 1 });
+    const [detail] = (await outcomesOf(f)).map((o) => o.detail);
+    expect(String(detail)).toContain("Sam Staff is now the first collector");
+    expect(await noteOf(f, location, t)).toContain("Sam Staff is now the first collector");
+  });
+});
+
+describe("the counts on the page", () => {
+  it("are split by season, as every other count is", async () => {
+    const f = await uploadFixture();
+    const { html } = await offered(f, [
+      { id: f.ids.sampleA, set: { county: "Linn" } },
+      { id: f.ids.sampleB, set: { county: "Linn" } },
+    ]);
+    expect(html).toContain(esc(en.uploads.page.changesLine(2, en.uploads.page.split(1, 1, 0))));
+  });
+});
+
+describe("words and notes", () => {
+  it("say an undone upload's change was not made, not that it was not created", async () => {
+    const f = await uploadFixture();
+    const t = await trapSample(f);
+    const { location, digest } = await offered(f, [{ id: t, set: { locality: "Albany" } }]);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    await settleUndone(f.db, await uploadId(f));
+    expect(byUnit(await outcomesOf(f))).toEqual({ place: ["skipped", "The upload was undone, so this change was not made."] });
+  });
+
+  it("do not break the download of the notes when a stored payload cannot be read: the change's label stands in", async () => {
+    const f = await uploadFixture();
+    const t = await trapSample(f);
+    const { location, digest } = await offered(f, [{ id: t, set: { locality: "Albany" } }]);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    await applyPending(deps(f));
+    await f.conn.run(`UPDATE upload_sample_outcome SET payload = 'not json' WHERE unit = 'place'`);
+    expect(await noteOf(f, location, t)).toContain(n.unitApplied("locality"));
+  });
+
+  it("give a printed entered sample's locality a sentence that does not send staff elsewhere", async () => {
+    const f = await uploadFixture();
+    const t = await trapSample(f);
+    await f.conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${t}, 1, 'OBA20001')`);
+    const { location } = await offered(f, [{ id: t, set: { locality: "Albany" } }]);
+    const note = await noteOf(f, location, t);
+    expect(note).toContain(n.mayNot("locality", c.localityPrinted));
+    expect(c.localityPrinted).not.toContain("Staff correct it");
+  });
+});
+
+describe("the method page", () => {
+  it("refuses a method change while a print run that has not printed holds the sample, as the upload does", async () => {
+    const f = await uploadFixture("staffer", { unprinted: true });
+    await f.conn.run(`UPDATE sample SET kind = 'trap', date_end = date_end + 3, protocol = 'vane trap' WHERE entity_id = ${f.ids.sampleC}`);
+    await f.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${f.ids.sampleC}, ${f.staffer})`);
+    const body = new FormData();
+    body.set("protocol", "pan trap");
+    body.set("date_end", day(17));
+    const res = await f.app.request(`/samples/${f.ids.sampleC}/method`, { method: "POST", headers: { origin: ORIGIN }, body });
+    expect(res.status).toBe(409);
+    expect(await res.text()).toBe(en.record.sample.methodEdit.inPrintRun);
   });
 });

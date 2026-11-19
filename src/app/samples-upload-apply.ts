@@ -10,8 +10,9 @@ import { en } from "./messages/en.js";
 import type { Messages } from "./messages/index.js";
 import type { Actor, CorrectionDeps } from "./sample-corrections.js";
 import { recordTrapChange } from "./sample-corrections.js";
+import { fromOldRecords } from "./sample-method.js";
 import { onSample } from "./sample-queue.js";
-import { APPLY_ORDER, applyUnit, readQueuedUnit, type ChangeUnit, type QueuedUnit } from "./samples-upload-change.js";
+import { APPLY_ORDER, applyUnit, readQueuedUnit, type QueuedUnit } from "./samples-upload-change.js";
 import { isHeld, readNow, type NewRowCreate, type SampleRowResult, type SampleUnitDifference as SamplesUnitDifference, type SamplesPlan } from "./samples-upload-plan.js";
 
 /**
@@ -49,9 +50,9 @@ export function rowsHeld(plan: SamplesPlan): Array<SampleRowResult & { create: N
   return plan.rows.filter((r): r is SampleRowResult & { create: NewRowCreate } => r.create !== null && isHeld(r.create));
 }
 
-/** The changes to existing samples that applying queues, by row: those ticked and not predicted to be refused. */
+/** The changes to existing samples that applying queues, by row: every one whose kind is ticked. A predicted refusal does not leave one out: the correction decides. */
 export function unitsToApply(plan: SamplesPlan): Array<{ row: SampleRowResult; unit: SamplesUnitDifference }> {
-  return plan.rows.flatMap((row) => row.differences.filter((d) => d.chosen && d.refusal === null).map((unit) => ({ row, unit })));
+  return plan.rows.flatMap((row) => row.differences.filter((d) => d.chosen).map((unit) => ({ row, unit })));
 }
 
 /**
@@ -60,13 +61,14 @@ export function unitsToApply(plan: SamplesPlan): Array<{ row: SampleRowResult; u
  * is the person's own answer and is not in it: the page's form carries this, and applying refuses if the plan worked
  * out again gives another. For an existing sample, every change that could be queued, whether or not its kind is ticked
  * (so the ticks, which are posted with the button, need not be in it): its row and unit, what it would write and the
- * people its collectors came to, the version the file says, and the sentence of a change predicted to be refused.
+ * people its collectors came to, the version the file says, and for a method change the effort text it would rewrite.
+ * Predicted refusals are not in it: they depend on the ticks, and are shown and not enforced.
  */
 export function digestOf(plan: SamplesPlan): string {
   const hash = createHash("sha256");
   for (const r of plan.rows) {
     if (r.kind === "existing") {
-      for (const d of r.differences) hash.update(JSON.stringify([r.row, "unit", d.unit, d.change, d.refusal, r.fileVersion]));
+      for (const d of r.differences) hash.update(JSON.stringify([r.row, "unit", d.unit, d.change, r.fileVersion]));
       continue;
     }
     if (r.create === null) continue;
@@ -84,7 +86,7 @@ export function digestOf(plan: SamplesPlan): string {
 export const lookalikeSentence = (sampleNumber: string, fileRow?: number) =>
   fileRow !== undefined
     ? `It looks like row ${fileRow}${sampleNumber === "" ? "" : ` (${sampleNumber})`} of this file: the same first collector, overlapping days and a point within 100 metres, so it was not created. If it is a different trap, upload the row again and tick create anyway, or enter it on the trap form.`
-    : `It looks like ${sampleNumber === "" ? "a sample Beeline already has" : `sample ${sampleNumber}`}: the same first collector, overlapping days and a point within 100 metres, so it was not created. To change that sample instead, put its sampleId in the file and upload the file again. To make a new sample anyway, upload the row again and tick create anyway, or enter it on the trap form.`;
+    : `It looks like ${sampleNumber === "" ? "a sample Beeline already has" : `sample ${sampleNumber}`}: the same first collector, overlapping days and a point within 100 metres, so it was not created. To change that sample instead, edit its row in a fresh download, which carries its sampleId, sampleVersion and fieldNumber, and upload that. To make a new sample anyway, upload the row again and tick create anyway, or enter it on the trap form.`;
 
 /** The sentence for a row left alone because its number is in the OBAS series and the numbers were not confirmed. */
 export const obasSentence =
@@ -98,10 +100,9 @@ const heldSentence = (create: NewRowCreate): string =>
  * Claim the upload and queue its rows, in one transaction. False if the upload was claimed already, which its key
  * decides: two submissions of one page cannot both queue the rows.
  *
- * A new row is one unit. For an existing sample, each change that could be queued is a unit named for its kind of
- * change: `pending` when its kind was ticked, `skipped` when it was not (the person chose to leave it), `refused`
- * with the sentence when a correction was predicted to refuse it. The two that are settled here carry no payload,
- * which is how the job tells work it has done from what was settled at the claim.
+ * A new row is one unit. For an existing sample, each change is a unit named for its kind of change: `pending` when
+ * its kind was ticked, `skipped` when it was not (the person chose to leave it). A predicted refusal is not recorded
+ * here: it is shown and not enforced, and the job asks the correction itself.
  */
 export async function claimUpload(
   db: Kysely<Database>,
@@ -120,10 +121,9 @@ export async function claimUpload(
   for (const r of claim.plan.rows) {
     for (const d of r.differences) {
       const base = { row: r.row, unit: d.unit, sampleId: r.sampleId, number: r.sampleNumber };
-      if (d.refusal !== null) inserts.push({ ...base, outcome: "refused", payload: null, detail: d.refusal });
-      else if (!d.chosen) inserts.push({ ...base, outcome: "skipped", payload: null, detail: m.uploads.changes.notChosen });
+      if (!d.chosen) inserts.push({ ...base, outcome: "skipped", payload: null, detail: m.uploads.changes.notChosen });
       else {
-        const queued: QueuedUnit = { version: r.fileVersion ?? "", change: d.change, cells: d.cells.filter((c) => c.differs).map((c) => ({ column: c.column, was: c.was, fileSays: c.fileSays })) };
+        const queued: QueuedUnit = { change: d.change, cells: d.cells.map((c) => ({ column: c.column, was: c.was, fileSays: c.fileSays, differs: c.differs })) };
         inserts.push({ ...base, outcome: "pending", payload: JSON.stringify(queued), detail: null });
       }
     }
@@ -172,7 +172,7 @@ export interface OutcomeRow {
   detail: string | null;
   /** What was queued, as JSON: for a change to an existing sample, the cells it came from, which its note says. Null for a new row, whose payload the page does not need. */
   payload: string | null;
-  /** The claim queued it for the job (it holds a payload), as against settling it itself: a row that was held, a change not ticked or predicted to be refused. */
+  /** The claim queued it for the job (it holds a payload), as against settling it itself: a row that was held, or a change not ticked. */
   queued: boolean;
   /** The sample was made and has since been deleted (`sample_deletion`). */
   deleted: boolean;
@@ -220,7 +220,7 @@ export async function settleUndone(db: Kysely<Database>, uploadId: number): Prom
   await db.updateTable("upload_applied").set({ stopped_at: null, stopped_row: null }).where("upload_id", "=", uploadId).execute();
   await db
     .updateTable("upload_sample_outcome")
-    .set({ outcome: "skipped", detail: "The upload was undone, so this row was not created.", recorded_at: new Date().toISOString() })
+    .set({ outcome: "skipped", detail: sql<string>`CASE WHEN unit = 'row' THEN 'The upload was undone, so this row was not created.' ELSE 'The upload was undone, so this change was not made.' END`, recorded_at: new Date().toISOString() })
     .where("upload_id", "=", uploadId)
     .where("outcome", "=", "pending")
     .execute();
@@ -404,19 +404,33 @@ class UnitNotDone extends Error {}
 const staffNow = async (deps: ApplyDeps, personId: number): Promise<boolean> =>
   deps.isStaff !== undefined ? deps.isStaff(personId) : (await deps.db.selectFrom("person_admin").where("person_id", "=", personId).select("person_id").executeTakeFirst()) !== undefined;
 
+/** Set what a change's note says without settling it: for a change still pending, or to add to what an applied one says. */
+async function noteOn(db: Kysely<Database>, key: Pick<Pending, "upload_id" | "row_number" | "unit">, detail: string): Promise<void> {
+  await db
+    .updateTable("upload_sample_outcome")
+    .set({ detail })
+    .where("upload_id", "=", key.upload_id)
+    .where("row_number", "=", key.row_number)
+    .where("unit", "=", key.unit)
+    .execute();
+}
+
 /**
- * Apply the pending changes of one existing sample's row, each through its correction, in `APPLY_ORDER`. The row's
- * version check comes first, once: the sample must still be as the file's `sampleVersion` says when the row is first
- * worked on, or every change of the row is refused. A row with any change already made is a row resumed after a stop,
- * and its own earlier writes changed the version, so it is not checked again.
+ * Apply the pending changes of one existing sample's row, each through its correction, in `APPLY_ORDER`. Right before
+ * each change, the cells it came from are compared with what Beeline holds now, as the uploader's reader (staff, who see
+ * what the download showed): a difference refuses that change as changed in Beeline since the file was downloaded. That
+ * replaces a check of the whole row's version, which could not tell a resumed row's own earlier writes from somebody
+ * else's and refused every change of the row for one it did not use. A small window remains between this read and the
+ * correction's own turn, since most corrections take no expected value; the method's takes its bases.
  */
 async function changeRow(deps: ApplyDeps, p: Pending): Promise<Counts> {
   const m = deps.messages ?? en;
+  const w = m.uploads.changes;
   const counts: Counts = {};
   const count = (k: keyof Counts) => (counts[k] = (counts[k] ?? 0) + 1);
   const all = (
-    await sql<{ unit: string; outcome: string; payload: string | null }>`
-      SELECT unit, outcome, payload FROM upload_sample_outcome WHERE upload_id = ${p.upload_id} AND row_number = ${p.row_number}
+    await sql<{ unit: string; outcome: string; payload: string | null; detail: string | null }>`
+      SELECT unit, outcome, payload, detail FROM upload_sample_outcome WHERE upload_id = ${p.upload_id} AND row_number = ${p.row_number}
       ORDER BY ${sql.raw(UNIT_ORDER_SQL("unit"))}`.execute(deps.db)
   ).rows;
   const pending = all.filter((u) => u.outcome === "pending");
@@ -429,28 +443,12 @@ async function changeRow(deps: ApplyDeps, p: Pending): Promise<Counts> {
   };
   const sampleId = p.sample_id;
   if (sampleId === null) {
-    await refuseRow(m.uploads.changes.sampleGone);
+    await refuseRow(w.sampleGone);
     return counts;
   }
   if (!(await staffNow(deps, p.applied_by))) {
-    await refuseRow(m.uploads.changes.noLongerStaff);
+    await refuseRow(w.noLongerStaff);
     return counts;
-  }
-  // Work done at the claim (a change left alone, or refused) holds no payload; only a change the job made counts as work.
-  const resumed = all.some((u) => u.outcome !== "pending" && u.payload !== null);
-  if (!resumed) {
-    // Every change of a row carries the one version; one whose payload cannot be read is refused by itself, below.
-    const first = pending.map((u) => readQueuedUnit(u.payload)).find((q): q is QueuedUnit => !("unreadable" in q));
-    const now = (await readNow(deps.db, [sampleId], STAFF_READER)).get(sampleId);
-    if (now === undefined) {
-      await refuseRow(m.uploads.changes.sampleGone);
-      return counts;
-    }
-    // Read as the uploader's reader, who is staff and so sees what the download showed.
-    if (first !== undefined && now.cells.get("sampleVersion") !== first.version) {
-      await refuseRow(m.uploads.changes.versionChanged);
-      return counts;
-    }
   }
   const actor: Actor = { personId: p.applied_by, signedInPersonId: p.applied_by, login: p.login ?? "", staff: true, impersonating: false, via: "upload" };
   const corrective: CorrectionDeps = {
@@ -467,23 +465,47 @@ async function changeRow(deps: ApplyDeps, p: Pending): Promise<Counts> {
   const settled = new Map(all.filter((u) => u.outcome !== "pending").map((u) => [u.unit, u.outcome]));
   for (const u of pending) {
     const key = { upload_id: p.upload_id, row_number: p.row_number, unit: u.unit };
+    const refuse = async (detail: string) => {
+      await settle(deps.db, key, "refused", detail);
+      settled.set(u.unit, "refused");
+      count("refused");
+    };
     const queued = readQueuedUnit(u.payload);
     if ("unreadable" in queued) {
-      await settle(deps.db, key, "refused", m.uploads.changes.rowUnreadable(queued.unreadable));
-      count("refused");
+      await refuse(w.rowUnreadable(queued.unreadable));
       continue;
     }
     // A change begun is not cut off, but none begins once the process is stopping.
     if (deps.signal?.aborted) throw new JobInterrupted(`upload ${p.upload_id} row ${p.row_number}`);
-    const result = await applyUnit(
-      { corrective, messages: m, today: deps.today?.() ?? oregonToday() },
-      { sampleId, note: historyReason(p.upload_id), actor, settled },
-      queued.change,
-    );
-    if (result.outcome === "stop") throw new UnitNotDone(`upload ${p.upload_id} row ${p.row_number} ${u.unit} was not done: ${result.why}`);
-    await settle(deps.db, key, result.outcome, "detail" in result ? result.detail : null);
+    // The place follows a point just set, so what the point wrote there is not somebody else's change: that change is skipped below.
+    if (!(u.unit === "area" && settled.get("coordinates") === "applied")) {
+      const now = (await readNow(deps.db, [sampleId], STAFF_READER)).get(sampleId);
+      if (now === undefined) {
+        await refuse(w.sampleGone);
+        continue;
+      }
+      const differs = queued.cells.find((c) => (now.cells.get(c.column) ?? "") !== c.was);
+      if (differs !== undefined) {
+        // A change that stopped as recorded and not applied, and then found the sample changed: the file holds an event the store never got.
+        const earlier = u.detail === w.notAppliedPending ? ` ${w.notAppliedRefused}` : "";
+        await refuse(w.changedSince(differs.column, now.cells.get(differs.column) ?? "") + earlier);
+        continue;
+      }
+    }
+    const result = await applyUnit({ corrective, messages: m, today: deps.today?.() ?? oregonToday() }, { sampleId, note: historyReason(p.upload_id), actor, settled }, queued.change);
+    if (result.outcome === "stop") {
+      // For a sample with old records, the corrections file holds the change and the store does not.
+      if (result.why === "not_applied") await noteOn(deps.db, key, (await fromOldRecords(deps.db, sampleId)) ? w.notAppliedPending : w.notAppliedNothingKept);
+      throw new UnitNotDone(`upload ${p.upload_id} row ${p.row_number} ${u.unit} was not done: ${result.why}`);
+    }
+    // Settled as made before anything that follows it, so a follow-up that fails cannot leave a change half done.
+    await settle(deps.db, key, result.outcome, "detail" in result ? (result.detail ?? null) : null);
     settled.set(u.unit, result.outcome);
     count(result.outcome);
+    if (result.outcome === "applied" && result.followUp !== undefined) {
+      const said = await result.followUp();
+      if (said !== null) await noteOn(deps.db, key, [result.detail, said].filter((x) => x !== undefined && x !== "").join(" "));
+    }
   }
   return counts;
 }

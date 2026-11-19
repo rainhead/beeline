@@ -59,21 +59,47 @@ export function driveUploadArchive(key: ServiceAccountKey, folderId: string, tim
     async keep(file) {
       const signal = AbortSignal.timeout(timeoutMs);
       const token = await serviceAccountToken(key, signal);
-      const stored = await uploadFile(token, {
-        folderId,
-        path: file.path,
-        name: file.name,
-        mimeType: XLSX,
-        metadata: { description: file.description, appProperties: file.properties },
-        signal,
-      });
-      return stored.id;
+      try {
+        const stored = await uploadFile(token, {
+          folderId,
+          path: file.path,
+          name: file.name,
+          mimeType: XLSX,
+          metadata: { description: file.description, appProperties: file.properties },
+          signal,
+        });
+        return stored.id;
+      } catch (err) {
+        // Drive may have stored the file and the answer been lost on the way back (CodeRabbit). The upload is then
+        // refused, so any copy that did arrive is binned, found by the upload id it carries.
+        await binStrays(token, folderId, file.properties.uploadId).catch((stray: Error) =>
+          console.error(`upload ${file.properties.uploadId}: could not look for a copy in Drive to bin (${stray.message})`),
+        );
+        throw err;
+      }
     },
     async discard(driveId) {
       const signal = AbortSignal.timeout(timeoutMs);
       await trashFile(await serviceAccountToken(key, signal), driveId, signal);
     },
   };
+}
+
+/** Bin every file in the folder that carries this upload id, for an upload that was refused after Drive may have taken it. */
+async function binStrays(token: string, folderId: string, uploadId: string | undefined): Promise<void> {
+  if (uploadId === undefined || !/^\d+$/.test(uploadId)) return;
+  const params = new URLSearchParams({
+    q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false and appProperties has { key='uploadId' and value='${uploadId}' }`,
+    fields: "files(id)",
+    supportsAllDrives: "true",
+    includeItemsFromAllDrives: "true",
+  });
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Drive answered ${res.status} to the search`);
+  for (const { id } of ((await res.json()) as { files: Array<{ id: string }> }).files) await trashFile(token, id, AbortSignal.timeout(15_000));
 }
 
 /** The archive the server keeps uploads in: the received-files folder, when the app has the service account's key. */

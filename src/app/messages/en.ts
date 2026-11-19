@@ -2471,8 +2471,16 @@ export const en = {
       samplesTryAgain: "Try again",
       samplesOthersInNotes: "What the file says of its other rows, such as changes to existing samples or rows that can't be used, is in the file with notes.",
       /** The one box for the program's numbers, and the line above it. */
-      obasLine: (rows: number, lowest: string | null, highest: string | null, blank: number, from: string | null, to: string | null) =>
-        `${n(rows)} new ${rows === 1 ? "row has" : "rows have"} a number in the OBAS series${lowest === null ? "" : `, from ${lowest} to ${highest}`}${blank > 0 ? `; ${n(blank)} ${blank === 1 ? "has" : "have"} no number and ${blank === 1 ? "is" : "are"} given ${from === to ? from : `${from} to ${to}`}` : ""}. They are made only if you tick the box.`,
+      obasLine: (rows: number, lowest: string | null, highest: string | null, blank: number, from: string | null, to: string | null) => {
+        // `rows` counts every new row in the series, those with no number among them.
+        const numbered = rows - blank;
+        const range = (a: string | null, b: string | null) => (a === b ? `${a}` : `${a} to ${b}`);
+        const parts = [
+          ...(numbered > 0 ? [`${n(numbered)} numbered ${range(lowest, highest)}`] : []),
+          ...(blank > 0 ? [`${n(blank)} with no number, which ${blank === 1 ? "is" : "are"} given ${range(from, to)}`] : []),
+        ];
+        return `${n(rows)} new ${rows === 1 ? "row is" : "rows are"} in the OBAS series: ${parts.join(", and ")}. They are made only if you tick the box.`;
+      },
       obasBox: "I've checked these OBAS numbers",
       labelsReady: (count: number) =>
         `${n(count)} of the samples to be made are in an active season and have specimens, so their labels are ready to print as soon as they are made. A print run gives their bees permanent numbers and ends the chance to delete them.`,

@@ -27,117 +27,42 @@ How each part of Beeline works is in [`docs/architecture/`](docs/architecture/RE
 ## Conventions & Patterns
 
 - Build only what the current roadmap phase needs; the fuller domain sketch waits in [docs/schema-sketch.md](docs/schema-sketch.md) and is re-reviewed when its phase arrives.
-- Keep DDL dialect-neutral per ADR 0001: `TEXT` + `CHECK` for enum-ish columns, `concat()`/`concat_ws()` over `||`, no partial unique indexes. Three exceptions are named and taken deliberately — the iNaturalist JSON shredding (`schema/105`), the street-suffix predicate in `observation_locality` (`schema/108`; until 2026-10-31 `qc_rule_locality_format` applied it too, before a volunteer's street address stopped being a fault), and that predicate's pattern as a `MACRO` rather than a one-row view (`schema/108`, because DuckDB recompiles a regex per row unless the pattern is a literal) — each marked in place with what a port must rewrite, and each with a measurement behind it rather than a preference. **Never `~`**: until DuckDB 2.0 it was `regexp_full_match` while Postgres's is a partial match, the one construct found so far that answered differently in the two engines without erroring, and 2.0 made DuckDB's a partial match too (duckdb#23432), so the same query also changed its answer across an upgrade. Write `regexp_matches` (part of the string) or `regexp_full_match` (all of it), so the meaning is in the name. A port was measured on 2026-10-12 and decided against (beeline-yfb); it found three more — `\b` in a regex, `->> '$.key'`, `round(x, n)`'s printing — listed with the reasons for staying in [docs/research/postgres-feasibility.md](docs/research/postgres-feasibility.md).
-- Collecting is often a pair (two thirds of legacy trap specimens), so collectors are a list: `sample_collector` in `recordedBy` order, position 1 **being** the primary — whose sample numbering it is. There is no `sample.collector_id`: the column was the same fact written twice, needed a view to police the copy, and could never be UPDATEd (beeline-6e9), so `sample_primary_collector` (`schema/100`) is the one definition every primary-collector read joins, and every "my samples" query reads the list (beeline-77j). What the engine cannot hold is now exactly one head per sample — `(sample_id, person_id)` stops neither a headless list nor two collectors both at position 1 — and `sample_primary_collector_invalid` (`schema/116`) names both, asserted empty after each promotion (beeline-daa). That list comes from the rows a sample is made of, never from everything its `(firstName, lastName)` pair ever recorded — one stray name on one row used to collect 1,675 samples. Person identity is the recordedBy name folded to letters and digits, so typography cannot split a human in two, and the display name is the spelling used **last** — a name changes only when somebody corrects it — but only where the later spelling *succeeds* the earlier rather than interleaving with it, since a single stray row is a keystroke and not a change of name; spellings that fold apart but name one human (`Barrett Barrett`, `Emily Hoskins`) are curated in `ingest/collector-aliases.csv`, and the worklist they are curated from is `legacy_collector_duplicate_candidate` — person records filing under one iNat login, minus the ones who collect together (beeline-eyk). The legacy system's own hand-curated name register (`shared/data/usernames.csv`, fetched by `pnpm legacy:fetch` into gitignored `data/legacy/`) is a second opinion and not an authority over any of this: it fills no missing name part — the people who have none have no iNat login for it to match on, which `legacy_register_unreached` is the view of — and of the 414 people it does reach it disagrees about 25. A few it has right in a way promotion cannot see (`MaryJo`→`Mary Jo`), several it has plainly wrong (`Herrmann`→`Hermann`, against a login of `mherrmann` and an iNat profile of `Mady Herrmann`), some are a nickname against a formal name in both directions (Kim/Kimberly, but also William/Bill), some are its own bad rows, and one is a shared household login that would hand Tom Robertson the name Julie Biddle. The login is the cheap adjudicator wherever it says anything at all; where it says nothing the person gets asked rather than picked for. So it lands as `legacy_register_name_conflict`, which is a **report and not a worklist** (Peter, 2026-08-28): staff fix names on `/people/:id`, which writes the overlay and applies immediately, so a name nobody has complained about is not worth a curation session in git. The view stays because "what does the register think about this person" is a fair question to be able to ask; nothing graduates from it on a schedule. Its email and mailing-address columns are never staged into the store at all — that satellite does not exist yet (beeline-8t8, beeline-1kb.6).
-- Scientific names come apart in exactly one place, `ingest/parse-names.sql`, which runs before anything reads them apart: `legacy_det_taxa` names the outcome (genus, subgenus, epithet, authorship, trinomial) and `legacy_name_parse` is the survey of what those rules do to every distinct verbatim string, because a parser is a pile of assumptions about strings nobody here wrote and the only way to know which hold is to run it over all of them and read the residue (beeline-qcd). All three sources that write names in columns come apart there — the expert columns, the volunteer ones (`legacy_vol_det_taxa`), and the staff taxonomy list — by rules that are facts about zoological names rather than a list: a genus is capitalised and an epithet never is, and a bracketed name is a subgenus wherever it was written, which the subgenus column (`Andrena (Andrena)` on 2,888 rows, once minted as `Andrena (Andrena (Andrena))`), the epithet column, the volunteer genus column and the staff list all do (beeline-45v.2). What no rule can recognise is misspelling (`Agopostemon`), curated in `ingest/taxon-aliases.csv` with `legacy_taxon_alias_unused` beside it — spelling only, since a gender ending or a name Ecdysis lacks is a taxonomic choice and belongs to the curation layer (beeline-45v.1). Two rules were wrong until it did: authorship was "whatever follows the binomial", which on a trinomial is the third epithet — `Osmia montana` authored *montana*, `Bembix americana` *spinolae* — and authorship prints on a label, which is permanent; and a subspecies was recognised from `taxonRank`, which calls two of the corpus's five trinomials a species. So authorship must look like one (`(` or a capital) and must have had a binomial to follow, and a trinomial is this row's own genus and epithet plus one more bare epithet, anchored on the parted columns rather than the string's shape — which read `Not a bee` as a subspecies of *Not a*. `test/legacy-name-parse.test.ts` runs the real parser over strings lifted from production staging, near-exhaustively by category, since the corpus is only 727 distinct names. What the model still cannot say is in `legacy_name_flattened`: 25 morphospecies (`Melissodes sp.1` and `sp.5` are one node, beeline-8g7) and one `nr.` (beeline-tgu) — nobody typed those wrong and no volunteer can fix them, so they are a view rather than a flag. `legacy_verbatim_shape` surveys the other parsed fields the same way, and its answers are what license their rules: `recordedBy` uses `|` and nothing else — no `&`, no comma — so splitting on the pipe is complete; 1,731 records spell the month in Roman numerals, which `legacy_month` already takes; and of the URLs the observation id is read off, five point at an iNat *taxon* page and correctly yield nothing.
-
-Identity per [ADR 0002](docs/adr/0002-entities.md): entity tables have an `entity_id` PK drawn from the global `entity_id_seq`; facet tables (1:1 satellites) are keyed by their parent's id; only global-identity columns are named `entity_id`.
-- Document tables and columns with `COMMENT ON` (queryable in-database); reserve `--` comments for design rationale spanning statements.
-- **Report every check count split by season** (Peter, 2026-08-29): the active seasons against the settled ones, never one number (the words are defined under **Season** in CONTEXT.md). A defect in current-practice data says the workflow is broken now; the same defect before it is residue from the wild west, and a combined figure cannot tell you which — nor whether a number that looks stable is actually a live problem growing under a historical one. The line is the store's own, `season.active_since` / `settled_sample` (`schema/102`), judged on `date_start` for a sample and `observed_on` for an observation; not a hand-rolled date, since last season stays active until 1 March and today is read in Oregon, not UTC. It changed the reading of minting's own numbers, measured when the line was still 1 March (the "open season"): `non_tracheophyte_host` is 0 against 40, so host plants are a solved problem; a missing locality is 14% of the open season against 34% before it; but `obscured_no_true_coordinates` is 50 against 21, which is the one that *inverts* — obscured-without-trust is a live and growing gap, not a historical one, and only the split says so.
-- Tests run against in-memory DuckDB built from the real `schema/*.sql` (`createMemoryDb`), so a schema mistake fails a test rather than a review — the load-bearing half being *from the real schema*, not *in memory*. The schema is built once per run, and `createMemoryDb` in `test/helpers.ts` hands each caller a copy of it, a store of its own (`test/store-template.ts`): a build takes about 0.4 s and a copy 0.1 s, and a run makes some 1,700 stores (beeline-tl4q). `test/store-template.test.ts` holds that copy equal to a store built from scratch, in every catalog entry with its comment, every row and the next entity id, and in the connection's settings, loaded extensions and temporary tables, so whatever a copy cannot carry fails there before it changes what another test means. A test of building the schema itself takes `createMemoryDb` from `src/schema.ts` instead. A test shares a store with another only where every test that shares it writes nothing, because a test on a shared store can keep passing while it no longer tests what it did; `sharedUploadFixture` (`test/upload-fixture.ts`), for upload plans, which only read, is the one such store. Where being file-backed is itself what is under test, `createFileDb` (`test/helpers.ts`) applies the same schema to a file: the default catalog is then named after the file rather than `memory`, which is where beeline-d34 lived, invisible to a suite in which every test paired a file-backed private store (since retired) with an in-memory main one. It is slower, and reaching for it anywhere else is a mistake. `insertCleanSample` (`test/helpers.ts`) is the fixture that makes a sample nothing is wrong with, and a test that wants something wrong says which. A test that wants the store promotion leaves behind, and is not testing promotion itself, takes its own in-memory copy with `promotedStore` (`test/promoted-store.ts`): promoting costs about 5 s however small the fixture, so each kind of promoted store is built once per run and copied in about 0.2 s (beeline-vwn4). Promotion hands out entity ids in no fixed order, so two promotions of one fixture can number the same specimen differently. `insertCleanSample`'s sample collects on 14 July of the current season: a fixture that should be asked about or printed is dated with `CURRENT_SEASON` or `currentSeasonDate` from the same file, never with a year written into the test, because a written year settles on the 1 March after it ends and every test that expected it to be active fails (beeline-a0lj). A fixture that should have settled is dated in `SETTLED_SEASON`, not `CURRENT_SEASON - 1`, which is still active in January and February. A test that builds the app spreads `scratchPaths()` into it: the files the app writes default to the developer's own under `data/`, a test that fell back to one wrote fake history into them, and under Vitest the fallback now throws (`src/deployment-path.ts`, beeline-yq65). Temporary files are the run's to remove, not the test's: `test/global-setup.ts` points `TMPDIR` at one folder per run and deletes it when the run ends, so a test makes its folder with `mkdtemp(join(tmpdir(), …))` and leaves it. Until it did, nothing removed them, and on Hostess, where `/tmp` is held in memory, a week of runs left over 5 GB there (beeline-qqcg). Assert against strings the source actually produced rather than invented ones — `test/legacy-name-parse.test.ts` is the pattern, its corpus lifted from production staging and its few synthetic cases labelled as such, because a parser tested only on strings we wrote is a parser tested on our assumptions.
-- `src/model.ts` (Kysely types) follows the SQL by hand — update it with any schema change.
-- Kysely is pinned to 0.28.x until `kysely-duckdb` supports 0.29.
-- A `TIMESTAMP` means UTC in every process, not only on Fly: the openers in `src/db.ts` pin DuckDB's session zone to UTC, and `patches/kysely-duckdb.patch` reads the value back as UTC rather than as the machine's local time (beeline-j0aj). Write an instant as `current_timestamp` or `toISOString()`, never as a local-time string. Before this, a workstation stored the SQL clock in Pacific time and JavaScript's instants in UTC, seven hours apart in one column.
+- Keep DDL dialect-neutral (ADR 0001): `TEXT` + `CHECK` for enum-ish columns, `concat()`/`concat_ws()` over `||`, no partial unique indexes. **Never `~`**: DuckDB and Postgres answered it differently without erroring, so write `regexp_matches` (part of the string) or `regexp_full_match` (all of it). Before changing any `schema/*.sql` file or a migration, read [docs/agents/schema-conventions.md](docs/agents/schema-conventions.md): it names the three deliberate exceptions, the Postgres port decision, and the rules for entity ids, `COMMENT ON` and Kysely.
+- `src/model.ts` (Kysely types) follows the SQL by hand: update it with any schema change. Kysely stays on 0.28.x until `kysely-duckdb` supports 0.29.
+- A `TIMESTAMP` means UTC in every process. Write an instant as `current_timestamp` or `toISOString()`, never as a local-time string (the reason is in the schema-conventions doc above).
+- Collectors are a list: `sample_collector` in `recordedBy` order, position 1 is the primary. There is no `sample.collector_id`; read the primary through `sample_primary_collector` and "my samples" through the list. The legacy name register is a report, not an authority or a worklist (Peter, 2026-08-28). Before changing how collectors or person names are modelled, promoted or read, read [docs/agents/collectors-and-people.md](docs/agents/collectors-and-people.md).
+- Scientific names are split into parts in exactly one place, `ingest/parse-names.sql`; misspellings are curated only in `ingest/taxon-aliases.csv`. Before changing the parser or touching either file, read [docs/agents/scientific-names.md](docs/agents/scientific-names.md).
+- **Report every check count split by season** (Peter, 2026-08-29): active seasons against settled ones, never one number, using the store's own line (`season.active_since` / `settled_sample`, `schema/102`) and not a hand-rolled date. A combined figure hides whether a defect is live or leftover. Definitions are under **Season** in CONTEXT.md; the reasoning and worked numbers are in [docs/agents/reporting-counts.md](docs/agents/reporting-counts.md).
+- Tests run against in-memory DuckDB built from the real `schema/*.sql` (`createMemoryDb` from `test/helpers.ts`), so a schema mistake fails a test. Date a fixture that should be active or printed with `CURRENT_SEASON` or `currentSeasonDate`, and one that should have settled with `SETTLED_SEASON`, never a year written into the test. A test that builds the app spreads `scratchPaths()` into it, so it never writes the developer's own files under `data/`. Make temporary folders with `mkdtemp(join(tmpdir(), …))` and leave them: `test/global-setup.ts` deletes them when the run ends. Before writing or changing a test or fixture, read [docs/agents/testing.md](docs/agents/testing.md): it covers the shared-store rules, `createFileDb`, `promotedStore` and real-corpus assertions.
 
 ## Non-Interactive Shell Commands
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
+Always use non-interactive forms: `cp`, `mv` and `rm` may be aliased to `-i` and hang waiting for a y/n answer.
 
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
-
-**Use these forms instead:**
 ```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
-
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
+cp -f source dest    # mv -f, rm -f; rm -rf and cp -rf for directories
 ```
 
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+Also: `scp` and `ssh` with `-o BatchMode=yes` (fail instead of prompting), `apt-get -y`, `HOMEBREW_NO_AUTO_UPDATE=1 brew`.
 
 ## Git Authority
 
-**This repository authorizes agents to commit and push without asking, and
-work lands as a pull request** (2026-08-28). Branch, commit, push, open it with
-`gh pr create`, and stop there: **since cutover (Peter, 2026-11-03) Peter
-merges, not the agent that opened the PR.** No approval is needed to open one.
-Close the beads you finished when it merges. **Do not commit or push to `main`
-directly**: nothing gets reviewed on the way in that way, which is the whole
-reason for the branch. Deploying production (`fly deploy -c
-fly.production.toml`, docs/runbooks/deploy-fly.md) is likewise done when asked,
-never as the tail of a merge.
+**Agents may commit and push without asking, and work lands as a pull request** (2026-08-28). Branch, commit, push, open it with `gh pr create`, and stop there. No approval is needed to open one. Close the beads you finished when the PR merges.
 
-**Beads make no commits at all** (Peter, 2026-10-23). Issue work syncs with
-`bd sync`, which pulls, checks for conflicts and pushes the Dolt store over
-`refs/dolt/data` on the git remote, and nothing in the working tree changes when
-an issue does. Run it without asking, after filing or changing issues and before
-ending a session; the SessionStart hook runs it too. The JSONL
-export used to be tracked and committed straight to `main`; it is now ignored,
-because it held nothing the Dolt ref does not and every branch that carried a
-copy of it conflicted with the next one on merge. `bd export -o <file>` writes
-one when something needs it.
+- **Peter merges, not the agent that opened the PR** (since cutover, Peter, 2026-11-03). Minted field numbers are permanent, backups are mandatory and production is never reseeded (ADR 0006), so a merge wants a human reading it. GitHub's review approval cannot stand in, because `gh` opens every PR as Peter and an author cannot approve their own PR; this is a practice recorded here, not a branch protection. An agent that finds a green PR waiting leaves it waiting.
+- **Do not commit or push to `main` directly**: nothing is reviewed on the way in that way.
+- Peter's branches are reviewed locally with the CodeRabbit CLI before the PR is opened; the PR bot skips his PRs (`.coderabbit.yaml`) and still reviews everyone else's. Triage what it says: fix what is real, and give the reason in the PR when declining.
+- Deploying production (`fly deploy -c fly.production.toml`, docs/runbooks/deploy-fly.md) is done when asked, never as the tail of a merge.
+- **Beads make no commits at all** (Peter, 2026-10-23). Run `bd sync` without asking, after filing or changing issues and before ending a session (the SessionStart hook runs it too); it pushes the Dolt store over `refs/dolt/data`, and nothing in the working tree changes. The JSONL export is ignored; `bd export -o <file>` writes one when something needs it.
+- Don't commit someone else's uncommitted work, don't rewrite published history, and keep documentation current in the same commit as the change it describes.
 
-This is the "repository profile" the Beads block below defers to, and it
-overrides that block's conservative default — stated here, outside the managed
-markers, so `bd setup` cannot regenerate it away.
+This is the "repository profile" the Beads block below defers to, and it overrides that block's conservative default. It is stated here, outside the managed markers, so `bd setup` cannot regenerate it away.
 
-Committing straight to `main` was the stance until CodeRabbit began reviewing
-every pull request, and the reason to change was empirical rather than
-procedural: on beeline-o22 it found a real defect that four rounds of
-adversarial design review had missed — an identity shortcut on the sibling code
-path of one already fixed. It is good at exactly what design review is worst
-at. Since 2026-10-04 it reads Peter's branches locally, through the CodeRabbit
-CLI, before the pull request is opened, so findings become ordinary edits rather
-than push-and-wait round trips; the PR bot skips his PRs (`.coderabbit.yaml`)
-and still reviews everyone else's. Triage what it says: fix what is real, and
-give the reason in the PR when declining. The branch still earns its keep: CI
-runs on it, and the pull request records what landed and why.
+## Issue tracker and domain docs
 
-Why the commit authority itself is broad is the era, not the tooling.
-Pre-cutover the store was blown away and rebuilt at will, nothing downstream
-consumed it, and no volunteer saw it, so a bad commit cost a revert and nothing
-else, and an agent merged its own green PR. Cutover on 3 November 2026 ended
-that: minted field numbers are permanent, backups are mandatory, and production
-is never reseeded (ADR 0006), so a merge now wants a human reading it, not only
-a bot. The human is Peter, by merging. GitHub's own review approval cannot
-stand in for this, because `gh` opens every PR as Peter and an author cannot
-approve their own PR, so the rule is a practice recorded here rather than a
-branch protection. An agent that finds a green PR waiting leaves it waiting.
-
-Still true regardless: don't commit someone else's uncommitted work, don't
-rewrite published history, and keep documentation current in the same commit as
-the change it describes.
-
-## Agent skills
-
-Per-repo configuration the engineering skills read. Written by
-`/setup-matt-pocock-skills`; edit `docs/agents/*.md` directly to change it.
-
-### Issue tracker
-
-Two trackers, split by audience: GitHub Issues for discussion-shaped work,
-customer requests, and bugs someone reported; beads (`bd`) for everything else,
-including bugs found while working. Where this disagrees with the managed Beads
-block below ("use `bd` for ALL task tracking"), the tracker doc wins. See
-[docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
-
-### Triage labels
-
-The five canonical roles, each label string equal to its name, applied to
-GitHub Issues only. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
-
-### Domain docs
-
-Single-context: [CONTEXT.md](CONTEXT.md) + [docs/adr/](docs/adr/) at the repo
-root. See [docs/agents/domain.md](docs/agents/domain.md).
+- Two trackers, split by audience: GitHub Issues for discussion-shaped work, customer requests and bugs someone reported; beads (`bd`) for everything else, including bugs found while working. Where this disagrees with the managed Beads block below ("use `bd` for ALL task tracking"), [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) wins. Read it before filing an issue.
+- Triage labels apply to GitHub Issues only: [docs/agents/triage-labels.md](docs/agents/triage-labels.md). Read it before labelling or triaging.
+- Single-context domain docs: [CONTEXT.md](CONTEXT.md) and [docs/adr/](docs/adr/); see [docs/agents/domain.md](docs/agents/domain.md). The files in `docs/agents/` configure the engineering skills (written by `/setup-matt-pocock-skills`); edit them directly.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker

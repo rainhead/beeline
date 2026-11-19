@@ -939,6 +939,8 @@ export const en = {
       editSamples: "Download the Excel file for editing samples",
       editSamplesNote:
         "One row for each sample, to edit when and how it was collected, who collected it, how many specimens it has, and where, or to add new trap samples. The file holds what these filters select, at most 20,000 samples, so filter first. Every cell is kept as text, so Excel leaves it as it is. Upload it back with the link beside this button: Beeline says what differs from what it has, and doesn't change any record yet.",
+      editSamplesCut: (total: number, max: number) =>
+        `These filters select ${total.toLocaleString("en-US")} samples, and the file holds only the first ${max.toLocaleString("en-US")} in this page's order. Filter further to get the rest.`,
       editNoteVolunteer:
         "To name your own bees in a spreadsheet: the columns that help you recognise each bee, then your own identification of each, to fill in. The file has what these filters select, so filter first, for example to your specimens of one collection year. Every cell is kept as text, so Excel leaves it as it is. Upload it back with the link beside this button: Beeline says how many identifications it can save, and saves them to Identify specimens when you choose.",
 

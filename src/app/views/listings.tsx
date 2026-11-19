@@ -28,6 +28,7 @@ import {
 import { sampleHref, specimenHref, type LocalitySuggestion } from "../record.js";
 import { ChevronDownIcon } from "./icons.js";
 import { methodNamesTrap } from "../../trap-method.js";
+import { MAX_ROWS as UPLOAD_MAX_ROWS } from "../upload-plan.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
@@ -443,7 +444,7 @@ function ListingActions({
 }) {
   return (
     <div class="row listing-actions">
-      {total > 0 && <DownloadMenu m={m} path={path} query={query} staff={staff} />}
+      {total > 0 && <DownloadMenu m={m} path={path} query={query} staff={staff} total={total} />}
       {children}
     </div>
   );
@@ -457,7 +458,7 @@ function ListingActions({
  * download, the Excel file for editing specimens (beeline-kgyd.5), so it is a
  * button with its note beside it, the way a single file is offered elsewhere.
  */
-function DownloadMenu({ m, path, query, staff }: { m: Messages; path: string; query: ListingQuery; staff: boolean }) {
+function DownloadMenu({ m, path, query, staff, total }: { m: Messages; path: string; query: ListingQuery; staff: boolean; total: number }) {
   const d = m.listings.csv;
   if (path === "/specimens") {
     return (
@@ -489,6 +490,8 @@ function DownloadMenu({ m, path, query, staff }: { m: Messages; path: string; qu
           {d.editSamples}
         </LinkButton>
         <Meta>{d.editSamplesNote}</Meta>
+        {/* The upload reads at most MAX_ROWS rows, so the file stops there: say so where the filters select more. */}
+        {total > UPLOAD_MAX_ROWS && <Meta>{d.editSamplesCut(total, UPLOAD_MAX_ROWS)}</Meta>}
       </>
     );
   }

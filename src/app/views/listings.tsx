@@ -789,7 +789,9 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
         </p>
       )}
       <Toolbar copy={copy} path={path} props={props} />
-      <ListingActions m={m} path={path} query={query} total={page.total} staff={admin} />
+      <ListingActions m={m} path={path} query={query} total={page.total} staff={admin}>
+        {admin && <a href="/uploads">{m.uploads.linkFromSpecimens}</a>}
+      </ListingActions>
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (
@@ -1111,7 +1113,6 @@ export function SpecimenListing(
         <ListingActions m={m} path={path} query={query} total={page.total} staff={admin}>
           {admin && <BulkActions m={m} path={path} query={query} />}
           {path === "/specimens" && <a href="/uploads">{m.uploads.linkFromSpecimens}</a>}
-          {path === "/samples" && admin && <a href="/uploads">{m.uploads.linkFromSpecimens}</a>}
         </ListingActions>
       )}
       {page.rows.length === 0 ? (

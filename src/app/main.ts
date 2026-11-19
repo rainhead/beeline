@@ -231,8 +231,9 @@ const app = createApp({
   printRunsDir: config.printRunsDir,
   uploadsDir: config.uploadsDir,
   // Each upload is also kept in the Drive folder of received files, with the
-  // key the nightly backup uses (beeline-kgyd.1); without it, on disk only.
-  uploadArchive: serverUploadArchive(config.driveBackup?.key ?? null),
+  // key the nightly backup uses (beeline-kgyd.1), in production only; on disk
+  // only anywhere else.
+  uploadArchive: serverUploadArchive(config.driveBackup?.key ?? null, config.environment),
   registryMarkPath: config.registryMarkPath,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

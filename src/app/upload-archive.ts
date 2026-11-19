@@ -77,9 +77,11 @@ export function driveUploadArchive(key: ServiceAccountKey, folderId: string, tim
         // Drive may have stored the file and the answer been lost on the way back (CodeRabbit). The upload is then
         // refused, so a copy this attempt left is looked for and binned. Best effort: if that fails too, the log
         // line names the attempt, and the copy is found in the folder by that app property.
-        await binAttempt(token, folderId, attempt).catch((stray: Error) =>
-          console.error(`upload ${file.properties.uploadId}: could not look for a copy in Drive to bin, attempt ${attempt} (${stray.message})`),
+        const outcome = await binAttempt(token, folderId, attempt).then(
+          (binned) => (binned.length === 0 ? "no copy was found in the folder" : `binned the copy it left, ${binned.join(", ")}`),
+          (stray: Error) => `could not look for a copy it left (${stray.message}); search the folder for the app property attempt=${attempt}`,
         );
+        console.error(`upload ${file.properties.uploadId}: keeping a copy in Drive failed, attempt ${attempt} (${(err as Error).message}); ${outcome}`);
         throw err;
       }
     },
@@ -91,7 +93,7 @@ export function driveUploadArchive(key: ServiceAccountKey, folderId: string, tim
 }
 
 /** Bin the file one attempt to keep a copy left in the folder, if any: an upload that was refused after Drive may have taken it. */
-async function binAttempt(token: string, folderId: string, attempt: string): Promise<void> {
+async function binAttempt(token: string, folderId: string, attempt: string): Promise<string[]> {
   const params = new URLSearchParams({
     q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false and appProperties has { key='attempt' and value='${attempt}' }`,
     fields: "files(id)",
@@ -103,12 +105,18 @@ async function binAttempt(token: string, folderId: string, attempt: string): Pro
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`Drive answered ${res.status} to the search`);
-  for (const { id } of ((await res.json()) as { files: Array<{ id: string }> }).files) await trashFile(token, id, AbortSignal.timeout(15_000));
+  const found = ((await res.json()) as { files: Array<{ id: string }> }).files.map((f) => f.id);
+  for (const id of found) await trashFile(token, id, AbortSignal.timeout(15_000));
+  return found;
 }
 
-/** The archive the server keeps uploads in: the received-files folder, when the app has the service account's key. */
-export function serverUploadArchive(key: ServiceAccountKey | null): UploadArchive | null {
-  return key === null || RECEIVED_FOLDER === null ? null : driveUploadArchive(key, RECEIVED_FOLDER);
+/**
+ * The archive the server keeps uploads in: the received-files folder, for production only and when it has the
+ * service account's key. The folder is production's; a workstation or the sandbox given the key to rehearse the
+ * backup must not write uploads into it.
+ */
+export function serverUploadArchive(key: ServiceAccountKey | null, environment: "development" | "sandbox" | "production"): UploadArchive | null {
+  return key === null || environment !== "production" || RECEIVED_FOLDER === null ? null : driveUploadArchive(key, RECEIVED_FOLDER);
 }
 
 /** A link a member of staff can open the kept copy by. */

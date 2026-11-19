@@ -2172,7 +2172,10 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     expect(specimens).toContain(en.listings.csv.edit);
     expect(specimens).toContain(en.listings.csv.editNote);
     const samples = await get(app, "/samples?scope=all");
-    expect(samples).not.toContain(".xlsx");
+    // Staff's samples page offers the Excel file for editing samples (beeline-kgyd.4.9), never the specimens one.
+    expect(samples).not.toContain("/specimens.xlsx");
+    expect(samples).toContain(`href="/samples.xlsx?`);
+    expect(await get((await listingApp("alice")).app, "/samples?scope=all")).not.toContain(".xlsx");
     // The samples listing still offers its CSV.
     expect(samples).toContain(`href="/samples.csv?`);
     // Everyone may download it, a volunteer too.

@@ -936,6 +936,11 @@ export const en = {
       edit: "Download the Excel file for editing specimens",
       editNote:
         "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. The file holds what these filters select, so filter first, for example to one collection year. Every cell is kept as text, so Excel leaves it as it is. A staff upload only lists what differs from what Beeline holds.",
+      editSamples: "Download the Excel file for editing samples",
+      editSamplesNote:
+        "One row for each sample, to edit when and how it was collected, who collected it, how many specimens it has, and where, or to add new trap samples. The file holds what these filters select, at most 20,000 samples, so filter first. Every cell is kept as text, so Excel leaves it as it is. Upload it back with the link beside this button: Beeline says what differs from what it has, and doesn't change any record yet.",
+      editSamplesCut: (total: number, max: number) =>
+        `These filters select ${total.toLocaleString("en-US")} samples, and the file holds only the first ${max.toLocaleString("en-US")} in this page's order. Filter further to get the rest.`,
       editNoteVolunteer:
         "To name your own bees in a spreadsheet: the columns that help you recognise each bee, then your own identification of each, to fill in. The file has what these filters select, so filter first, for example to your specimens of one collection year. Every cell is kept as text, so Excel leaves it as it is. Upload it back with the link beside this button: Beeline says how many identifications it can save, and saves them to Identify specimens when you choose.",
 
@@ -2283,6 +2288,42 @@ export const en = {
           "The names tab lists the scientific names in Beeline's taxonomy, for looking up. Beeline does not read it when the file is uploaded, so changing it changes nothing. The scientificName column offers the names as you type; your spreadsheet may mark a name that is not on the tab.",
       },
     },
+    /**
+     * The about tab of the samples file (beeline-kgyd.4.9), staff's alone for now. A sentence for each white column
+     * says what it takes, in the words the comparison's own rules use (src/app/samples-upload-plan.ts).
+     */
+    samples: {
+      purposeTopic: "What this file is for",
+      purpose:
+        "This file is for editing samples, one row for each sample: when and how it was collected, who collected it, how many specimens it has, and where. Fill in the white columns. When you upload it on the Edited downloads page, Beeline counts what differs from what it has, which rows would become new trap samples and which it cannot use, and gives the file back with a note on each row. It does not change any record from this file yet. The grey columns are not for editing.",
+      columns:
+        "Beeline reads the white columns when the file is uploaded, and their headings are in bold. Nothing is locked, so you can still sort and filter on any column. Each sample is judged as a whole in its groups of cells: the date with the method, the area (country, state and county), the place, the coordinates, the collectors, the trap count and the specimen count. If one cell of a group can't be used, none of that group is used.",
+      leaveTopic: "sampleId and sampleVersion",
+      leave:
+        "These two are grey, but Beeline does read them. It finds each existing sample by its sampleId, and uses sampleVersion to see whether the sample changed since you downloaded the file, so leave both as they are. The fieldNumber is the sample's number: Beeline checks it against the sample the row is for, sets the row aside if they disagree, and never changes a sample's number from this file.",
+      newTopic: "A new trap sample",
+      newRows:
+        "A row with a blank sampleId will become a new trap sample, with the number in its fieldNumber. Beeline doesn't create it yet: the upload only says whether the row could be used. A new trap sample needs a number that no other trap sample has, a collecting date that isn't in the future, a method, a point, a country, a state and at least one collector. A blank specimenCount is 0.",
+      lookupTopic: "The collectors tab",
+      lookup:
+        "This tab lists the people who collected a sample whose last day of collecting is in the last 24 months, once each, for looking up how a name is spelled. Beeline does not read it when the file is uploaded, so changing it changes nothing. The recordedBy column offers no list, because your spreadsheet may mark a name that isn't on it as invalid, and a collector Beeline hasn't met is ordinary.",
+      column: {
+        fieldNumber: "The sample's number, such as OBAS-00657. Never changed from this file; on a new row, the number the new trap sample will have.",
+        recordedBy:
+          "The collectors' names in order, the first being the primary collector, with a | between them, such as Ann Lee | Bo Chan. Each must be a person Beeline knows. A person's id, or inat: and their iNaturalist login, also names them. At least one is needed.",
+        eventDate: "The day the sample was collected, or the first and last days of a trap sample, written YYYY-MM-DD or YYYY-MM-DD/YYYY-MM-DD. Not after today.",
+        samplingProtocol: "The method, any text, such as vane trap, pan trap, malaise trap, trap nest or net.",
+        trapCount: "The number of traps, a whole number from 1. Leave it blank for a net sample, or when it isn't known.",
+        specimenCount: "How many specimens the sample has, a whole number from 0. It can't be blank on an existing sample.",
+        decimalLatitude: "The latitude in degrees, between -90 and 90, with a decimal point and a minus sign where it has one, such as 44.5638. Give the longitude too, or clear all three coordinate cells.",
+        decimalLongitude: "The longitude in degrees, between -180 and 180, such as -123.262.",
+        coordinateUncertaintyInMeters: "How far off the point may be, a whole number of meters above zero. It can be blank.",
+        countryCode: "The country as a two-letter code, such as US, or the three-letter one, such as USA. It can't be blank.",
+        stateProvince: "The state or province, such as OR. It can't be blank.",
+        county: "Any text, such as Benton.",
+        locality: "Any text.",
+      } as Record<string, string>,
+    },
   },
 
   /**
@@ -2298,7 +2339,7 @@ export const en = {
     title: "Edited downloads",
     heading: "Compare an edited download",
     intro:
-      "Upload the Excel file for editing specimens that you downloaded from Specimens and edited. Beeline counts what differs from what it has, and gives the file back with a note on each row. It does not change any record from a staff upload yet.",
+      "Upload an Excel file for editing specimens that you downloaded from Specimens, or one for editing samples that you downloaded from Samples, and edited. Beeline counts what differs from what it has, and gives the file back with a note on each row. It does not change any record from a staff upload yet.",
     headingVolunteer: "Upload your identifications",
     introVolunteer:
       "Upload the Excel file you downloaded from Specimens and edited. Beeline says how many of your identifications it can save, and saves them when you choose. If some can't be saved, you can download your file with a note on each row saying why.",
@@ -2308,7 +2349,7 @@ export const en = {
       heading: "Upload a file",
       fileLabel: "Excel file",
       fileHint:
-        "The Excel file for editing specimens from Specimens, up to 20 MB and 20,000 rows. Leave its specimenId and specimenVersion columns as they are: Beeline finds each row by them. Keep the cells you edit formatted as text, and type a date as YYYY-MM-DD.",
+        "The Excel file for editing specimens from Specimens, or for editing samples from Samples, up to 20 MB and 20,000 rows. Leave its specimenId and specimenVersion columns (sampleId and sampleVersion in the samples file) as they are: Beeline finds each row by them. Keep the cells you edit formatted as text, and type a date as YYYY-MM-DD.",
       fileHintVolunteer:
         "The Excel file from Specimens, up to 20 MB and 20,000 rows. Leave its specimenId and specimenVersion columns as they are: Beeline finds each row by them.",
       referenceLabel: "Request behind the file (optional)",
@@ -2342,6 +2383,10 @@ export const en = {
         "This file is protected, with a password or a sensitivity label, or it is an older .xls file, so Beeline cannot read it. Save an unprotected copy as an Excel workbook (.xlsx) and upload that.",
       no_rows: "That file has a row of column names and nothing after it.",
       not_kept: "Beeline could not keep a copy of the file just now, so it did not take it. Nothing was saved. Try again in a few minutes.",
+      no_sample_id_column:
+        "This file has no sampleId column, so Beeline cannot tell which sample each row is about. Download the Excel file from Samples again and edit the new file, leaving that column in.",
+      staff_only_samples:
+        "Only staff can upload the Excel file for editing samples for now. Download the Excel file from Specimens and edit that to name your own bees.",
       staff_file:
         "This is the file program staff download: its names are the ones Beeline keeps for each bee, an expert's among them, not yours, so Beeline did not read it. Download the Excel file from Specimens again and edit that one: it has your own identifications in it.",
     } as Record<string, string>,
@@ -2350,7 +2395,7 @@ export const en = {
     refusedRepeatedColumn: (column: string) =>
       `The column ${column} is in this file more than once, so Beeline cannot tell which one to read. Delete the extra one and upload the file again.`,
     refusedNoSuchSheet: (tabs: string) =>
-      `This workbook has more than one tab (${tabs}) and none is named specimens, so Beeline cannot tell which one has the edited rows. Keep the edited rows on a tab named specimens and upload the file again.`,
+      `This workbook has more than one tab (${tabs}) and none is named specimens or samples, so Beeline cannot tell which one has the edited rows. Keep the edited rows on a tab named specimens (or samples, in the samples file) and upload the file again.`,
     refusedNearMiss: (column: string) =>
       `This file has no column headed exactly ${column}, though one is headed almost like it. Put the heading back as it was in the download.`,
     /** One upload's page: the file, a few counts, and what can be done. Every count is of rows of the file. */
@@ -2379,10 +2424,28 @@ export const en = {
       staffNotes: "Each row's note in the file says what differs, or what is wrong.",
       staffNothingChanged: "Beeline doesn't change any record from a staff upload yet.",
       downloadStaff: "Download the file with notes",
+      /** The samples file's page (beeline-kgyd.4.9): counts, each with how many are in the active seasons and how many in settled ones. */
+      samplesNew: (count: number, split: string) => `${n(count)} new trap ${count === 1 ? "sample" : "samples"} could be created${split}.`,
+      samplesCantUse: (count: number, split: string) => `${n(count)} ${count === 1 ? "row" : "rows"} can't be used: see the notes in your file${split}.`,
+      samplesDiffer: (count: number, split: string) => `${n(count)} existing ${count === 1 ? "sample differs" : "samples differ"} from what Beeline has${split}.`,
+      samplesSame: (count: number, split: string) => `${n(count)} ${count === 1 ? "is" : "are"} the same as Beeline has${split}.`,
+      samplesUnknownCollectors: (names: string) =>
+        `Beeline doesn't know these collectors, or can't tell which person is meant: ${names}. Add them on the Unclaimed or People page, or name them by their id, and upload the file again.`,
+      samplesUnknownCollector: (name: string, rows: number) => `${name} (${n(rows)} ${rows === 1 ? "row" : "rows"})`,
+      samplesNothingChanged: "Beeline doesn't change any record from this file yet.",
+      /** After a count: how many of the rows are in seasons Beeline still asks about and how many in settled ones. */
+      split: (active: number, settled: number, unplaced: number) =>
+        ` (${[
+          active > 0 ? `${n(active)} in the active seasons` : "",
+          settled > 0 ? `${n(settled)} in settled seasons` : "",
+          unplaced > 0 ? `${n(unplaced)} not placed in a season` : "",
+        ]
+          .filter((part) => part !== "")
+          .join(", ")})`,
       unrecognised: (columns: string) =>
         `Beeline didn't read these columns: ${columns}. Put a heading back exactly as it was in the download to have it read.`,
       probably: (header: string, meant: string) => `${header} (probably ${meant})`,
-      otherSheets: (tabs: string) => `Beeline read only the tab named specimens, not ${tabs}.`,
+      otherSheets: (tabs: string, read = "specimens") => `Beeline read only the tab named ${read}, not ${tabs}.`,
       notFound: "No such upload.",
       fileMissing: "The file this upload kept is no longer on disk, so it cannot be compared again.",
       fileAltered: "The file kept for this upload is not the file that was uploaded, so Beeline will not compare it.",
@@ -2399,6 +2462,26 @@ export const en = {
       grey: "Your changes to the grey columns aren't saved. Beeline reads only scientificName, sex and caste.",
       cell: (column: string, was: string, says: string) => `${column} was ${was}, file says ${says}`,
       nothing: "blank",
+      newTrap: "New trap sample. Beeline doesn't create it yet.",
+      newTrapCantUse: (why: string) => `New trap sample, can't use: ${why}`,
+      /**
+       * The reasons only the samples file has. The reasons it shares with the specimens file are in `reason`. Two have no
+       * words of their own, since the check that found them gave the sentence: a collector Beeline cannot match
+       * (`collector_unknown`) and what the trap form says of a new row (`new_row_problem`).
+       */
+      sampleReason: {
+        no_sample_id: "the sampleId cell isn't a whole number. Put back the one from your download, or clear it to make a new trap sample.",
+        sample_repeated: "this sample is on another row too. Keep one row for each sample.",
+        no_sample: "Beeline has no sample with this sampleId. Download a new file.",
+        sample_number_disagrees: "the fieldNumber isn't this sample's number. Put back the fieldNumber and sampleId from your download.",
+        trap_count_invalid: "the trap count must be a whole number from 1, or blank.",
+        specimen_count_invalid: "the specimen count must be a whole number from 0.",
+        collectors_blank: "give at least one collector.",
+        country_blank: "the country is blank.",
+        state_blank: "the state or province is blank.",
+        country_unknown: "the country must be a two-letter code such as US, or a three-letter one such as USA.",
+        new_number_repeated: "another new row has the same number. Give each new trap sample its own number.",
+      } as Record<string, string>,
       columnMissing: (column: string) => `the file has no ${column} column. Download a new file.`,
       reason: {
         no_id: "the specimenId cell is empty or not a number. Put back the one from your download.",

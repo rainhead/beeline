@@ -37,11 +37,13 @@ export interface ReadLimits {
   /** Cells in one row. The download has under 60 columns. */
   maxCellsPerRow: number;
   /**
-   * The sheet to read, by name. Where there is no sheet of that name and the
-   * workbook has exactly one, that one; otherwise the file is refused
-   * (`no_such_sheet`). Left out, the first sheet is read.
+   * The sheet to read, by name, or any of several names (the specimens file's
+   * tab and the samples file's, which are told apart by their headings). The
+   * first sheet of the workbook with one of the names; where there is none and
+   * the workbook has exactly one sheet, that one; otherwise the file is
+   * refused (`no_such_sheet`). Left out, the first sheet is read.
    */
-  sheetName?: string;
+  sheetName?: string | readonly string[];
   /** How long the worker may take, in milliseconds. A 20,000-row download parses in a few seconds. */
   timeMs: number;
   /** The worker's heap, in megabytes. A 20,000-row, 47-column sheet needs well under half of this. */
@@ -199,7 +201,8 @@ export function readXlsxHere(bytes: Uint8Array, limits: Partial<ReadLimits> = {}
     // The names first, which is cheap; then only the sheet that is read.
     const names = XLSX.read(bytes, { type: "array", bookSheets: true }).SheetNames ?? [];
     if (names.length === 0) throw new Refused("not_a_workbook");
-    const chosen = sheetName === undefined ? names[0] : (names.find((n) => n === sheetName) ?? (names.length === 1 ? names[0] : undefined));
+    const wanted = sheetName === undefined ? null : typeof sheetName === "string" ? [sheetName] : sheetName;
+    const chosen = wanted === null ? names[0] : (names.find((n) => wanted.includes(n)) ?? (names.length === 1 ? names[0] : undefined));
     if (chosen === undefined) throw new Refused("no_such_sheet", names);
     const book = XLSX.read(bytes, {
       type: "array",

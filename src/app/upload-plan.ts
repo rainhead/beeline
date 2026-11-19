@@ -17,7 +17,7 @@ import {
 } from "./listings.js";
 import { ownIdentifications, ownVersion, withOwnIdentification } from "./own-identification.js";
 import { oregonToday } from "../oregon-today.js";
-import { columnName, type CellType, type XlsxCell, type XLSX_REFUSALS } from "./xlsx.js";
+import { columnName, type CellType, type XlsxCell, type XlsxRead, type XLSX_REFUSALS } from "./xlsx.js";
 import { readXlsx, type ReadLimits } from "./xlsx-reader.js";
 
 /**
@@ -71,6 +71,10 @@ export const REFUSALS = [
   "no_rows",
   // A file with the columns staff's file has and a volunteer's lacks, uploaded by someone who is not staff.
   "staff_file",
+  // The samples file has no sampleId column, so no row can be found.
+  "no_sample_id_column",
+  // The samples file, uploaded by someone who is not staff: only staff may for now.
+  "staff_only_samples",
 ] as const;
 export type Refusal = (typeof REFUSALS)[number];
 // The reader's refusals are all refusals here.
@@ -80,8 +84,10 @@ void _readerRefusalsAreRefusals;
 /** The column Beeline adds after the last column of a file it hands back with a note on each row (src/app/upload-notes.ts). */
 export const NOTE_COLUMN = "Beeline's note";
 
-/** The sheet of the download, and so the sheet that is read. */
+/** The sheet of the specimens download, and so the sheet that is read. */
 export const SHEET_NAME = "specimens";
+/** The sheet of the samples download (beeline-kgyd.4.9). */
+export const SAMPLES_SHEET_NAME = "samples";
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_ROWS = 20_000;
@@ -152,7 +158,7 @@ export const CHANGE_KINDS = ["determination", "method_dates", "place", "coordina
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 export type SpecimenUnit = "determination" | "disposition";
 export type SampleUnit = "method_dates" | "place" | "coordinates";
-type Unit = SpecimenUnit | SampleUnit;
+export type Unit = SpecimenUnit | SampleUnit;
 const SPECIMEN_UNITS: readonly SpecimenUnit[] = ["determination", "disposition"];
 const SAMPLE_UNITS: readonly SampleUnit[] = ["method_dates", "place", "coordinates"];
 
@@ -162,7 +168,8 @@ export type Reads =
   | "word" // text compared ignoring case, read as the lower-case word
   | "number" // a plain decimal number
   | "days" // YYYY-MM-DD, or YYYY-MM-DD/YYYY-MM-DD
-  | "moment"; // YYYY-MM-DD, YYYY-MM or YYYY
+  | "moment" // YYYY-MM-DD, YYYY-MM or YYYY
+  | "names"; // names between `|`, trimmed, blanks dropped: a list, so `A|B` is `A | B`
 
 interface ColumnRule {
   kind: ChangeKind;
@@ -204,7 +211,7 @@ rule("identifiedByExpert", "not_applied", "word");
  * are for looking up and are not read from an upload. An upload does not list
  * them as tabs that were not read, and a change to one changes nothing.
  */
-export const REFERENCE_TABS = ["names", "identifiers", "words", "about"] as const;
+export const REFERENCE_TABS = ["names", "identifiers", "collectors", "words", "about"] as const;
 
 /** How a column is read, for the file's own account of what each column takes. */
 export const columnRule = (column: string): { reads: Reads; kind: ChangeKind } | undefined => RULES.get(column);
@@ -226,15 +233,23 @@ export const columnRule = (column: string): { reads: Reads; kind: ChangeKind } |
  *   disposition with its remarks.
  * - then the bookkeeping columns, shaded, read but not to be edited. The
  *   `sampleVersion` of the CSV is not among them: only a sample's units use
- *   it, and no file reads those today.
+ *   it, and the specimens file reads none of those.
  *
  * The comparison still holds rules for a sample's dates and method, its
- * locality and coordinates, but no file reads those columns: they wait for
- * the samples upload (beeline-kgyd.4), which will bring its own layout.
+ * locality and coordinates, but the specimens file does not read those
+ * columns: the samples file does, with its own layout (SAMPLES_LAYOUT).
  */
 export const BOOKKEEPING_COLUMNS = ["specimenId", "specimenVersion"] as const;
 
 export interface Layout {
+  /** Which file this is: the specimens file, or the samples file, whose rows are samples (src/app/samples-upload-plan.ts). */
+  kind: "specimens" | "samples";
+  /** The column that finds a row, which a file cannot do without: `specimenId`, or `sampleId`. */
+  idColumn: string;
+  /** The tab that is read. */
+  sheetName: string;
+  /** The headings Beeline knows by name: any other heading in a file is a column it did not read. */
+  known: readonly string[];
   recognise: readonly string[];
   read: readonly string[];
   /**
@@ -250,6 +265,10 @@ export interface Layout {
 }
 
 const layout = (recognise: readonly string[], read: readonly string[], refuses: readonly string[] = []): Layout => ({
+  kind: "specimens",
+  idColumn: "specimenId",
+  sheetName: SHEET_NAME,
+  known: SPECIMEN_CSV_HEADER,
   recognise,
   read,
   refuses,
@@ -286,6 +305,44 @@ export const VOLUNTEER_LAYOUT: Layout = layout(
   SPECIMENS_LAYOUT.read.filter((c) => !["scientificName", "sex", "caste"].includes(c)),
 );
 
+/**
+ * The Excel file a staff member downloads to edit samples, one row for each
+ * sample (beeline-kgyd.4.9, Peter, 2026-11-19: it will be "the main way trap
+ * samples are created and updated"). Every column but the last two is white
+ * and read, `fieldNumber` being the sample's number, which finds nothing but
+ * checks that a row is the sample it says; the last two are grey and left
+ * alone: `sampleId` finds the row (a blank one is a new trap sample) and
+ * `sampleVersion` says what the row was written against. Which columns the
+ * comparison takes, and by what rule, is src/app/samples-upload-plan.ts.
+ */
+export const SAMPLES_READ = [
+  "fieldNumber",
+  "recordedBy",
+  "eventDate",
+  "samplingProtocol",
+  "trapCount",
+  "specimenCount",
+  "decimalLatitude",
+  "decimalLongitude",
+  "coordinateUncertaintyInMeters",
+  "countryCode",
+  "stateProvince",
+  "county",
+  "locality",
+] as const;
+export const SAMPLES_BOOKKEEPING = ["sampleId", "sampleVersion"] as const;
+export const SAMPLES_LAYOUT: Layout = {
+  kind: "samples",
+  idColumn: "sampleId",
+  sheetName: SAMPLES_SHEET_NAME,
+  known: [...SAMPLES_READ, ...SAMPLES_BOOKKEEPING],
+  recognise: [],
+  read: SAMPLES_READ,
+  refuses: [],
+  headings: [...SAMPLES_READ, ...SAMPLES_BOOKKEEPING],
+  shaded: SAMPLES_BOOKKEEPING,
+};
+
 // A layout cannot say a column is read that the comparison has no unit for, or that the download does not have.
 for (const [name, l] of [["specimens", SPECIMENS_LAYOUT], ["volunteer", VOLUNTEER_LAYOUT]] as const) {
   const known = new Set<string>(SPECIMEN_CSV_HEADER);
@@ -293,7 +350,7 @@ for (const [name, l] of [["specimens", SPECIMENS_LAYOUT], ["volunteer", VOLUNTEE
   for (const c of l.read) if (RULES.get(c) === undefined || RULES.get(c)!.kind === "not_applied") throw new Error(`the ${name} layout reads ${c}, which the comparison does not take`);
 }
 
-/** What the comparison can read, for the samples upload that will use it and for tests: every column that belongs to a unit. */
+/** What the comparison can read, for tests of the rules the samples file shares: every column that belongs to a unit. */
 export const UNIT_COLUMNS: readonly string[] = SPECIMEN_CSV_HEADER.filter((c) => RULES.get(c) !== undefined && RULES.get(c)!.kind !== "not_applied");
 
 /** The most row numbers an item names; a count says how many more there are. A file of thousands of rows of one sample must not print them all. */
@@ -332,7 +389,9 @@ export type CellValue =
   /** A day is `start` equal to `end`. */
   | { kind: "days"; start: string; end: string }
   /** `date` is as written: `2025`, `2025-07` or `2025-07-14`. */
-  | { kind: "moment"; date: string; precision: "year" | "month" | "day" };
+  | { kind: "moment"; date: string; precision: "year" | "month" | "day" }
+  /** The names of a list, in order. */
+  | { kind: "list"; items: string[] };
 
 /** One cell of a unit, as the file gives it and as Beeline has it. */
 export interface UnitCell {
@@ -505,13 +564,35 @@ export type PlanResult = { ok: true; plan: UploadPlan; rowCount: number } | { ok
 
 const squashed = (header: string) => header.replace(/\s+/g, "").toLowerCase();
 
-/** Whether a file can be read at all, and if so its columns and rows. */
+/**
+ * Whether a file can be read at all, and if so its columns and rows. The layout says which file this is expected to
+ * be, and so which tab is read.
+ */
 export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits> = {}, layout: Layout = SPECIMENS_LAYOUT): Promise<Parsed> {
   // The sheet the download names, which is the one the person edits; a workbook with only one sheet is read whatever it is called.
-  const read = await readXlsx(bytes, { maxBytes: MAX_FILE_BYTES, maxRows: MAX_ROWS + 1, sheetName: SHEET_NAME, ...limits });
+  const read = await readXlsx(bytes, { maxBytes: MAX_FILE_BYTES, maxRows: MAX_ROWS + 1, sheetName: layout.sheetName, ...limits });
+  return parseSheet(read, layout);
+}
+
+/**
+ * `parseUpload` for a file that may be either upload: the specimens file (read as `layout`) or the samples file. Which
+ * it is comes from the file itself, each time it is read, so nothing is stored about it: a heading `sampleId` and no
+ * heading `specimenId` is a samples file, and so is a tab named `samples` with no `specimenId` (which then says
+ * what is missing, and not that a specimen column is).
+ */
+export async function parseAnyUpload(bytes: Uint8Array, limits: Partial<ReadLimits> = {}, layout: Layout = SPECIMENS_LAYOUT): Promise<Parsed> {
+  const read = await readXlsx(bytes, { maxBytes: MAX_FILE_BYTES, maxRows: MAX_ROWS + 1, sheetName: [layout.sheetName, SAMPLES_SHEET_NAME], ...limits });
+  if (read.ok) {
+    const headings = new Set([...(read.sheet.rows[0]?.cells.values() ?? [])].map((c) => c.text.trim()));
+    if (!headings.has("specimenId") && (headings.has("sampleId") || read.sheet.name === SAMPLES_SHEET_NAME)) return parseSheet(read, SAMPLES_LAYOUT);
+  }
+  return parseSheet(read, layout);
+}
+
+function parseSheet(read: XlsxRead, layout: Layout): Parsed {
   if (!read.ok) return { ok: false, refusal: read.refusal, ...(read.sheets === undefined ? {} : { detail: JSON.stringify(read.sheets) }) };
   const [head, ...body] = read.sheet.rows;
-  const known = new Set<string>(SPECIMEN_CSV_HEADER);
+  const known = new Set<string>(layout.known);
   const columns = new Map<string, number>();
   const unrecognised: UnrecognisedColumn[] = [];
   const headings: string[] = [];
@@ -526,15 +607,19 @@ export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits>
         if (columns.has(header)) return { ok: false, refusal: "repeated_column", detail: header };
         columns.set(header, at);
       } else {
-        const probably = SPECIMEN_CSV_HEADER.find((name) => squashed(name) === squashed(header)) ?? null;
+        const probably = layout.known.find((name) => squashed(name) === squashed(header)) ?? null;
         unrecognised.push({ letter: columnName(at), header, probably });
       }
     }
   }
   const foreign = layout.refuses.find((c) => columns.has(c));
   if (foreign !== undefined) return { ok: false, refusal: "staff_file", detail: foreign };
-  if (!columns.has("specimenId")) {
-    return { ok: false, refusal: "no_specimen_id_column", ...(unrecognised.find((u) => u.probably === "specimenId") ? { detail: "specimenId" } : {}) };
+  if (!columns.has(layout.idColumn)) {
+    return {
+      ok: false,
+      refusal: layout.kind === "samples" ? "no_sample_id_column" : "no_specimen_id_column",
+      ...(unrecognised.find((u) => u.probably === layout.idColumn) ? { detail: layout.idColumn } : {}),
+    };
   }
   const rows = body.filter((r) => [...r.cells.values()].some((c) => c.text.trim() !== ""));
   if (rows.length > MAX_ROWS) return { ok: false, refusal: "too_many_rows" };
@@ -545,10 +630,10 @@ export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits>
 
 // --- Reading a cell ---
 
-type CellProblem = "number_unreadable" | "date_unreadable" | "converted_to_date" | "holds_time" | "holds_formula" | "converted_other";
+export type CellProblem = "number_unreadable" | "date_unreadable" | "converted_to_date" | "holds_time" | "holds_formula" | "converted_other";
 
 /** A cell as the strict reading found it: what it says, or why it cannot be used. */
-interface Evaluated {
+export interface Evaluated {
   column: string;
   /** Beeline's text for the cell, trimmed. */
   nowText: string;
@@ -562,7 +647,7 @@ interface Evaluated {
 const BLANK: CellValue = { kind: "blank" };
 
 /** A line break inside a cell, however the spreadsheet saved it, as a line feed. */
-const foldBreaks = (text: string): string => text.replace(/\r\n?/g, "\n");
+export const foldBreaks = (text: string): string => text.replace(/\r\n?/g, "\n");
 
 /** Excel keeps a number to 15 significant digits, so a longer one a person converts or pastes comes back rounded. */
 const roundedTo15 = (text: string): number | null => {
@@ -617,6 +702,10 @@ function readText(reads: Reads, text: string, type: CellType): CellValue | CellP
       const end = m[2] === undefined ? start : validDay(m[2]);
       return start === null || end === null || end < start ? "date_unreadable" : { kind: "days", start, end };
     }
+    case "names": {
+      const items = text.split("|").map((t) => t.trim()).filter((t) => t !== "");
+      return items.length === 0 ? BLANK : { kind: "list", items };
+    }
     case "moment": {
       if (/^\d{4}$/.test(text)) return { kind: "moment", date: text, precision: "year" };
       const month = /^(\d{4})-(\d{2})$/.exec(text);
@@ -643,6 +732,10 @@ const sameValue = (a: CellValue, b: CellValue): boolean => {
       return a.start === (b as typeof a).start && a.end === (b as typeof a).end;
     case "moment":
       return a.date === (b as typeof a).date;
+    case "list": {
+      const other = (b as typeof a).items;
+      return a.items.length === other.length && a.items.every((item, at) => item === other[at]);
+    }
   }
 };
 
@@ -661,7 +754,11 @@ const PROBLEM_OF_TYPE: Partial<Record<CellType, CellProblem>> = {
  * column takes is a problem, not a value.
  */
 function evaluate(column: string, cell: XlsxCell | undefined, nowText: string, applied: boolean): Evaluated {
-  const { reads } = RULES.get(column)!;
+  return evaluateAs(RULES.get(column)!.reads, column, cell, nowText, applied);
+}
+
+/** `evaluate` for a column read in the way `reads` says: the samples file's columns are not the specimens download's (src/app/samples-upload-plan.ts). */
+export function evaluateAs(reads: Reads, column: string, cell: XlsxCell | undefined, nowText: string, applied: boolean): Evaluated {
   const fileText = foldBreaks(cell?.text ?? "").trim();
   const type: CellType = cell?.type ?? "text";
   const was = foldBreaks(nowText).trim();
@@ -699,9 +796,9 @@ function evaluate(column: string, cell: XlsxCell | undefined, nowText: string, a
 }
 
 /** A cell the file does not have, as Beeline's own: what a unit is completed with when the file leaves its column out. */
-function fromBeeline(column: string, nowText: string): Evaluated {
+export function fromBeeline(column: string, nowText: string, reads: Reads = RULES.get(column)!.reads): Evaluated {
   const was = foldBreaks(nowText).trim();
-  return { column, nowText: was, fileText: was, value: readOwn(RULES.get(column)!.reads, was), differs: false, problem: null };
+  return { column, nowText: was, fileText: was, value: readOwn(reads, was), differs: false, problem: null };
 }
 
 // --- When a unit is complete ---
@@ -712,10 +809,10 @@ interface Incomplete {
   column: string;
 }
 
-const MAX_INTEGER = 2_147_483_647;
+export const MAX_INTEGER = 2_147_483_647;
 
 
-type UnitCells = ReadonlyMap<string, Evaluated>;
+export type UnitCells = ReadonlyMap<string, Evaluated>;
 const blank = (cells: UnitCells, column: string): boolean => cells.get(column)!.value.kind === "blank";
 const wordOf = (cells: UnitCells, column: string): string | null => {
   const v = cells.get(column)!.value;
@@ -734,7 +831,7 @@ const textOf = (cells: UnitCells, column: string): string => {
  * taxonomy, or a determiner being a known person, is not checked: that comes
  * when changes can be applied.
  */
-const UNIT_RULES: Record<Unit, (cells: UnitCells, today: string) => Incomplete | null> = {
+export const UNIT_RULES: Record<Unit, (cells: UnitCells, today: string) => Incomplete | null> = {
   determination(cells, today) {
     if (blank(cells, "scientificName")) return { reason: "name_blank", column: "scientificName" };
     const qualifier = wordOf(cells, "identificationQualifier");

@@ -10,8 +10,14 @@ import { ALL, EMPTY_QUERY, SPECIMEN_CSV_HEADER, STAFF_READER, hostNamesOnce, lis
 import { writeXlsx } from "../src/app/xlsx.js";
 import type { Layout } from "../src/app/upload-plan.js";
 import type { UploadArchive } from "../src/app/upload-archive.js";
-import { createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
+import { CURRENT_SEASON, createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
 import { openCopy, writeCopy } from "./promoted-store.js";
+
+/**
+ * The day the app's plans are made on, in the current season and after the fixtures' summer days, so that a test does
+ * not depend on the date it runs on: collecting dates are held when they come after today (`event_date_future`).
+ */
+export const UPLOAD_TODAY = `${CURRENT_SEASON}-12-31`;
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -171,6 +177,7 @@ export async function uploadFixture(
     // Never the real folder: a test that is about the copy in Drive gives a fake.
     uploadArchive: options.archive ?? null,
     uploadApplyPause: options.applyPause,
+    uploadToday: () => UPLOAD_TODAY,
     resolveSession: async () => ({ personId: people[who], login: who, iconUrl: null }),
   });
   const app = appAs(signedInAs);
@@ -236,6 +243,10 @@ export function edited(
     renameColumns?: Record<string, string>;
     addColumns?: Record<string, string>;
     dropRows?: number[];
+    /** The column that names a row, which an edit's `id` is in: `sampleId` for the samples file. */
+    idColumn?: string;
+    /** Rows added after the last, each by heading; a heading it does not give is left blank. */
+    addRows?: Array<Record<string, TestCell>>;
     /** The sheet's name, and other sheets of the workbook (see buildWorkbook). */
     sheets?: { name?: string; others?: string[]; before?: boolean; date1904?: boolean };
   } = {},
@@ -245,7 +256,7 @@ export function edited(
   const tab = readXlsxHere(download);
   const tabName = tab.ok ? tab.sheet.name : "specimens";
   const head = records[0]!;
-  const idAt = head.indexOf("specimenId");
+  const idAt = head.indexOf(options.idColumn ?? "specimenId");
   const drop = new Set((options.dropColumns ?? []).map((c) => head.indexOf(c)));
   const rows: TestCell[][] = records
     .filter((r, i) => i === 0 || !(options.dropRows ?? []).includes(Number(r[idAt])))
@@ -263,6 +274,9 @@ export function edited(
       for (const [name, value] of Object.entries(options.addColumns ?? {})) cells.push(i === 0 ? name : value);
       return cells;
     });
+  for (const added of options.addRows ?? []) {
+    rows.push(head.filter((_, at) => !drop.has(at)).map((h) => added[h] ?? null));
+  }
   return buildWorkbook(rows, { name: tabName, ...options.sheets });
 }
 

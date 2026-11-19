@@ -49,7 +49,7 @@ async function rows<T>(conn: DuckDBConnection, sql: string, params: unknown[] = 
  * Who one entry names, or why it names nobody. `people` is every person, as
  * display names; read once for a whole list.
  */
-async function matchOne(conn: DuckDBConnection, entry: string, people: MatchedCollector[], staff: boolean): Promise<MatchedCollector | string> {
+export async function matchName(conn: DuckDBConnection, entry: string, people: readonly MatchedCollector[], staff: boolean): Promise<MatchedCollector | string> {
   // Staff can tell people apart by id and add them on /unclaimed or /people; a collector cannot reach either.
   const tellApart = staff ? "name one by their id or iNaturalist login" : "ask staff to tell them apart";
   if (/^\d+$/.test(entry)) {
@@ -86,21 +86,31 @@ async function matchOne(conn: DuckDBConnection, entry: string, people: MatchedCo
   return `Beeline has nobody called ${entry}; ${staff ? "add them on /unclaimed or /people first" : "ask staff to add them"}`;
 }
 
+/** Every person, as display names: what a name is matched against. A caller matching many lists reads it once and passes it to each. */
+export async function readPeople(conn: DuckDBConnection): Promise<MatchedCollector[]> {
+  return (await rows<{ person_id: number; display_name: string }>(conn, `SELECT entity_id AS person_id, display_name FROM person`)).map(
+    (p) => ({ person_id: Number(p.person_id), display_name: p.display_name }),
+  );
+}
+
 /**
  * The people a list of entries names, in its order, the first being the
  * primary collector. Blank entries are left out. Refused: a list naming
  * nobody, an entry that names nobody or several people, and one person named
- * twice. The problem is a sentence for whoever wrote the list.
+ * twice. The problem is a sentence for whoever wrote the list. `people` is
+ * {@link readPeople}, which a caller with many lists reads once for all of them.
  */
-export async function matchCollectors(conn: DuckDBConnection, entries: readonly string[], { staff }: { staff: boolean }): Promise<CollectorMatch> {
+export async function matchCollectors(
+  conn: DuckDBConnection,
+  entries: readonly string[],
+  { staff, people: known }: { staff: boolean; people?: readonly MatchedCollector[] },
+): Promise<CollectorMatch> {
   const given = entries.map((e) => e.trim()).filter((e) => e !== "");
   if (given.length === 0) return { problem: "At least one collector is needed." };
-  const people = (await rows<{ person_id: number; display_name: string }>(conn, `SELECT entity_id AS person_id, display_name FROM person`)).map(
-    (p) => ({ person_id: Number(p.person_id), display_name: p.display_name }),
-  );
+  const people = known ?? (await readPeople(conn));
   const collectors: MatchedCollector[] = [];
   for (const entry of given) {
-    const found = await matchOne(conn, entry, people, staff);
+    const found = await matchName(conn, entry, people, staff);
     if (typeof found === "string") return { problem: `${found}.` };
     if (collectors.some((c) => c.person_id === found.person_id)) return { problem: `${found.display_name} is named twice.` };
     collectors.push(found);

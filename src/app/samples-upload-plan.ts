@@ -94,7 +94,6 @@ const READS: Record<string, Reads> = {
   coordinateUncertaintyInMeters: "number",
 };
 const COMPARED = Object.keys(READS);
-const UNIT_OF = new Map(SAMPLES_UNITS.flatMap((unit) => UNIT_COLUMNS[unit].map((c) => [c, unit] as const)));
 
 /** The trap form's fields and the columns of the file that say them, so that a problem the form finds is not said twice. */
 const FORM_COLUMNS: Record<keyof TrapSampleForm, readonly string[]> = {
@@ -366,6 +365,13 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         for (const c of UNIT_COLUMNS[unit]) if (cellResults.get(c)?.problem != null) flagged.add(c);
         flagged.add(wrong.column);
         result.problems.push({ reason: wrong.reason, unit, column: wrong.column, detail: full.get(wrong.column)!.fileText, cells: heldCells(full, [wrong.column]) });
+      }
+      // A new sample's number is permanent, so it is read as strictly as any other cell: a formula, or a cell the
+      // spreadsheet turned into a date, is not a number somebody typed, whatever text it shows.
+      const numberCell = evaluateAs("text", "fieldNumber", cell(cells, "fieldNumber"), "", true);
+      if (numberCell.problem !== null) {
+        flagged.add("fieldNumber");
+        result.problems.push({ reason: numberCell.problem, unit: null, column: "fieldNumber", detail: numberCell.fileText, cells: heldCells(new Map([["fieldNumber", numberCell]]), ["fieldNumber"]) });
       }
       const when = full.get("eventDate")!.value;
       if (when.kind === "days") result.season = when.start < activeSince ? "settled" : "active";

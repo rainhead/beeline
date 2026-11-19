@@ -316,6 +316,22 @@ describe("a new trap sample", () => {
     expect(added[2]!.problems[0]!.detail).toBe("Trap sample OBAS-20009 is already in Beeline.");
   });
 
+  it("cannot use a new row whose number is a formula or a date, whatever text it shows", async () => {
+    const f = await uploadFixture();
+    const p = await plan(
+      f,
+      edit(await download(f), [], {
+        addRows: [
+          { ...ready, fieldNumber: { formula: 'CONCAT("OBAS-","20001")', cached: "OBAS-20001" } },
+          { ...ready, fieldNumber: { date: 46000 } },
+        ],
+      }),
+    );
+    const added = p.rows.filter((r) => r.kind === "new");
+    expect(added.map(reasons)).toEqual([["holds_formula"], ["converted_to_date"]]);
+    expect(p.counts.newReady).toEqual({ active: 0, settled: 0, unplaced: 0 });
+  });
+
   it("uses the comparison's rules for a date and a point, and its reading of a cell", async () => {
     const f = await uploadFixture();
     const p = await plan(

@@ -607,10 +607,29 @@ function RegistrationCard({
             </p>
           </form>
         </>
-      ) : g.decided && g.decided_by !== null && g.decided_at !== null ? (
-        <p>{p.registrationDecidedNone(g.decided_by, m.format.date(g.decided_at))}</p>
       ) : (
-        <p>{p.registrationNone}</p>
+        <>
+          {g.decided && g.decided_by !== null && g.decided_at !== null ? (
+            <p>{p.registrationDecidedNone(g.decided_by, m.format.date(g.decided_at))}</p>
+          ) : (
+            <p>{p.registrationNone}</p>
+          )}
+          <details open={g.decided}>
+            <summary>{m.registrations.byId}</summary>
+            <form method="post" action={`/registrations/${person.person_id}/link`} class="form-column">
+              <input type="hidden" name="return" value="person" />
+              <TextField
+                id="registration-id"
+                name="ideal_logic_id"
+                label={m.registrations.byIdLabel(person.display_name)}
+                hint={m.registrations.byIdHint}
+              />
+              <p class="row">
+                <Button variant="outlined">{m.registrations.link}</Button>
+              </p>
+            </form>
+          </details>
+        </>
       )}
       <p>
         <a href="/registrations">{p.openRegistrations}</a>

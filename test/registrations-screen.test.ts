@@ -220,7 +220,7 @@ describe("deciding from the page", () => {
     const { post, get, conn, ids } = await setup();
     const res = await post(`/registrations/${ids.ada}/link`, { ideal_logic_id: "ADA-1" });
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe(`/registrations?saved=linked&for=${ids.ada}#collectors`);
+    expect(res.headers.get("location")).toBe(`/registrations?saved=linked&for=${ids.ada}&id=ADA-1#collectors`);
     expect(await decisions(conn, ids.ada)).toEqual([["ADA-1", "staff", "samstaff"]]);
     const html = await (await get(res.headers.get("location")!)).text();
     expect(html).toContain(en.registrations.saved.linked("Ada Ash", "Ada Ash"));
@@ -307,5 +307,37 @@ describe("the registration on a person's page", () => {
       [null, "staff", "samstaff"],
     ]);
     expect(await (await get(`/people/${ids.ada}`)).text()).toContain("No registration (decided by samstaff");
+  });
+
+  it("lets staff link a person they recorded as having no registration, from the person's page", async () => {
+    const { get, post, conn, db, ids } = await setup();
+    await post(`/registrations/${ids.bo}/none`);
+    const none = await (await get(`/people/${ids.bo}`)).text();
+    expect(none).toContain("No registration (decided by samstaff");
+    expect(none).toContain(`action="/registrations/${ids.bo}/link"`);
+    expect(none).toContain('name="return" value="person"');
+    // The person has left the list, so the page is the only way back.
+    expect((await listRegistrations(db)).collectors.map((c) => c.person_id)).not.toContain(ids.bo);
+
+    const res = await post(`/registrations/${ids.bo}/link`, { ideal_logic_id: "BIR-1", return: "person" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(en.registrations.saved.linked("Bo Birch", "Bo Birch"));
+    expect(await decisions(conn, ids.bo)).toEqual([
+      [null, "staff", "samstaff"],
+      ["BIR-1", "staff", "samstaff"],
+    ]);
+    expect(await (await get(`/people/${ids.bo}`)).text()).toContain(en.people.registrationOf("Bo Birch"));
+  });
+
+  it("confirms the registration this request saved, even if it was changed before the page loaded", async () => {
+    const { get, post, conn, ids } = await setup();
+    const res = await post(`/registrations/${ids.ada}/link`, { ideal_logic_id: "ADA-1" });
+    // Another staff member links Ada to somebody else before the redirect is followed.
+    await conn.run(
+      `INSERT INTO person_registration_event (person_id, ideal_logic_id, evidence, decided_by) VALUES (${ids.ada}, 'ASH-2', 'staff', 'other')`,
+    );
+    const html = await (await get(res.headers.get("location")!)).text();
+    expect(html).toContain(en.registrations.saved.linked("Ada Ash", "Ada Ash"));
+    expect(html).not.toContain(en.registrations.saved.linked("Ada Ash", "Zed Ash"));
   });
 });

@@ -3345,8 +3345,15 @@ export function createApp({
         else if (saved === "unlinked") notice = s.unlinked(person.display_name);
         else if (saved === "unchanged") notice = s.unchanged(person.display_name);
         else if (saved === "linked") {
-          const now = await registrationOf(db, who);
-          notice = s.linked(person.display_name, now.registrant ?? "");
+          // The id the decision saved travels in the address, so the sentence
+          // describes that decision even if somebody has changed it since.
+          const id = url.searchParams.get("id") ?? "";
+          const row = await db
+            .selectFrom("ideal_logic_registrant")
+            .select(["given_name", "family_name"])
+            .where("ideal_logic_id", "=", id)
+            .executeTakeFirst();
+          notice = s.linked(person.display_name, row === undefined ? "" : `${row.given_name} ${row.family_name}`);
         }
       }
     }
@@ -3402,7 +3409,8 @@ export function createApp({
               : said.unchanged(name),
       );
     }
-    return c.redirect(`/registrations?saved=${outcome}&for=${personId}#collectors`);
+    const savedId = outcome === "linked" ? `&id=${encodeURIComponent(typed)}` : "";
+    return c.redirect(`/registrations?saved=${outcome}&for=${personId}${savedId}#collectors`);
   };
   app.post("/registrations/:id/link", decideFromScreen("link"));
   app.post("/registrations/:id/none", decideFromScreen("none"));

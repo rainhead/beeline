@@ -1188,6 +1188,78 @@ describe("taking the observation's location", () => {
     expect(await effort()).toBeNull();
   });
 
+  it("corrects a sample's country, state and county for a staff key, says what changed, and refuses the rest", async () => {
+    const w = await world();
+    const path = `/samples/${w.legacy}/country-state-county`;
+    const saved = await w.send(w.keys.sam, path, { county: "Walla Walla", note: "on the vial", reference: "ticket 2" });
+    expect(saved.status).toBe(200);
+    expect(await json(saved)).toEqual({ sample_id: w.legacy, outcome: "saved", changes: [{ field: "county", from: null, to: "Walla Walla" }] });
+    expect(await w.entries("OBAS-00657")).toEqual([{ field: "county", to: "Walla Walla", author: "samstaff", reason: "on the vial", source: "api" }]);
+    expect(await json(await w.send(w.keys.sam, path, { county: "Walla Walla" }))).toMatchObject({ outcome: "unchanged", changes: [] });
+    // The sample A-1 is still to print and has an observation: its place follows its point.
+    const follows = await w.send(w.keys.sam, `/samples/${w.linked}/country-state-county`, { county: "Linn" });
+    expect([follows.status, (await json(follows)).error]).toEqual([409, "follows_point"]);
+    const bad = await w.send(w.keys.sam, path, { state_province: "BC" });
+    expect([bad.status, (await json(bad)).message]).toEqual([422, "BC is in CAN, not USA."]);
+    expect((await w.send(w.keys.sam, path, { county: 3 })).status).toBe(400);
+    expect((await w.send(w.keys.sam, path, { values: { county: "x" } })).status).toBe(400);
+    expect((await w.send(w.keys.bea, path, { county: "x" })).status).toBe(403);
+    expect((await w.send(w.keys.samEdit, path, { county: "x" })).status).toBe(403);
+    expect((await w.send(w.keys.aliceRead, path, { county: "x" })).status).toBe(403);
+    expect(((await rows(w.conn, `SELECT county FROM sample WHERE entity_id = ${w.legacy}`)) as string[][])[0]![0]).toBe("Walla Walla");
+  });
+
+  it("answers a lost write conflict on an old sample truthfully: recorded against the old records, applied only by sending it again", async () => {
+    const w = await world();
+    let fired = false;
+    const db = new Proxy(w.db, {
+      get(target, prop) {
+        if (prop === "transaction" && !fired) {
+          fired = true;
+          return () => ({
+            execute: async () => {
+              throw new Error("TransactionContext Error: Conflict on update!");
+            },
+          });
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Kysely<Database>;
+    const api = createApi({
+      db: w.db,
+      isStaff: async (personId) => personId === w.people.sam,
+      corrections: {
+        deps: {
+          db,
+          conn: w.conn,
+          correctionsPath: w.paths.correctionsPath,
+          sampleOverlayPath: w.paths.sampleOverlayPath,
+          samplePaths: { log: w.paths.sampleChangesPath, state: w.paths.sampleStatePath },
+          syncJobRunning: () => false,
+        },
+        messages: en,
+      },
+    });
+    const send = () =>
+      api.request(`/samples/${w.legacy}/country-state-county`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${w.keys.sam}` },
+        body: JSON.stringify({ county: "Walla Walla" }),
+      });
+    const lost = await send();
+    const answer = await json(lost);
+    expect([lost.status, answer.error]).toEqual([409, "recorded_not_applied"]);
+    expect(answer.message).toContain("Nothing applies it later on its own");
+    expect(answer.message).not.toContain("nightly");
+    expect((await send()).status).toBe(200);
+    // Recorded under the name the answer gives, as the edit's thrown conflict is.
+    expect((await w.uses()).map((u) => [u[2], u[4], u[6]])).toEqual([
+      ["/samples/:id/country-state-county", "recorded_not_applied", 409],
+      ["/samples/:id/country-state-county", "saved", 200],
+    ]);
+    expect(((await rows(w.conn, `SELECT county FROM sample WHERE entity_id = ${w.legacy}`)) as string[][])[0]![0]).toBe("Walla Walla");
+  });
 });
 
 describe("a trap sample's specimen count", () => {

@@ -75,6 +75,18 @@ export async function loadSampleForStaff(db: Kysely<Database>, sampleId: number)
     .executeTakeFirst();
 }
 
+/**
+ * A country as an old record writes it. Beeline keeps ISO alpha-3 codes, and
+ * the old Beeline wrote the short name its places file gave a country: USA,
+ * but CA and NZ. The legacy-format export maps the sample's code back the same
+ * way (src/legacy-export.ts), so a correction event in the record's own words
+ * is what `legacy:compare-export` reads as a staff correction rather than as a
+ * change nobody explained.
+ */
+export function legacyCountry(code: string): string {
+  return ({ CAN: "CA", NZL: "NZ", MEX: "MX" } as Record<string, string>)[code] ?? code;
+}
+
 interface StagingMember {
   _id: string;
   locality: string | null;
@@ -171,7 +183,8 @@ export async function planSampleEdit(
   for (const member of members) {
     for (const f of changed) {
       const base = member[f.staging] ?? "";
-      const newValue = (input.values[f.name] ?? "").trim();
+      const submitted = (input.values[f.name] ?? "").trim();
+      const newValue = f.name === "country" ? legacyCountry(submitted) : submitted;
       // Identity events (base === new) are written too: they replace a stale
       // app row and shadow any git-curated row for the key, so reverting to
       // the staged value applies as a no-op on rebuild (beeline-eef).
@@ -198,6 +211,7 @@ async function writeSampleEdit(
   correctionsPath: string,
   sample: EditableSample,
   plan: SampleEditPlan,
+  options: SampleEditOptions,
 ): Promise<{ outcome: "saved"; changed: EditableFieldName[] }> {
   // Durability before immediacy: if the event write fails, nothing applied.
   await upsertCorrections(correctionsPath, plan.events);
@@ -219,8 +233,18 @@ async function writeSampleEdit(
         .where("details", "like", `${name}: %`)
         .execute();
     }
+    await options.inTransaction?.(trx, plan.changed);
   });
   return { outcome: "saved", changed: plan.changed };
+}
+
+export interface SampleEditOptions {
+  /**
+   * More to write in the same transaction as the sample, after it: what
+   * follows from the change, such as the atlas a changed state assigns
+   * (src/app/sample-place.ts). Told which fields changed.
+   */
+  inTransaction?: (trx: Kysely<Database>, changed: EditableFieldName[]) => Promise<void>;
 }
 
 /** Plan the edit and write it: the two halves composed. */
@@ -229,8 +253,9 @@ export async function applySampleEdit(
   correctionsPath: string,
   sample: EditableSample,
   input: SampleEditInput,
+  options: SampleEditOptions = {},
 ): Promise<SampleEditResult> {
   const plan = await planSampleEdit(db, sample, input);
   if (plan.outcome !== "planned") return plan;
-  return writeSampleEdit(db, correctionsPath, sample, plan);
+  return writeSampleEdit(db, correctionsPath, sample, plan, options);
 }

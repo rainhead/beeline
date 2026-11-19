@@ -6,12 +6,14 @@ import { apiError, type ApiEnv } from "./api.js";
 import { localityReasonFor, specimenCountProblemFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import type { Messages } from "./messages/index.js";
 import { EDITABLE_FIELDS, type EditableFieldName } from "./sample-edit.js";
+import { PLACE_FIELDS, type PlaceField } from "./sample-place.js";
 import {
   actorFor,
   editSample,
   holdSample,
   setCoordinates,
   setPlace,
+  setSamplePlace,
   setSpecimenCount,
   setTrapCount,
   takeLocation,
@@ -23,6 +25,7 @@ import {
   type EditSampleInput,
   type EditSampleResult,
   type QcDecisionCorrectionResult,
+  type SamplePlaceResult,
   type SetPlaceResult,
   type SpecimenCountResult,
   type StaffCoordinatesCorrectionResult,
@@ -94,7 +97,20 @@ const REFUSALS = {
   in_print_run: {
     status: 409,
     error: "in_print_run",
-    message: "Labels for this sample are in a print run that has not printed yet, which holds the point it froze. Wait for the run to print or cancel it, then set the point.",
+    message:
+      "Labels for this sample are in a print run that has not printed yet, which holds the point and place it froze. Wait for the run to print or cancel it, then make the correction.",
+  },
+  follows_point: {
+    status: 409,
+    error: "follows_point",
+    message:
+      "This sample's country, state and county follow its coordinates: Beeline writes them from the point each night, so a correction here would not last. Correct the coordinates instead.",
+  },
+  not_applied: {
+    status: 409,
+    error: "recorded_not_applied",
+    message:
+      "Your change is recorded against the sample's old Beeline records, but Beeline could not finish applying it to the sample because another write to the store got there first. Nothing applies it later on its own: send the same request again, which applies it now and does not record it twice. Like any correction, it replaces what the sample holds at that moment, so if someone else may have corrected the same thing since, check before you send it again.",
   },
   unavailable: { status: 503, error: "unavailable", message: "This Beeline cannot make this correction." },
 } as const satisfies Record<string, { status: ContentfulStatusCode; error: string; message: string }>;
@@ -107,6 +123,7 @@ type AnyFailure = Extract<
   | EditSampleResult
   | SetPlaceResult
   | StaffCoordinatesCorrectionResult
+  | SamplePlaceResult
   | TrapCountResult
   | SpecimenCountResult
   | TakeObservationLocationCorrectionResult
@@ -116,7 +133,8 @@ type AnyFailure = Extract<
 
 /** A refused correction as the API answers it. The switch ends in `unreachable`, so a new refusal fails the typecheck. */
 function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
-  c.set("outcome", failure.refusal);
+  // A change recorded and not applied is recorded under the name its answer gives, as the thrown conflict's is.
+  c.set("outcome", failure.refusal === "not_applied" ? "recorded_not_applied" : failure.refusal);
   switch (failure.refusal) {
     case "invalid":
       return apiError(c, 422, "invalid", failure.problem);
@@ -136,6 +154,8 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "no_staging":
     case "no_observation":
     case "in_print_run":
+    case "follows_point":
+    case "not_applied":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
       return apiError(c, r.status, r.error, r.message);
@@ -417,6 +437,19 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     [],
     setCoordinates,
     (r) => ({ outcome: r.outcome, settled: r.settled }),
+  );
+
+  // The country, state and county: staff only, any sample whose place does not follow its point.
+  endpoint(
+    "country-state-county",
+    (b): { values: Partial<Record<PlaceField, string>>; note: string } => ({
+      values: Object.fromEntries(PLACE_FIELDS.filter((f) => b[f] !== undefined).map((f) => [f, b[f] as string])),
+      note: (b.note as string | undefined) ?? "",
+    }),
+    { country: "string", state_province: "string", county: "string", note: "string" },
+    [],
+    setSamplePlace,
+    (r) => ({ outcome: r.outcome, changes: r.changes }),
   );
 
   endpoint(

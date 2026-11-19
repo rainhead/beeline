@@ -408,6 +408,29 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
     expect((await deriveAreas(conn, path, { stampCounties: true })).countiesStamped).toBe(0);
   });
 
+  test("writes the county of a settled sample staff released for printing, and not of one they did not", async () => {
+    const path = join(dir, "released.duckdb");
+    await buildTestGazetteer(path, "build-released");
+    const conn = await storeWithPerson();
+    const settledDates = { date_start: `DATE '${SETTLED_SEASON}-07-14'`, date_end: `DATE '${SETTLED_SEASON}-07-14'` };
+    const unreleased = await insertCleanSample(conn, { inat_observation_id: "1103", sample_number: "'3'", ...settledDates }, ALSEA);
+    const released = await insertCleanSample(conn, { inat_observation_id: "1104", sample_number: "'4'", ...settledDates }, ALSEA);
+    const enteredAndReleased = await insertCleanSample(conn, { sample_number: "'5'", kind: "'trap'", ...settledDates }, ALSEA);
+    // A released sample from the old records has neither an observation nor an entry, so its place is the record's.
+    const oldRecord = await insertCleanSample(conn, { sample_number: "'6'", ...settledDates }, ALSEA);
+    await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${enteredAndReleased})`);
+    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${released}), (${enteredAndReleased}), (${oldRecord})`);
+    // A released sample with a label on paper keeps what the label says.
+    const printed = await insertCleanSample(conn, { inat_observation_id: "1107", sample_number: "'7'", ...settledDates }, ALSEA);
+    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${printed})`);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1)`);
+    const r = await deriveAreas(conn, path, { stampCounties: true });
+    expect(r.countiesStamped).toBe(2);
+    expect(await countyOf(conn, released)).toBe("Benton");
+    expect(await countyOf(conn, enteredAndReleased)).toBe("Benton");
+    for (const id of [unreleased, oldRecord, printed]) expect(await countyOf(conn, id)).toBe("BentonCo");
+  });
+
   test("never writes a county the gazetteer does not name over one the sample has", async () => {
     const path = join(dir, "nameless.duckdb");
     await buildTestGazetteer(path, "build-nameless");

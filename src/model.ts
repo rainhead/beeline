@@ -1348,6 +1348,15 @@ export interface SampleHoldTable {
   held_by: number | null;
 }
 
+/** A staff decision that a settled season's sample may print (beeline-3vs.7). */
+export interface SamplePrintReleaseTable {
+  sample_id: number;
+  released_by: number | null;
+  /** Defaults to the time of writing. */
+  released_at: Generated<Date>;
+  reason: string | null;
+}
+
 /** The blocking rules no waiver can set aside (beeline-1kb.9). */
 export interface QcRuleUnwaivableTable {
   name: string;
@@ -1731,6 +1740,11 @@ export interface SettledSampleView {
   sample_id: number;
 }
 
+/** Settled samples staff have not released for printing: the ones that never print (beeline-3vs.7). */
+export interface SettledUnreleasedSampleView {
+  sample_id: number;
+}
+
 /** Samples carrying a blocking finding, by either route it can arrive on. */
 export interface BlockingSampleView {
   sample_id: number;
@@ -1936,6 +1950,7 @@ export interface Database {
   qc_rule: QcRuleTable;
   sample_promotion_finding: SamplePromotionFindingTable;
   sample_hold: SampleHoldTable;
+  sample_print_release: SamplePrintReleaseTable;
   qc_rule_unwaivable: QcRuleUnwaivableTable;
   sample_qc_waiver: SampleQcWaiverTable;
   sample_legacy_observation: SampleLegacyObservationTable;
@@ -1949,6 +1964,7 @@ export interface Database {
   blocking_sample: BlockingSampleView;
   season: SeasonView;
   settled_sample: SettledSampleView;
+  settled_unreleased_sample: SettledUnreleasedSampleView;
   animal_rank: AnimalRankTable;
   determination_misplaced_qualifier: DeterminationMisplacedQualifierView;
   expert_identification: ExpertIdentificationView;

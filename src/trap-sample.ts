@@ -291,8 +291,19 @@ async function writeParts(conn: DuckDBConnection, id: number, s: TrapSample, wit
   );
 }
 
-/** Write a new trap sample; its id. Behind the print runs' lock, on the print connection. */
-export function createTrapSample(conn: DuckDBConnection, s: TrapSample, enteredBy: number | null): Promise<number | "taken"> {
+/**
+ * Write a new trap sample; its id. Behind the print runs' lock, on the print
+ * connection. `releasedByStaff` is for staff entering it: a sample from a
+ * settled season prints only once staff have released it, and staff entering
+ * one is that release (sample_print_release, schema/050; beeline-3vs.7),
+ * written in the same transaction. A trapper's entry writes none.
+ */
+export function createTrapSample(
+  conn: DuckDBConnection,
+  s: TrapSample,
+  enteredBy: number | null,
+  { releasedByStaff = false }: { releasedByStaff?: boolean } = {},
+): Promise<number | "taken"> {
   return withPrintRunLock(async () => {
     if (await numberTaken(conn, s.sample_number, null)) return "taken";
     return inTransaction(conn, async () => {
@@ -304,6 +315,7 @@ export function createTrapSample(conn: DuckDBConnection, s: TrapSample, enteredB
       );
       const id = created[0]!.entity_id;
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);
+      if (releasedByStaff) await conn.run(`INSERT INTO sample_print_release (sample_id, released_by) VALUES ($1, $2)`, [id, enteredBy] as never);
       await writeParts(conn, id, s);
       return id;
     });

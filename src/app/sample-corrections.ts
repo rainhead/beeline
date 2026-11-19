@@ -844,6 +844,26 @@ export function setCollectors(
   });
 }
 
+/**
+ * Write the release of a sample for printing, unless one stands (beeline-3vs.7):
+ * who, when and the reason staff gave, if any. In the transaction of whatever
+ * made it. The sample's own queue holds the turn, so nothing else writes this
+ * sample's release between the check and the insert.
+ */
+async function writeRelease(db: Kysely<Database>, sampleId: number, actor: Actor, reason: string): Promise<boolean> {
+  const standing = await db.selectFrom("sample_print_release").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst();
+  if (standing !== undefined) return false;
+  await db
+    .insertInto("sample_print_release")
+    .values({ sample_id: sampleId, released_by: actor.signedInPersonId, reason: reason.trim() === "" ? null : reason.trim() })
+    .execute();
+  return true;
+}
+
+async function releaseInTransaction(deps: CorrectionDeps, sampleId: number, actor: Actor, reason: string): Promise<void> {
+  await deps.db.transaction().execute((trx) => writeRelease(trx, sampleId, actor, reason));
+}
+
 export interface SpecimenCountInput {
   /** The number of specimens, a whole number of 0 or more as text or a number. */
   count: string | number;
@@ -857,7 +877,7 @@ export type SpecimenCountResult =
       ok: true;
       outcome: Exclude<Outcome, "removed">;
       specimen_count: number;
-      /** How many labels the next print run would print for this sample; 0 when it has none waiting, as for a settled season's sample, which never prints. */
+      /** How many labels the next print run would print for this sample; 0 when it has none waiting, as for a settled season's sample that staff have not released, which never prints. */
       pending: number;
     }
   | Common
@@ -876,6 +896,13 @@ export type SpecimenCountResult =
  * would put the observation's count back (ingest/mint-samples.sql): any
  * sample with an observation, until its labels are on paper. Staff
  * only, and refused while impersonating.
+ *
+ * Setting the count also releases the sample for printing, whatever its
+ * season, in the same transaction (sample_print_release, schema/050;
+ * beeline-3vs.7): staff setting or confirming a count is staff saying its
+ * bees need labels, and a settled season's sample prints only once released.
+ * Confirming the count, which changes nothing, releases it too and answers
+ * `unchanged`. It is harmless for an active season's sample.
  *
  * It is written straight to the sample and recorded in its history, with no
  * overlay file: production is never promoted again (ADR 0006), and a
@@ -916,9 +943,15 @@ export function setSpecimenCount(deps: CorrectionDeps, actor: Actor, sampleId: n
         const waiting = await sql<{ pending_count: number }>`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${sampleId}`.execute(deps.db);
         return waiting.rows[0] === undefined ? 0 : Number(waiting.rows[0].pending_count);
       };
-      if (now.specimen_count === count) return { ok: true, outcome: "unchanged", specimen_count: count, pending: await pendingNow() };
       try {
-        await deps.db.updateTable("sample").set({ specimen_count: count }).where("entity_id", "=", sampleId).execute();
+        if (now.specimen_count === count) {
+          await releaseInTransaction(deps, sampleId, actor, form.note);
+          return { ok: true, outcome: "unchanged", specimen_count: count, pending: await pendingNow() };
+        }
+        await deps.db.transaction().execute(async (trx) => {
+          await trx.updateTable("sample").set({ specimen_count: count }).where("entity_id", "=", sampleId).execute();
+          await writeRelease(trx, sampleId, actor, form.note);
+        });
       } catch (err) {
         // Nothing is recorded anywhere else, so a conflict means nothing was done: say so, and let the caller send it again.
         if (isWriteConflict(err)) return refused("busy");
@@ -927,6 +960,96 @@ export function setSpecimenCount(deps: CorrectionDeps, actor: Actor, sampleId: n
       await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "specimen count change");
       return { ok: true, outcome: "saved", specimen_count: count, pending: await pendingNow() };
     });
+  });
+}
+
+export interface ReleaseLabelsInput {
+  /** Why staff released it, or withdrew the release; free text, may be blank. */
+  note: string;
+  /** Take the release away instead of writing one. */
+  withdraw?: boolean;
+}
+
+export type ReleaseLabelsResult =
+  | {
+      ok: true;
+      outcome: "saved" | "removed" | "unchanged";
+      /** How many labels the next print run would print for this sample. */
+      pending: number;
+      /** Labels for this sample already frozen into a print run that has not printed; a withdrawal does not take them out of it. */
+      labels_in_run: number;
+    }
+  | Common
+  | StaffOnly
+  | Refused<"busy" | "not_settled" | "count_follows_observation">;
+
+/**
+ * Staff say that a sample from a settled season may print its labels, or take
+ * that back (beeline-3vs.7, `sample_print_release`, schema/050). Trap bottles
+ * are pinned years after they were collected, and a settled season's sample
+ * prints only once released; setting a trap sample's count, or entering one,
+ * releases it as well (`setSpecimenCount`, `createTrapSample`), and this is the
+ * explicit act for the rest. Staff only, refused while impersonating.
+ *
+ * Releasing a sample of an active season is refused: it prints without one.
+ * So is releasing one whose count still follows its iNaturalist observation
+ * (an observation, and no label on paper, the condition `setSpecimenCount`
+ * refuses as `follows`): a settled season's count copied from iNaturalist does
+ * not print (Peter, 2026-11-19), and staff cannot correct that count, so there
+ * is nothing for them to vouch for.
+ * Withdrawing is allowed at any time, since it only changes what is pending:
+ * labels already frozen into a prepared run stay in it until that run is
+ * canceled, and the answer says how many. After a release the county, state
+ * and country are stamped from the sample's point at once (`deriveMovedPoint`),
+ * so no run is prepared with the old ones, and a sample released from the
+ * 250 m allowance is now held to 100 m like an active one.
+ *
+ * The sample's history tracks no field that a release changes, so it is not a
+ * history entry of its own; what the stamp changes is recorded under whoever
+ * released it, as for a staff point.
+ */
+export function releaseLabels(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<ReleaseLabelsInput>): Promise<ReleaseLabelsResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const found = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select("entity_id").executeTakeFirst();
+    if (found === undefined) return refused("not_found");
+    return { ready: null };
+  };
+  return correct(sampleId, input, gates, async (_, form): Promise<ReleaseLabelsResult> => {
+    const note = form.note.trim();
+    const facts = await sql<{ settled: boolean; released: boolean; follows: boolean; in_run: number | null }>`
+      SELECT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = ${sampleId}) AS settled,
+             (SELECT s.inat_observation_id IS NOT NULL
+                     AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+              FROM sample s WHERE s.entity_id = ${sampleId}) AS follows,
+             EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = ${sampleId}) AS released,
+             (SELECT lp.printing_count FROM sample_label_in_progress lp WHERE lp.sample_id = ${sampleId}) AS in_run`.execute(deps.db);
+    const now = facts.rows[0]!;
+    const inRun = Number(now.in_run ?? 0);
+    const pendingNow = async (): Promise<number> => {
+      const waiting = await sql<{ pending_count: number }>`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${sampleId}`.execute(deps.db);
+      return waiting.rows[0] === undefined ? 0 : Number(waiting.rows[0].pending_count);
+    };
+    try {
+      if (form.withdraw === true) {
+        if (!now.released) return { ok: true, outcome: "unchanged", pending: await pendingNow(), labels_in_run: inRun };
+        await deps.db.deleteFrom("sample_print_release").where("sample_id", "=", sampleId).execute();
+        return { ok: true, outcome: "removed", pending: await pendingNow(), labels_in_run: inRun };
+      }
+      if (!now.settled) return refused("not_settled");
+      if (now.follows) return refused("count_follows_observation");
+      if (now.released) return { ok: true, outcome: "unchanged", pending: await pendingNow(), labels_in_run: inRun };
+      await releaseInTransaction(deps, sampleId, actor, note);
+    } catch (err) {
+      // Nothing is recorded anywhere else, so a conflict means nothing was done: say so, and let the caller send it again.
+      if (isWriteConflict(err)) return refused("busy");
+      throw err;
+    }
+    // Before any run is prepared, so its labels carry the county and state the point gives.
+    await deriveMovedPoint(deps, sampleId, "label release");
+    await recordChange(deps, sampleId, actor, note || undefined, "label release");
+    return { ok: true, outcome: "saved", pending: await pendingNow(), labels_in_run: inRun };
   });
 }
 

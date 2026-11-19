@@ -122,10 +122,11 @@ describe("preparing a run", () => {
     expect(await nextFieldNumber(conn, new Date("2027-04-01T12:00:00Z"))).toBe(27000001);
   });
 
-  it("takes nothing from a settled season, minted late or with its count raised", async () => {
-    // Nothing from a settled season is printed (Peter, 2026-10-14): a full
-    // sync minted 2018 samples from observations the old system never
-    // recorded, and each read as labels waiting.
+  it("takes nothing from a settled season that staff have not released, minted late or with its count raised", async () => {
+    // Nothing from a settled season is printed unless staff released it
+    // (Peter, 2026-10-14, 2026-11-19): a full sync minted 2018 samples from
+    // observations the old system never recorded, and each read as labels
+    // waiting.
     const open = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "1" });
     const settled = { collector_id: String(ash), date_start: "DATE '2024-07-14'", date_end: "DATE '2024-07-14'" };
     await insertCleanSample(conn, { ...settled, sample_number: "'2'", specimen_count: "3" });
@@ -135,6 +136,42 @@ describe("preparing a run", () => {
 
     expect(await rows(conn, "SELECT sample_id, pending_count FROM pending_print_sample")).toEqual([[open, 1]]);
     expect(await prepareRun(conn, { atlasId: null, personId: ash, now: NOW })).toMatchObject({ labels: 1, samples: 1 });
+  });
+
+  it("takes a settled season's sample once staff have released it, and only that one", async () => {
+    // Minted from an observation with a count, as promotion makes them: no release, so no labels.
+    const minted = await insertCleanSample(conn, {
+      collector_id: String(ash),
+      sample_number: "'2'",
+      specimen_count: "3",
+      inat_observation_id: "7001",
+      date_start: "DATE '2024-07-14'",
+      date_end: "DATE '2024-07-14'",
+    });
+    const released = await insertCleanSample(conn, {
+      collector_id: String(ash),
+      sample_number: "'3'",
+      kind: "'trap'",
+      specimen_count: "2",
+      date_start: "DATE '2024-07-14'",
+      date_end: "DATE '2024-07-14'",
+    });
+    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${released})`);
+    expect(await rows(conn, "SELECT sample_id, pending_count FROM pending_print_sample")).toEqual([[released, 2]]);
+    expect(await rows(conn, "SELECT sample_id, waiting FROM sample_labels_waiting ORDER BY sample_id")).toEqual([[released, 2]]);
+    expect(await rows(conn, "SELECT sample_id FROM settled_unreleased_sample")).toEqual([[minted]]);
+    expect(await prepareRun(conn, { atlasId: null, personId: ash, now: NOW })).toMatchObject({ labels: 2, samples: 1 });
+    // Withdrawn after the freeze, the labels stay frozen and nothing more is pending.
+    await conn.run(`DELETE FROM sample_print_release WHERE sample_id = ${released}`);
+    expect(await rows(conn, "SELECT sample_id FROM pending_print_sample")).toEqual([]);
+    expect(await count(`SELECT count(*) FROM printed_label`)).toBe(2);
+  });
+
+  it("a release has no effect on a sample of an active season", async () => {
+    const open = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "1" });
+    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${open})`);
+    expect(await rows(conn, "SELECT sample_id, pending_count FROM pending_print_sample")).toEqual([[open, 1]]);
+    expect(await rows(conn, "SELECT sample_id FROM settled_unreleased_sample")).toEqual([]);
   });
 
   it("mints only the new specimen numbers when a count was raised after an earlier run", async () => {

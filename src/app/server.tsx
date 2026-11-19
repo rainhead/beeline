@@ -189,6 +189,7 @@ import {
   readerFor,
   recordTrapChange as recordTrapSampleChange,
   setCoordinates,
+  releaseLabels,
   setTrapCount,
   setPlace,
   takeLocation,
@@ -1520,7 +1521,9 @@ export function createApp({
     if ("problems" in checked) {
       return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, checked.problems, "/trap-samples/new"), 400);
     }
-    const id = await createTrapSample(printWriter!, checked.sample, c.get("session").personId);
+    const id = await createTrapSample(printWriter!, checked.sample, c.get("session").personId, {
+      releasedByStaff: c.get("admin"),
+    });
     // Somebody else saved this number since the form was checked.
     if (id === "taken") {
       const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
@@ -1787,6 +1790,35 @@ export function createApp({
         return c.text(m.record.sample.staffCoordinates.busy, 409);
       case "invalid":
         return c.text(result.problem, 400);
+      default:
+        return unreachable(result);
+    }
+  });
+
+  // Staff release a settled season's sample for printing, or take the release
+  // back (beeline-3vs.7); the page sends `withdraw` for the second.
+  app.post("/samples/:id/release-labels", async (c) => {
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const result = await releaseLabels(corrective, actorOf(c), id, async () => {
+      const body = await c.req.parseBody();
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+      return { note: field("note"), withdraw: field("withdraw") !== "" };
+    });
+    if (result.ok) return c.redirect(sampleHref(id));
+    switch (result.refusal) {
+      case "impersonating":
+        return c.text(m.errors.readOnlyImpersonating, 403);
+      case "not_admin":
+        return c.text("Admins only.", 403);
+      case "not_found":
+        return errorResponse(c, "notFound");
+      case "busy":
+        return c.text(m.record.sample.staffCoordinates.busy, 409);
+      case "not_settled":
+        return c.text(m.record.sample.printRelease.notSettled, 409);
+      case "count_follows_observation":
+        return c.text(m.record.sample.printRelease.countFollowsObservation, 409);
       default:
         return unreachable(result);
     }

@@ -862,6 +862,47 @@ function StaffHold({ m, staff, hold }: { m: Messages; staff: StaffQc; hold: Reco
   );
 }
 
+/**
+ * Staff releasing a settled season's sample for printing, or withdrawing the
+ * release (beeline-3vs.7). The release is offered only where it would change
+ * something: a settled sample with no release and bees that have no label on
+ * paper. Where one stands, the page says who wrote it and when, and offers to
+ * withdraw it.
+ */
+function PrintRelease({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.printRelease;
+  const action = `/samples/${sample.sample_id}/release-labels`;
+  const release = sample.print_release;
+  if (release !== null) {
+    return (
+      <>
+        <Meta block>
+          {t.released(release.released_by, m.format.day(release.released_at))}
+          {release.reason !== null && <> {t.because(release.reason)}</>} {t.releasedHint}
+        </Meta>
+        <form method="post" action={action}>
+          <input type="hidden" name="withdraw" value="1" />
+          <Button variant="outlined">{t.withdraw}</Button>
+        </form>
+      </>
+    );
+  }
+  // A count that follows its observation is not staff's to vouch for (releaseLabels refuses it).
+  if (!sample.settled || sample.labels_not_on_paper === 0) return null;
+  if (sample.inat_observation_id !== null && !sample.printed) return null;
+  return (
+    <>
+      <Meta block>{t.hint}</Meta>
+      <form method="post" action={action} class="form-column">
+        <TextField id="release-note" name="note" label={t.note} />
+        <p class="row">
+          <Button variant="outlined">{t.release}</Button>
+        </p>
+      </form>
+    </>
+  );
+}
+
 /** The fix-it action: upstream where there is an observation, here where
  * there is not — and only for someone who actually collected it. */
 function SampleActions({ m, sample, trapEditHref }: { m: Messages; sample: SampleDetail; trapEditHref?: string }) {
@@ -1057,6 +1098,7 @@ export function SamplePage({
           personLinks={admin}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
+        {admin && <PrintRelease m={m} sample={sample} />}
       </Card>
       <Card>
         <WhereCollected

@@ -191,7 +191,7 @@ describe("the front page", () => {
   it("does not ask for labels from a settled season", async () => {
     // Clean, three specimens, none pinned, from two seasons ago: what a full sync mints
     // from an old observation the old system never recorded. Nothing from a
-    // settled season is printed (Peter, 2026-10-14), so it is not on the page.
+    // settled season is printed unless staff released it (Peter, 2026-10-14, 2026-11-19), so it is not on the page.
     const { app, conn, alice } = await qcApp();
     await insertCleanSample(conn, {
       collector_id: String(alice),

@@ -167,6 +167,16 @@ export interface SampleDetail {
   printed: boolean;
   /** Built from the old Beeline's records, which a staff correction of its method names (beeline-p8y1). */
   from_old_records: boolean;
+  /** From a settled season (schema/102): its labels print only once staff have released it. */
+  settled: boolean;
+  /** Staff's release of this sample for printing (sample_print_release, beeline-3vs.7): who, when and why. Null when there is none. */
+  print_release: PrintRelease | null;
+  /**
+   * How many of the sample's specimens have no label on paper, by its count.
+   * Worked out only for a settled sample with no release, whose page offers
+   * staff the release when it is above 0; 0 for any other.
+   */
+  labels_not_on_paper: number;
   /**
    * A locality staff set over the observation's (beeline-649), with its
    * provenance: who, why, and — where the observation has since moved to a
@@ -217,6 +227,13 @@ export interface SampleDetail {
   place_disagreement: PlaceDisagreement | null;
   /** Everyone who collected it, in recordedBy order (beeline-77j). */
   collectors: RecordCollector[];
+}
+
+export interface PrintRelease {
+  /** The person's name; null when the release was written by a staff login that is no person. */
+  released_by: string | null;
+  released_at: Date;
+  reason: string | null;
 }
 
 export interface LocalitySuggestion {
@@ -588,6 +605,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
     place_disagreement: hidden ? null : await placeDisagreement(db, Number(row.sample_id)),
     printed: Boolean(row.printed),
     from_old_records: await fromOldRecords(db, Number(row.sample_id)),
+    ...(await printReleaseOf(db, Number(row.sample_id), Number(row.specimen_count))),
     sample_id: Number(row.sample_id),
     specimen_count: Number(row.specimen_count),
     ...(hidden
@@ -616,6 +634,37 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
     location_withheld: hidden,
     collectors: await collectorsOfSample(db, Number(row.sample_id)),
   };
+}
+
+/**
+ * Whether the sample is from a settled season, whether staff released it for
+ * printing, and, only where the page may offer the release, how many of its
+ * specimens have no label on paper. One row by primary key, and the count
+ * (which reads every printed label) only for a settled sample with no release.
+ */
+async function printReleaseOf(
+  db: Kysely<Database>,
+  sampleId: number,
+  specimenCount: number,
+): Promise<{ settled: boolean; print_release: PrintRelease | null; labels_not_on_paper: number }> {
+  const found = await sql<{ settled: boolean; released_at: Date | null; released_by: string | null; reason: string | null }>`
+    SELECT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id) AS settled,
+           r.released_at, p.display_name AS released_by, r.reason
+    FROM sample s
+    LEFT JOIN sample_print_release r ON r.sample_id = s.entity_id
+    LEFT JOIN person p ON p.entity_id = r.released_by
+    WHERE s.entity_id = ${sampleId}`.execute(db);
+  const row = found.rows[0];
+  const settled = Boolean(row?.settled);
+  const release = row?.released_at == null ? null : { released_by: row.released_by, released_at: row.released_at, reason: row.reason };
+  let notOnPaper = 0;
+  if (settled && release === null && specimenCount > 0) {
+    const paper = await sql<{ n: number }>`
+      SELECT CAST(count(*) AS INTEGER) AS n FROM specimen_on_paper o
+      WHERE o.sample_id = ${sampleId} AND o.specimen_number <= ${specimenCount}`.execute(db);
+    notOnPaper = Math.max(0, specimenCount - Number(paper.rows[0]?.n ?? 0));
+  }
+  return { settled, print_release: release, labels_not_on_paper: notOnPaper };
 }
 
 /** Everyone who collected one sample, in recordedBy order. */

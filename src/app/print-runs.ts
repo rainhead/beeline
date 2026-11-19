@@ -258,7 +258,10 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
   // A hold placed after the freeze does not change the run: it is named
   // here and the printer decides whether to cancel and prepare again, which
   // leaves the held sample out (Peter, 2026-10-25). A past season's labels
-  // print with the run regardless, so they are not named.
+  // print with the run regardless, so they are not named, except those of a
+  // sample staff released for printing (sample_print_release): they are in
+  // the run because staff said so, and a hold placed since is the printer's
+  // to hear of.
   const held =
     row.state === "prepared" || row.state === "approved"
       ? (
@@ -273,7 +276,8 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
             JOIN sample_season ss ON ss.sample_id = s.entity_id
             CROSS JOIN season
             WHERE pl.print_run_id = ${printRunId}
-              AND ss.season >= season.current_season
+              AND (ss.season >= season.current_season
+                   OR EXISTS (SELECT 1 FROM sample_print_release rel WHERE rel.sample_id = s.entity_id))
             ORDER BY s.sample_number, s.entity_id`.execute(db)
         ).rows.map((h) => ({ ...h, sample_id: Number(h.sample_id) }))
       : [];

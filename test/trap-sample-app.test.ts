@@ -4,7 +4,7 @@ import { createApp } from "../src/app/server.js";
 import { createKysely } from "../src/db.js";
 import { duckdbReader } from "../src/person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
-import { createMemoryDb, CURRENT_SEASON, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, CURRENT_SEASON, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 
 /**
  * Entering and editing a trap sample through the app (beeline-3vs.2): who
@@ -108,6 +108,15 @@ describe("entering a trap sample", () => {
     expect(await (await as("staffer").app.request(location)).text()).not.toContain(`action="/samples/${id}/locality"`);
     // Somebody who may not enter trap samples is not offered the edit.
     expect(await (await as("netter").app.request(location)).text()).not.toContain(`/samples/${id}/trap`);
+  });
+
+  it("releases a settled season's sample for printing when staff enter it, and not when a trapper does", async () => {
+    const { as, conn } = await trapApp();
+    const old = { date_start: `${SETTLED_SEASON}-06-16`, date_end: `${SETTLED_SEASON}-07-12` };
+    const byStaff = Number((await as("staffer").post("/trap-samples/new", entry({ ...old, specimen_count: "4" }))).headers.get("location")!.split("/")[2]);
+    const byTrapper = Number((await as("trapper").post("/trap-samples/new", entry({ ...old, specimen_count: "4", sample_number: "OBAS-00659" }))).headers.get("location")!.split("/")[2]);
+    expect(await rows(conn, `SELECT sample_id FROM sample_print_release`)).toEqual([[byStaff]]);
+    expect(await rows(conn, `SELECT sample_id, pending_count FROM pending_print_sample WHERE sample_id IN (${byStaff}, ${byTrapper})`)).toEqual([[byStaff, 4]]);
   });
 
   it("refuses a save with what was wrong, keeping what was typed", async () => {

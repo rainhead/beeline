@@ -17,7 +17,7 @@ import type { Database } from "../src/model.js";
 import { approveRun, markPrinted, prepareRun } from "../src/print-run.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { canonicalJson } from "../src/sync-inat.js";
-import { buildTestGazetteer, createMemoryDb, currentSeasonDate, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { buildTestGazetteer, createMemoryDb, currentSeasonDate, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 import { promotedStore } from "./promoted-store.js";
 
 /**
@@ -1347,5 +1347,44 @@ describe("a trap sample's specimen count", () => {
     expect((await w.send(w.keys.samEdit, path, { count: 2 })).status).toBe(403);
     expect((await w.send(w.keys.aliceRead, path, { count: 2 })).status).toBe(403);
     expect(await count()).toBe(5);
+  });
+});
+
+describe("releasing a settled season's sample for printing", () => {
+  it("releases and withdraws for a staff key, and refuses the rest", async () => {
+    const w = await world();
+    const settled = await insertCleanSample(w.conn, {
+      collector_id: String(w.people.alice),
+      sample_number: "'T-9'",
+      kind: "'trap'",
+      protocol: "'vane trap'",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+    });
+    const releases = async () => rows(w.conn, `SELECT reason FROM sample_print_release WHERE sample_id = ${settled}`);
+    const path = `/samples/${settled}/release-labels`;
+    const saved = await w.send(w.keys.sam, path, { note: "bottle is unlabelled", reference: "ticket 3" });
+    expect(saved.status).toBe(200);
+    expect(await json(saved)).toEqual({ sample_id: settled, outcome: "saved", pending: 3, labels_in_run: 0 });
+    expect(await releases()).toEqual([["bottle is unlabelled"]]);
+    expect(await json(await w.send(w.keys.sam, path, {}))).toMatchObject({ outcome: "unchanged" });
+    expect(await json(await w.send(w.keys.sam, path, { withdraw: true }))).toEqual({ sample_id: settled, outcome: "removed", pending: 0, labels_in_run: 0 });
+    expect(await releases()).toEqual([]);
+    const active = await w.send(w.keys.sam, `/samples/${w.linked}/release-labels`, {});
+    expect([active.status, (await json(active)).error]).toEqual([409, "not_settled"]);
+    const following = await insertCleanSample(w.conn, {
+      sample_number: "'T-10'",
+      kind: "'trap'",
+      inat_observation_id: "778899",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+    });
+    const follows = await w.send(w.keys.sam, `/samples/${following}/release-labels`, {});
+    expect([follows.status, (await json(follows)).error]).toEqual([409, "count_follows_observation"]);
+    expect((await w.send(w.keys.alice, path, {})).status).toBe(403);
+    expect((await w.send(w.keys.samEdit, path, {})).status).toBe(403);
+    expect((await w.send(w.keys.aliceRead, path, {})).status).toBe(403);
+    expect((await w.send(w.keys.sam, `/samples/999999/release-labels`, {})).status).toBe(404);
+    expect(await releases()).toEqual([]);
   });
 });

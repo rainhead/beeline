@@ -77,6 +77,22 @@ CREATE TABLE sample_hold (
 COMMENT ON TABLE sample_hold IS 'A sample staff are holding back from printing (beeline-plu). Re-derived at the end of observation promotion from data/sample-overlay.csv, the durable record. qc_rule_staff_hold (schema/120) makes each row a blocking finding, with the reason as its details: the note is for the collector, who may have something to fix, and for the printer, who needs to know why the sample is not in the run.';
 COMMENT ON COLUMN sample_hold.held_by IS 'Whoever placed it, resolved from the overlay row''s author login through inat_account at apply time; null where the login no longer resolves.';
 
+-- A sample from a settled season prints only once staff have released it
+-- (beeline-3vs.7). It sits here, beside sample_hold, as the other staff
+-- decision about whether a sample prints: a hold stops an active sample, a
+-- release lets a settled one through. The views that read it are in
+-- schema/102 (settled_unreleased_sample).
+CREATE TABLE sample_print_release (
+  sample_id   INTEGER PRIMARY KEY REFERENCES sample(entity_id),
+  released_by INTEGER REFERENCES person(entity_id),
+  released_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+  reason      TEXT
+);
+COMMENT ON TABLE sample_print_release IS 'A staff decision that a sample from a settled season may print its labels (beeline-3vs.7). It matters only once the season has settled: an active season''s samples print without one. Written straight to the store, with no overlay file, because production is never promoted again (ADR 0006), so a development store rebuilt from the old records loses it. No sample with a release row follows an observation''s count, which promotion would otherwise put back (it does so for a sample that has an observation and no label on paper). Each writer sees to it: setSpecimenCount refuses such a sample, releaseLabels refuses it, and a sample entered in Beeline has no observation. Not a record of what printed: printed_sample is.';
+COMMENT ON COLUMN sample_print_release.released_by IS 'The person who released it; null for a staff login that is no person, as sample_hold.held_by and sample_entry.entered_by are.';
+COMMENT ON COLUMN sample_print_release.released_at IS 'When the release was written, UTC.';
+COMMENT ON COLUMN sample_print_release.reason IS 'What staff said when they released it; null when they said nothing.';
+
 -- Waiving these would print something false, or override a decision that is
 -- an atlas's rather than a judgement about one sample (Peter, 2026-10-25):
 -- a shifted point printed as the true one, a taxon-obscured point an atlas

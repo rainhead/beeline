@@ -12,9 +12,12 @@
 -- Membership follows printable_sample, so the waiver clause and the
 -- per-atlas geoprivacy policy reach this view without the app knowing. A
 -- run with no atlas freezes the subset print_scope_sample names (schema/155).
--- A settled sample (schema/102) is never pending: nothing from a settled
--- season is printed (Peter, 2026-10-14), whether it was minted late from an
--- old observation or had its count raised after the season ended.
+-- A settled sample (schema/102) is pending only once staff have released it
+-- (sample_print_release, schema/050; Peter, 2026-11-19): trap bottles are
+-- pinned years after they were collected, so a sample staff entered, or whose
+-- count they set, prints whatever its season. One minted late from an old
+-- observation, or whose count only iNaturalist gave, stays out, as every
+-- settled sample did from 2026-10-14 (Peter), because nobody pins those.
 --
 -- The count is the freeze's definition, not the difference of two totals
 -- (beeline-ni5m.13): the freeze fills every open place in 1..count, so what
@@ -39,4 +42,4 @@ LEFT JOIN (
   GROUP BY i.sample_id
 ) printed ON printed.sample_id = s.entity_id
 WHERE s.specimen_count > coalesce(printed.n, 0)
-  AND NOT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id);
+  AND NOT EXISTS (SELECT 1 FROM settled_unreleased_sample st WHERE st.sample_id = s.entity_id);

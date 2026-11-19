@@ -1263,6 +1263,19 @@ export const en = {
           method: "This sample has no method, and the count is kept with the kind of trap. Set the method first, then the count.",
         },
       },
+      /** Staff releasing a settled season's sample for printing, or withdrawing the release (beeline-3vs.7). */
+      printRelease: {
+        hint: "This sample is from a season that has settled, so its labels do not print. Releasing it lets the next print run label the bees that have no label yet.",
+        note: "Reason (optional)",
+        release: "Release labels for printing",
+        released: (by: string | null, day: string) => `Released for printing${by === null ? "" : ` by ${by}`} on ${day}.`,
+        because: (reason: string) => `Reason: ${reason}`,
+        releasedHint: "The next print run labels the bees that have no label yet. Withdrawing the release does not take labels out of a print run that has already been prepared.",
+        withdraw: "Withdraw release",
+        /** The reason when a sample from an active season is released: it needs none. */
+        countFollowsObservation: "This sample's specimen count comes from its iNaturalist observation, and a past season's count copied from iNaturalist is not printed.",
+        notSettled: "This sample is from a season that is still active, and an active season's labels print without a release.",
+      },
       /** Staff correcting how many specimens a trap sample holds, through the API (beeline-kgyd.4.4). */
       specimenCount: {
         problems: {

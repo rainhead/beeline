@@ -1472,9 +1472,10 @@ async function filteredSamples(
                                            WHERE xs.sample_id = s.entity_id AND lower(xc.catalog_number) = ${exact.catalog_number.toLowerCase()})`);
   }
   // "Printed" is every label on paper, counted against the specimen count in
-  // any season: a settled sample printed only in part is not waiting, since
-  // settled samples never print, and is not all printed either (CodeRabbit).
-  // A settled sample that never printed is neither.
+  // any season: a settled sample printed only in part is not waiting unless
+  // staff released it, since a settled sample staff have not released never
+  // prints, and is not all printed either (CodeRabbit). A settled sample that
+  // never printed and was not released is neither.
   if (query.labels === "waiting") {
     base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM sample_labels_waiting w WHERE w.sample_id = s.entity_id)`);
   } else if (query.labels === "printed") {

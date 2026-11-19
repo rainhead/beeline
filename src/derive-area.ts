@@ -490,11 +490,14 @@ ${places ? `    UNION ALL
  *
  * - one still to print: it has an observation or was entered in Beeline (the
  *   rest are the old system's records, whose place is what the record or a
- *   staff correction says, ADR 0004), it is from an active season, and no
- *   label for it has printed. A printed sample's place is what its labels
+ *   staff correction says, ADR 0004), it is from an active season or a
+ *   settled one staff have released for printing (sample_print_release), and
+ *   no label for it has printed. A printed sample's place is what its labels
  *   say, as a printed locality is (CONTEXT.md, Upstream); a settled sample
- *   with no print recorded was most likely printed before Beeline kept the
- *   record, and will not print again (Peter, 2026-10-27).
+ *   that staff have not released, with no print recorded, was most likely
+ *   printed before Beeline kept the record, and will not print again (Peter,
+ *   2026-10-27). Releasing a sample stamps its place at once, before a run
+ *   is prepared (releaseLabels, src/app/sample-corrections.ts).
  * - or one whose point staff set (sample_location_override, beeline-942),
  *   printed or settled. A person said that is where the bees were caught, so
  *   a place that disagrees is the record contradicting itself, and on a
@@ -529,8 +532,9 @@ ${places ? `    UNION ALL
 /**
  * Whether a sample's county, state and country follow its point, as SQL over
  * a `sample` row named `s`: the first half of stampCounties' condition above
- * (a staff point, or a sample still to print with an observation or entered
- * in Beeline). One definition for the stamp and for the staff correction of
+ * (a staff point, or a sample still to print, in an active season or released
+ * from a settled one, with an observation or entered in Beeline). One
+ * definition for the stamp and for the staff correction of
  * the place (src/app/sample-place.ts), which refuses a sample the stamp would
  * write over.
  */
@@ -539,7 +543,7 @@ export function followsPointSql(s: string): string {
               OR ((${s}.inat_observation_id IS NOT NULL
                    OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = ${s}.entity_id))
                   AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = ${s}.entity_id)
-                  AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = ${s}.entity_id)))`;
+                  AND NOT EXISTS (SELECT 1 FROM settled_unreleased_sample ss WHERE ss.sample_id = ${s}.entity_id)))`;
 }
 
 interface StampResult {

@@ -22,19 +22,24 @@
 --
 -- Settling is a rule about attention: a settled sample's flags are still
 -- true, still derived, and still block printing — they just stop asking on
--- the dashboard. Nothing here makes a sample immutable; a settled sample is
+-- the dashboard, unless staff have released the sample for printing (below). Nothing here makes a sample immutable; a settled sample is
 -- edited exactly like any other. It lives with the QC views because that is
 -- where the rules about what counts live, not in a route handler.
 --
--- It is also a rule about printing: nothing from a settled season is printed
--- (Peter, 2026-10-14). pending_print_sample (schema/150) leaves settled
--- samples out, so no run takes them and no dashboard asks for their labels.
+-- It is also a rule about printing: a settled sample prints only once staff
+-- have released it (sample_print_release, schema/050; beeline-3vs.7).
+-- Nothing from a settled season printed at all from 2026-10-14 until then.
 -- A full sync on the sandbox had minted 818 samples from observations the old
 -- system never recorded, 441 of them from 2018, and every one read as labels
 -- waiting: nobody pins a bee eight years later, so a sample like that is a
--- record of what was observed, not a print job. That is why these views sit
--- here, ahead of the printing views, where printed_sample (schema/101) sits
--- for the same reason.
+-- record of what was observed, not a print job. But trap bottles are pinned
+-- years after they were collected, so a sample staff entered or whose count
+-- they set did need labels (Peter, 2026-11-19). Staff releasing a sample is
+-- the explicit act that tells the two apart: what a count copied from
+-- iNaturalist leaves behind stays unprinted. settled_unreleased_sample is the
+-- settled samples that still never print, and pending_print_sample (schema/150)
+-- leaves out those. That is why these views sit here, ahead of the printing
+-- views, where printed_sample (schema/101) sits for the same reason.
 
 -- Today is read in Oregon's time zone, not the session's UTC (src/db.ts),
 -- whose new year arrives at 4 p.m. Pacific on 31 December. AT TIME ZONE on a
@@ -56,7 +61,14 @@ CREATE VIEW settled_sample AS
 SELECT s.entity_id AS sample_id
 FROM sample s, season
 WHERE s.date_start < season.active_since;
-COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable. Nothing of theirs is printed any more: pending_print_sample leaves them out (Peter, 2026-10-14).';
+COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable. They print only once staff have released them (sample_print_release); settled_unreleased_sample is the ones that never print (Peter, 2026-10-14, 2026-11-19).';
+
+CREATE VIEW settled_unreleased_sample AS
+SELECT st.sample_id
+FROM settled_sample st
+LEFT JOIN sample_print_release r ON r.sample_id = st.sample_id
+WHERE r.sample_id IS NULL;
+COMMENT ON VIEW settled_unreleased_sample IS 'Samples from a settled season that staff have not released for printing: they never print, are never pending, are held to the loose 250 m coordinate limit and do not follow their point for place. A released settled sample is none of these: it prints like an active one.';
 
 CREATE VIEW sample_season AS
 SELECT entity_id AS sample_id,

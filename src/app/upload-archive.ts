@@ -78,7 +78,14 @@ export function driveUploadArchive(key: ServiceAccountKey, folderId: string, tim
         // refused, so a copy this attempt left is looked for and binned. Best effort: if that fails too, the log
         // line names the attempt, and the copy is found in the folder by that app property.
         const outcome = await binAttempt(token, folderId, attempt).then(
-          (binned) => (binned.length === 0 ? "no copy was found in the folder" : `binned the copy it left, ${binned.join(", ")}`),
+          ({ binned, failed }) =>
+            [
+              binned.length === 0 && failed.length === 0 ? "no copy was found in the folder" : "",
+              binned.length > 0 ? `binned the copy it left, ${binned.join(", ")}` : "",
+              ...failed.map(({ id, why }) => `found the copy it left, ${id}, but could not bin it (${why}); bin it by hand`),
+            ]
+              .filter((s) => s !== "")
+              .join("; "),
           (stray: Error) => `could not look for a copy it left (${stray.message}); search the folder for the app property attempt=${attempt}`,
         );
         console.error(`upload ${file.properties.uploadId}: keeping a copy in Drive failed, attempt ${attempt} (${(err as Error).message}); ${outcome}`);
@@ -92,8 +99,11 @@ export function driveUploadArchive(key: ServiceAccountKey, folderId: string, tim
   };
 }
 
-/** Bin the file one attempt to keep a copy left in the folder, if any: an upload that was refused after Drive may have taken it. */
-async function binAttempt(token: string, folderId: string, attempt: string): Promise<string[]> {
+/**
+ * Bin the file one attempt to keep a copy left in the folder, if any: an upload that was refused after Drive may have
+ * taken it. Throws only if the search fails; a copy found and not binned is reported as such.
+ */
+async function binAttempt(token: string, folderId: string, attempt: string): Promise<{ binned: string[]; failed: Array<{ id: string; why: string }> }> {
   const params = new URLSearchParams({
     q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false and appProperties has { key='attempt' and value='${attempt}' }`,
     fields: "files(id)",
@@ -106,8 +116,15 @@ async function binAttempt(token: string, folderId: string, attempt: string): Pro
   });
   if (!res.ok) throw new Error(`Drive answered ${res.status} to the search`);
   const found = ((await res.json()) as { files: Array<{ id: string }> }).files.map((f) => f.id);
-  for (const id of found) await trashFile(token, id, AbortSignal.timeout(15_000));
-  return found;
+  const binned: string[] = [];
+  const failed: Array<{ id: string; why: string }> = [];
+  for (const id of found) {
+    await trashFile(token, id, AbortSignal.timeout(15_000)).then(
+      () => binned.push(id),
+      (err: Error) => failed.push({ id, why: err.message }),
+    );
+  }
+  return { binned, failed };
 }
 
 /**

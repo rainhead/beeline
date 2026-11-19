@@ -324,7 +324,7 @@ describe("night steps kept in the store (beeline-e1xg)", () => {
 });
 
 describe("scheduler", () => {
-  it("runs due jobs on tick and records history", async () => {
+  it("runs a job once when it is due, and records that it succeeded", async () => {
     const deps = await jobDeps();
     let ran = 0;
     const scheduler = startScheduler({
@@ -343,12 +343,25 @@ describe("scheduler", () => {
       tickMs: 10,
     });
     try {
-      await sleep(80);
-      expect(ran).toBe(1); // due immediately, then not for 9999 minutes
-      const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+      // Wait for the run to be recorded, not for a number of milliseconds:
+      // on a loaded CI runner 80ms was not always enough for the first tick
+      // (beeline-izd1).
+      const run = await vi.waitFor(
+        async () => {
+          const row = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+          expect(row.completed_at).not.toBeNull();
+          return row;
+        },
+        { timeout: 5_000, interval: 10 },
+      );
       expect(run.outcome).toBe("succeeded");
+      // Due immediately, then not for 9999 minutes: give it a few more ticks
+      // to run again. A slow runner only gives it fewer, which can let a
+      // regression pass but never fails a correct scheduler.
+      await sleep(50);
+      expect(ran).toBe(1);
     } finally {
-      scheduler.stop();
+      await scheduler.stop();
     }
   });
 
@@ -542,13 +555,20 @@ describe("boot reconciliation", () => {
     await deps.db.insertInto("job_run").values({ job_name: "nightly-pipeline" }).execute();
     const scheduler = startScheduler({ ...deps, jobs: [], tickMs: 10 });
     try {
-      await sleep(50);
-      const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+      // Waits for the sweep rather than a fixed pause, which a loaded runner
+      // could outlast (beeline-izd1).
+      const run = await vi.waitFor(
+        async () => {
+          const row = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+          expect(row.completed_at).not.toBeNull();
+          return row;
+        },
+        { timeout: 5_000, interval: 10 },
+      );
       expect(run.outcome).toBe("failed");
-      expect(run.completed_at).not.toBeNull();
       expect(run.detail).toContain("orphaned");
     } finally {
-      scheduler.stop();
+      await scheduler.stop();
     }
   });
 });

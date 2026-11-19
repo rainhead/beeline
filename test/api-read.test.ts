@@ -267,6 +267,10 @@ describe("the listings", () => {
     expect(a1).toMatchObject({ id: w.ids.a1, url: `${ORIGIN}/samples/${w.ids.a1}`, inatObservationId: 123456789, locality: "Corvallis", qcStatus: "clean" });
     expect(await w.page("alice", "/samples")).toContain("3 samples");
 
+    // Every program is a scope (beeline-t0rh), and MM names the ground outside the atlases as outside does.
+    for (const scope of ["NWR", "BLM", "MM", "outside"]) await w.json(w.keys.alice, `/samples?scope=${scope}`);
+    expect((await w.json(w.keys.alice, "/samples?scope=nowhere", 400)).message).toContain("scope");
+
     const specimens = await w.json(w.keys.alice, "/specimens?scope=all");
     expect(Object.keys(specimens.rows[0])).toEqual([...SPECIMEN_CSV_HEADER, "id", "url", "sample_id", "sample_url", "location_withheld"]);
     expect(specimens.total).toBe(4);

@@ -454,7 +454,7 @@ describe("dates", () => {
 
 describe("the columns read ignoring case", () => {
   it("is case-blind for sex, caste, the qualifier and the expert flag, and for nothing else", async () => {
-    const f = await uploadFixture();
+    const f = await sharedUploadFixture();
     const { a1 } = f.ids;
     const nothing = await plan(f, edited(await f.download(), [{ id: a1, set: { sex: "FEMALE", identifiedByExpert: "TRUE" } }]));
     nothingDiffers(nothing);
@@ -475,7 +475,7 @@ describe("a unit is listed only when it is complete", () => {
 
   describe("an identification", () => {
     it("needs a name", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       const p = await edit(f, { scientificName: "" });
       expect(heldOf(p, "name_blank").map((h) => [h.row, h.unit, h.column])).toEqual([[2, "determination", "scientificName"]]);
       expect(p.differences).toEqual([]);
@@ -488,7 +488,7 @@ describe("a unit is listed only when it is complete", () => {
     });
 
     it("needs a qualifier Beeline knows, or none", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       for (const word of DETERMINATION_QUALIFIERS) expect((await edit(f, { identificationQualifier: word })).differences, word).toHaveLength(1);
       for (const bad of ["maybe", "cf", "sp.", "agg."]) {
         const p = await edit(f, { identificationQualifier: bad });
@@ -498,14 +498,14 @@ describe("a unit is listed only when it is complete", () => {
     });
 
     it("needs a sex Beeline knows, or none", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       for (const word of DETERMINATION_SEXES) expect((await edit(f, { sex: word, caste: "" })).differences, word).toHaveLength(word === "female" ? 0 : 1);
       expect((await edit(f, { sex: "" })).differences).toHaveLength(1);
       for (const bad of ["queen", "f", "unknown"]) expect(heldOf(await edit(f, { sex: bad }), "sex_unknown"), bad).toHaveLength(1);
     });
 
     it("is judged on Beeline's own value for a column the file is not read for, so an edit there cannot hold it", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       const parsed = await parseUpload(edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "queen" } }]));
       if (!parsed.ok) throw new Error(parsed.refusal);
       // A file read for the name alone: the sex it carries is not Beeline's to take from it.
@@ -517,14 +517,14 @@ describe("a unit is listed only when it is complete", () => {
     });
 
     it("needs a caste Beeline knows, or none", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       for (const bad of ["king", "queen", "w"]) expect(heldOf(await edit(f, { caste: bad }), "caste_unknown"), bad).toHaveLength(1);
       expect((await edit(f, { caste: "worker" })).differences).toHaveLength(1);
       expect((await edit(f, { caste: "gyne" })).differences).toHaveLength(1);
     });
 
     it("needs a caste that fits the sex: a drone is male and a male is a drone", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       // a1 is female.
       expect(heldOf(await edit(f, { caste: "drone" }), "caste_sex")).toHaveLength(1);
       expect(heldOf(await edit(f, { sex: "male", caste: "worker" }), "caste_sex")).toHaveLength(1);
@@ -539,7 +539,7 @@ describe("a unit is listed only when it is complete", () => {
     });
 
     it("needs a date identified that is not after today", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       const today = "2026-11-16";
       expect(heldOf(await edit(f, { dateIdentified: "2026-11-17" }, f.ids.a1, today), "date_identified_future")).toHaveLength(1);
       expect(heldOf(await edit(f, { dateIdentified: "2999" }, f.ids.a1, today), "date_identified_future")).toHaveLength(1);
@@ -552,7 +552,7 @@ describe("a unit is listed only when it is complete", () => {
     });
 
     it("does not check the determiner, nor that the name is in the taxonomy", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       expect((await edit(f, { identifiedBy: "Nobody Known", scientificName: "Notagenus notaspecies" })).differences.map((c) => differing(c))).toEqual([["scientificName", "identifiedBy"]]);
     });
 
@@ -573,7 +573,7 @@ describe("a unit is listed only when it is complete", () => {
 
   describe("a disposition", () => {
     it("is a disposition Beeline knows, or none, with a remark", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       const { a2 } = f.ids;
       for (const word of DISPOSITIONS) {
         const p = await edit(f, { disposition: word, occurrenceRemarks: "Looked at" }, a2);
@@ -602,7 +602,7 @@ describe("a unit is listed only when it is complete", () => {
 
   describe("a sample's dates and method", () => {
     it("needs a collecting date", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       const p = await plan(f, edited(await f.download(), onSample(f, { eventDate: "", samplingProtocol: "blue vane trap" })));
       expect(heldOf(p, "event_date_blank").map((h) => [h.row, h.unit, h.column])).toEqual([[2, "method_dates", "eventDate"], [3, "method_dates", "eventDate"], [4, "method_dates", "eventDate"]]);
       expect(p.sampleDifferences).toEqual([]);
@@ -611,7 +611,7 @@ describe("a unit is listed only when it is complete", () => {
     });
 
     it("needs a collecting date that is not after today", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       const today = "2026-11-16";
       const download = await f.download();
       const p = await plan(f, edited(download, onSample(f, { eventDate: "2026-11-17" })), today);
@@ -629,7 +629,7 @@ describe("a unit is listed only when it is complete", () => {
     const held = (p: UploadPlan, reason: string) => heldOf(p, reason).length;
 
     it("is a point, which is both numbers, or nothing at all", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       expect(held(await coordinates(f, { decimalLatitude: "" }), "coordinates_incomplete")).toBe(3);
       expect(held(await coordinates(f, { decimalLongitude: "" }), "coordinates_incomplete")).toBe(3);
       // An uncertainty needs its point.
@@ -642,7 +642,7 @@ describe("a unit is listed only when it is complete", () => {
     });
 
     it("keeps its latitude within -90 and 90 and its longitude within -180 and 180", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       for (const bad of ["90.0001", "-91", "180"]) expect(held(await coordinates(f, { decimalLatitude: bad }), "latitude_range"), bad).toBe(3);
       for (const bad of ["180.0001", "-181", "360"]) expect(held(await coordinates(f, { decimalLongitude: bad }), "longitude_range"), bad).toBe(3);
       for (const ok of ["90", "-90", "0"]) expect((await coordinates(f, { decimalLatitude: ok })).sampleDifferences, ok).toHaveLength(1);
@@ -650,7 +650,7 @@ describe("a unit is listed only when it is complete", () => {
     });
 
     it("has an uncertainty that is a positive whole number, or none", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       for (const bad of ["0", "-5", "2.5"]) expect(held(await coordinates(f, { coordinateUncertaintyInMeters: bad }), "uncertainty_invalid"), bad).toBe(3);
       for (const ok of ["1", "30.0", "5000"]) {
         const p = await coordinates(f, { coordinateUncertaintyInMeters: ok });
@@ -662,7 +662,7 @@ describe("a unit is listed only when it is complete", () => {
 
   describe("a sample's locality", () => {
     it("is any text, and blank too", async () => {
-      const f = await uploadFixture();
+      const f = await sharedUploadFixture();
       const download = await f.download();
       for (const value of ["Albany", "x", "A very long place name ".repeat(10), "=1+1", "-Corvallis"]) {
         const p = await plan(f, edited(download, onSample(f, { locality: value })));

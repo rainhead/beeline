@@ -88,6 +88,12 @@ export interface IdealLogicRegistrantTable {
   last_seen_at: Generated<Date>;
 }
 
+/** schema/014: a keyed fingerprint of a registration's email address, never the address. */
+export interface IdealLogicEmailFingerprintTable {
+  ideal_logic_id: string;
+  fingerprint: string;
+}
+
 export type RegistrationEvidence = "register_email" | "handle" | "sign_in_email" | "staff";
 
 /** schema/014: a decision about which registration is a person's; the latest per person is the answer. */
@@ -1890,6 +1896,7 @@ export interface Database {
   person_admin: PersonAdminTable;
   person_delegate: PersonDelegateTable;
   ideal_logic_registrant: IdealLogicRegistrantTable;
+  ideal_logic_email_fingerprint: IdealLogicEmailFingerprintTable;
   person_registration_event: PersonRegistrationEventTable;
   person_registration: PersonRegistrationView;
   person_mailing_event: PersonMailingEventTable;

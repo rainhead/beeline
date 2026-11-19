@@ -225,7 +225,7 @@ export function UploadPreview({
       )}
       <NotRead m={m} unrecognised={unrecognised} otherSheets={otherSheets} read={samplesSummary !== null ? "samples" : undefined} />
       {samples !== null && samples.canApply && samplesSummary !== null && (
-        <form method="post" action={`${uploadHref(upload.entity_id)}/apply-samples`} class="form-column">
+        <form method="post" action={`${uploadHref(upload.entity_id)}/apply-samples`}>
           <input type="hidden" name="digest" value={samples.digest} />
           {samplesSummary.held.length > 0 && (
             <>

@@ -3,6 +3,7 @@ import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
 import { mirrorCorrections } from "./correction-store.js";
 import { trapCountOf, trapEffort } from "../trap-sample.js";
+import { isWriteConflict } from "../write-conflict.js";
 
 /**
  * Staff correcting how a sample was collected, from the Method row of its
@@ -69,7 +70,15 @@ export type MethodResult =
   /** Someone changed a field this form touched since it was opened. */
   | { outcome: "conflict" }
   /** No old record behind this sample: nothing durable to name. */
-  | { outcome: "no_old_records" };
+  | { outcome: "no_old_records" }
+  /**
+   * The store write lost a write conflict. For a sample with old records the
+   * events are already in the corrections file, which nothing reads again on
+   * production (ADR 0006); a sample entered in Beeline is written directly,
+   * with no events, so nothing was kept. Either way the change is applied only by saving it
+   * again, which does not record it twice (beeline-kgyd.4.8).
+   */
+  | { outcome: "not_applied" };
 
 interface Member {
   _id: string;
@@ -184,7 +193,13 @@ export async function setSampleMethod(
       const count = trapCountOf(current?.sampling_effort ?? null);
       if (count !== null) effort = { sampling_effort: trapEffort(count, protocol) };
     }
-    await db.updateTable("sample").set({ ...update, ...effort }).where("entity_id", "=", sampleId).execute();
+    try {
+      await db.updateTable("sample").set({ ...update, ...effort }).where("entity_id", "=", sampleId).execute();
+    } catch (err) {
+      // Nothing was kept anywhere, so saving again is all that is needed.
+      if (isWriteConflict(err)) return { outcome: "not_applied" };
+      throw err;
+    }
     return { outcome: "saved" };
   }
 
@@ -226,19 +241,25 @@ export async function setSampleMethod(
   // Everything in the store at once: the correction tables, the sample, and
   // the settled finding, so neither a failure part-way nor an export reading
   // between two statements sees half a correction (CodeRabbit on #314).
-  await db.transaction().execute(async (trx) => {
-    await mirrorCorrections(trx, events);
-    await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
-    // A disagreement among the records over the method is settled by the
-    // edit, as on the collector's form.
-    if (protocolChanged) {
-      await trx
-        .deleteFrom("sample_promotion_finding")
-        .where("sample_id", "=", sampleId)
-        .where("rule_name", "=", "within_sample_disagreement")
-        .where("details", "like", "protocol: %")
-        .execute();
-    }
-  });
+  try {
+    await db.transaction().execute(async (trx) => {
+      await mirrorCorrections(trx, events);
+      await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
+      // A disagreement among the records over the method is settled by the
+      // edit, as on the collector's form.
+      if (protocolChanged) {
+        await trx
+          .deleteFrom("sample_promotion_finding")
+          .where("sample_id", "=", sampleId)
+          .where("rule_name", "=", "within_sample_disagreement")
+          .where("details", "like", "protocol: %")
+          .execute();
+      }
+    });
+  } catch (err) {
+    // The file may hold the change, and the store does not; saving again applies it once.
+    if (isWriteConflict(err)) return { outcome: "not_applied" };
+    throw err;
+  }
   return { outcome: "saved" };
 }

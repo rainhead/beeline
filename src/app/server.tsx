@@ -1731,6 +1731,7 @@ export function createApp({
     if (result.outcome === "invalid") return c.text(t.problems[result.problem], 400);
     if (result.outcome === "no_old_records") return c.text(t.noOldRecords, 409);
     if (result.outcome === "conflict") return c.text(t.conflict, 409);
+    if (result.outcome === "not_applied") return c.text(c.get("m").sampleEdit.notApplied, 409);
     return c.redirect(sampleHref(sample.sample_id));
   });
 

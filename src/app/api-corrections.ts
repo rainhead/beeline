@@ -416,8 +416,11 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
       } catch (err) {
         // A save does not retry on a write conflict (docs/architecture/ingestion-jobs-and-elevation.md),
         // so the caller is told and may send it again.
-        // The correction writes its file first and then the store, so by now
-        // the file holds the change and the next promotion applies it.
+        // What reaches here is the sample overlay (locality, coordinates, hold and
+        // waiver on a sample with an observation), which the nightly does apply, so
+        // the message below is true for it. A writer of the corrections file answers
+        // its own conflict as `not_applied` instead: nothing reads that file again on
+        // production, so the nightly would never apply its change.
         if (isWriteConflict(err)) {
           c.set("outcome", "recorded_not_applied");
           return apiError(

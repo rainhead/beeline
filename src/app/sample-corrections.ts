@@ -13,7 +13,7 @@ import {
   setStaffLocality,
   standingLocalityAuthor,
   takeObservationLocation,
-  type StaffLocalityResult,
+  type StaffPointResult,
 } from "./locality-override.js";
 import { withPrintRunLock } from "../print-run.js";
 import { isWriteConflict } from "../write-conflict.js";
@@ -184,14 +184,14 @@ type StaffOnly = Refused<"not_admin">;
 const refused = <Why extends string>(refusal: Why): Refused<Why> => ({ ok: false, refusal }) as Refused<Why>;
 
 /** The sample's own overlay or corrections write, as it answers, reduced to what a caller needs. */
-function overlayRefusal(result: StaffLocalityResult | QcDecisionResult): Invalid | Unresolved | null {
+function overlayRefusal(result: StaffPointResult | QcDecisionResult): Invalid | Unresolved | null {
   if (result.outcome === "invalid") return { ok: false, refusal: "invalid", problem: result.problem };
   if (result.outcome === "unresolved") return { ok: false, refusal: "unresolved", reason: result.reason };
   return null;
 }
 
 /** What a write that was not refused did. Call it only after `overlayRefusal` and the other refusals have been handled. */
-const outcomeOf = (result: StaffLocalityResult | QcDecisionResult): Outcome =>
+const outcomeOf = (result: StaffPointResult | QcDecisionResult): Outcome =>
   result.outcome === "saved" || result.outcome === "removed" ? result.outcome : "unchanged";
 
 /**
@@ -277,7 +277,7 @@ export type EditSampleResult =
       /** The fields changed, or that a dry run would change. */
       changes: FieldChange[];
     }
-  | Refused<"impersonating" | "not_editable" | "no_staging">;
+  | Refused<"impersonating" | "not_editable" | "no_staging" | "not_applied">;
 
 /** The changes an edit makes to these fields, as the plan and the writer both trim them. */
 function fieldChanges(sample: EditableSample, fields: EditableFieldName[], values: EditSampleInput["values"]): FieldChange[] {
@@ -310,7 +310,14 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
       if (plan.outcome === "unchanged") return { ok: true, outcome: "unchanged", changes: [] };
       return { ok: true, outcome: "would_save", changes: fieldChanges(sample, plan.changed, form.values) };
     }
-    const result = await applySampleEdit(deps.db, deps.correctionsPath, sample, edit);
+    let result;
+    try {
+      result = await applySampleEdit(deps.db, deps.correctionsPath, sample, edit);
+    } catch (err) {
+      // The sample has old records, so the corrections file already holds the change and nothing applies it later.
+      if (isWriteConflict(err)) return refused("not_applied");
+      throw err;
+    }
     if (result.outcome === "no_staging") return refused("no_staging");
     // Record what just changed, credited to whoever typed it. Narrowed to
     // this sample, so the author is charged with this sample's pending
@@ -366,7 +373,7 @@ export interface AdoptLocalityInput {
 export type AdoptLocalityResult =
   | { ok: true; outcome: Outcome; reason: string }
   | Common
-  | Refused<"printed" | "set_by_other" | "changed" | "no_staging">
+  | Refused<"printed" | "set_by_other" | "changed" | "no_staging" | "not_applied">
   | Invalid
   | Unresolved;
 
@@ -409,6 +416,7 @@ export function adoptLocality(
     if (suggestion === undefined) return refused("changed");
     const reason = form.reasonFor(suggestion.basis);
     const result = await adoptSuggestedLocality(writeDeps, target, { suggestion: suggestion.locality, reason, author: actor.login });
+    if (result.outcome === "not_applied") return refused("not_applied");
     const bad = overlayRefusal(result);
     if (bad !== null) return bad;
     if (result.outcome === "no_staging") return refused("no_staging");
@@ -428,7 +436,7 @@ export interface SetPlaceInput {
 export type SetPlaceResult =
   | { ok: true; outcome: Outcome }
   | Common
-  | Refused<"printed" | "not_yours" | "set_by_other" | "only_offered" | "no_staging">
+  | Refused<"printed" | "not_yours" | "set_by_other" | "only_offered" | "no_staging" | "not_applied">
   | Invalid
   | Unresolved;
 
@@ -507,6 +515,7 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
       if (!admin) return refused("only_offered");
       result = await setStaffLocality(writeDeps, target, { value: name, remove: false, note: "", author: actor.login });
     }
+    if (result.outcome === "not_applied") return refused("not_applied");
     const bad = overlayRefusal(result);
     if (bad !== null) return bad;
     if (result.outcome === "no_staging") return refused("no_staging");

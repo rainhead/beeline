@@ -1021,6 +1021,9 @@ export const en = {
     /** The error page's heading for that refusal: "There's nothing here" would contradict it. */
     notEditableHeading: "This sample cannot be edited here",
     noStagingRows: "This sample has no underlying records to correct. Please contact staff for assistance.",
+    /** The change is in the corrections file but the store write lost a write conflict; nothing applies it later, so the person saves again (beeline-kgyd.4.6). */
+    notApplied:
+      "Your change could not be finished, because another change to this sample got there first, so it is not showing yet. Open the sample again to see what it holds now, and if your change is still needed, make it again.",
   },
 
   /**

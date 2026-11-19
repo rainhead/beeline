@@ -610,7 +610,9 @@ describe("what a refused correction is answered with", () => {
       const lost = await send();
       const answer = await json(lost);
       expect([lost.status, answer.error]).toEqual([409, "recorded_not_applied"]);
-      expect(answer.message).toContain("Sending the same request again applies it now and does not record it twice");
+      // Nothing applies a correction of an old sample's records later on its own, and the answer must not say the nightly will.
+      expect(answer.message).toContain("Nothing applies it later on its own");
+      expect(answer.message).not.toContain("nightly");
       // The file holds it; the store and the history do not.
       expect(await correctionsFile(w)).toContain("Walla Walla");
       expect(await localityOf(w.conn, w.legacy)).not.toBe("Walla Walla");
@@ -629,6 +631,24 @@ describe("what a refused correction is answered with", () => {
         ["/samples/:id/edit", "recorded_not_applied", 409],
         ["/samples/:id/edit", "saved", 200],
       ]);
+    });
+
+    it("answers a staff locality on a sample with no observation as recorded and not applied, and sending it again applies it once", async () => {
+      const w = await world();
+      const api = apiOver(w, { db: dbLosingOnce(w.db) });
+      const send = () => post(api, w.keys.sam, `/samples/${w.legacy}/locality`, { locality: "Hood River" });
+      const lost = await send();
+      const answer = await json(lost);
+      expect([lost.status, answer.error]).toEqual([409, "recorded_not_applied"]);
+      expect(answer.message).toContain("Nothing applies it later on its own");
+      expect(answer.message).not.toContain("nightly");
+      expect(await correctionsFile(w)).toContain("Hood River");
+      expect(await localityOf(w.conn, w.legacy)).not.toBe("Hood River");
+      expect(await apiEntries(w, "OBAS-00657", "locality")).toEqual([]);
+      expect((await send()).status).toBe(200);
+      expect(await localityOf(w.conn, w.legacy)).toBe("Hood River");
+      expect(await apiEntries(w, "OBAS-00657", "locality")).toHaveLength(1);
+      expect((await w.uses()).map((u) => u[4])).toEqual(["recorded_not_applied", "saved"]);
     });
 
     const overlayCases = [

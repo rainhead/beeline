@@ -1582,6 +1582,8 @@ export function createApp({
         return errorResponse(c, "notFound", { heading: m.sampleEdit.notEditableHeading, message: m.sampleEdit.notEditable });
       case "no_staging":
         return c.text(m.sampleEdit.noStagingRows, 409);
+      case "not_applied":
+        return c.text(m.sampleEdit.notApplied, 409);
       default:
         return unreachable(result);
     }
@@ -1621,6 +1623,8 @@ export function createApp({
         return c.text(result.problem, 400);
       case "no_staging":
         return c.text(m.sampleEdit.noStagingRows, 409);
+      case "not_applied":
+        return c.text(m.sampleEdit.notApplied, 409);
       case "unresolved":
         return c.text(result.reason, 409);
       default:
@@ -1672,6 +1676,8 @@ export function createApp({
         return c.text(result.problem, 400);
       case "no_staging":
         return c.text(m.sampleEdit.noStagingRows, 409);
+      case "not_applied":
+        return c.text(m.sampleEdit.notApplied, 409);
       case "unresolved":
         return c.text(result.reason, 409);
       default:

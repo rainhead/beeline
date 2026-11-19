@@ -69,8 +69,8 @@ FROM sample_print_release_event e
 WHERE e.action = 'release'
   AND NOT EXISTS (SELECT 1 FROM sample_print_release_event later
                   WHERE later.sample_id = e.sample_id
-                    AND (later.decided_at > e.decided_at OR (later.decided_at = e.decided_at AND later.entity_id > e.entity_id)));
-COMMENT ON VIEW sample_print_release IS 'Samples whose latest release or withdrawal (sample_print_release_event) is a release, with who released them, when, and why. A sample staff released and then withdrew is not here, and one they released again after a withdrawal is.';
+                    AND later.entity_id > e.entity_id);
+COMMENT ON VIEW sample_print_release IS 'Samples whose latest release or withdrawal (sample_print_release_event, in the order the rows were written: entity_id comes from a sequence) is a release, with who released them, when, and why. A sample staff released and then withdrew is not here, and one they released again after a withdrawal is.';
 
 CREATE VIEW settled_unreleased_sample AS
 SELECT st.sample_id

@@ -78,6 +78,14 @@ export interface ScopeOption {
 export interface ScopeCounts {
   program: { samples: number; labels: number; reprints: number };
   atlases: ScopeOption[];
+  /**
+   * Released samples with labels still to print that wait for the nightly's
+   * county stamp to work out their county and state (sample_awaiting_place,
+   * schema/150), whatever their scope. If the nightly's areas step cannot run
+   * (the gazetteer is missing or out of date), these wait for ever, and this
+   * count is where that shows.
+   */
+  awaiting_place: number;
 }
 
 export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
@@ -106,7 +114,16 @@ export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
     LEFT JOIN pending_print_sample p ON p.sample_id = sa.sample_id
     GROUP BY a.entity_id, a.code, ab.abbreviation, a.name, ap.atlas_id
     ORDER BY a.entity_id`.execute(db);
+  // Only those with bees still to label: a released sample with every label already
+  // individuated has nothing to wait for. Counted as pending_print_sample counts a sample's labels.
+  const awaiting = await sql<{ n: number }>`
+    SELECT CAST(count(*) AS INTEGER) AS n
+    FROM sample_awaiting_place w
+    JOIN sample s ON s.entity_id = w.sample_id
+    WHERE s.specimen_count > coalesce((SELECT count(*) FROM individuated_specimen i
+                                       WHERE i.sample_id = s.entity_id AND i.specimen_number <= s.specimen_count), 0)`.execute(db);
   return {
+    awaiting_place: Number(awaiting.rows[0]?.n ?? 0),
     program: {
       samples: Number(program.samples),
       labels: Number(program.labels ?? 0),

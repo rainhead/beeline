@@ -1824,8 +1824,6 @@ export function createApp({
         return c.text(m.record.sample.printRelease.busy, 409);
       case "labels_in_run":
         return c.text(m.record.sample.printRelease.labelsInRun, 409);
-      case "not_settled":
-        return c.text(m.record.sample.printRelease.notSettled, 409);
       case "count_follows_observation":
         return c.text(m.record.sample.printRelease.countFollowsObservation, 409);
       default:

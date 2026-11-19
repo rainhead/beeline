@@ -1375,6 +1375,11 @@ export interface SamplePrintReleaseView {
   reason: string | null;
 }
 
+/** Samples whose county, state and country follow their point (schema/150). */
+export interface SampleFollowsPointView {
+  sample_id: number;
+}
+
 /** Released settled samples waiting for the county stamp (schema/150). */
 export interface SampleAwaitingPlaceView {
   sample_id: number;
@@ -1976,6 +1981,7 @@ export interface Database {
   sample_print_release_event: SamplePrintReleaseEventTable;
   sample_place_stamped: SamplePlaceStampedTable;
   sample_print_release: SamplePrintReleaseView;
+  sample_follows_point: SampleFollowsPointView;
   sample_awaiting_place: SampleAwaitingPlaceView;
   qc_rule_unwaivable: QcRuleUnwaivableTable;
   sample_qc_waiver: SampleQcWaiverTable;

@@ -961,9 +961,9 @@ export const en = {
       "Its labels print once the specimens are pinned and counted.",
     notSaved: "Nothing was saved. Correct the fields marked below and save again.",
     /** Shown to staff entering a sample whose dates are from a season that has settled: saving releases its labels. */
-    releasesLabelsNew: "These dates are from a season that has settled. Saving this sample lets the next print run label its bees that have no label yet.",
+    releasesLabelsNew: "These dates are from a season that has settled. Saving this sample releases its labels: once the nightly update has worked out its county and state from its coordinates, the next print run labels its bees that have no label yet.",
     /** Shown to staff editing one: only a new specimen count releases the labels, and a save that leaves the count alone does not. */
-    releasesLabelsEdit: "These dates are from a season that has settled. Saving a new specimen count lets the next print run label this sample's bees that have no label yet.",
+    releasesLabelsEdit: "These dates are from a season that has settled. Saving a new specimen count releases its labels: once the nightly update has worked out its county and state from its coordinates, the next print run labels this sample's bees that have no label yet. Changing the coordinates, county, state or country sends it back to wait for that update.",
     trapCollectorNote: "has trap samples",
     fields: {
       sampleNumber: "Sample number",
@@ -1269,18 +1269,36 @@ export const en = {
       },
       /** Staff releasing a settled season's sample for printing, or withdrawing the release (beeline-3vs.7). */
       printRelease: {
-        /** Says what staff vouch for, and how many labels the next print run would make. */
-        hint: (labels: number) =>
-          `This sample is from a season that has settled, so its labels do not print. Release it only if you know its bees have no labels yet, from old Beeline or made by hand. ` +
-          `The next print run will then print ${labels === 1 ? "1 label" : `${labels} labels`}, unless a flag holds the sample back.`,
+        /**
+         * Says what staff vouch for, and when the labels print. `settled`: the sample's season has settled, so it prints only once released;
+         * `followsPoint`: its county and state are first worked out from its coordinates by the nightly update.
+         */
+        hint: (labels: number, settled: boolean, followsPoint: boolean) => {
+          const n = labels === 1 ? "1 label" : `${labels} labels`;
+          if (!settled) {
+            return (
+              `This sample is from a season that is still active, so its labels print without a release. ` +
+              `Releasing it keeps them printing after its season settles on 1 March. Release it only if you know its bees have no labels yet, from old Beeline or made by hand. ` +
+              `${n} would print, unless a flag holds the sample back.`
+            );
+          }
+          return (
+            `This sample is from a season that has settled, so its labels do not print. Release it only if you know its bees have no labels yet, from old Beeline or made by hand. ` +
+            (followsPoint
+              ? `Once the nightly update has worked out its county and state from its coordinates, the next print run will print ${n}, unless a flag holds the sample back.`
+              : `The next print run will then print ${n}, unless a flag holds the sample back.`)
+          );
+        },
         note: "Reason (optional)",
         release: "Release labels for printing",
         released: (by: string | null, day: string) => `Released for printing${by === null ? "" : ` by ${by}`} on ${day}.`,
         because: (reason: string) => `Reason: ${reason}`,
-        /** Shown on a settled sample whose release stands, not on an active one. */
+        /** Shown on a settled sample whose release stands and that waits for nothing else, not on an active one. */
         releasedHint: "The next print run labels the bees that have no label yet.",
-        /** Said to staff on a released settled sample that follows its point and has not been placed yet. */
+        /** Said to staff on a released settled sample that has a point and follows it, and has not been placed yet. */
         awaitingPlace: "Its labels print after the nightly update works out its county and state from its coordinates.",
+        /** Said to staff on a released settled sample that has no coordinates: it cannot print without them. */
+        awaitingCoordinates: "Its labels wait for coordinates: it has none yet.",
         withdraw: "Withdraw release",
         /** Said beside the withdraw button. */
         withdrawHint: "Withdrawing is refused while the sample's labels are in a prepared print run: cancel the run first, or let it print.",
@@ -1289,8 +1307,6 @@ export const en = {
         busy: "Another change to the store got in the way, so nothing was done. Try again in a few minutes.",
         labelsInRun: "This sample's labels are in a print run that has not printed, which would keep them. Cancel the run first, or let it print.",
         countFollowsObservation: "This sample's specimen count comes from its iNaturalist observation, and a past season's count copied from iNaturalist is not printed.",
-        /** The reason when a sample from an active season is released: it needs none. */
-        notSettled: "This sample is from a season that is still active, and an active season's labels print without a release.",
       },
       /** Staff correcting how many specimens a trap sample holds, through the API (beeline-kgyd.4.4). */
       specimenCount: {
@@ -2852,6 +2868,11 @@ export const en = {
       button: "Prepare",
       hint:
         "Preparing freezes the set and assigns field numbers, in the order the labels will appear on the sheets. If that was wrong, cancel the run before it prints: the numbers stay used and the samples go back to waiting.",
+      /** Released samples whose county and state the nightly update has not worked out yet: they are not in the counts above. */
+      awaitingPlace: (samples: number) =>
+        `${n(samples)} released ${samples === 1 ? "sample is" : "samples are"} not counted above. ${
+          samples === 1 ? "It prints" : "They print"
+        } once the nightly update has worked out ${samples === 1 ? "its" : "their"} county and state.`,
       /** The POST found nothing pending, so no run was made. */
       nothingToPrepare: "Nothing was waiting to print in that scope, so no run was prepared.",
     },

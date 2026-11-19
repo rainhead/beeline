@@ -135,11 +135,6 @@ const REFUSALS = {
     error: "conflict",
     message: "The sample's collectors changed while this request was being worked out. Nothing was done. Read the sample again and send the list you mean.",
   },
-  not_settled: {
-    status: 409,
-    error: "not_settled",
-    message: "This sample is from a season that is still active, and an active season's labels print without a release. Nothing was done.",
-  },
   count_follows_observation: {
     status: 409,
     error: "count_follows_observation",
@@ -201,7 +196,6 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "number_taken":
     case "observation_tied":
     case "conflict":
-    case "not_settled":
     case "count_follows_observation":
     case "labels_in_run":
     case "unavailable": {
@@ -555,7 +549,7 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     { count: "text_or_number", note: "string" },
     ["count"],
     setSpecimenCount,
-    (r) => ({ outcome: r.outcome, specimen_count: r.specimen_count, pending: r.pending }),
+    (r) => ({ outcome: r.outcome, specimen_count: r.specimen_count, pending: r.pending, released: r.released, awaiting_place: r.awaiting_place }),
   );
 
   // Staff release a settled season's sample for printing, or withdraw the release (beeline-3vs.7).
@@ -565,7 +559,7 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     { note: "string", withdraw: "boolean" },
     [],
     releaseLabels,
-    (r) => ({ outcome: r.outcome, pending: r.pending }),
+    (r) => ({ outcome: r.outcome, pending: r.pending, released: r.released, awaiting_place: r.awaiting_place }),
   );
 
   endpoint(

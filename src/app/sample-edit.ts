@@ -220,6 +220,11 @@ async function writeSampleEdit(
   // through (src/app/correction-store.ts).
   await db.transaction().execute(async (trx) => {
     await mirrorCorrections(trx, plan.events);
+    // A rewritten place has not been looked at by the nightly's county stamp
+    // (sample_place_stamped, schema/038): a released sample waits for it again.
+    if (plan.changed.some((name) => name === "country" || name === "state_province" || name === "county")) {
+      await sql`DELETE FROM sample_place_stamped WHERE sample_id = ${sample.entity_id}`.execute(trx);
+    }
     await trx.updateTable("sample").set(plan.updates).where("entity_id", "=", sample.entity_id).execute();
     // A within-sample disagreement on an edited field is settled by the edit:
     // every member row now carries one value, so the stored finding would not

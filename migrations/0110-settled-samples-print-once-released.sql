@@ -31,8 +31,8 @@ CREATE TABLE sample_print_release_event (
   decided_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
   reason    TEXT
 );
-COMMENT ON TABLE sample_print_release_event IS 'One staff decision that a sample from a settled season may print its labels (a release), or may not any more (a withdrawal), as a row of its own that is never changed (beeline-3vs.7). A sample''s standing is its latest event, by decided_at and then entity_id (sample_print_release, schema/102). It matters only once the season has settled: an active season''s samples print without one. Written straight to the store, with no overlay file, because production is never promoted again (ADR 0006), so a development store rebuilt from the old records loses it. No sample with a standing release follows an observation''s count, which promotion would otherwise put back (it does so for a sample that has an observation and no label on paper): setSpecimenCount and releaseLabels refuse such a sample, a sample entered in Beeline has no observation, and minting links no observation to an entered or released sample (sample_mint_free_link, schema/108). Not a record of what printed: printed_sample is.';
-COMMENT ON COLUMN sample_print_release_event.entity_id IS 'A draw from entity_id_seq, not an identity anyone refers to: the tie-break that makes a sample''s latest event deterministic when two share a timestamp, as minted_field_number.entity_id does for a specimen''s latest number (ADR 0008 §6).';
+COMMENT ON TABLE sample_print_release_event IS 'One staff decision that a sample from a settled season may print its labels (a release), or may not any more (a withdrawal), as a row of its own that is never changed (beeline-3vs.7). A sample''s standing is its latest event, the one written last: the highest entity_id, which comes from a sequence (sample_print_release, schema/102). It matters only once the season has settled: an active season''s samples print without one. Written straight to the store, with no overlay file, because production is never promoted again (ADR 0006), so a development store rebuilt from the old records loses it. No sample with a standing release follows an observation''s count, which promotion would otherwise put back (it does so for a sample that has an observation and no label on paper): setSpecimenCount and releaseLabels refuse such a sample, a sample entered in Beeline has no observation, and minting links no observation to an entered or released sample (sample_mint_free_link, schema/108). Not a record of what printed: printed_sample is.';
+COMMENT ON COLUMN sample_print_release_event.entity_id IS 'A draw from entity_id_seq, not an identity anyone refers to: the order the rows were written in, which makes a sample''s latest event the one with the highest, as minted_field_number.entity_id does for a specimen''s latest number (ADR 0008 §6); decided_at is for people and is not compared.';
 COMMENT ON COLUMN sample_print_release_event.action IS 'A release lets the sample print once its season has settled; a withdrawal takes that back. Withdrawing is refused while the sample''s labels are in a print run that has not printed (releaseLabels, src/app/sample-corrections.ts).';
 COMMENT ON COLUMN sample_print_release_event.person_id IS 'The person who decided it; null for a staff login that is no person, as sample_hold.held_by and sample_entry.entered_by are.';
 COMMENT ON COLUMN sample_print_release_event.decided_at IS 'When the decision was written, UTC.';
@@ -54,8 +54,8 @@ FROM sample_print_release_event e
 WHERE e.action = 'release'
   AND NOT EXISTS (SELECT 1 FROM sample_print_release_event later
                   WHERE later.sample_id = e.sample_id
-                    AND (later.decided_at > e.decided_at OR (later.decided_at = e.decided_at AND later.entity_id > e.entity_id)));
-COMMENT ON VIEW sample_print_release IS 'Samples whose latest release or withdrawal (sample_print_release_event) is a release, with who released them, when, and why. A sample staff released and then withdrew is not here, and one they released again after a withdrawal is.';
+                    AND later.entity_id > e.entity_id);
+COMMENT ON VIEW sample_print_release IS 'Samples whose latest release or withdrawal (sample_print_release_event, in the order the rows were written: entity_id comes from a sequence) is a release, with who released them, when, and why. A sample staff released and then withdrew is not here, and one they released again after a withdrawal is.';
 
 CREATE VIEW settled_unreleased_sample AS
 SELECT st.sample_id
@@ -65,21 +65,30 @@ WHERE r.sample_id IS NULL;
 COMMENT ON VIEW settled_unreleased_sample IS 'Samples from a settled season that staff have not released for printing, or whose release they withdrew: they never print, are never pending, are held to the loose 250 m coordinate limit and do not follow their point for place. A released settled sample is none of these: it prints like an active one, once its place is worked out where it follows its point (sample_awaiting_place, schema/150).';
 COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable. They print only once staff have released them (sample_print_release_event); settled_unreleased_sample is the ones that never print (Peter, 2026-10-14, 2026-11-19).';
 
+CREATE VIEW sample_follows_point AS
+SELECT s.entity_id AS sample_id
+FROM sample s
+WHERE EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = s.entity_id)
+   OR ((s.inat_observation_id IS NOT NULL
+        OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
+       AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+       AND NOT EXISTS (SELECT 1 FROM settled_unreleased_sample ss WHERE ss.sample_id = s.entity_id));
+COMMENT ON VIEW sample_follows_point IS 'Samples whose county, state and country follow their point, as the nightly''s county stamp writes them (src/derive-area.ts, stampCounties): one whose point staff set (sample_location_override), printed or not, or one with an observation or entered in Beeline that has no label on paper and is in an active season or released from a settled one. The one definition of "follows its point": the stamp, the staff correction of the place and sample_awaiting_place all read it.';
+
 CREATE VIEW sample_awaiting_place AS
 SELECT s.entity_id AS sample_id
 FROM sample s
 JOIN settled_sample st ON st.sample_id = s.entity_id
 JOIN sample_print_release r ON r.sample_id = s.entity_id
+JOIN sample_follows_point f ON f.sample_id = s.entity_id
 LEFT JOIN (
   SELECT p.sample_id, p.stamped_at
   FROM sample_place_stamped p
   JOIN sample_location l ON l.sample_id = p.sample_id
   WHERE abs(p.latitude - l.latitude) <= 5e-5 AND abs(p.longitude - l.longitude) <= 5e-5
 ) looked ON looked.sample_id = s.entity_id AND looked.stamped_at >= r.released_at
-WHERE (s.inat_observation_id IS NOT NULL OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
-  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
-  AND looked.sample_id IS NULL;
-COMMENT ON VIEW sample_awaiting_place IS 'Settled samples staff have released for printing whose county, state and country follow their point (they have an observation, or were entered in Beeline, and no label is on paper) and which the nightly''s county stamp has not looked at since the release, at the sample''s present point (sample_place_stamped, schema/038): they wait here, and are not pending, so no label carries a place typed before the point was read. A released sample that does not follow its point (old records, printed) is never here. A sample with no point is here too, since it cannot print anyway.';
+WHERE looked.sample_id IS NULL;
+COMMENT ON VIEW sample_awaiting_place IS 'Settled samples staff have released for printing whose county, state and country follow their point (sample_follows_point: an observation, an entry in Beeline or a staff point, and no label on paper unless staff set the point) and which the nightly''s county stamp has not looked at since the release, at the sample''s present point (sample_place_stamped, schema/038): they wait here, and are not pending, so no label carries a place typed before the point was read. A released sample that does not follow its point (old records) is never here. A sample with no point is here too, since it cannot print anyway.';
 
 CREATE OR REPLACE VIEW pending_print_sample AS
 SELECT s.entity_id AS sample_id,

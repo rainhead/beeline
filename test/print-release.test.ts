@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createKysely } from "../src/db.js";
@@ -6,6 +8,7 @@ import { loadDashboard } from "../src/app/dashboard.js";
 import { en } from "../src/app/messages/en.js";
 import { loadRun } from "../src/app/print-runs.js";
 import { createApp } from "../src/app/server.js";
+import { deriveAreas } from "../src/derive-area.js";
 import { prepareRun } from "../src/print-run.js";
 import { createMemoryDb, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 
@@ -61,13 +64,14 @@ describe("the release on the sample page", () => {
     const page = async (app: typeof s.staff, id: number) => (await app.request(`/samples/${id}`)).text();
     expect(await page(s.staff, settled)).toContain(t.release);
     // It says what staff vouch for and how many labels the next run will print.
-    expect(await page(s.staff, settled)).toContain(t.hint(3));
+    expect(await page(s.staff, settled)).toContain(t.hint(3, true, false).replaceAll("'", "&#39;"));
     expect(await page(s.staff, settled)).toContain(route(settled));
     expect(await page(s.collector, settled)).not.toContain(t.release);
     expect(await page(s.collector, settled)).not.toContain(route(settled));
-    // An active season prints without one.
+    // An active season prints without one, and staff may still release it so it keeps printing once it settles.
     const active = await s.sample({ sample_number: "'T-2'" });
-    expect(await page(s.staff, active)).not.toContain(t.release);
+    expect(await page(s.staff, active)).toContain(t.release);
+    expect(await page(s.staff, active)).toContain(t.hint(3, false, false).replaceAll("'", "&#39;"));
     // A count copied from the observation is not staff's to vouch for: no button, and the route refuses.
     const followed = await s.sample({ sample_number: "'T-4'", inat_observation_id: "990011", ...settledDates });
     expect(await page(s.staff, followed)).not.toContain(t.release);
@@ -117,15 +121,44 @@ describe("the release on the sample page", () => {
     expect(page).not.toContain(t.releasedHint);
   });
 
-  it("refuses a collector, and an active season's sample, in the catalogue's words", async () => {
+  it("refuses a collector, and releases an active season's sample ahead of its settling", async () => {
     const s = await setup();
     const settled = await s.sample({ sample_number: "'T-1'", ...settledDates });
     const active = await s.sample({ sample_number: "'T-2'" });
     expect((await post(s.collector, settled, {})).status).toBe(403);
-    const refused = await post(s.staff, active, {});
-    expect([refused.status, await refused.text()]).toEqual([409, t.notSettled]);
     expect((await post(s.staff, 999999, {})).status).toBe(404);
     expect(await rows(s.conn, `SELECT count(*) FROM sample_print_release_event`)).toEqual([[0n]]);
+    expect((await post(s.staff, active, {})).status).toBe(302);
+    expect(await rows(s.conn, `SELECT sample_id FROM sample_print_release`)).toEqual([[active]]);
+  });
+
+  it("says one sentence for what a released settled sample waits for", async () => {
+    const s = await setup();
+    const page = async (id: number) => (await s.staff.request(`/samples/${id}`)).text();
+    const release = (id: number) => s.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${id}, 'release')`);
+    // Entered in Beeline with a point: its county and state wait for the nightly update.
+    const entered = await s.sample({ sample_number: "'T-1'", ...settledDates });
+    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+    await release(entered);
+    let text = await page(entered);
+    expect(text).toContain(t.awaitingPlace);
+    expect(text).not.toContain(t.releasedHint);
+    expect(text).not.toContain(t.awaitingCoordinates);
+    // No point: the labels wait for coordinates, not for the nightly update.
+    const pointless = await s.sample({ sample_number: "'T-2'", ...settledDates });
+    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${pointless})`);
+    await s.conn.run(`DELETE FROM sample_location WHERE sample_id = ${pointless}`);
+    await release(pointless);
+    text = await page(pointless);
+    expect(text).toContain(t.awaitingCoordinates);
+    expect(text).not.toContain(t.awaitingPlace);
+    // Nothing else to wait for: the next print run.
+    const oldRecord = await s.sample({ sample_number: "'T-3'", ...settledDates });
+    await release(oldRecord);
+    text = await page(oldRecord);
+    expect(text).toContain(t.releasedHint);
+    expect(text).not.toContain(t.awaitingPlace);
+    expect(text).not.toContain(t.awaitingCoordinates);
   });
 });
 
@@ -147,6 +180,24 @@ describe("the collector's front page", () => {
     // Not released: kept off the page, its flag counted.
     expect(byId.has(unreleased)).toBe(false);
     expect(dash.settledFlagged).toBe(1);
+  });
+});
+
+describe("the Prepare page", () => {
+  it("counts released samples that wait for the nightly to place them, so a failing areas step shows", async () => {
+    const s = await setup();
+    const waiting = await s.sample({ sample_number: "'T-1'", ...settledDates });
+    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${waiting})`);
+    await s.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${waiting}, 'release')`);
+    const page = async () => (await s.staff.request("/print-runs")).text();
+    expect(await page()).toContain(en.printRuns.prepare.awaitingPlace(1));
+    // The nightly's areas step finds no gazetteer, so nothing places the sample: it stays out of every run and the page keeps saying so.
+    expect(await deriveAreas(s.conn, join(tmpdir(), "no-such-gazetteer.duckdb"), { stampCounties: true })).toMatchObject({ gazetteerBuild: null });
+    expect(await rows(s.conn, `SELECT sample_id FROM pending_print_sample WHERE sample_id = ${waiting}`)).toEqual([]);
+    expect(await page()).toContain(en.printRuns.prepare.awaitingPlace(1));
+    // Withdrawn, it waits for nothing.
+    await s.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${waiting}, 'withdraw')`);
+    expect(await page()).not.toContain(en.printRuns.prepare.awaitingPlace(1));
   });
 });
 

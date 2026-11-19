@@ -174,11 +174,15 @@ export interface SampleDetail {
   /**
    * How many labels the next print run would print for this sample if it were
    * released: its count less the specimens already individuated, as
-   * pending_print_sample counts them. Worked out only for a settled sample
-   * with no standing release, whose page offers staff the release when it is
-   * above 0; 0 for any other.
+   * pending_print_sample counts them. Worked out only for a sample with no
+   * standing release, in any season, whose page offers staff the release when
+   * it is above 0; 0 for any other.
    */
   labels_to_print: number;
+  /** Whether the sample has a point (sample_location), withheld from the reader or not. */
+  has_point: boolean;
+  /** Whether its county, state and country follow its point once it prints: a staff point, or an observation or an entry in Beeline with no label on paper. */
+  follows_point_when_released: boolean;
   /**
    * A released settled sample that follows its point and waits for the
    * nightly's county stamp (sample_awaiting_place, schema/150): its labels
@@ -649,36 +653,54 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
  * Whether the sample is from a settled season, staff's latest release or
  * withdrawal for it, whether a release is waiting for the county stamp, and,
  * only where the page may offer the release, how many labels the next run
- * would print. One row by primary key, and the count only for a settled
- * sample with no standing release.
+ * would print. One row by primary key, and the count only for a sample with
+ * no standing release, in any season.
  */
 async function printReleaseOf(
   db: Kysely<Database>,
   sampleId: number,
   specimenCount: number,
-): Promise<{ settled: boolean; print_release: PrintRelease | null; labels_to_print: number; awaiting_place: boolean }> {
-  const state = await sql<{ settled: boolean; released: boolean; awaiting: boolean }>`
+): Promise<{
+  settled: boolean;
+  print_release: PrintRelease | null;
+  labels_to_print: number;
+  awaiting_place: boolean;
+  has_point: boolean;
+  follows_point_when_released: boolean;
+}> {
+  const state = await sql<{ settled: boolean; released: boolean; awaiting: boolean; has_point: boolean; follows: boolean }>`
     SELECT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id) AS settled,
            EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = s.entity_id) AS released,
-           EXISTS (SELECT 1 FROM sample_awaiting_place w WHERE w.sample_id = s.entity_id) AS awaiting
+           EXISTS (SELECT 1 FROM sample_awaiting_place w WHERE w.sample_id = s.entity_id) AS awaiting,
+           EXISTS (SELECT 1 FROM sample_location l WHERE l.sample_id = s.entity_id) AS has_point,
+           (EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = s.entity_id)
+            OR ((s.inat_observation_id IS NOT NULL OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
+                AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id))) AS follows
     FROM sample s WHERE s.entity_id = ${sampleId}`.execute(db);
   const latest = await sql<{ action: "release" | "withdraw"; at: Date; reason: string | null; by: string | null }>`
     SELECT e.action, e.decided_at AS at, e.reason, p.display_name AS by
     FROM sample_print_release_event e LEFT JOIN person p ON p.entity_id = e.person_id
     WHERE e.sample_id = ${sampleId}
-    ORDER BY e.decided_at DESC, e.entity_id DESC LIMIT 1`.execute(db);
+    ORDER BY e.entity_id DESC LIMIT 1`.execute(db);
   const settled = Boolean(state.rows[0]?.settled);
   const released = Boolean(state.rows[0]?.released);
   const row = latest.rows[0];
   const release: PrintRelease | null = row === undefined ? null : { action: row.action, by: row.by, at: row.at, reason: row.reason };
   let toPrint = 0;
-  if (settled && !released && specimenCount > 0) {
+  if (!released && specimenCount > 0) {
     const held = await sql<{ n: number }>`
       SELECT CAST(count(*) AS INTEGER) AS n FROM individuated_specimen i
       WHERE i.sample_id = ${sampleId} AND i.specimen_number <= ${specimenCount}`.execute(db);
     toPrint = Math.max(0, specimenCount - Number(held.rows[0]?.n ?? 0));
   }
-  return { settled, print_release: release, labels_to_print: toPrint, awaiting_place: settled && Boolean(state.rows[0]?.awaiting) };
+  return {
+    settled,
+    print_release: release,
+    labels_to_print: toPrint,
+    awaiting_place: settled && Boolean(state.rows[0]?.awaiting),
+    has_point: Boolean(state.rows[0]?.has_point),
+    follows_point_when_released: Boolean(state.rows[0]?.follows),
+  };
 }
 
 /** Everyone who collected one sample, in recordedBy order. */

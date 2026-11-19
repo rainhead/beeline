@@ -315,9 +315,9 @@ async function releaseByStaff(conn: DuckDBConnection, sampleId: number, by: Staf
 
 /**
  * Write a new trap sample; its id. Behind the print runs' lock, on the print
- * connection. Where `staff` says staff entered it and its dates are from a
- * settled season, the release is written with it, in the same transaction:
- * staff entering a sample is staff saying its bees need labels.
+ * connection. Where `staff` says staff entered it, the release is written
+ * with it, in the same transaction and in any season: staff entering a sample
+ * is staff saying its bees need labels.
  */
 export function createTrapSample(
   conn: DuckDBConnection,
@@ -399,6 +399,10 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
       // The satellites are replaced rather than updated: none is referenced,
       // and the sample row itself keeps its id (beeline-6e9).
       await conn.run(`DELETE FROM sample_collector WHERE sample_id = $1`, [id] as never);
+      // The save rewrites the place and the point, so the nightly's stamp has
+      // not looked at what is there now (sample_place_stamped, schema/038): a
+      // released sample waits for it again before it prints.
+      await conn.run(`DELETE FROM sample_place_stamped WHERE sample_id = $1`, [id] as never);
       // A point staff set from the sample's page goes with the location the
       // form is rewriting, whose point is the new one (beeline-kgyd.4.2).
       await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [id] as never);

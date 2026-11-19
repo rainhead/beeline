@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AREA_RULE_VERSION, deriveAreas, describeAreas } from "../src/derive-area.js";
 import { loadSpatial, openDuckDb } from "../src/db.js";
-import { SETTLED_SEASON, buildTestGazetteer, createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { applyStaffPoint } from "../src/apply-sample-overlay.js";
+import { CURRENT_SEASON, SETTLED_SEASON, buildTestGazetteer, createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 let dir: string;
 
@@ -466,6 +467,64 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
     expect(await pending(conn)).toEqual([linked, oldRecord]);
     await deriveAreas(conn, path, { stampCounties: true });
     expect(await pending(conn)).toEqual([entered, linked, oldRecord]);
+  });
+
+  test("a released settled old-records sample with a staff point is not pending until the stamp has looked at it", async () => {
+    const path = join(dir, "staff-point-released.duckdb");
+    await buildTestGazetteer(path, "build-staff-point-released");
+    const conn = await storeWithPerson();
+    const settledDates = { date_start: `DATE '${SETTLED_SEASON}-07-14'`, date_end: `DATE '${SETTLED_SEASON}-07-14'` };
+    // From the old records (no observation, not entered), whose place does not follow its point, unless staff set the point.
+    const staffPoint = await insertCleanSample(conn, { sample_number: "'1'", ...settledDates, county: "'Klickitat'", state_province: "'WA'" }, ALSEA);
+    await conn.run(`INSERT INTO sample_location_override (sample_id, latitude, longitude) VALUES (${staffPoint}, ${ALSEA.latitude}, ${ALSEA.longitude})`);
+    await conn.run(`UPDATE sample_location SET source = 'staff_entry' WHERE sample_id = ${staffPoint}`);
+    const plain = await insertCleanSample(conn, { sample_number: "'2'", ...settledDates }, ALSEA);
+    await release(conn, staffPoint, plain);
+    expect(await rows(conn, `SELECT sample_id FROM sample_follows_point ORDER BY sample_id`)).toEqual([[staffPoint]]);
+    expect(await rows(conn, `SELECT sample_id FROM sample_awaiting_place`)).toEqual([[staffPoint]]);
+    expect(await pending(conn)).toEqual([plain]);
+    await deriveAreas(conn, path, { stampCounties: true });
+    expect(await countyOf(conn, staffPoint)).toBe("Benton");
+    expect(await pending(conn)).toEqual([staffPoint, plain]);
+  });
+
+  test("a staff point that moves a released sample, or one taken away, sends it back to wait for the stamp", async () => {
+    const path = join(dir, "staff-point-moved.duckdb");
+    await buildTestGazetteer(path, "build-staff-point-moved");
+    const conn = await storeWithPerson();
+    const settledDates = { date_start: `DATE '${SETTLED_SEASON}-07-14'`, date_end: `DATE '${SETTLED_SEASON}-07-14'` };
+    const id = await insertCleanSample(conn, { sample_number: "'1'", inat_observation_id: "3301", ...settledDates }, ALSEA);
+    await release(conn, id);
+    await deriveAreas(conn, path, { stampCounties: true });
+    expect(await pending(conn)).toEqual([id]);
+    const stamps = () => rows(conn, `SELECT count(*) FROM sample_place_stamped WHERE sample_id = ${id}`);
+    expect(await stamps()).toEqual([[1n]]);
+    // The same point again leaves the record, as every promotion's replay of the overlay does.
+    await applyStaffPoint(conn, id, { base_value: "", value: `${ALSEA.latitude} ${ALSEA.longitude}`, reason: "" }, null, { transactional: true });
+    expect(await stamps()).toEqual([[1n]]);
+    // A different point forgets it, even one so near that the stamp's tolerance would still match.
+    await applyStaffPoint(conn, id, { base_value: "", value: "44.500001 -123.60", reason: "" }, null, { transactional: true });
+    expect(await stamps()).toEqual([[0n]]);
+    expect(await pending(conn)).toEqual([]);
+    await deriveAreas(conn, path, { stampCounties: true });
+    expect(await pending(conn)).toEqual([id]);
+  });
+
+  test("a sample released in an active season waits for the stamp once the season settles", async () => {
+    const path = join(dir, "crossover.duckdb");
+    await buildTestGazetteer(path, "build-crossover");
+    const conn = await storeWithPerson();
+    const active = await insertCleanSample(conn, { sample_number: "'1'", inat_observation_id: "3401" }, ALSEA);
+    await release(conn, active);
+    // It prints like any active sample, with no wait for the stamp.
+    expect(await pending(conn)).toEqual([active]);
+    // The season settles, as it does on 1 March: today is read from this view, so the test moves it, not the sample.
+    await conn.run(`CREATE OR REPLACE VIEW season AS SELECT ${CURRENT_SEASON} AS current_season, make_date(${CURRENT_SEASON + 1}, 1, 1) AS active_since`);
+    expect(await rows(conn, `SELECT sample_id FROM settled_sample`)).toEqual([[active]]);
+    expect(await pending(conn)).toEqual([]);
+    expect(await rows(conn, `SELECT sample_id FROM sample_awaiting_place`)).toEqual([[active]]);
+    await deriveAreas(conn, path, { stampCounties: true });
+    expect(await pending(conn)).toEqual([active]);
   });
 
   test("never writes a county the gazetteer does not name over one the sample has", async () => {

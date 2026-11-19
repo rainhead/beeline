@@ -1,20 +1,29 @@
 -- Released settled samples still to be placed (beeline-3vs.7): see the
 -- comment on the view. It sits first because pending_print_sample reads it.
+CREATE VIEW sample_follows_point AS
+SELECT s.entity_id AS sample_id
+FROM sample s
+WHERE EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = s.entity_id)
+   OR ((s.inat_observation_id IS NOT NULL
+        OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
+       AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+       AND NOT EXISTS (SELECT 1 FROM settled_unreleased_sample ss WHERE ss.sample_id = s.entity_id));
+COMMENT ON VIEW sample_follows_point IS 'Samples whose county, state and country follow their point, as the nightly''s county stamp writes them (src/derive-area.ts, stampCounties): one whose point staff set (sample_location_override), printed or not, or one with an observation or entered in Beeline that has no label on paper and is in an active season or released from a settled one. The one definition of "follows its point": the stamp, the staff correction of the place and sample_awaiting_place all read it.';
+
 CREATE VIEW sample_awaiting_place AS
 SELECT s.entity_id AS sample_id
 FROM sample s
 JOIN settled_sample st ON st.sample_id = s.entity_id
 JOIN sample_print_release r ON r.sample_id = s.entity_id
+JOIN sample_follows_point f ON f.sample_id = s.entity_id
 LEFT JOIN (
   SELECT p.sample_id, p.stamped_at
   FROM sample_place_stamped p
   JOIN sample_location l ON l.sample_id = p.sample_id
   WHERE abs(p.latitude - l.latitude) <= 5e-5 AND abs(p.longitude - l.longitude) <= 5e-5
 ) looked ON looked.sample_id = s.entity_id AND looked.stamped_at >= r.released_at
-WHERE (s.inat_observation_id IS NOT NULL OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
-  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
-  AND looked.sample_id IS NULL;
-COMMENT ON VIEW sample_awaiting_place IS 'Settled samples staff have released for printing whose county, state and country follow their point (they have an observation, or were entered in Beeline, and no label is on paper) and which the nightly''s county stamp has not looked at since the release, at the sample''s present point (sample_place_stamped, schema/038): they wait here, and are not pending, so no label carries a place typed before the point was read. A released sample that does not follow its point (old records, printed) is never here. A sample with no point is here too, since it cannot print anyway.';
+WHERE looked.sample_id IS NULL;
+COMMENT ON VIEW sample_awaiting_place IS 'Settled samples staff have released for printing whose county, state and country follow their point (sample_follows_point: an observation, an entry in Beeline or a staff point, and no label on paper unless staff set the point) and which the nightly''s county stamp has not looked at since the release, at the sample''s present point (sample_place_stamped, schema/038): they wait here, and are not pending, so no label carries a place typed before the point was read. A released sample that does not follow its point (old records) is never here. A sample with no point is here too, since it cannot print anyway.';
 
 -- What is waiting on labels: printable, and not yet frozen into a print
 -- run. Specimens are individuated by printing — a run's freeze creates the

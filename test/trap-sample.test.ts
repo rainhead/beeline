@@ -110,7 +110,7 @@ describe("entering and editing", () => {
       [byStaff, "release", staff],
       [active, "release", staff],
     ]);
-    expect(byTrapper).not.toBe(active);
+    expect(await rows(conn, `SELECT count(*) FROM sample_print_release WHERE sample_id = ${byTrapper}`)).toEqual([[0n]]);
   });
 
   it("releases a settled season's sample when staff change its count in an edit, and only then", async () => {
@@ -134,6 +134,25 @@ describe("entering and editing", () => {
     expect(await events()).toEqual([[1n]]);
     expect(await edit({ specimen_count: "10" }, { personId: staff })).toBe("saved");
     expect(await events()).toEqual([[1n]]);
+  });
+
+  it("forgets that the nightly's stamp looked at a released sample when a save rewrites its place", async () => {
+    const staff = await personId("Dan O'Loughlin");
+    const settled = { date_start: `${SETTLED_SEASON}-06-01`, date_end: `${SETTLED_SEASON}-06-20` };
+    const first = await checkTrapSample(conn, form({ sample_number: "OBAS-20321", specimen_count: "4", ...settled }));
+    if (!("sample" in first)) throw new Error("unexpected problems");
+    const id = (await createTrapSample(conn, first.sample, staff, { personId: staff })) as number;
+    const pending = async () => rows(conn, `SELECT sample_id FROM pending_print_sample WHERE sample_id = ${id}`);
+    // The nightly looked at it at its present point after the release: it is pending.
+    await conn.run(`INSERT INTO sample_place_stamped (sample_id, latitude, longitude, stamped_at)
+                    SELECT sample_id, latitude, longitude, current_timestamp + INTERVAL 1 MINUTE FROM sample_location WHERE sample_id = ${id}`);
+    expect(await pending()).toEqual([[id]]);
+    // Retyping the county leaves the point where it was, so the stamp's record would still match it.
+    const again = await checkTrapSample(conn, form({ sample_number: "OBAS-20321", specimen_count: "4", county: "Harney", ...settled }), id);
+    if (!("sample" in again)) throw new Error("unexpected problems");
+    expect(await updateTrapSample(conn, id, again.sample)).toBe("saved");
+    expect(await rows(conn, `SELECT count(*) FROM sample_place_stamped WHERE sample_id = ${id}`)).toEqual([[0n]]);
+    expect(await pending()).toEqual([]);
   });
 
   it("refuses the second of two saves that were both checked before either was written", async () => {

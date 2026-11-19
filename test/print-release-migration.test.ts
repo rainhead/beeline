@@ -18,6 +18,7 @@ const VIEWS = [
   "settled_sample",
   "settled_unreleased_sample",
   "sample_print_release",
+  "sample_follows_point",
   "sample_awaiting_place",
   "pending_print_sample",
   "sample_labels_waiting",
@@ -62,7 +63,7 @@ async function asBefore(conn: DuckDBConnection): Promise<void> {
     .replace(/\n\s*AND NOT EXISTS \(SELECT 1 FROM sample_print_release r WHERE r\.sample_id = m\.sample_id\)/, "");
   await conn.run(views);
   await conn.run(`COMMENT ON VIEW settled_sample IS 'Samples from a settled season; nothing of theirs is printed.'`);
-  for (const view of ["sample_awaiting_place", "settled_unreleased_sample", "sample_print_release"]) await conn.run(`DROP VIEW ${view}`);
+  for (const view of ["sample_awaiting_place", "sample_follows_point", "settled_unreleased_sample", "sample_print_release"]) await conn.run(`DROP VIEW ${view}`);
   for (const table of ["sample_place_stamped", "sample_print_release_event"]) await conn.run(`DROP TABLE ${table}`);
 }
 
@@ -89,6 +90,24 @@ describe("migration 0110: a settled sample prints once staff have released it", 
     // Nothing is released by the migration itself.
     expect(await rows(conn, "SELECT count(*) FROM sample_print_release_event")).toEqual([[0n]]);
     expect(await rows(conn, "SELECT sample_id FROM pending_print_sample")).toEqual([]);
+    // A settled sample with an observation, and an entered settled sample with no release, wait for a release and are not pending.
+    const observed = await insertCleanSample(conn, {
+      sample_number: "'7'",
+      kind: "'trap'",
+      inat_observation_id: "910011",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+    });
+    const entered = await insertCleanSample(conn, {
+      sample_number: "'8'",
+      kind: "'trap'",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+    });
+    await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+    const pendingIds = async () => (await rows(conn, "SELECT sample_id FROM pending_print_sample ORDER BY sample_id")).map(([id]) => id);
+    expect(await pendingIds()).not.toContain(observed);
+    expect(await pendingIds()).not.toContain(entered);
     // A release prints at once for a sample that does not follow its point (no observation, not entered).
     await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${sample}, 'release')`);
     expect(await rows(conn, "SELECT sample_id, pending_count FROM pending_print_sample")).toEqual([[sample, 3]]);

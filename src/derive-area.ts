@@ -533,17 +533,15 @@ ${places ? `    UNION ALL
  * Whether a sample's county, state and country follow its point, as SQL over
  * a `sample` row named `s`: the first half of stampCounties' condition above
  * (a staff point, or a sample still to print, in an active season or released
- * from a settled one, with an observation or entered in Beeline). One
- * definition for the stamp and for the staff correction of
- * the place (src/app/sample-place.ts), which refuses a sample the stamp would
- * write over.
+ * from a settled one, with an observation or entered in Beeline). It is the
+ * view `sample_follows_point` (schema/150), so there is one definition for
+ * the stamp, for the staff correction of the place (src/app/sample-place.ts),
+ * which refuses a sample the stamp would write over, and for
+ * `sample_awaiting_place`, which holds a released sample out of printing until
+ * the stamp has looked at it.
  */
 export function followsPointSql(s: string): string {
-  return `(EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = ${s}.entity_id)
-              OR ((${s}.inat_observation_id IS NOT NULL
-                   OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = ${s}.entity_id))
-                  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = ${s}.entity_id)
-                  AND NOT EXISTS (SELECT 1 FROM settled_unreleased_sample ss WHERE ss.sample_id = ${s}.entity_id)))`;
+  return `EXISTS (SELECT 1 FROM sample_follows_point fp WHERE fp.sample_id = ${s}.entity_id)`;
 }
 
 interface StampResult {

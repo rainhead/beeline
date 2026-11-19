@@ -15,6 +15,7 @@ import {
   takeObservationLocation,
   type StaffLocalityResult,
 } from "./locality-override.js";
+import { withPrintRunLock } from "../print-run.js";
 import { isWriteConflict } from "../write-conflict.js";
 import { withPromotionLock } from "./promotion-lock.js";
 import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
@@ -746,6 +747,92 @@ export function setSamplePlace(deps: CorrectionDeps, actor: Actor, sampleId: num
       default:
         return unreachable(result);
     }
+  });
+}
+
+export interface SpecimenCountInput {
+  /** The number of specimens, a whole number of 0 or more as text or a number. */
+  count: string | number;
+  note: string;
+  /** The sentence for each way a count is refused, from the message catalogue (`specimenCountProblemFor`); `numbered` takes the highest place already numbered. */
+  problemFor: (problem: "count" | "net" | "follows" | "numbered", number?: number) => string;
+}
+
+export type SpecimenCountResult =
+  | {
+      ok: true;
+      outcome: Exclude<Outcome, "removed">;
+      specimen_count: number;
+      /** How many labels the next print run would print for this sample; 0 when it has none waiting, as for a settled season's sample, which never prints. */
+      pending: number;
+    }
+  | Common
+  | StaffOnly
+  | Refused<"busy">
+  | Invalid;
+
+/**
+ * Staff correct how many specimens a trap sample holds (`sample.specimen_count`),
+ * printed or not. Raising it makes the next print run number the extra bees
+ * (the freeze creates specimens for the places in 1..count that no individuated
+ * specimen holds, schema/150); lowering it below the highest place already
+ * numbered is refused. On a printed sample with an iNaturalist observation the
+ * `count_mismatch` flag stands afterwards, which is expected. A sample whose
+ * count still follows its observation is refused, because the next promotion
+ * would put the observation's count back (ingest/mint-samples.sql): any
+ * sample with an observation, until its labels are on paper. Staff
+ * only, and refused while impersonating.
+ *
+ * It is written straight to the sample and recorded in its history, with no
+ * overlay file: production is never promoted again (ADR 0006), and a
+ * development store rebuilt from the old records loses it. The check and the
+ * write run behind the print runs' lock, because a run's freeze creates
+ * specimens behind it and could otherwise slip between the two.
+ */
+export function setSpecimenCount(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<SpecimenCountInput>): Promise<SpecimenCountResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const sample = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select(["kind"]).executeTakeFirst();
+    if (sample === undefined) return refused("not_found");
+    return { ready: sample };
+  };
+  return correct(sampleId, input, gates, async (sample, form): Promise<SpecimenCountResult> => {
+    const invalid = (problem: string): Invalid => ({ ok: false, refusal: "invalid", problem });
+    const given = String(form.count).trim();
+    if (!/^(0|[1-9]\d{0,5})$/.test(given)) return invalid(form.problemFor("count"));
+    if (sample.kind !== "trap") return invalid(form.problemFor("net"));
+    const count = Number(given);
+    return withPrintRunLock(async (): Promise<SpecimenCountResult> => {
+      const found = await sql<{ specimen_count: number | null; follows: boolean; highest: number | null }>`
+        SELECT s.specimen_count,
+               (s.inat_observation_id IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)) AS follows,
+               (SELECT max(i.specimen_number) FROM individuated_specimen i WHERE i.sample_id = s.entity_id) AS highest
+        FROM sample s WHERE s.entity_id = ${sampleId}`.execute(deps.db);
+      const now = found.rows[0];
+      if (now === undefined) return refused("not_found");
+      // The next promotion would put the observation's count back, so a count set here would be undone overnight.
+      // Any observation, not only one whose count promotion follows today: one with a count of zero or junk
+      // is followed again as soon as the volunteer fixes it, and that would undo this write without a word.
+      if (now.follows) return invalid(form.problemFor("follows"));
+      const highest = now.highest === null ? 0 : Number(now.highest);
+      if (count < highest) return invalid(form.problemFor("numbered", highest));
+      const pendingNow = async (): Promise<number> => {
+        const waiting = await sql<{ pending_count: number }>`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${sampleId}`.execute(deps.db);
+        return waiting.rows[0] === undefined ? 0 : Number(waiting.rows[0].pending_count);
+      };
+      if (now.specimen_count === count) return { ok: true, outcome: "unchanged", specimen_count: count, pending: await pendingNow() };
+      try {
+        await deps.db.updateTable("sample").set({ specimen_count: count }).where("entity_id", "=", sampleId).execute();
+      } catch (err) {
+        // Nothing is recorded anywhere else, so a conflict means nothing was done: say so, and let the caller send it again.
+        if (isWriteConflict(err)) return refused("busy");
+        throw err;
+      }
+      await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "specimen count change");
+      return { ok: true, outcome: "saved", specimen_count: count, pending: await pendingNow() };
+    });
   });
 }
 

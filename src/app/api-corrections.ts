@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { isWriteConflict } from "../write-conflict.js";
 import { apiError, type ApiEnv } from "./api.js";
-import { localityReasonFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
+import { localityReasonFor, specimenCountProblemFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import type { Messages } from "./messages/index.js";
 import { EDITABLE_FIELDS, type EditableFieldName } from "./sample-edit.js";
 import { PLACE_FIELDS, type PlaceField } from "./sample-place.js";
@@ -14,6 +14,7 @@ import {
   setCoordinates,
   setPlace,
   setSamplePlace,
+  setSpecimenCount,
   setTrapCount,
   takeLocation,
   unreachable,
@@ -26,6 +27,7 @@ import {
   type QcDecisionCorrectionResult,
   type SamplePlaceResult,
   type SetPlaceResult,
+  type SpecimenCountResult,
   type StaffCoordinatesCorrectionResult,
   type TakeObservationLocationCorrectionResult,
   type TrapCountResult,
@@ -123,6 +125,7 @@ type AnyFailure = Extract<
   | StaffCoordinatesCorrectionResult
   | SamplePlaceResult
   | TrapCountResult
+  | SpecimenCountResult
   | TakeObservationLocationCorrectionResult
   | QcDecisionCorrectionResult,
   { ok: false }
@@ -455,6 +458,15 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     ["count"],
     setTrapCount,
     (r) => ({ outcome: r.outcome, effort: r.effort }),
+  );
+
+  endpoint(
+    "specimen-count",
+    (b) => ({ count: b.count === undefined ? "" : text(b.count), note: (b.note as string | undefined) ?? "", problemFor: specimenCountProblemFor(corrections!.messages) }),
+    { count: "text_or_number", note: "string" },
+    ["count"],
+    setSpecimenCount,
+    (r) => ({ outcome: r.outcome, specimen_count: r.specimen_count, pending: r.pending }),
   );
 
   endpoint(

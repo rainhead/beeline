@@ -1256,3 +1256,29 @@ describe("taking the observation's location", () => {
     expect(((await rows(w.conn, `SELECT county FROM sample WHERE entity_id = ${w.legacy}`)) as string[][])[0]![0]).toBe("Walla Walla");
   });
 });
+
+describe("a trap sample's specimen count", () => {
+  it("sets it for a staff key, and refuses the rest", async () => {
+    const w = await world();
+    const trap = await insertCleanSample(w.conn, {
+      collector_id: String(w.people.alice),
+      sample_number: "'T-8'",
+      kind: "'trap'",
+      protocol: "'vane trap'",
+    });
+    const count = async () => ((await rows(w.conn, `SELECT specimen_count FROM sample WHERE entity_id = ${trap}`)) as number[][])[0]![0];
+    const path = `/samples/${trap}/specimen-count`;
+    const saved = await w.send(w.keys.sam, path, { count: 5, note: "recount", reference: "ticket 2" });
+    expect(saved.status).toBe(200);
+    expect(await json(saved)).toEqual({ sample_id: trap, outcome: "saved", specimen_count: 5, pending: 5 });
+    expect(await count()).toBe(5);
+    expect(await json(await w.send(w.keys.sam, path, { count: "5" }))).toMatchObject({ outcome: "unchanged", specimen_count: 5 });
+    expect((await w.send(w.keys.sam, path, { count: "x" })).status).toBe(422);
+    expect((await w.send(w.keys.sam, path, {})).status).toBe(400);
+    expect((await w.send(w.keys.sam, `/samples/${w.linked}/specimen-count`, { count: 2 })).status).toBe(422);
+    expect((await w.send(w.keys.alice, path, { count: 2 })).status).toBe(403);
+    expect((await w.send(w.keys.samEdit, path, { count: 2 })).status).toBe(403);
+    expect((await w.send(w.keys.aliceRead, path, { count: 2 })).status).toBe(403);
+    expect(await count()).toBe(5);
+  });
+});

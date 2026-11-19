@@ -81,6 +81,7 @@ import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, t
 import { specimenWorkbook } from "./specimen-workbook.js";
 import { samplesFileRow, samplesWorkbook } from "./sample-workbook.js";
 import { planSamples } from "./samples-upload-plan.js";
+import { APPLY_JOB, claimUpload, digestOf, readOutcomes, rowsToApply } from "./samples-upload-apply.js";
 import {
   MAX_FILE_BYTES,
   MAX_ROWS as UPLOAD_MAX_ROWS,
@@ -206,6 +207,8 @@ import {
   checkTrapSample,
   collectorChoices,
   createTrapSample,
+  deletable,
+  deleteTrapSample,
   loadTrapSample,
   mayEditTrapSample,
   mayEnterTrapSamples,
@@ -216,7 +219,7 @@ import {
   type FieldProblems,
   type TrapSampleForm,
 } from "../trap-sample.js";
-import { TrapSampleFormPage } from "./views/trap-sample.js";
+import { TrapSampleDelete, TrapSampleFormPage } from "./views/trap-sample.js";
 import { deploymentPath } from "../deployment-path.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 import {
@@ -1391,6 +1394,8 @@ export function createApp({
       entered?.editable && !c.get("acting").impersonating && (await mayEditTrapSample(conn!, sample.sample_id, c.get("acting").personId, c.get("admin")))
         ? `/samples/${sample.sample_id}/trap`
         : undefined;
+    const deleteHref =
+      entered !== null && c.get("admin") && "number" in (await deletable(conn!, sample.sample_id)) ? `/samples/${sample.sample_id}/delete` : undefined;
     return c.html(
       await page(
         c,
@@ -1406,6 +1411,7 @@ export function createApp({
           admin={c.get("admin")}
           ownsLocality={ownsLocality}
           trapEditHref={trapEditHref}
+          deleteHref={deleteHref}
           entered={entered !== null}
           enteredPastItsForm={entered !== null && !entered.editable}
           placePending={c.get("admin") && c.req.query("place") === "pending"}
@@ -1577,6 +1583,51 @@ export function createApp({
       return c.html(await trapPage(c, m.trapSample.editTitle, form, problems, `/samples/${id}/trap`, id), 409);
     }
     return c.redirect(`/samples/${id}`);
+  });
+
+  // Deleting a trap sample entered in Beeline (beeline-kgyd.4.10), by staff, for a sample nothing has been done with:
+  // never printed, in no print run, no specimens. A page that says what goes, then a form that does it, in the
+  // sample's turn of its queue and behind the print runs' lock. The change log cannot say a sample is gone (a sample
+  // that falls silent is recorded as nothing, ADR 0007), so the deletion is said in the server's log.
+  const deleteGate = (c: Context<AppEnv>, writing: boolean): Response | Promise<Response> | null => {
+    const m = c.get("m");
+    if (writing && c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return errorResponse(c, "notFound");
+    if (conn === undefined || printWriter === undefined) return c.text("This instance cannot delete samples.", 503);
+    return null;
+  };
+  app.get("/samples/:id{[0-9]+}/delete", async (c) => {
+    const refused = deleteGate(c, false);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const found = await deletable(conn!, id);
+    if ("refused" in found && (found.refused === "not_found")) return errorResponse(c, "notFound");
+    const number = "number" in found ? found.number : ((await db.selectFrom("sample").select("sample_number").where("entity_id", "=", id).executeTakeFirst())?.sample_number ?? "");
+    return c.html(
+      await page(
+        c,
+        m.trapSample.delete.title(number),
+        <TrapSampleDelete m={m} sampleId={id} sampleNumber={number} refusal={"refused" in found ? (m.trapSample.delete.refused[found.refused] ?? found.refused) : null} />,
+      ),
+    );
+  });
+  app.post("/samples/:id{[0-9]+}/delete", async (c) => {
+    const refused = deleteGate(c, true);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const result = await onSample(id, () => deleteTrapSample(printWriter!, id));
+    if ("refused" in result) {
+      if (result.refused === "not_found") return errorResponse(c, "notFound");
+      const number = (await db.selectFrom("sample").select("sample_number").where("entity_id", "=", id).executeTakeFirst())?.sample_number ?? "";
+      return c.html(
+        await page(c, m.trapSample.delete.title(number), <TrapSampleDelete m={m} sampleId={id} sampleNumber={number} refusal={m.trapSample.delete.refused[result.refused] ?? result.refused} />),
+        409,
+      );
+    }
+    console.log(`trap sample ${result.deleted} (id ${id}) deleted by ${c.get("session").login}`);
+    return c.redirect("/samples");
   });
 
   app.get("/samples/:id/edit", async (c) => {
@@ -2486,13 +2537,21 @@ export function createApp({
    * save, staff's compared, each with a note for every row. Staff's file from someone no longer staff is compared
    * with their own reader, so nothing withheld from them now is shown (an independent review).
    */
-  const uploadOutcome = async (c: Context<AppEnv>, row: VisibleUpload, kept: { upload: ParsedUpload; staffFile: boolean; bytes: Uint8Array }) => {
+  const uploadOutcome = async (
+    c: Context<AppEnv>,
+    row: VisibleUpload,
+    kept: { upload: ParsedUpload; staffFile: boolean; bytes: Uint8Array },
+    /** The rows of a samples file whose look-alike was ticked, when applying works the plan out. */
+    createAnyway?: ReadonlySet<number>,
+  ) => {
     const m = c.get("m");
     if (kept.upload.layout.kind === "samples") {
       // Compared as the viewer sees locations: staff see every one, and someone no longer staff only their own.
       if (conn === undefined) throw new Error("comparing a samples file needs the store connection");
-      const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), today: uploadToday?.() });
-      return { kind: "samples" as const, plan, noted: samplesNotes(m, kept.upload, plan) };
+      const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), today: uploadToday?.(), createAnyway });
+      // What applying did to each row, once the file was applied: the notes and the counts say it.
+      const outcomes = row.applied_at === null ? [] : await readOutcomes(db, row.entity_id);
+      return { kind: "samples" as const, plan, outcomes, noted: samplesNotes(m, kept.upload, plan, outcomes) };
     }
     if (kept.staffFile) {
       const plan = await comparePlan(db, kept.upload, c.get("admin") ? {} : { view: { reader: readerOf(c) } });
@@ -2509,6 +2568,7 @@ export function createApp({
     kept: { upload: ParsedUpload; bytes: Uint8Array },
     outcome: UploadOutcome,
     changedSince = false,
+    samplesNotice: "changed" | "busy" | null = null,
   ) => {
     const m = c.get("m");
     const { sha256: _kept, uploaded_by: _by, applied_at, draft_count, ...shown } = row;
@@ -2523,6 +2583,23 @@ export function createApp({
             applied: applied_at === null ? null : { at: applied_at, count: draft_count ?? 0 },
             changedSince,
           };
+    // The staff member who uploaded a samples file applies it, unless viewing as somebody else.
+    const samples =
+      outcome.kind !== "samples"
+        ? null
+        : {
+            digest: digestOf(outcome.plan),
+            canApply:
+              c.get("admin") &&
+              row.uploaded_by === c.get("session").personId &&
+              applied_at === null &&
+              (outcome.noted.summary.counts.newReady.active + outcome.noted.summary.counts.newReady.settled + outcome.noted.summary.counts.newReady.unplaced > 0 ||
+                outcome.noted.summary.held.length > 0),
+            applied: applied_at === null ? null : { at: applied_at, by: row.uploader },
+            notice: samplesNotice,
+          };
+    // While rows wait for the job, the page asks again by itself, so the progress it shows moves.
+    if (outcome.kind === "samples" && outcome.noted.summary.outcomes !== null && outcome.noted.summary.outcomes.pending > 0) c.header("Refresh", "5");
     return c.html(
       await page(
         c,
@@ -2535,6 +2612,7 @@ export function createApp({
           volunteer={volunteer}
           staffSummary={outcome.kind === "staff" ? outcome.noted.summary : null}
           samplesSummary={outcome.kind === "samples" ? outcome.noted.summary : null}
+          samples={samples}
           staff={c.get("admin")}
           notesCopy={!canAnnotate(kept.bytes, kept.upload.sheetName).ok}
         />,
@@ -2630,6 +2708,52 @@ export function createApp({
       return true;
     });
     return saved ? c.redirect(uploadHref(row.entity_id), 303) : stale();
+  });
+
+  // Applying a staff member's samples file (beeline-kgyd.4.10): its new rows become trap samples. The plan is worked
+  // out again and must be the plan the page showed (the form carries its digest); then, in one transaction, the upload
+  // is claimed (its key stops a second submission) and one pending row is queued for each row to make, with exactly
+  // what to write. The apply-uploads job does the rows, one at a time. Refused while viewing as somebody else, for
+  // anyone but the staff member who uploaded the file, and while the nightly or the weekly sweep runs.
+  app.post("/uploads/:id{[0-9]+}/apply-samples", async (c) => {
+    const refused = uploadsGate(c);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    const row = await visibleUpload(c, Number(c.req.param("id")));
+    if (row === null || row.uploaded_by !== c.get("session").personId || !c.get("admin")) {
+      return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    }
+    if (conn === undefined || printWriter === undefined) return c.text("This instance cannot enter samples.", 503);
+    if (row.applied_at !== null) return c.redirect(uploadHref(row.entity_id), 303);
+    const body = await c.req.formData();
+    const asked = String(body.get("digest") ?? "");
+    const anyway = new Set(
+      body
+        .getAll("anyway")
+        .map((v) => Number(v))
+        .filter((v) => Number.isInteger(v)),
+    );
+    const kept = await readKept(c, row, layoutFor(true));
+    if (kept.problem !== undefined) return kept.problem;
+    if (kept.upload.layout.kind !== "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    const showing = async (notice: "changed" | "busy") => {
+      // A second submission whose page was worked out after the first claimed the file: told what was done, not that nothing was.
+      if ((await db.selectFrom("upload_applied").select("upload_id").where("upload_id", "=", row.entity_id).executeTakeFirst()) !== undefined) {
+        return c.redirect(uploadHref(row.entity_id), 303);
+      }
+      return c.html(await (await previewPage(c, row, kept, await uploadOutcome(c, row, kept), false, notice)).text(), 409);
+    };
+    if (syncJobRunning()) return showing("busy");
+    const outcome = await uploadOutcome(c, row, kept, anyway);
+    if (outcome.kind !== "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    if (digestOf(outcome.plan) !== asked || rowsToApply(outcome.plan).length === 0) {
+      return showing("changed");
+    }
+    const claimed = await claimUpload(db, { uploadId: row.entity_id, appliedBy: c.get("session").personId, plan: outcome.plan, now: new Date() });
+    // Started now, and if something else is running, by the scheduler's tick as soon as it is done.
+    if (claimed !== null) await jobsDep.start(APPLY_JOB);
+    return c.redirect(uploadHref(row.entity_id), 303);
   });
 
   // One program-year's Darwin Core archive, as the dwc-archives job wrote

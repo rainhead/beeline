@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { matchCollectors, matchName, readPeople, type MatchedCollector } from "../collector-match.js";
 import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
-import { checkTrapSample, type TrapSampleForm } from "../trap-sample.js";
+import { checkTrapSample, findLookalikes, highestSampleNumber, seriesNumberProblem, type Lookalike, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import {
@@ -59,7 +59,8 @@ export const SAMPLE_REASONS = [
   "collector_unknown",
   // A new trap sample.
   "new_number_repeated",
-  // What the trap form's own check says of a new row, as its sentence for that field.
+  // What the trap form's own check says of a new row, as its sentence for that field; and what the guard on the
+  // program's own numbers says of one (src/trap-sample.ts seriesNumberProblem), which is the same kind of sentence.
   "new_row_problem",
 ] as const;
 export type SampleReason = (typeof SAMPLE_REASONS)[number];
@@ -130,6 +131,16 @@ export interface SampleProblem {
   cells: HeldCell[];
 }
 
+/** What applying a new row would write, worked out and checked: kept with the row so that applying writes exactly this. */
+export interface NewRowCreate {
+  /** The trap form's fields, the collectors as the ids of the people they came to, so that nothing is matched again. */
+  form: TrapSampleForm;
+  /** The existing sample this one looks like, which holds the row back unless it is ticked. */
+  lookalike: Lookalike | null;
+  /** The look-alike was ticked "create anyway", so the row is not held. */
+  anyway: boolean;
+}
+
 export interface SampleRowResult {
   /** The row in the file, the header being row 1. */
   row: number;
@@ -142,6 +153,8 @@ export interface SampleRowResult {
   differences: SampleUnitDifference[];
   /** Why the row, or part of it, cannot be used. */
   problems: SampleProblem[];
+  /** For a new row with nothing wrong: what making it a trap sample would write. */
+  create: NewRowCreate | null;
 }
 
 export interface SamplesCounts {
@@ -149,6 +162,8 @@ export interface SamplesCounts {
   rows: SeasonSplit;
   /** New rows with nothing wrong: trap samples that could be created. */
   newReady: SeasonSplit;
+  /** New rows with nothing wrong except that each looks like an existing sample, so they wait to be ticked. */
+  newHeld: SeasonSplit;
   /** Rows, new or existing, with something that cannot be used. */
   cantUse: SeasonSplit;
   /** Existing samples that differ, and nothing is wrong. */
@@ -176,6 +191,19 @@ export interface SamplesPlan {
 }
 
 const emptySplit = (): SeasonSplit => ({ active: 0, settled: 0, unplaced: 0 });
+
+/** The counts of a set of rows. Also what the page counts once some rows have an outcome of their own. */
+export function countRows(rows: readonly SampleRowResult[]): SamplesCounts {
+  const counts: SamplesCounts = { rows: emptySplit(), newReady: emptySplit(), newHeld: emptySplit(), cantUse: emptySplit(), differ: emptySplit(), same: emptySplit() };
+  for (const r of rows) {
+    counts.rows[r.season]++;
+    if (r.problems.length > 0) counts.cantUse[r.season]++;
+    else if (r.kind === "new") counts[r.create?.lookalike != null && !r.create.anyway ? "newHeld" : "newReady"][r.season]++;
+    else if (r.differences.length > 0) counts.differ[r.season]++;
+    else counts.same[r.season]++;
+  }
+  return counts;
+}
 
 // --- What Beeline says now ---
 
@@ -275,6 +303,8 @@ export interface SamplesPlanOptions {
   today?: string;
   /** Who the file is read as: staff, who see every location, unless said. */
   reader?: Reader;
+  /** The rows of the file whose look-alike was ticked "create anyway". */
+  createAnyway?: ReadonlySet<number>;
 }
 
 /**
@@ -303,7 +333,6 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   const { settled, activeSince } = await readSeasons(db, [...now.keys()]);
   const people = await readPeople(conn);
 
-  const counts: SamplesCounts = { rows: emptySplit(), newReady: emptySplit(), cantUse: emptySplit(), differ: emptySplit(), same: emptySplit() };
   const results: SampleRowResult[] = [];
 
   // What each name in a list of collectors comes to, once for the file; and the names that come to nobody, with their rows.
@@ -338,6 +367,8 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   };
 
   const newNumbers = new Map<string, number[]>();
+  /** The highest number in the program's series, read once and only if a new row is in it. */
+  let series: { highest: number } | null = null;
 
   for (const [index, { row, cells }] of rows.entries()) {
     const { given, id } = idOf[index]!;
@@ -352,6 +383,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
       season: "unplaced",
       differences: [],
       problems: [],
+      create: null,
     };
     results.push(result);
     const wholeRow = (reason: SampleReason, detail: string) => result.problems.push({ reason, unit: null, column: null, detail, cells: [] });
@@ -400,6 +432,25 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         for (const [field, sentence] of Object.entries(checked.problems) as Array<[keyof TrapSampleForm, string]>) {
           if (FORM_COLUMNS[field].some((c) => flagged.has(c))) continue;
           result.problems.push({ reason: "new_row_problem", unit: null, column: FORM_COLUMNS[field][0]!, detail: sentence, cells: [] });
+        }
+      } else {
+        // The program's own numbers are guarded: a number far above the series would move the next one offered for good.
+        const sample = checked.sample;
+        if (series === null && sample.sample_number.startsWith("OBAS-")) series = { highest: await highestSampleNumber(conn) };
+        const wrong = series === null ? null : seriesNumberProblem(sample.sample_number, series.highest);
+        if (wrong !== null) {
+          result.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: wrong, cells: [] });
+        } else if (result.problems.length === 0) {
+          // What applying would write, with the collectors as the ids they came to.
+          const [first] = sample.collector_ids;
+          const [lookalike] = await findLookalikes(conn, {
+            firstCollectorId: first!,
+            dateStart: sample.date_start,
+            dateEnd: sample.date_end,
+            latitude: sample.latitude,
+            longitude: sample.longitude,
+          });
+          result.create = { form: { ...form, collectors: sample.collector_ids.map(String) }, lookalike: lookalike ?? null, anyway: options.createAnyway?.has(row) ?? false };
         }
       }
       if (fileNumber !== "") (newNumbers.get(fileNumber) ?? newNumbers.set(fileNumber, []).get(fileNumber)!).push(index);
@@ -464,16 +515,13 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   // Two new rows with one number would make two trap samples that cannot both exist.
   for (const [number, at] of newNumbers) {
     if (at.length < 2) continue;
-    for (const i of at) results[i]!.problems.push({ reason: "new_number_repeated", unit: null, column: "fieldNumber", detail: number, cells: [] });
+    for (const i of at) {
+      results[i]!.problems.push({ reason: "new_number_repeated", unit: null, column: "fieldNumber", detail: number, cells: [] });
+      results[i]!.create = null;
+    }
   }
 
-  for (const r of results) {
-    counts.rows[r.season]++;
-    if (r.problems.length > 0) counts.cantUse[r.season]++;
-    else if (r.kind === "new") counts.newReady[r.season]++;
-    else if (r.differences.length > 0) counts.differ[r.season]++;
-    else counts.same[r.season]++;
-  }
+  const counts = countRows(results);
   const unknownCollectors = [...unknown]
     .map(([name, { rows: at, problem }]) => ({ name, rows: at.size, problem }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));

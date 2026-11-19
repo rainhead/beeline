@@ -198,6 +198,9 @@ export function monitorConfig(job: Pick<Job, "schedule" | "window">): MonitorCon
   const base = { failureIssueThreshold: 1, recoveryThreshold: 1 };
   const s = job.schedule;
   switch (s.kind) {
+    // Never expected by the clock, so its check-ins are not sent (jobCheckIns); this is for the type's sake.
+    case "onDemand":
+      return { ...base, schedule: { type: "interval", value: 1, unit: "day" }, checkinMargin: 24 * 60, maxRuntime: 6 * 60 };
     case "everyMinutes":
       return { ...base, schedule: { type: "interval", value: s.minutes, unit: "minute" }, checkinMargin: s.minutes, maxRuntime: 30 };
     case "dailyLA":
@@ -217,6 +220,17 @@ export function monitorConfig(job: Pick<Job, "schedule" | "window">): MonitorCon
 
 /** A job's runs as Sentry cron check-ins, and its failure as an error with the job named. */
 export const jobCheckIns: JobObserver = (job) => {
+  // A job nothing expects at a time has no monitor to check in to: only its failure is reported.
+  if (job.schedule.kind === "onDemand") {
+    return (outcome, err) => {
+      if (outcome === "failed" && err !== undefined) {
+        Sentry.withScope((scope) => {
+          scope.setTag("job", job.name);
+          Sentry.captureException(err);
+        });
+      }
+    };
+  }
   const monitorSlug = job.name;
   const started = performance.now();
   const checkInId = Sentry.captureCheckIn({ monitorSlug, status: "in_progress" }, monitorConfig(job));

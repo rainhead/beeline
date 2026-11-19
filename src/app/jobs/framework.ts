@@ -19,7 +19,13 @@ export type Schedule =
   | /** Once per LA calendar day, at or after this hour (schedule night jobs ≥ 0 and < 5). */
     { kind: "dailyLA"; hour: number }
   | /** Once per week: on this LA weekday (0 = Sunday), at or after this hour. */
-    { kind: "weeklyLA"; weekday: number; hour: number };
+    { kind: "weeklyLA"; weekday: number; hour: number }
+  | /**
+     * Never by the clock: started by something asking for it (the apply button, POST /api/v1/jobs/<name>), and by
+     * the scheduler's own tick whenever the job says work is `waiting`, so what a restart interrupted is picked up
+     * again. Never overdue, since not running is its ordinary state.
+     */
+    { kind: "onDemand" };
 
 export interface JobContext {
   db: Kysely<Database>;
@@ -53,6 +59,8 @@ export interface Job {
   window: JobWindow;
   /** The returned string becomes job_run.detail — say what happened, with counts. */
   run(ctx: JobContext): Promise<string | void>;
+  /** For an on-demand job: whether work is waiting for it, which the scheduler asks every tick and starts the job if so. */
+  waiting?(db: Kysely<Database>): Promise<boolean>;
 }
 
 const LA = "America/Los_Angeles";
@@ -101,6 +109,8 @@ function dueToday(now: Date, todayLA: string, last: LastRuns): boolean {
 
 export function isDue(schedule: Schedule, window: JobWindow, now: Date, last: LastRuns): boolean {
   switch (schedule.kind) {
+    case "onDemand":
+      return false;
     case "everyMinutes":
       return last.started === null || now.getTime() - last.started.getTime() >= schedule.minutes * 60_000;
     case "dailyLA": {
@@ -143,6 +153,8 @@ function laDaysBetween(from: Date, to: Date): number {
  */
 export function isOverdue(schedule: Schedule, lastSucceeded: Date, now: Date): boolean {
   switch (schedule.kind) {
+    case "onDemand":
+      return false;
     case "everyMinutes":
       return now.getTime() - lastSucceeded.getTime() > 2 * schedule.minutes * 60_000;
     case "dailyLA":
@@ -202,7 +214,9 @@ export function jobHealth(jobs: Job[], last: Map<string, LastOutcome>, now: Date
     const lastSucceeded = seen?.succeeded ?? null;
     const detail = seen?.detail ?? null;
     let problem: JobProblem | null = null;
-    if (seen === undefined || seen.started === null) problem = "never-run";
+    // A job nobody has asked for has not failed to run: only a run that failed is a problem.
+    if (job.schedule.kind === "onDemand") problem = seen?.outcome === "failed" ? "failing" : null;
+    else if (seen === undefined || seen.started === null) problem = "never-run";
     else if (seen.outcome === "failed") problem = "failing";
     else if (lastSucceeded === null) problem = "never-run";
     else if (isOverdue(job.schedule, lastSucceeded, now)) problem = "overdue";
@@ -695,7 +709,10 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
       const last = await lastRuns();
       for (const job of deps.jobs) {
         if (stopping) break;
-        if (isDue(job.schedule, job.window, now(), last.get(job.name) ?? NEVER)) {
+        if (
+          isDue(job.schedule, job.window, now(), last.get(job.name) ?? NEVER) ||
+          (job.schedule.kind === "onDemand" && job.waiting !== undefined && (await job.waiting(deps.db)))
+        ) {
           await track(job);
         }
       }

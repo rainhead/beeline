@@ -39,6 +39,8 @@ import { describeRefresh, refreshEcdysisTaxonomy } from "../../load-ecdysis-taxo
 import { join } from "node:path";
 import { fetchEcdysisTaxonomyInChild } from "../../fetch-ecdysis-taxonomy-child.js";
 import type { Job, JobContext } from "./framework.js";
+import type { DuckDBConnection } from "@duckdb/node-api";
+import { APPLY_JOB, applyPending, applyWaiting, describeApply } from "../samples-upload-apply.js";
 import { clearEmailFingerprints, describeRegistrants, recordEmailFingerprints, recordRegistrants } from "../../registrations.js";
 
 /** A fresh JWT per run (src/inat-jwt.ts); a failed mint aborts the job. */
@@ -588,6 +590,8 @@ export function buildJobs(
         | "programContactsPath"
       >
     >,
+  /** What a job needs that is not configuration: the print runs' connection, which the app opens (src/app/main.ts). */
+  extras: { printConn?: DuckDBConnection } = {},
 ): Job[] {
   const samplePaths: SampleLogPaths = { log: config.sampleChangesPath, state: config.sampleStatePath };
   return [
@@ -977,6 +981,31 @@ export function buildJobs(
           writeChanges(ctx.conn, path, rulings, changesDir(dir)),
         );
         return describeChanges(summary);
+      },
+    },
+    {
+      // The rows of a samples file that staff applied (beeline-kgyd.4.10), one
+      // trap sample at a time in file order, each outcome recorded as it is
+      // done. Started by the apply button and by the scheduler's tick whenever
+      // a row is pending, which is also how a deploy that interrupted it
+      // resumes it. One job at a time, so it waits for the nightly and the
+      // nightly waits for it. Needs the print runs' connection, which a
+      // creation is written on; without one (a test of something else) nothing
+      // is waiting for it.
+      name: APPLY_JOB,
+      schedule: { kind: "onDemand" },
+      window: "interactive",
+      waiting: async (db) => extras.printConn !== undefined && (await applyWaiting(db)),
+      async run(ctx) {
+        if (extras.printConn === undefined) return "this process has no print connection, so nothing was applied";
+        const result = await applyPending({
+          db: ctx.db,
+          conn: ctx.conn,
+          printWriter: extras.printConn,
+          samplePaths,
+          step: ctx.step,
+        });
+        return describeApply(result);
       },
     },
   ];

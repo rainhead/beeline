@@ -134,13 +134,86 @@ export async function collectorChoices(conn: DuckDBConnection): Promise<{ name: 
  * 2026-10-30). The series keeps counting across years.
  */
 export async function nextSampleNumber(conn: DuckDBConnection, prefix = "OBAS-"): Promise<string> {
+  return `${prefix}${String((await highestSampleNumber(conn, prefix)) + 1).padStart(5, "0")}`;
+}
+
+/** The highest number after the prefix on any sample, 0 if none has the prefix: what the next number offered counts from. */
+export async function highestSampleNumber(conn: DuckDBConnection, prefix = "OBAS-"): Promise<number> {
   const found = await rows<{ n: number | null }>(
     conn,
     `SELECT max(TRY_CAST(substr(sample_number, length($1) + 1) AS INTEGER))::INTEGER AS n
      FROM sample WHERE starts_with(sample_number, $1)`,
     [prefix],
   );
-  return `${prefix}${String((found[0]?.n ?? 0) + 1).padStart(5, "0")}`;
+  return found[0]?.n ?? 0;
+}
+
+/** The series the program numbers its own trap samples in, whose next number the form offers. */
+export const PROGRAM_SERIES = "OBAS-";
+
+/**
+ * How far above the highest number in the store a new OBAS- number may be. One mistyped number moves the next
+ * number the trap form offers for good, since nothing deletes a sample the ordinary way (Peter, 2026-11-19), so a
+ * file may start a little ahead of the series but not leap.
+ */
+export const SERIES_MARGIN = 50;
+
+/**
+ * The sentence saying why a number in the program's series cannot be used, or null if it can. A number outside the
+ * series is not judged: a collector's own numbers are theirs.
+ */
+export function seriesNumberProblem(sampleNumber: string, highest: number): string | null {
+  if (!sampleNumber.startsWith(PROGRAM_SERIES)) return null;
+  const digits = sampleNumber.slice(PROGRAM_SERIES.length);
+  if (!/^\d{5}$/.test(digits)) {
+    return `A number starting ${PROGRAM_SERIES} is the program's own and is written ${PROGRAM_SERIES} and five digits, such as ${PROGRAM_SERIES}00657.`;
+  }
+  if (Number(digits) > highest + SERIES_MARGIN) {
+    return `${sampleNumber} is more than ${SERIES_MARGIN} past ${PROGRAM_SERIES}${String(highest).padStart(5, "0")}, the highest in Beeline, and one mistyped number would move the next one offered for good. Check it, or enter the sample on its own form.`;
+  }
+  return null;
+}
+
+/** How near a new sample's point must be to an existing sample's, in metres, for the two to look like one sample. */
+export const LOOKALIKE_METRES = 100;
+
+/** A sample that a new one looks like. */
+export interface Lookalike {
+  sampleId: number;
+  sampleNumber: string;
+}
+
+/**
+ * The samples a new trap sample looks like: the same first collector, collecting days that overlap, and a point
+ * within LOOKALIKE_METRES. Any kind of sample counts, a net sample as well as a trap. One rule, in one place, so
+ * the preview that holds the row and the job that makes it judge it alike.
+ */
+export async function findLookalikes(
+  conn: DuckDBConnection,
+  sample: { firstCollectorId: number; dateStart: string; dateEnd: string; latitude: number; longitude: number },
+): Promise<Lookalike[]> {
+  // A box a little wider than the distance first, which a place's coordinates can answer from their own order, then
+  // the great-circle distance for what is inside it.
+  const degrees = (LOOKALIKE_METRES * 1.5) / 111_000;
+  const reach = degrees / Math.max(0.05, Math.cos((sample.latitude * Math.PI) / 180));
+  const found = await rows<{ entity_id: number; sample_number: string }>(
+    conn,
+    `SELECT s.entity_id, s.sample_number
+     FROM sample_collector c
+     JOIN sample s ON s.entity_id = c.sample_id
+     JOIN sample_location l ON l.sample_id = s.entity_id
+     WHERE c.person_id = $1 AND c.position = 1
+       AND s.date_start <= $3::DATE AND s.date_end >= $2::DATE
+       AND l.latitude BETWEEN $4 - $6 AND $4 + $6
+       AND l.longitude BETWEEN $5 - $7 AND $5 + $7
+       AND 2 * 6371000 * asin(sqrt(
+             power(sin(radians(l.latitude - $4) / 2), 2) +
+             cos(radians($4)) * cos(radians(l.latitude)) * power(sin(radians(l.longitude - $5) / 2), 2)
+           )) <= $8
+     ORDER BY s.entity_id`,
+    [sample.firstCollectorId, sample.dateStart, sample.dateEnd, sample.latitude, sample.longitude, degrees, reach, LOOKALIKE_METRES],
+  );
+  return found.map((r) => ({ sampleId: r.entity_id, sampleNumber: r.sample_number }));
 }
 
 /**
@@ -291,8 +364,17 @@ async function writeParts(conn: DuckDBConnection, id: number, s: TrapSample, wit
   );
 }
 
-/** Write a new trap sample; its id. Behind the print runs' lock, on the print connection. */
-export function createTrapSample(conn: DuckDBConnection, s: TrapSample, enteredBy: number | null): Promise<number | "taken"> {
+/**
+ * Write a new trap sample; its id. Behind the print runs' lock, on the print connection. `within` is run, with the
+ * new id, in the same transaction as the sample, so that whatever it writes stands or falls with the sample: the
+ * apply-uploads job records the row's outcome there, so a crash cannot leave a sample that no upload row names.
+ */
+export function createTrapSample(
+  conn: DuckDBConnection,
+  s: TrapSample,
+  enteredBy: number | null,
+  within?: (id: number) => Promise<void>,
+): Promise<number | "taken"> {
   return withPrintRunLock(async () => {
     if (await numberTaken(conn, s.sample_number, null)) return "taken";
     return inTransaction(conn, async () => {
@@ -305,9 +387,69 @@ export function createTrapSample(conn: DuckDBConnection, s: TrapSample, enteredB
       const id = created[0]!.entity_id;
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);
       await writeParts(conn, id, s);
+      await within?.(id);
       return id;
     });
   });
+}
+
+/** Why a trap sample cannot be deleted. */
+export type DeleteRefusal = "not_found" | "not_entered" | "printed" | "in_print_run" | "has_specimens";
+
+/**
+ * The tables that name a sample by a foreign key, other than the specimens, which are why a sample is not deleted.
+ * Asked of the store itself, so a table added later is deleted from without anyone remembering to say so.
+ */
+async function satelliteTables(conn: DuckDBConnection): Promise<string[]> {
+  const found = await rows<{ table_name: string; columns: { items: string[] } }>(
+    conn,
+    `SELECT table_name, constraint_column_names AS columns FROM duckdb_constraints()
+     WHERE constraint_type = 'FOREIGN KEY' AND referenced_table = 'sample' AND table_name <> 'specimen'`,
+  );
+  return found.map((r) => `${r.table_name}:${r.columns.items.join(",")}`).sort();
+}
+
+/**
+ * Delete a trap sample entered in Beeline that has never been printed, is in no print run and has no specimens, with
+ * every row that names it. Behind the print runs' lock, so a freeze cannot take its labels between the check and the
+ * delete. The caller takes the sample's turn in its queue (src/app/sample-queue.ts). What an upload recorded about it
+ * stands: upload_sample_outcome names a sample without a foreign key. Returns the number the sample had.
+ */
+export function deleteTrapSample(conn: DuckDBConnection, id: number): Promise<{ deleted: string } | { refused: DeleteRefusal }> {
+  return withPrintRunLock(async () => {
+    const found = await deletable(conn, id);
+    if ("refused" in found) return found;
+    const tables = await satelliteTables(conn);
+    await inTransaction(conn, async () => {
+      for (const t of tables) {
+        const [table, columns] = t.split(":");
+        for (const column of columns!.split(",")) await conn.run(`DELETE FROM "${table}" WHERE "${column}" = $1`, [id] as never);
+      }
+      await conn.run(`DELETE FROM sample WHERE entity_id = $1`, [id] as never);
+    });
+    return { deleted: found.number };
+  });
+}
+
+/** Whether a trap sample may be deleted now, and its number if so. The same answer the delete gives, read without writing. */
+export async function deletable(conn: DuckDBConnection, id: number): Promise<{ number: string } | { refused: DeleteRefusal }> {
+  const found = await rows<{ sample_number: string; entered: boolean; printed: boolean; in_run: boolean; specimens: number }>(
+    conn,
+    `SELECT s.sample_number,
+            EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id) AS entered,
+            EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id) AS printed,
+            EXISTS (SELECT 1 FROM sample_label_in_progress l WHERE l.sample_id = s.entity_id) AS in_run,
+            (SELECT count(*)::INTEGER FROM specimen sp WHERE sp.sample_id = s.entity_id) AS specimens
+     FROM sample s WHERE s.entity_id = $1 AND s.kind = 'trap'`,
+    [id],
+  );
+  const r = found[0];
+  if (r === undefined) return { refused: "not_found" };
+  if (!r.entered) return { refused: "not_entered" };
+  if (r.printed) return { refused: "printed" };
+  if (r.in_run) return { refused: "in_print_run" };
+  if (r.specimens > 0) return { refused: "has_specimens" };
+  return { number: r.sample_number };
 }
 
 /** A sample entered in Beeline, as its form shows it; null if it is not one. */

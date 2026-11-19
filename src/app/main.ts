@@ -173,12 +173,14 @@ if (config.devLogin) {
   resolveSession = async () => ({ personId, login: config.devLogin!, iconUrl: null, stub: true });
 }
 
-const jobs = buildJobs(config);
+// The print runs' own connection: a freeze is one transaction and cannot
+// share a connection with the nightly's (src/print-run.ts). Opened before the
+// jobs, since the job that applies an uploaded samples file writes trap
+// samples on it (beeline-kgyd.4.10).
+const printConn = await instance.connect();
+const jobs = buildJobs(config, { printConn });
 const jobConn = await instance.connect();
 const scheduler = startScheduler({ db, conn: jobConn, jobs, observe: reporting ? jobCheckIns : undefined });
-// The print runs' own connection: a freeze is one transaction and cannot
-// share a connection with the nightly's (src/print-run.ts).
-const printConn = await instance.connect();
 // The unclaimed screen's, for the same reason: connecting a collector runs a
 // promotion, which is one transaction (src/app/unclaimed.ts, beeline-e85).
 const mintConn = await instance.connect();

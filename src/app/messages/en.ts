@@ -1003,6 +1003,23 @@ export const en = {
     notAllowed: "Trap samples are entered by staff and by people who have collected trap samples before.",
     notEditableHeading: "This sample can no longer be changed here",
     notEditable: "This sample's labels are printed or about to print, so it can no longer be changed here. Ask staff to correct it.",
+    /** Staff delete a trap sample that was entered in Beeline by mistake, before anything was done with it. */
+    delete: {
+      button: "Delete this sample",
+      title: (sampleNumber: string) => `Delete trap sample ${sampleNumber}`,
+      heading: (sampleNumber: string) => `Delete trap sample ${sampleNumber}?`,
+      explain:
+        "This takes the sample out of Beeline altogether, with its collectors, its place and its atlas. It was entered in Beeline, and nothing has been printed or pinned for it. It cannot be undone: to get it back, enter it again. An upload that made it keeps its record of having done so.",
+      confirm: "Delete it",
+      cancel: "Keep it",
+      refused: {
+        not_found: "There is no trap sample with this number.",
+        not_entered: "This sample did not come from an entry in Beeline: it came from iNaturalist or the old Beeline, which are its records, so it cannot be deleted here.",
+        printed: "This sample has labels on paper, so it cannot be deleted.",
+        in_print_run: "This sample's labels are in a print run that has not been canceled or mailed, so it cannot be deleted. Cancel the run first.",
+        has_specimens: "This sample has specimens, so it cannot be deleted.",
+      } as Record<string, string>,
+    },
   },
 
   sampleEdit: {
@@ -1088,6 +1105,7 @@ export const en = {
       source: {
         app: "staff",
         api: "the API",
+        upload: "an uploaded file",
         legacy_promotion: "the import from old Beeline",
         observation_promotion: "iNaturalist",
         reconcile: "found at startup",
@@ -2425,14 +2443,31 @@ export const en = {
       staffNothingChanged: "Beeline doesn't change any record from a staff upload yet.",
       downloadStaff: "Download the file with notes",
       /** The samples file's page (beeline-kgyd.4.9): counts, each with how many are in the active seasons and how many in settled ones. */
-      samplesNew: (count: number, split: string) => `${n(count)} new trap ${count === 1 ? "sample" : "samples"} could be created${split}.`,
+      samplesNew: (count: number, split: string) => `${n(count)} new trap ${count === 1 ? "sample" : "samples"} can be created${split}.`,
+      samplesHeld: (count: number) =>
+        `${n(count)} new ${count === 1 ? "row looks" : "rows look"} like ${count === 1 ? "a sample" : "samples"} Beeline already has, so ${count === 1 ? "it is" : "they are"} left out unless you tick create anyway.`,
+      heldHeading: "New rows that look like an existing sample",
+      heldColumns: { row: "Row", number: "Number in the file", like: "Looks like", anyway: "Create anyway" },
+      heldAnyway: (row: number) => `Create row ${n(row)} anyway`,
+      heldRule:
+        "Looks like means the same first collector, collecting days that overlap, and a point within 100 metres. To change an existing sample instead, put its sampleId in the file.",
       samplesCantUse: (count: number, split: string) => `${n(count)} ${count === 1 ? "row" : "rows"} can't be used: see the notes in your file${split}.`,
       samplesDiffer: (count: number, split: string) => `${n(count)} existing ${count === 1 ? "sample differs" : "samples differ"} from what Beeline has${split}.`,
       samplesSame: (count: number, split: string) => `${n(count)} ${count === 1 ? "is" : "are"} the same as Beeline has${split}.`,
       samplesUnknownCollectors: (names: string) =>
         `Beeline doesn't know these collectors, or can't tell which person is meant: ${names}. Add them on the Unclaimed or People page, or name them by their id, and upload the file again.`,
       samplesUnknownCollector: (name: string, rows: number) => `${name} (${n(rows)} ${rows === 1 ? "row" : "rows"})`,
-      samplesNothingChanged: "Beeline doesn't change any record from this file yet.",
+      samplesNothingChanged:
+        "Nothing has been changed yet. Applying this file makes its new trap samples. Changes to existing samples aren't applied yet.",
+      samplesApply: "Apply",
+      samplesApplyNote: "Beeline makes the new trap samples one at a time, in the order of the file. You can leave this page: it carries on, and the page shows how far it has got.",
+      samplesApplying: (done: number, total: number) => `Applying: ${n(done)} of ${n(total)} ${total === 1 ? "row" : "rows"} done.`,
+      samplesApplied: (when: string, by: string) => `Applied on ${when} by ${by}.`,
+      samplesCreated: (count: number) => `Created ${n(count)} new trap ${count === 1 ? "sample" : "samples"}.`,
+      samplesNotCreated: (count: number) => `${n(count)} ${count === 1 ? "row was" : "rows were"} not created: see the notes in the file.`,
+      samplesExistingNotApplied: "Changes to existing samples aren't applied yet; they are listed as differences only.",
+      samplesChangedSince: "The comparison with this file changed after this page was shown, so nothing was applied. This is how it stands now: check it and apply again.",
+      samplesBusy: "Beeline is reading from iNaturalist and rewriting samples right now, so nothing was applied. Try again in a few minutes.",
       /** After a count: how many of the rows are in seasons Beeline still asks about and how many in settled ones. */
       split: (active: number, settled: number, unplaced: number) =>
         ` (${[
@@ -2462,7 +2497,13 @@ export const en = {
       grey: "Your changes to the grey columns aren't saved. Beeline reads only scientificName, sex and caste.",
       cell: (column: string, was: string, says: string) => `${column} was ${was}, file says ${says}`,
       nothing: "blank",
-      newTrap: "New trap sample. Beeline doesn't create it yet.",
+      newTrap: "New trap sample, ready to be created when you apply the file.",
+      newTrapHeld: (number: string) =>
+        `New trap sample, not created yet: it looks like sample ${number}. To change that sample, put its sampleId in this row. To make a new sample anyway, tick create anyway on the page before applying.`,
+      /** What applying did to a new row. */
+      waiting: "Waiting to be applied.",
+      created: (number: string) => `Created ${number}.`,
+      notCreated: (why: string) => `Not created: ${why}`,
       newTrapCantUse: (why: string) => `New trap sample, can't use: ${why}`,
       /**
        * The reasons only the samples file has. The reasons it shares with the specimens file are in `reason`. Two have no
@@ -2712,9 +2753,12 @@ export const en = {
         "Turns the day's entries on Identify specimens into determinations. Until it runs, volunteers can change what they entered; after it, a change is added beside the old one. A name picked from Ecdysis's list is added to Beeline's names first.",
       "resource-budget":
         "Reads what the machine used in the last day and an hour — processor, memory, swap and disk — from Fly's metrics, and fails when it came close to a limit, so somebody looks before the machine is throttled, killed or its disk grows.",
+      "apply-uploads":
+        "Makes the trap samples that a staff member applied from an uploaded samples file, one row at a time in file order, and records what became of each row. It starts when a file is applied, and again after a restart if rows are still waiting. It does not run while the nightly or the weekly sweep runs.",
       "weekly-sweep":
         "Re-fetches the full trailing year from each project as a presence proof — the run that detects deletions and anything the incremental pulls missed — then promotes and derives elevations.",
     } as Record<string, string>,
+    onDemand: "when asked, and when work is waiting",
     everyMinutes: (minutes: number) => `every ${n(minutes)} min`,
     dailyLA: (hour: number) => `daily at ${n(hour)}:00 Pacific (night window)`,
     weeklyLA: (weekday: string, hour: number) => `${weekday}s at ${n(hour)}:00 Pacific (night window)`,

@@ -18,11 +18,13 @@ export interface JobRunRow {
 }
 
 const scheduleLabel = (m: Messages, s: Schedule) =>
-  s.kind === "everyMinutes"
-    ? m.jobs.everyMinutes(s.minutes)
-    : s.kind === "dailyLA"
-      ? m.jobs.dailyLA(s.hour)
-      : m.jobs.weeklyLA(m.jobs.weekdays[s.weekday] ?? String(s.weekday), s.hour);
+  s.kind === "onDemand"
+    ? m.jobs.onDemand
+    : s.kind === "everyMinutes"
+      ? m.jobs.everyMinutes(s.minutes)
+      : s.kind === "dailyLA"
+        ? m.jobs.dailyLA(s.hour)
+        : m.jobs.weeklyLA(m.jobs.weekdays[s.weekday] ?? String(s.weekday), s.hour);
 
 function Outcome({ m, run }: { m: Messages; run: JobRunRow }) {
   // A run that finished with a failed step in it did not simply succeed

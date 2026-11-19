@@ -2,7 +2,8 @@ import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import type { Messages } from "./messages/en.js";
 import { samplesWorkbook } from "./sample-workbook.js";
-import type { SampleRowResult, SamplesCounts, SamplesPlan, UnknownCollector } from "./samples-upload-plan.js";
+import type { OutcomeRow } from "./samples-upload-apply.js";
+import { countRows, type SampleRowResult, type SamplesCounts, type SamplesPlan, type UnknownCollector } from "./samples-upload-plan.js";
 import { specimenWorkbook, type Audience } from "./specimen-workbook.js";
 import type { DraftPlan } from "./upload-drafts.js";
 import { NOTE_COLUMN, type HeldItem, type ParsedUpload, type UploadPlan } from "./upload-plan.js";
@@ -42,12 +43,38 @@ export interface StaffSummary {
   grey: number;
 }
 
+/** A new row that looks like an existing sample, which waits for its tick. */
+export interface HeldRow {
+  row: number;
+  /** The number the file gives the new row. */
+  sampleNumber: string;
+  /** The existing sample it looks like. */
+  likeId: number;
+  likeNumber: string;
+}
+
+/** What applying did, counted over the rows it queued. */
+export interface OutcomeSummary {
+  /** Rows queued, whatever became of them. */
+  total: number;
+  /** Rows still waiting for the job. */
+  pending: number;
+  created: number;
+  /** Rows refused or left alone: not created. */
+  notCreated: number;
+}
+
 export interface SamplesSummary {
   kind: "samples";
   rows: number;
+  /** Over the rows that have no outcome of their own: once a file is applied, its rows are counted in `outcomes`. */
   counts: SamplesCounts;
   /** Names in the file that match nobody, or several people, each once. */
   unknownCollectors: UnknownCollector[];
+  /** New rows that wait to be ticked, before the file is applied. */
+  held: HeldRow[];
+  /** What applying did, once it was applied. */
+  outcomes: OutcomeSummary | null;
 }
 
 export interface Noted<S> {
@@ -137,7 +164,7 @@ export function staffNotes(m: Messages, upload: ParsedUpload, plan: UploadPlan):
  * and what Beeline could not use, each as a note on its row. A row that has both a difference and something it cannot
  * use says both.
  */
-export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPlan): Noted<SamplesSummary> {
+export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPlan, outcomes: readonly OutcomeRow[] = []): Noted<SamplesSummary> {
   const n = m.uploads.notes;
   const byRow = new Map<number, SampleRowResult>(plan.rows.map((r) => [r.row, r]));
   const reasons = (r: SampleRowResult): string => {
@@ -154,19 +181,55 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
     return [...said].join(" ");
   };
   const notes = new Map<number, string>();
+  // What applying did to a row says what became of it, and replaces what the comparison would say of the row now: a
+  // sample made from a new row makes the row read as a number Beeline already has.
+  const done = new Map(outcomes.filter((o) => o.unit === "row").map((o) => [o.row_number, o]));
   for (const { row } of upload.rows) {
+    const o = done.get(row);
+    if (o !== undefined) {
+      notes.set(row, o.outcome === "pending" ? n.waiting : o.outcome === "created" ? n.created(o.sample_number ?? "") : n.notCreated(o.detail ?? ""));
+      continue;
+    }
     const r = byRow.get(row);
     if (r === undefined) continue;
     const parts: string[] = [];
-    if (r.kind === "new") parts.push(r.problems.length === 0 ? n.newTrap : n.newTrapCantUse(reasons(r)));
-    else {
+    if (r.kind === "new") {
+      parts.push(
+        r.problems.length > 0
+          ? n.newTrapCantUse(reasons(r))
+          : r.create?.lookalike != null && !r.create.anyway
+            ? n.newTrapHeld(r.create.lookalike.sampleNumber)
+            : n.newTrap,
+      );
+    } else {
       if (r.problems.length > 0) parts.push(n.cantUse(reasons(r)));
       const changed = r.differences.map((d) => cellsText(m, d.cells.filter((c) => c.differs)));
       if (changed.length > 0) parts.push(n.differs(changed.join("; ")));
     }
     notes.set(row, parts.join(" "));
   }
-  return { notes, summary: { kind: "samples", rows: upload.rows.length, counts: plan.counts, unknownCollectors: plan.unknownCollectors } };
+  const open = plan.rows.filter((r) => !done.has(r.row));
+  const held: HeldRow[] =
+    outcomes.length > 0
+      ? []
+      : open.flatMap((r) =>
+          r.problems.length === 0 && r.create?.lookalike != null && !r.create.anyway
+            ? [{ row: r.row, sampleNumber: r.create.form.sample_number, likeId: r.create.lookalike.sampleId, likeNumber: r.create.lookalike.sampleNumber }]
+            : [],
+        );
+  const outcomeSummary: OutcomeSummary | null =
+    done.size === 0
+      ? null
+      : {
+          total: done.size,
+          pending: [...done.values()].filter((o) => o.outcome === "pending").length,
+          created: [...done.values()].filter((o) => o.outcome === "created").length,
+          notCreated: [...done.values()].filter((o) => o.outcome === "refused" || o.outcome === "skipped").length,
+        };
+  return {
+    notes,
+    summary: { kind: "samples", rows: upload.rows.length, counts: done.size === 0 ? plan.counts : countRows(open), unknownCollectors: plan.unknownCollectors, held, outcomes: outcomeSummary },
+  };
 }
 
 /** How wide the note column is drawn, in characters. */

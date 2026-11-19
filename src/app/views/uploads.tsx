@@ -95,6 +95,18 @@ export interface VolunteerPreview {
   changedSince: boolean;
 }
 
+/** What the samples file's page shows beyond the counts: the form that applies it, and what applying has done. */
+export interface SamplesPreview {
+  /** What applying would do, carried by the form so that applying refuses a page that went stale. */
+  digest: string;
+  /** The person looking is the staff member who uploaded the file, it is not applied yet, and there are rows to apply. */
+  canApply: boolean;
+  /** When it was applied and by whom, once it was. */
+  applied: { at: Date; by: string } | null;
+  /** Applying was asked for, and why nothing was applied. */
+  notice: "changed" | "busy" | null;
+}
+
 /** Columns the file has that Beeline did not read, and tabs it did not read: a line each, only where there are any. */
 function NotRead({ m, unrecognised, otherSheets, read }: { m: Messages; unrecognised: UnrecognisedColumn[]; otherSheets: string[]; read?: string }) {
   const p = m.uploads.page;
@@ -116,6 +128,7 @@ export function UploadPreview({
   volunteer = null,
   staffSummary = null,
   samplesSummary = null,
+  samples = null,
   staff = true,
   notesCopy = false,
 }: {
@@ -127,8 +140,10 @@ export function UploadPreview({
   volunteer?: VolunteerPreview | null;
   /** Staff's file, which changes nothing. */
   staffSummary?: StaffSummary | null;
-  /** The samples file, which changes nothing. */
+  /** The samples file. */
   samplesSummary?: SamplesSummary | null;
+  /** The samples file's form and state. */
+  samples?: SamplesPreview | null;
   /** Whether the reader is staff, who alone can open the copy kept in the program's shared drive. */
   staff?: boolean;
   /** The file with notes is a copy Beeline makes, since the person's own file cannot have a column added safely. */
@@ -156,7 +171,14 @@ export function UploadPreview({
     const total = (split: SeasonSplit) => split.active + split.settled + split.unplaced;
     // Each count says how many of its rows are in the active seasons and how many in settled ones.
     const split = (of: SeasonSplit) => p.split(of.active, of.settled, of.unplaced);
+    const o = samplesSummary.outcomes;
+    if (o !== null) {
+      if (o.pending > 0) lines.push(p.samplesApplying(o.total - o.pending, o.total));
+      if (o.created > 0) lines.push(p.samplesCreated(o.created));
+      if (o.notCreated > 0) lines.push(p.samplesNotCreated(o.notCreated));
+    }
     if (total(c.newReady) > 0) lines.push(p.samplesNew(total(c.newReady), split(c.newReady)));
+    if (total(c.newHeld) > 0) lines.push(p.samplesHeld(total(c.newHeld)));
     if (total(c.cantUse) > 0) lines.push(p.samplesCantUse(total(c.cantUse), split(c.cantUse)));
     if (total(c.differ) > 0) lines.push(p.samplesDiffer(total(c.differ), split(c.differ)));
     if (total(c.same) > 0) lines.push(p.samplesSame(total(c.same), split(c.same)));
@@ -186,7 +208,14 @@ export function UploadPreview({
       )}
       {volunteer !== null && volunteer.changedSince && <Callout tone="warning">{p.changedSince}</Callout>}
       {staffSummary !== null && <Callout>{p.staffNothingChanged}</Callout>}
-      {samplesSummary !== null && <Callout>{p.samplesNothingChanged}</Callout>}
+      {samplesSummary !== null && samples?.notice === "changed" && <Callout tone="warning">{p.samplesChangedSince}</Callout>}
+      {samplesSummary !== null && samples?.notice === "busy" && <Callout tone="warning">{p.samplesBusy}</Callout>}
+      {samplesSummary !== null && samples?.applied == null && <Callout>{p.samplesNothingChanged}</Callout>}
+      {samplesSummary !== null && samples?.applied != null && (
+        <Callout tone="success">
+          {p.samplesApplied(m.format.dateTime(samples.applied.at), samples.applied.by)} {p.samplesExistingNotApplied}
+        </Callout>
+      )}
       {lines.map((line) => (
         <p>{line}</p>
       ))}
@@ -194,6 +223,35 @@ export function UploadPreview({
         <p>{p.samplesUnknownCollectors(m.format.list(samplesSummary.unknownCollectors.map((c) => p.samplesUnknownCollector(c.name, c.rows))))}</p>
       )}
       <NotRead m={m} unrecognised={unrecognised} otherSheets={otherSheets} read={samplesSummary !== null ? "samples" : undefined} />
+      {samples !== null && samples.canApply && samplesSummary !== null && (
+        <form method="post" action={`${uploadHref(upload.entity_id)}/apply-samples`} class="form-column">
+          <input type="hidden" name="digest" value={samples.digest} />
+          {samplesSummary.held.length > 0 && (
+            <>
+              <h2>{p.heldHeading}</h2>
+              <p>{p.heldRule}</p>
+              <DataTable columns={[p.heldColumns.row, p.heldColumns.number, p.heldColumns.like, p.heldColumns.anyway]}>
+                {samplesSummary.held.map((h) => (
+                  <tr>
+                    <td>{m.format.number(h.row)}</td>
+                    <td>{h.sampleNumber}</td>
+                    <td>
+                      <a href={`/samples/${h.likeId}`}>{h.likeNumber}</a>
+                    </td>
+                    <td>
+                      <input type="checkbox" name="anyway" value={String(h.row)} aria-label={p.heldAnyway(h.row)} />
+                    </td>
+                  </tr>
+                ))}
+              </DataTable>
+            </>
+          )}
+          <p class="row">
+            <Button>{p.samplesApply}</Button>
+          </p>
+          <Meta block>{p.samplesApplyNote}</Meta>
+        </form>
+      )}
       <div class="row">
         {volunteer !== null && volunteer.canSave && (
           <form method="post" action={`${uploadHref(upload.entity_id)}/apply`}>

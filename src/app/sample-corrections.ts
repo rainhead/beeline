@@ -54,11 +54,11 @@ export interface Actor {
    * The door the request came through. It is recorded as the `source` of the
    * history entries the correction makes. Absent means a page.
    */
-  via?: "page" | "api";
+  via?: "page" | "api" | "upload";
 }
 
-/** The `source` a correction's history entries carry: `app` for a page, `api` for the API. */
-const sourceOf = (actor: Actor): SampleChangeSource => (actor.via === "api" ? "api" : "app");
+/** The `source` a correction's history entries carry: `app` for a page, `api` for the API, `upload` for an applied file. */
+export const sourceOf = (actor: Actor): SampleChangeSource => (actor.via === "api" ? "api" : actor.via === "upload" ? "upload" : "app");
 
 /**
  * What a correction did, as the writer reported it: it wrote a value, took one
@@ -226,15 +226,16 @@ async function recordChange(
  * sample it has no record of to the nightly (beeline-7r0g).
  */
 export async function recordTrapChange(
-  deps: CorrectionDeps,
+  deps: Pick<CorrectionDeps, "db" | "samplePaths">,
   login: string,
   sampleId: number,
-  { source = "app", created = false }: { source?: SampleChangeSource; created?: boolean } = {},
+  { source = "app", created = false, reason }: { source?: SampleChangeSource; created?: boolean; reason?: string } = {},
 ): Promise<void> {
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
       source,
       author: login,
+      reason,
       where: `s.entity_id = ${sampleId}`,
       created,
     });

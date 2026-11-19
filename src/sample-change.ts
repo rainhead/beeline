@@ -146,9 +146,11 @@ export interface SampleLog {
  * sources that can appear here, and a person-only source cannot be recorded
  * against a sample by a typo. `api` is a correction made through the API
  * (beeline-pnqr.6): it has an author, like `app`, and says only which door the
- * change came through.
+ * change came through. `upload` is a change made by applying a file staff
+ * uploaded (beeline-kgyd.4.10): its author is the staff member who applied it,
+ * and its reason names the upload.
  */
-export const SAMPLE_CHANGE_SOURCES = ["app", "api", "legacy_promotion", "observation_promotion", "reconcile", "coordinates"] as const;
+export const SAMPLE_CHANGE_SOURCES = ["app", "api", "upload", "legacy_promotion", "observation_promotion", "reconcile", "coordinates"] as const;
 export type SampleChangeSource = (typeof SAMPLE_CHANGE_SOURCES)[number];
 
 const LOG_COLUMNS = [

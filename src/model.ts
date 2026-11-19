@@ -1269,12 +1269,25 @@ export interface UploadTable {
   drive_file_id: string | null;
 }
 
-/** An upload whose changes were saved: a volunteer's identifications written as drafts (schema/047, beeline-kgyd.7). */
+/** An upload whose changes were taken up: a volunteer's identifications written as drafts, or the rows of a samples file queued (schema/047, beeline-kgyd.7, beeline-kgyd.4.10). */
 export interface UploadAppliedTable {
   upload_id: number;
   applied_by: number;
   applied_at: Timestamped;
   draft_count: number;
+}
+
+/** What applying a samples file did to each row it queued (schema/047, beeline-kgyd.4.10). */
+export interface UploadSampleOutcomeTable {
+  upload_id: number;
+  row_number: number;
+  unit: string;
+  outcome: "pending" | "created" | "applied" | "unchanged" | "refused" | "skipped";
+  sample_id: number | null;
+  sample_number: string | null;
+  payload: string | null;
+  detail: string | null;
+  recorded_at: Timestamped;
 }
 
 /** An old-Beeline record promotion set aside as a second print, tied to its specimen (beeline-iuva). */
@@ -1928,6 +1941,7 @@ export interface Database {
   legacy_duplicate_record: LegacyDuplicateRecordTable;
   upload: UploadTable;
   upload_applied: UploadAppliedTable;
+  upload_sample_outcome: UploadSampleOutcomeTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;
   determination_batch: DeterminationBatchTable;

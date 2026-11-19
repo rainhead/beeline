@@ -265,9 +265,9 @@ describe("comparing the samples file", () => {
       f,
       edit(await download(f), [{ id: f.ids.sampleB, set: { locality: "Albany", sampleVersion: "fold" } }], {
         addRows: [
-          { ...base, fieldNumber: "OBAS-10001", eventDate: THIS_YEAR(10, "07") },
-          { ...base, fieldNumber: "OBAS-10002", eventDate: settled },
-          { ...base, fieldNumber: "OBAS-10003", eventDate: "later" },
+          { ...base, fieldNumber: "OBAS-00021", eventDate: THIS_YEAR(10, "07") },
+          { ...base, fieldNumber: "OBAS-00022", eventDate: settled },
+          { ...base, fieldNumber: "OBAS-00023", eventDate: "later" },
         ],
       }),
     );
@@ -280,14 +280,14 @@ describe("comparing the samples file", () => {
 });
 
 describe("a new trap sample", () => {
-  const ready = { fieldNumber: "OBAS-20001", recordedBy: "Vera Volunteer", eventDate: THIS_YEAR(10, "07"), samplingProtocol: "vane trap", trapCount: "6", specimenCount: "", decimalLatitude: "44.5", decimalLongitude: "-123.2", coordinateUncertaintyInMeters: "50", countryCode: "US", stateProvince: "OR", county: "Benton", locality: "Fir Butte" };
+  const ready = { fieldNumber: "OBAS-00011", recordedBy: "Vera Volunteer", eventDate: THIS_YEAR(10, "07"), samplingProtocol: "vane trap", trapCount: "6", specimenCount: "", decimalLatitude: "44.5", decimalLongitude: "-123.2", coordinateUncertaintyInMeters: "50", countryCode: "US", stateProvince: "OR", county: "Benton", locality: "Fir Butte" };
 
   it("is ready when the trap form would take it, and its date may be one day or a range", async () => {
     const f = await uploadFixture();
     const bytes = await download(f);
-    const p = await plan(f, edit(bytes, [], { addRows: [ready, { ...ready, fieldNumber: "OBAS-20002", eventDate: `${THIS_YEAR(1, "07")}/${THIS_YEAR(9, "07")}` }] }));
+    const p = await plan(f, edit(bytes, [], { addRows: [ready, { ...ready, fieldNumber: "OBAS-00012", eventDate: `${THIS_YEAR(1, "07")}/${THIS_YEAR(9, "07")}` }] }));
     const added = p.rows.filter((r) => r.kind === "new");
-    expect(added.map((r) => [r.sampleNumber, r.problems])).toEqual([["OBAS-20001", []], ["OBAS-20002", []]]);
+    expect(added.map((r) => [r.sampleNumber, r.problems])).toEqual([["OBAS-00011", []], ["OBAS-00012", []]]);
     expect(p.counts.newReady).toEqual({ active: 2, settled: 0, unplaced: 0 });
   });
 
@@ -306,14 +306,14 @@ describe("a new trap sample", () => {
 
   it("cannot use two new rows with one number, nor one whose number another trap sample has", async () => {
     const f = await uploadFixture();
-    await insertCleanSample(f.conn, { kind: "'trap'", sample_number: "'OBAS-20009'", collector_id: String(f.volunteer) });
+    await insertCleanSample(f.conn, { kind: "'trap'", sample_number: "'OBAS-00019'", collector_id: String(f.volunteer) });
     const p = await plan(
       f,
-      edit(await download(f), [], { addRows: [ready, { ...ready, locality: "Elsewhere" }, { ...ready, fieldNumber: "OBAS-20009" }] }),
+      edit(await download(f), [], { addRows: [ready, { ...ready, locality: "Elsewhere" }, { ...ready, fieldNumber: "OBAS-00019" }] }),
     );
     const added = p.rows.filter((r) => r.kind === "new");
     expect(added.map(reasons)).toEqual([["new_number_repeated"], ["new_number_repeated"], ["new_row_problem"]]);
-    expect(added[2]!.problems[0]!.detail).toBe("Trap sample OBAS-20009 is already in Beeline.");
+    expect(added[2]!.problems[0]!.detail).toBe("Trap sample OBAS-00019 is already in Beeline.");
   });
 
   it("cannot use a new row whose number is a formula or a date, whatever text it shows", async () => {
@@ -322,7 +322,7 @@ describe("a new trap sample", () => {
       f,
       edit(await download(f), [], {
         addRows: [
-          { ...ready, fieldNumber: { formula: 'CONCAT("OBAS-","20001")', cached: "OBAS-20001" } },
+          { ...ready, fieldNumber: { formula: 'CONCAT("OBAS-","00011")', cached: "OBAS-00011" } },
           { ...ready, fieldNumber: { date: 46000 } },
         ],
       }),
@@ -339,9 +339,9 @@ describe("a new trap sample", () => {
       edit(await download(f), [], {
         addRows: [
           { ...ready, eventDate: "2999-01-01" },
-          { ...ready, fieldNumber: "OBAS-20002", decimalLatitude: "95" },
-          { ...ready, fieldNumber: "OBAS-20003", countryCode: "XX" },
-          { ...ready, fieldNumber: "OBAS-20004", trapCount: "0" },
+          { ...ready, fieldNumber: "OBAS-00012", decimalLatitude: "95" },
+          { ...ready, fieldNumber: "OBAS-00013", countryCode: "XX" },
+          { ...ready, fieldNumber: "OBAS-00014", trapCount: "0" },
         ],
       }),
     );
@@ -369,8 +369,8 @@ describe("a new trap sample", () => {
       edit(await download(f), [{ id: f.ids.sampleA, set: { recordedBy: "Vera Volunteer | Zed Zebra" } }], {
         addRows: [
           { ...ready, recordedBy: "Zed Zebra" },
-          { ...ready, fieldNumber: "OBAS-20002", recordedBy: "Zed Zebra | Vera Volunteer" },
-          { ...ready, fieldNumber: "OBAS-20003", recordedBy: "Yan Yak" },
+          { ...ready, fieldNumber: "OBAS-00012", recordedBy: "Zed Zebra | Vera Volunteer" },
+          { ...ready, fieldNumber: "OBAS-00013", recordedBy: "Yan Yak" },
         ],
       }),
     );
@@ -387,7 +387,7 @@ describe("a new trap sample", () => {
       edit(await download(f), [], {
         addRows: [
           { ...ready, recordedBy: "vera  volunteer" },
-          { ...ready, fieldNumber: "OBAS-20002", recordedBy: `${f.staffer} | inat:vera_v` },
+          { ...ready, fieldNumber: "OBAS-00012", recordedBy: `${f.staffer} | inat:vera_v` },
         ],
       }),
     );
@@ -400,9 +400,9 @@ describe("the upload page and the file with notes", () => {
   it("is a few counts and two actions, with no row listed, and writes nothing", async () => {
     const f = await uploadFixture();
     const before = JSON.stringify(await Promise.all(["sample", "sample_collector", "sample_location"].map((t) => rows(f.conn, `SELECT * FROM ${t} ORDER BY 1`))));
-    const ready = { fieldNumber: "OBAS-20001", recordedBy: "Vera Volunteer", eventDate: THIS_YEAR(10, "07"), samplingProtocol: "vane trap", specimenCount: "2", decimalLatitude: "44.5", decimalLongitude: "-123.2", countryCode: "US", stateProvince: "OR" };
+    const ready = { fieldNumber: "OBAS-00011", recordedBy: "Vera Volunteer", eventDate: THIS_YEAR(10, "07"), samplingProtocol: "vane trap", specimenCount: "2", decimalLatitude: "44.5", decimalLongitude: "-123.2", countryCode: "US", stateProvince: "OR" };
     const bytes = edit(await download(f), [{ id: f.ids.sampleA, set: { locality: "Albany" } }, { id: f.ids.sampleB, set: { specimenCount: "x" } }], {
-      addRows: [ready, { ...ready, fieldNumber: "OBAS-20002", recordedBy: "Zed Zebra" }],
+      addRows: [ready, { ...ready, fieldNumber: "OBAS-00012", recordedBy: "Zed Zebra" }],
     });
     const { location, html } = await pageOf(f, bytes);
     const p = en.uploads.page;
@@ -422,9 +422,9 @@ describe("the upload page and the file with notes", () => {
 
   it("hands the file back with a note on each row, which uploads again cleanly", async () => {
     const f = await uploadFixture();
-    const ready = { fieldNumber: "OBAS-20001", recordedBy: "Vera Volunteer", eventDate: THIS_YEAR(10, "07"), samplingProtocol: "vane trap", specimenCount: "2", decimalLatitude: "44.5", decimalLongitude: "-123.2", countryCode: "US", stateProvince: "OR" };
+    const ready = { fieldNumber: "OBAS-00011", recordedBy: "Vera Volunteer", eventDate: THIS_YEAR(10, "07"), samplingProtocol: "vane trap", specimenCount: "2", decimalLatitude: "44.5", decimalLongitude: "-123.2", countryCode: "US", stateProvince: "OR" };
     const bytes = edit(await download(f), [{ id: f.ids.sampleA, set: { locality: "Albany" } }, { id: f.ids.sampleB, set: { specimenCount: "x" } }], {
-      addRows: [ready, { ...ready, fieldNumber: "OBAS-20002", recordedBy: "Zed Zebra" }],
+      addRows: [ready, { ...ready, fieldNumber: "OBAS-00012", recordedBy: "Zed Zebra" }],
     });
     const { location } = await pageOf(f, bytes);
     const res = await f.app.request(`${location}/notes`);
@@ -437,10 +437,10 @@ describe("the upload page and the file with notes", () => {
     const n = en.uploads.notes;
     expect(noteOf("UP-1")).toBe(n.differs(n.cell("locality", '"Corvallis"', '"Albany"')));
     expect(noteOf("UP-2")).toBe(n.cantUse(n.reason.number_unreadable!));
-    expect(noteOf("OBAS-20001")).toBe(n.newTrap);
-    expect(noteOf("OBAS-20002")).toContain("New trap sample, can't use: ");
-    expect(noteOf("OBAS-20002")).toContain("Zed Zebra");
-    for (const text of [noteOf("UP-1"), noteOf("UP-2"), noteOf("OBAS-20001"), noteOf("OBAS-20002")]) expect(text).not.toMatch(/\b(held|hold|holds|draft|drafts|plan|unit|reader|layout)\b/i);
+    expect(noteOf("OBAS-00011")).toBe(n.newTrap);
+    expect(noteOf("OBAS-00012")).toContain("New trap sample, can't use: ");
+    expect(noteOf("OBAS-00012")).toContain("Zed Zebra");
+    for (const text of [noteOf("UP-1"), noteOf("UP-2"), noteOf("OBAS-00011"), noteOf("OBAS-00012")]) expect(text).not.toMatch(/\b(held|hold|holds|draft|drafts|plan|unit|reader|layout)\b/i);
     // The same file uploaded again: the note column is not read, and what the rows say is the same.
     const again = await parsed(back);
     expect(again.unrecognised).toEqual([]);

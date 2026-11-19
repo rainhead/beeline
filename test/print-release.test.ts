@@ -181,6 +181,21 @@ describe("the collector's front page", () => {
     expect(byId.has(unreleased)).toBe(false);
     expect(dash.settledFlagged).toBe(1);
   });
+
+  it("keeps a released settled sample that waits for the nightly to place it, its labels counted as waiting", async () => {
+    const s = await setup();
+    // Entered in Beeline, so its county and state follow its point: not pending until the nightly stamp.
+    const entered = await s.sample({ sample_number: "'T-1'", ...settledDates });
+    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+    await s.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${entered}, 'release')`);
+    expect(await rows(s.conn, `SELECT count(*) FROM sample_awaiting_place WHERE sample_id = ${entered}`)).toEqual([[1n]]);
+    expect(await rows(s.conn, `SELECT count(*) FROM pending_print_sample WHERE sample_id = ${entered}`)).toEqual([[0n]]);
+
+    const dash = await loadDashboard(s.db, s.alice);
+    const row = dash.rows.find((r) => r.sample_id === entered);
+    expect(row).toMatchObject({ pending_count: 3, printing_count: 0, printed_count: 0 });
+    expect(row!.findings).toEqual([]);
+  });
 });
 
 describe("the Prepare page", () => {

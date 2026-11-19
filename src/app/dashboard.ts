@@ -122,7 +122,11 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              loc.latitude, loc.longitude, loc.coordinate_uncertainty_m,
              s.geoprivacy, s.taxon_geoprivacy,
              s.host_name_as_observed AS host_name, s.host_rank, s.host_inat_taxon_id AS host_taxon_id,
-             s.specimen_count, coalesce(p.pending_count, 0) AS pending_count,
+             -- A released settled sample waiting for the nightly to place it
+             -- (sample_awaiting_place, schema/150) is not pending yet, but its
+             -- labels are on their way, so the page counts them as waiting.
+             s.specimen_count,
+             coalesce(p.pending_count, CASE WHEN aw.sample_id IS NOT NULL THEN w.waiting END, 0) AS pending_count,
              coalesce(lp.printing_count, 0) AS printing_count,
              coalesce(lp.printed_count, 0) AS printed_count, lp.printed_at,
              st.sample_id IS NOT NULL AS settled,
@@ -137,6 +141,8 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       LEFT JOIN printed_sample ps ON ps.sample_id = s.entity_id
       LEFT JOIN sample_locality_override lo ON lo.sample_id = s.entity_id
       LEFT JOIN pending_print_sample p ON p.sample_id = s.entity_id
+      LEFT JOIN sample_awaiting_place aw ON aw.sample_id = s.entity_id
+      LEFT JOIN sample_labels_waiting w ON w.sample_id = s.entity_id
       LEFT JOIN sample_label_in_progress lp ON lp.sample_id = s.entity_id
       LEFT JOIN settled_unreleased_sample st ON st.sample_id = s.entity_id
       WHERE ${mine("s.entity_id")}
@@ -304,8 +310,9 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     // their way until the run is mailed (schema/155). A settled sample that was
     // not released stays only while a run holds its labels; it is never
     // pending (schema/102), but a run prepared before its season settled
-    // still goes out. A released one is pending, and shows its flags, like an
-    // active one.
+    // still goes out. A released one shows its flags like an active one, and
+    // its labels count as waiting from the release, including while it waits
+    // for the nightly to place it, before it is pending (pending_count above).
     if (findingsHere.length === 0 && pending === 0 && printing === 0 && printed === 0) continue;
     rows.push({
       sample_id: sampleId,

@@ -367,8 +367,6 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   };
 
   const newNumbers = new Map<string, number[]>();
-  /** The highest number in the program's series, read once and only if a new row is in it. */
-  let series: { highest: number } | null = null;
 
   for (const [index, { row, cells }] of rows.entries()) {
     const { given, id } = idOf[index]!;
@@ -433,29 +431,22 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
           if (FORM_COLUMNS[field].some((c) => flagged.has(c))) continue;
           result.problems.push({ reason: "new_row_problem", unit: null, column: FORM_COLUMNS[field][0]!, detail: sentence, cells: [] });
         }
-      } else {
-        // The program's own numbers are guarded: a number far above the series would move the next one offered for good.
+      } else if (result.problems.length === 0) {
+        // What applying would write, with the collectors as the ids they came to. The number's guard is applied
+        // after every row is read, since it needs to know which rows will be made.
         const sample = checked.sample;
-        if (series === null && sample.sample_number.startsWith(PROGRAM_SERIES)) {
-          // The file's own new numbers extend the reach, so a run of consecutive numbers is taken whole.
-          const newNumbers = rows.filter(({ cells: c }) => text(c, "sampleId") === "").map(({ cells: c }) => text(c, "fieldNumber"));
-          series = { highest: seriesReach(await highestSampleNumber(conn), newNumbers) };
-        }
-        const wrong = series === null ? null : seriesNumberProblem(sample.sample_number, series.highest);
-        if (wrong !== null) {
-          result.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: wrong, cells: [] });
-        } else if (result.problems.length === 0) {
-          // What applying would write, with the collectors as the ids they came to.
-          const [first] = sample.collector_ids;
-          const [lookalike] = await findLookalikes(conn, {
-            firstCollectorId: first!,
-            dateStart: sample.date_start,
-            dateEnd: sample.date_end,
-            latitude: sample.latitude,
-            longitude: sample.longitude,
-          });
-          result.create = { form: { ...form, collectors: sample.collector_ids.map(String) }, lookalike: lookalike ?? null, anyway: options.createAnyway?.has(row) ?? false };
-        }
+        const [first] = sample.collector_ids;
+        const [found] = await findLookalikes(conn, {
+          firstCollectorId: first!,
+          dateStart: sample.date_start,
+          dateEnd: sample.date_end,
+          latitude: sample.latitude,
+          longitude: sample.longitude,
+        });
+        // Someone who is not staff may not see where every sample is: they are told the row is held, and not which sample.
+        const lookalike = found !== undefined && options.reader !== undefined && !options.reader.staff ? { sampleId: 0, sampleNumber: "" } : (found ?? null);
+        // A tick counts only for a row that looks like something, so a stale or made-up one cannot switch off a later check.
+        result.create = { form: { ...form, collectors: sample.collector_ids.map(String) }, lookalike, anyway: lookalike !== null && (options.createAnyway?.has(row) ?? false) };
       }
       if (fileNumber !== "") (newNumbers.get(fileNumber) ?? newNumbers.set(fileNumber, []).get(fileNumber)!).push(index);
       continue;
@@ -522,6 +513,23 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
     for (const i of at) {
       results[i]!.problems.push({ reason: "new_number_repeated", unit: null, column: "fieldNumber", detail: number, cells: [] });
       results[i]!.create = null;
+    }
+  }
+
+  // The program's own numbers are guarded: a number far above the series would move the next one offered for good. The
+  // file's own run of numbers extends the reach, but only the numbers of rows that will be made: a row that cannot be
+  // used, or waits to be ticked, or repeats a number, stretches nothing.
+  const candidates = results.filter((r) => r.kind === "new" && r.create !== null);
+  if (candidates.some((r) => r.create!.form.sample_number.startsWith(PROGRAM_SERIES))) {
+    const reach = seriesReach(
+      await highestSampleNumber(conn),
+      candidates.filter((r) => r.create!.lookalike === null || r.create!.anyway).map((r) => r.create!.form.sample_number),
+    );
+    for (const r of candidates) {
+      const wrong = seriesNumberProblem(r.create!.form.sample_number, reach);
+      if (wrong === null) continue;
+      r.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: wrong, cells: [] });
+      r.create = null;
     }
   }
 

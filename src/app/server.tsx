@@ -1588,7 +1588,7 @@ export function createApp({
   // Deleting a trap sample entered in Beeline (beeline-kgyd.4.10), by staff, for a sample nothing has been done with:
   // never printed, in no print run, no specimens. A page that says what goes, then a form that does it, in the
   // sample's turn of its queue and behind the print runs' lock. The change log cannot say a sample is gone (a sample
-  // that falls silent is recorded as nothing, ADR 0007), so the deletion is said in the server's log.
+  // that falls silent is recorded as nothing, ADR 0007), so the deletion is recorded in `sample_deletion` (schema/048) and said in the server's log.
   const deleteGate = (c: Context<AppEnv>, writing: boolean): Response | Promise<Response> | null => {
     const m = c.get("m");
     if (writing && c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
@@ -1617,7 +1617,7 @@ export function createApp({
     if (refused !== null) return refused;
     const m = c.get("m");
     const id = Number(c.req.param("id"));
-    const result = await onSample(id, () => deleteTrapSample(printWriter!, id));
+    const result = await onSample(id, () => deleteTrapSample(printWriter!, id, c.get("session").personId));
     if ("refused" in result) {
       if (result.refused === "not_found") return errorResponse(c, "notFound");
       const number = (await db.selectFrom("sample").select("sample_number").where("entity_id", "=", id).executeTakeFirst())?.sample_number ?? "";
@@ -2568,7 +2568,7 @@ export function createApp({
     kept: { upload: ParsedUpload; bytes: Uint8Array },
     outcome: UploadOutcome,
     changedSince = false,
-    samplesNotice: "changed" | "busy" | null = null,
+    samplesNotice: "changed" | "busy" | "nothing_ticked" | null = null,
   ) => {
     const m = c.get("m");
     const { sha256: _kept, uploaded_by: _by, applied_at, draft_count, ...shown } = row;
@@ -2737,7 +2737,7 @@ export function createApp({
     const kept = await readKept(c, row, layoutFor(true));
     if (kept.problem !== undefined) return kept.problem;
     if (kept.upload.layout.kind !== "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
-    const showing = async (notice: "changed" | "busy") => {
+    const showing = async (notice: "changed" | "busy" | "nothing_ticked") => {
       // A second submission whose page was worked out after the first claimed the file: told what was done, not that nothing was.
       if ((await db.selectFrom("upload_applied").select("upload_id").where("upload_id", "=", row.entity_id).executeTakeFirst()) !== undefined) {
         return c.redirect(uploadHref(row.entity_id), 303);
@@ -2747,9 +2747,9 @@ export function createApp({
     if (syncJobRunning()) return showing("busy");
     const outcome = await uploadOutcome(c, row, kept, anyway);
     if (outcome.kind !== "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
-    if (digestOf(outcome.plan) !== asked || rowsToApply(outcome.plan).length === 0) {
-      return showing("changed");
-    }
+    if (digestOf(outcome.plan) !== asked) return showing("changed");
+    // The page is as it was shown, and every new row that could be made waits for a tick that was not given.
+    if (rowsToApply(outcome.plan).length === 0) return showing("nothing_ticked");
     const claimed = await claimUpload(db, { uploadId: row.entity_id, appliedBy: c.get("session").personId, plan: outcome.plan, now: new Date() });
     // Started now, and if something else is running, by the scheduler's tick as soon as it is done.
     if (claimed !== null) await jobsDep.start(APPLY_JOB);

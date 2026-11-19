@@ -2467,6 +2467,8 @@ export const en = {
       samplesNotCreated: (count: number) => `${n(count)} ${count === 1 ? "row was" : "rows were"} not created: see the notes in the file.`,
       samplesExistingNotApplied: "Changes to existing samples aren't applied yet; they are listed as differences only.",
       samplesChangedSince: "The comparison with this file changed after this page was shown, so nothing was applied. This is how it stands now: check it and apply again.",
+      samplesNothingTicked:
+        "Nothing was applied: every new row looks like a sample Beeline already has, and none was ticked. Tick create anyway on the rows you want made, or put the sampleId of the existing sample in the file to change that sample.",
       samplesBusy: "Beeline is reading from iNaturalist and rewriting samples right now, so nothing was applied. Try again in a few minutes.",
       /** After a count: how many of the rows are in seasons Beeline still asks about and how many in settled ones. */
       split: (active: number, settled: number, unplaced: number) =>
@@ -2499,7 +2501,7 @@ export const en = {
       nothing: "blank",
       newTrap: "New trap sample, ready to be created when you apply the file.",
       newTrapHeld: (number: string) =>
-        `New trap sample, not created yet: it looks like sample ${number}. To change that sample, put its sampleId in this row. To make a new sample anyway, tick create anyway on the page before applying.`,
+        `New trap sample, not created yet: it looks like ${number === "" ? "a sample Beeline already has" : `sample ${number}`}. To change that sample, put its sampleId in this row. To make a new sample anyway, tick create anyway on the page before applying.`,
       /** What applying did to a new row. */
       waiting: "Waiting to be applied.",
       created: (number: string) => `Created ${number}.`,

@@ -566,9 +566,11 @@ export async function runJob(
     await finish("succeeded", detail ?? null);
     ended("succeeded");
   } catch (err) {
-    console.error(`[job ${job.name}] failed after ${took()}: ${(err as Error).stack ?? String(err)}`);
-    ended("failed", err);
-    await finish("failed", (err as Error).message);
+    // A run that ended because the process is stopping is no fault to report: it resumes when the process is back.
+    const stopped = signal.aborted || err instanceof JobInterrupted;
+    console.error(`[job ${job.name}] ${stopped ? "stopped" : "failed"} after ${took()}: ${(err as Error).stack ?? String(err)}`);
+    ended("failed", stopped ? undefined : err);
+    await finish("failed", stopped && !(err instanceof JobInterrupted) ? `interrupted by shutdown: ${(err as Error).message}` : (err as Error).message);
   }
 }
 
@@ -623,6 +625,26 @@ export type StartedRun =
   | { status: "unknown" }
   /** One job runs at a time, and one is running (or the scheduler is deciding what to run, or stopping). */
   | { status: "busy"; running: string | null };
+
+/**
+ * How long an on-demand job that failed is left alone by the scheduler's tick, so that a step that keeps failing is
+ * tried every five minutes and reported then, not every minute. A run that ended because the process was stopping, or
+ * was orphaned by it, is no failure of the job's own and is not waited out: the job resumes at the next tick.
+ */
+export const ON_DEMAND_RETRY_MS = 5 * 60_000;
+
+async function failedLately(db: Kysely<Database>, name: string, at: Date): Promise<boolean> {
+  const last = await db
+    .selectFrom("job_run")
+    .select(["started_at", "outcome", "detail"])
+    .where("job_name", "=", name)
+    .orderBy("started_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (last === undefined || last.outcome !== "failed") return false;
+  if (/^(interrupted by shutdown|orphaned)/.test(last.detail ?? "")) return false;
+  return at.getTime() - new Date(last.started_at).getTime() < ON_DEMAND_RETRY_MS;
+}
 
 export function startScheduler(deps: SchedulerDeps): Scheduler {
   const now = deps.now ?? (() => new Date());
@@ -709,20 +731,28 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
       const last = await lastRuns();
       for (const job of deps.jobs) {
         if (stopping) break;
-        if (
-          isDue(job.schedule, job.window, now(), last.get(job.name) ?? NEVER) ||
-          (job.schedule.kind === "onDemand" && job.waiting !== undefined && (await job.waiting(deps.db)))
-        ) {
-          await track(job);
+        let start = isDue(job.schedule, job.window, now(), last.get(job.name) ?? NEVER);
+        if (!start && job.schedule.kind === "onDemand" && job.waiting !== undefined) {
+          start = (await job.waiting(deps.db)) && !(await failedLately(deps.db, job.name, now()));
+          // The predicate took time, and a stop may have begun in it: nothing is started once it has (beeline-kgyd.4.10).
+          if (stopping) break;
         }
+        if (start) await track(job);
       }
     } finally {
       busy = null;
     }
   };
 
+  /** The tick in progress, so that stop() can wait for it and never close the store under it. */
+  let ticking: Promise<void> | null = null;
   const interval = setInterval(() => {
-    tick().catch((err: unknown) => console.error("scheduler tick failed:", err));
+    if (ticking !== null) return;
+    ticking = tick()
+      .catch((err: unknown) => console.error("scheduler tick failed:", err))
+      .finally(() => {
+        ticking = null;
+      });
   }, deps.tickMs ?? 60_000);
   interval.unref();
 
@@ -749,7 +779,11 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
       stopping = true;
       clearInterval(interval);
       const running = inFlight;
-      if (running === null) return;
+      if (running === null) {
+        // A tick between its checks starts nothing once `stopping` is set; it is waited for so that it is over.
+        if (ticking !== null) await ticking;
+        return;
+      }
       const grace = opts.graceMs ?? 0;
       if (grace > 0) await Promise.race([running, settle(grace)]);
       if (inFlight !== null) {

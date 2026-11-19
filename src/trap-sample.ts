@@ -433,16 +433,28 @@ async function satelliteTables(conn: DuckDBConnection): Promise<string[]> {
  * every row that names it. Behind the print runs' lock, so a freeze cannot take its labels between the check and the
  * delete. The caller takes the sample's turn in its queue (src/app/sample-queue.ts). What an upload recorded about it
  * stands: upload_sample_outcome names a sample without a foreign key. Returns the number the sample had.
+ *
+ * Two transactions, because DuckDB will not delete a referenced row in the transaction that removed its references
+ * (the limit printing.md names for cancelling a run). The first removes the satellites and writes the sample's
+ * `sample_deletion` row; the second removes the sample. A crash between them leaves a sample with no entry mark and
+ * no collector, which `deletable` accepts because of that row, so deleting again finishes it. The row stays.
  */
-export function deleteTrapSample(conn: DuckDBConnection, id: number): Promise<{ deleted: string } | { refused: DeleteRefusal }> {
+export function deleteTrapSample(
+  conn: DuckDBConnection,
+  id: number,
+  deletedBy: number,
+  reason: string | null = null,
+): Promise<{ deleted: string } | { refused: DeleteRefusal }> {
   return withPrintRunLock(async () => {
     const found = await deletable(conn, id);
     if ("refused" in found) return found;
     const tables = await satelliteTables(conn);
-    // Two transactions, because DuckDB will not delete a referenced row in the transaction that removed its references
-    // (the limit printing.md names for cancelling a run). A crash between them leaves a sample with no collector, which
-    // sample_primary_collector_invalid names and which deleting again finishes.
     await inTransaction(conn, async () => {
+      await conn.run(
+        `INSERT INTO sample_deletion (sample_id, sample_number, deleted_by, deleted_at, reason)
+         SELECT $1, $2, $3, now(), $4 WHERE NOT EXISTS (SELECT 1 FROM sample_deletion WHERE sample_id = $1)`,
+        [id, found.number, deletedBy, reason] as never,
+      );
       for (const t of tables) {
         const [table, columns] = t.split(":");
         for (const column of columns!.split(",")) await conn.run(`DELETE FROM "${table}" WHERE "${column}" = $1`, [id] as never);
@@ -453,12 +465,19 @@ export function deleteTrapSample(conn: DuckDBConnection, id: number): Promise<{ 
   });
 }
 
-/** Whether a trap sample may be deleted now, and its number if so. The same answer the delete gives, read without writing. */
+/**
+ * Whether a trap sample may be deleted now, and its number if so. The same answer the delete gives, read without
+ * writing. A sample whose deletion was cut short, so that it has a `sample_deletion` row and no entry mark and no
+ * collector left, may be deleted again to finish it.
+ */
 export async function deletable(conn: DuckDBConnection, id: number): Promise<{ number: string } | { refused: DeleteRefusal }> {
-  const found = await rows<{ sample_number: string; entered: boolean; printed: boolean; in_run: boolean; specimens: number }>(
+  const found = await rows<{ sample_number: string; entered: boolean; cut_short: boolean; printed: boolean; in_run: boolean; specimens: number }>(
     conn,
     `SELECT s.sample_number,
             EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id) AS entered,
+            EXISTS (SELECT 1 FROM sample_deletion d WHERE d.sample_id = s.entity_id)
+              AND NOT EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id)
+              AND NOT EXISTS (SELECT 1 FROM sample_collector c WHERE c.sample_id = s.entity_id) AS cut_short,
             EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id) AS printed,
             EXISTS (SELECT 1 FROM sample_label_in_progress l WHERE l.sample_id = s.entity_id) AS in_run,
             (SELECT count(*)::INTEGER FROM specimen sp WHERE sp.sample_id = s.entity_id) AS specimens
@@ -467,7 +486,7 @@ export async function deletable(conn: DuckDBConnection, id: number): Promise<{ n
   );
   const r = found[0];
   if (r === undefined) return { refused: "not_found" };
-  if (!r.entered) return { refused: "not_entered" };
+  if (!r.entered && !r.cut_short) return { refused: "not_entered" };
   if (r.printed) return { refused: "printed" };
   if (r.in_run) return { refused: "in_print_run" };
   if (r.specimens > 0) return { refused: "has_specimens" };

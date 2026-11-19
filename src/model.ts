@@ -1277,6 +1277,15 @@ export interface UploadAppliedTable {
   draft_count: number;
 }
 
+/** A trap sample staff deleted (schema/048, beeline-kgyd.4.10). */
+export interface SampleDeletionTable {
+  sample_id: number;
+  sample_number: string;
+  deleted_by: number;
+  deleted_at: Timestamped;
+  reason: string | null;
+}
+
 /** What applying a samples file did to each row it queued (schema/047, beeline-kgyd.4.10). */
 export interface UploadSampleOutcomeTable {
   upload_id: number;
@@ -1942,6 +1951,7 @@ export interface Database {
   upload: UploadTable;
   upload_applied: UploadAppliedTable;
   upload_sample_outcome: UploadSampleOutcomeTable;
+  sample_deletion: SampleDeletionTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;
   determination_batch: DeterminationBatchTable;

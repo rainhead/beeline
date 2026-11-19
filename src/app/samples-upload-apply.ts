@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { checkTrapSample, createTrapSample, findLookalikes, numberTakenProblem, type TrapSampleForm } from "../trap-sample.js";
+import { checkTrapSample, createTrapSample, findLookalikes, highestSampleNumber, numberTakenProblem, seriesNumberProblem, seriesReach, PROGRAM_SERIES, type TrapSampleForm } from "../trap-sample.js";
 import type { CorrectionDeps } from "./sample-corrections.js";
 import { recordTrapChanges } from "./sample-corrections.js";
 import { onSample } from "./sample-queue.js";
@@ -58,9 +58,12 @@ export function digestOf(plan: SamplesPlan): string {
   return hash.digest("hex").slice(0, 32);
 }
 
-/** The sentence for a row left alone because it looks like an existing sample. */
+/**
+ * The sentence for a row left alone because it looks like an existing sample, said once the file is applied, when
+ * nothing can be ticked any more: the row can be uploaded again, or entered on the trap form.
+ */
 export const lookalikeSentence = (sampleNumber: string) =>
-  `It looks like sample ${sampleNumber}: the same first collector, overlapping days and a point within 100 metres. To change that sample, put its sampleId in the file. To make a new sample anyway, tick create anyway.`;
+  `It looks like sample ${sampleNumber}: the same first collector, overlapping days and a point within 100 metres, so it was not created. To change that sample, put its sampleId in the file and upload the file again. To make a new sample anyway, upload the row again and tick create anyway, or enter it on the trap form.`;
 
 /**
  * Claim the upload and queue its rows, in one transaction. False if the upload was claimed already, which its key
@@ -195,6 +198,8 @@ interface Unrecorded {
   uploadId: number;
   login: string;
   ids: number[];
+  /** Each new sample's queue turn is held from its creation until it is in the history: these let them go. */
+  releases: Array<() => void>;
 }
 
 /**
@@ -205,20 +210,27 @@ interface Unrecorded {
  */
 export const HISTORY_BATCH = 25;
 
-/** Enter the samples made so far in the history, each in its own turn of the sample's queue. */
+/**
+ * Enter the samples made so far in the history, in one pass. Each sample's queue turn has been held since it was
+ * made (createRow), so no edit of it can have been made, or recorded, in the gap before this pass reads it: an edit
+ * waits for its turn and is recorded under its own author after this entry. The turns are let go when the pass ends,
+ * whether or not it wrote.
+ */
 async function recordMade(deps: ApplyDeps, pending: Unrecorded | null): Promise<void> {
   if (pending === null || pending.ids.length === 0) return;
   const ids = [...pending.ids];
+  const releases = [...pending.releases];
   pending.ids.length = 0;
-  // Turns are taken one inside another, for ids nobody else is waiting on: the samples are new.
-  const inTurns = (rest: number[]): Promise<void> => (rest.length === 0
-    ? recordTrapChanges(deps, pending.login, ids, { source: "upload", created: true, reason: historyReason(pending.uploadId) })
-    : onSample(rest[0]!, () => inTurns(rest.slice(1))));
-  await inTurns(ids);
+  pending.releases.length = 0;
+  try {
+    await recordTrapChanges(deps, pending.login, ids, { source: "upload", created: true, reason: historyReason(pending.uploadId) });
+  } finally {
+    for (const release of releases) release();
+  }
 }
 
 /** Make one trap sample from a queued row, or say why not. */
-async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "created"; id: number } | { outcome: "refused" | "skipped" }> {
+async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "created"; id: number; release: () => void } | { outcome: "refused" | "skipped" }> {
   const queued = JSON.parse(p.payload ?? "null") as QueuedRow | null;
   if (queued === null) {
     await settle(deps.db, p, "refused", "Nothing was queued for this row.");
@@ -231,6 +243,16 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
     return { outcome: "refused" };
   }
   const sample = checked.sample;
+  // The guard on the program's own numbers again, against the store as it is now with this upload's own numbers (those
+  // already made are in the store; those waiting extend the reach as they did in the preview).
+  if (sample.sample_number.startsWith(PROGRAM_SERIES)) {
+    const waiting = await deps.db.selectFrom("upload_sample_outcome").select("sample_number").where("upload_id", "=", p.upload_id).where("outcome", "=", "pending").execute();
+    const wrong = seriesNumberProblem(sample.sample_number, seriesReach(await highestSampleNumber(deps.conn), waiting.flatMap((w) => (w.sample_number === null ? [] : [w.sample_number]))));
+    if (wrong !== null) {
+      await settle(deps.db, p, "refused", wrong);
+      return { outcome: "refused" };
+    }
+  }
   if (!queued.anyway) {
     // Not the samples this same upload has made: its rows are the file's own, and two traps at one site on the same days are two samples.
     const siblings = new Set(await madeBy(deps.db, p.upload_id));
@@ -249,18 +271,26 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
     }
   }
   // The outcome is written in the sample's own transaction, so a crash cannot leave a sample that no row names.
+  // Its queue turn is taken here, before the sample is visible to anyone, and held until the history pass has read it.
+  let release: (() => void) | undefined;
   const made = await createTrapSample(deps.printWriter, sample, p.applied_by, async (id) => {
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    void onSample(id, () => gate);
     await deps.printWriter.run(
       `UPDATE upload_sample_outcome SET outcome = 'created', sample_id = $1, detail = NULL, recorded_at = now()
        WHERE upload_id = $2 AND row_number = $3 AND unit = $4`,
       [id, p.upload_id, p.row_number, p.unit] as never,
     );
+  }).catch((err: unknown) => {
+    // The transaction was rolled back, so the sample does not exist; its turn is let go.
+    release?.();
+    throw err;
   });
   if (made === "taken") {
     await settle(deps.db, p, "refused", numberTakenProblem(sample.sample_number));
     return { outcome: "refused" };
   }
-  return { outcome: "created", id: made };
+  return { outcome: "created", id: made, release: release! };
 }
 
 export interface ApplyResult {
@@ -272,8 +302,10 @@ export interface ApplyResult {
 /**
  * Work through the pending rows, in upload and file order, one row a step, until none is left. The framework stops
  * it at a row boundary when the process is asked to shut down; what is left stays pending, and the scheduler starts
- * the job again when the process is back (`applyWaiting`). A row that fails is recorded as refused with the error,
- * so one bad row neither stops the rest nor is tried again for ever.
+ * the job again when the process is back (`applyWaiting`). A row is recorded as refused only for a problem the code
+ * recognises (the trap form's checks, a number taken, a look-alike, the guard on numbers). Anything else, an
+ * interruption or a write conflict or an error nobody foresaw, leaves the row pending and ends the run as failed, so
+ * the next run tries it again; the scheduler waits ON_DEMAND_RETRY_MS after a failure of that kind.
  */
 export async function applyPending(deps: ApplyDeps): Promise<ApplyResult> {
   const step = deps.step ?? ((_label, fn) => fn());
@@ -289,20 +321,15 @@ export async function applyPending(deps: ApplyDeps): Promise<ApplyResult> {
       }
       if (next === undefined) return result;
       const done = await step(`upload ${next.upload_id} row ${next.row_number}`, async (): Promise<Awaited<ReturnType<typeof createRow>>> => {
-        try {
-          if (next.unit === ROW_UNIT) return await createRow(deps, next);
-          await settle(deps.db, next, "refused", `Beeline does not apply a ${next.unit} change yet.`);
-          return { outcome: "refused" };
-        } catch (err) {
-          console.error(`[apply-uploads] upload ${next.upload_id} row ${next.row_number} failed: ${(err as Error).stack ?? String(err)}`);
-          await settle(deps.db, next, "refused", `It could not be created: ${(err as Error).message}`);
-          return { outcome: "refused" };
-        }
+        if (next.unit === ROW_UNIT) return await createRow(deps, next);
+        await settle(deps.db, next, "refused", `Beeline does not apply a ${next.unit} change yet.`);
+        return { outcome: "refused" };
       });
       result[done.outcome]++;
       if (done.outcome === "created") {
-        unrecorded ??= { uploadId: next.upload_id, login: next.login ?? "", ids: [] };
+        unrecorded ??= { uploadId: next.upload_id, login: next.login ?? "", ids: [], releases: [] };
         unrecorded.ids.push(done.id);
+        unrecorded.releases.push(done.release);
         if (unrecorded.ids.length >= HISTORY_BATCH) await recordMade(deps, unrecorded);
       }
       await deps.afterRow?.({ uploadId: next.upload_id, row: next.row_number });

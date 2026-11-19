@@ -104,7 +104,7 @@ export interface SamplesPreview {
   /** When it was applied and by whom, once it was. */
   applied: { at: Date; by: string } | null;
   /** Applying was asked for, and why nothing was applied. */
-  notice: "changed" | "busy" | null;
+  notice: "changed" | "busy" | "nothing_ticked" | null;
 }
 
 /** Columns the file has that Beeline did not read, and tabs it did not read: a line each, only where there are any. */
@@ -209,6 +209,7 @@ export function UploadPreview({
       {volunteer !== null && volunteer.changedSince && <Callout tone="warning">{p.changedSince}</Callout>}
       {staffSummary !== null && <Callout>{p.staffNothingChanged}</Callout>}
       {samplesSummary !== null && samples?.notice === "changed" && <Callout tone="warning">{p.samplesChangedSince}</Callout>}
+      {samplesSummary !== null && samples?.notice === "nothing_ticked" && <Callout tone="warning">{p.samplesNothingTicked}</Callout>}
       {samplesSummary !== null && samples?.notice === "busy" && <Callout tone="warning">{p.samplesBusy}</Callout>}
       {samplesSummary !== null && samples?.applied == null && <Callout>{p.samplesNothingChanged}</Callout>}
       {samplesSummary !== null && samples?.applied != null && (

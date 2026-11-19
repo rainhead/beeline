@@ -426,15 +426,17 @@ FROM (
   FROM sample_mint_match m
   WHERE m.inat_observation_id IS NULL
     AND NOT EXISTS (SELECT 1 FROM sample_mint_ambiguous a WHERE a.lead_inat_id = m.lead_inat_id)
-    -- A sample entered in Beeline is its own record (Beeline is its only one):
-    -- linking an observation would make its number, count and locality follow
-    -- iNaturalist and undo what staff typed or released (beeline-3vs.7). It
-    -- stays in sample_mint_match, so sample_mint_pending still refuses to mint
-    -- a second sample beside it.
+    -- A sample entered in Beeline is its own record (Beeline is its only one),
+    -- and one staff released for printing has had its count and place vouched
+    -- for: linking an observation would make its number, count and locality
+    -- follow iNaturalist and undo that (beeline-3vs.7). Both stay in
+    -- sample_mint_match, so sample_mint_pending still refuses to mint a second
+    -- sample beside them.
     AND NOT EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = m.sample_id)
+    AND NOT EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = m.sample_id)
 ) ranked
 WHERE rn = 1;
-COMMENT ON VIEW sample_mint_free_link IS 'An existing sample, not one entered in Beeline, that cites no observation and whose collector, number and date range an unlinked observation matches: the link is free, and it is what carries believed-true coordinates and geoprivacy onto a record the legacy dump supplied without them.';
+COMMENT ON VIEW sample_mint_free_link IS 'An existing sample, neither one entered in Beeline nor one staff released for printing, that cites no observation and whose collector, number and date range an unlinked observation matches: the link is free, and it is what carries believed-true coordinates and geoprivacy onto a record the legacy dump supplied without them.';
 
 -- What minting actually creates: an observation that matches no existing
 -- sample, or matches only unprinted ones citing other observations. Those

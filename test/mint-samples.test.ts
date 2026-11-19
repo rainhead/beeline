@@ -273,7 +273,7 @@ describe("reconciling against samples the store already holds", () => {
       specimen_count: "12",
     });
     await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered}), (${released})`);
-    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${released})`);
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${released}, 'release')`);
     await stage(obs(7));
     await stage(obs(8, { ofvs: ofvs("8", "3") }));
     expect(await count("SELECT count(*) FROM sample_mint_free_link")).toBe(0);
@@ -287,10 +287,31 @@ describe("reconciling against samples the store already holds", () => {
     ]);
   });
 
+  test("an old-records sample staff released is not linked to a matching observation either", async () => {
+    // A sample citing no observation that staff released has had its count and place vouched for: linking an
+    // observation would make its number, count and locality follow iNaturalist.
+    const sampleId = await insertCleanSample(conn, {
+      kind: "'trap'",
+      sample_number: "'7'",
+      date_start: `DATE '${currentSeasonDate(7, 10)}'`,
+      date_end: `DATE '${currentSeasonDate(7, 14)}'`,
+      specimen_count: "11",
+    });
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${sampleId}, 'release')`);
+    await stage(obs(7));
+    expect(await count("SELECT count(*) FROM sample_mint_free_link")).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_mint_pending")).toBe(0);
+    expect(await promoteObservations(conn)).toMatchObject({ samplesMinted: 0, freeLinks: 0 });
+    expect(await rows(conn, `SELECT inat_observation_id, specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([[null, 11]]);
+    // Withdrawn, it is a free link again.
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${sampleId}, 'withdraw')`);
+    expect(await count("SELECT count(*) FROM sample_mint_free_link")).toBe(1);
+  });
+
   test("a count that staff released is not rewritten from the observation, but an unreleased linked sample's is", async () => {
     const linked = await insertCleanSample(conn, { sample_number: "'7'", inat_observation_id: "7", specimen_count: "11" });
     const staffs = await insertCleanSample(conn, { sample_number: "'8'", inat_observation_id: "8", specimen_count: "12" });
-    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${staffs})`);
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${staffs}, 'release')`);
     await stage(obs(7));
     await stage(obs(8, { ofvs: ofvs("8", "3") }));
     await promoteObservations(conn);
@@ -299,7 +320,7 @@ describe("reconciling against samples the store already holds", () => {
       [staffs, 12],
     ]);
     // A withdrawn release no longer protects the count.
-    await conn.run(`UPDATE sample_print_release SET withdrawn_at = current_timestamp WHERE sample_id = ${staffs}`);
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${staffs}, 'withdraw')`);
     await promoteObservations(conn);
     expect(await rows(conn, `SELECT specimen_count FROM sample WHERE entity_id = ${staffs}`)).toEqual([[3]]);
   });

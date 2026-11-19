@@ -76,7 +76,7 @@ export function TrapSampleFormPage({
         <TextField id="trap-state_province" name="state_province" label={t.fields.stateProvince} value={form.state_province} hint={problem("state_province") ?? t.hints.stateProvince} />
         <TextField id="trap-county" name="county" label={t.fields.county} value={form.county} hint={t.hints.county} />
         <TextField id="trap-locality" name="locality" label={t.fields.locality} value={form.locality} hint={t.hints.locality} />
-        {releasesLabels && <Meta block>{t.releasesLabels}</Meta>}
+        {releasesLabels && <Meta block>{sampleId === undefined ? t.releasesLabelsNew : t.releasesLabelsEdit}</Meta>}
         <p class="row">
           <Button>{sampleId === undefined ? t.create : t.save}</Button>
           <a href={sampleId === undefined ? "/samples" : `/samples/${sampleId}`}>{t.cancel}</a>

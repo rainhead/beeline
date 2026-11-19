@@ -146,11 +146,11 @@ const REFUSALS = {
     message:
       "This sample's specimen count comes from its iNaturalist observation, and a past season's count copied from iNaturalist is not printed. Nothing was done.",
   },
-  place_not_derived: {
+  labels_in_run: {
     status: 409,
-    error: "place_not_derived",
+    error: "labels_in_run",
     message:
-      "The county, state and country of this sample could not be worked out from its coordinates yet (its point has not been tested against the gazetteer, or the gazetteer is not available), so it was not released for printing. A specimen count sent with the release was saved. Try again later.",
+      "This sample's labels are in a print run that has not printed, which would keep them. Cancel the run first, or let it print. Nothing was done.",
   },
   unavailable: { status: 503, error: "unavailable", message: "This Beeline cannot make this correction." },
 } as const satisfies Record<string, { status: ContentfulStatusCode; error: string; message: string }>;
@@ -203,7 +203,7 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "conflict":
     case "not_settled":
     case "count_follows_observation":
-    case "place_not_derived":
+    case "labels_in_run":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
       return apiError(c, r.status, r.error, r.message);
@@ -565,7 +565,7 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     { note: "string", withdraw: "boolean" },
     [],
     releaseLabels,
-    (r) => ({ outcome: r.outcome, pending: r.pending, labels_in_run: r.labels_in_run, place_settled: r.place_settled }),
+    (r) => ({ outcome: r.outcome, pending: r.pending }),
   );
 
   endpoint(

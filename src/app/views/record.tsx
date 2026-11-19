@@ -872,14 +872,15 @@ function StaffHold({ m, staff, hold }: { m: Messages; staff: StaffQc; hold: Reco
 function PrintRelease({ m, sample }: { m: Messages; sample: SampleDetail }) {
   const t = m.record.sample.printRelease;
   const action = `/samples/${sample.sample_id}/release-labels`;
-  const release = sample.print_release;
-  if (release !== null && release.withdrawn === null) {
+  const latest = sample.print_release;
+  if (latest !== null && latest.action === "release") {
     return (
       <>
         <Meta block>
-          {t.released(release.released_by, m.format.day(release.released_at))}
-          {release.reason !== null && <> {t.because(release.reason)}</>}
+          {t.released(latest.by, m.format.day(latest.at))}
+          {latest.reason !== null && <> {t.because(latest.reason)}</>}
           {sample.settled && <> {t.releasedHint}</>}
+          {sample.awaiting_place && <> {t.awaitingPlace}</>}
         </Meta>
         <Meta block>{t.withdrawHint}</Meta>
         <form method="post" action={action}>
@@ -889,21 +890,21 @@ function PrintRelease({ m, sample }: { m: Messages; sample: SampleDetail }) {
       </>
     );
   }
-  // A release that was withdrawn is still said, with who and when, above the offer to release again.
+  // A withdrawal is still said, with who and when, above the offer to release again.
   const withdrawn =
-    release?.withdrawn == null ? null : (
+    latest === null ? null : (
       <Meta block>
-        {t.withdrawn(release.withdrawn.by, m.format.day(release.withdrawn.at))}
-        {release.withdrawn.reason !== null && <> {t.because(release.withdrawn.reason)}</>}
+        {t.withdrawn(latest.by, m.format.day(latest.at))}
+        {latest.reason !== null && <> {t.because(latest.reason)}</>}
       </Meta>
     );
   // A count that follows its observation is not staff's to vouch for (releaseLabels refuses it).
   const follows = sample.inat_observation_id !== null && !sample.printed;
-  if (!sample.settled || sample.labels_not_on_paper === 0 || follows) return withdrawn;
+  if (!sample.settled || sample.labels_to_print === 0 || follows) return withdrawn;
   return (
     <>
       {withdrawn}
-      <Meta block>{t.hint(sample.labels_not_on_paper)}</Meta>
+      <Meta block>{t.hint(sample.labels_to_print)}</Meta>
       <form method="post" action={action} class="form-column">
         <TextField id="release-note" name="note" label={t.note} />
         <p class="row">

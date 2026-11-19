@@ -21,11 +21,8 @@ import {
 } from "../src/app/sample-corrections.js";
 import { withPromotionLock } from "../src/app/promotion-lock.js";
 import { onSample } from "../src/app/sample-queue.js";
-import { prepareRun } from "../src/print-run.js";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildTestGazetteer, createMemoryDb, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
+import { approveRun, cancelRun, markPrinted, prepareRun } from "../src/print-run.js";
+import { createMemoryDb, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 
 /**
  * The refusals each sample correction makes by itself, without a page
@@ -39,7 +36,7 @@ async function person(conn: DuckDBConnection, name: string, login: string, userI
   return Number(id);
 }
 
-async function setup(opts: { gazetteer?: boolean } = {}) {
+async function setup() {
   const { instance, conn } = await createMemoryDb();
   const alice = await person(conn, "Alice Adams", "alice", 1);
   const bob = await person(conn, "Bob Barnes", "bob", 2);
@@ -56,12 +53,6 @@ async function setup(opts: { gazetteer?: boolean } = {}) {
     samplePaths: { log: paths.sampleChangesPath, state: paths.sampleStatePath },
     syncJobRunning: () => running,
   };
-  if (opts.gazetteer === true) {
-    // The derivation's gazetteer, so the places that follow a point can be worked out (src/derive-area.ts).
-    const gazetteerPath = join(await mkdtemp(join(tmpdir(), "sample-corrections-gazetteer-")), "gazetteer.duckdb");
-    await buildTestGazetteer(gazetteerPath, "build-corrections");
-    deps.derivePaths = { gazetteerPath };
-  }
   const actor = (personId: number, login: string, extra: Partial<Actor> = {}): Actor => ({
     personId,
     signedInPersonId: personId,
@@ -587,12 +578,12 @@ describe("setSpecimenCount", () => {
     expect(await countOf(s, id)).toBe(5);
   });
 
-  it("reports the labels the next run would print, a settled season's included once the count is set", async () => {
+  it("reports the labels the next run would print, a settled season's included once the count is changed", async () => {
     const s = await setup();
     const current = await trapSample(s);
     expect(await set(s, current, "6")).toMatchObject({ ok: true, specimen_count: 6, pending: 6 });
     const settled = await trapSample(s, { sample_number: "'T-2'", ...settledDates });
-    // Setting the count is what releases a settled season's sample, so the bees print.
+    // A changed count is what releases a settled season's sample, so the bees print.
     expect(await set(s, settled, "6")).toMatchObject({ ok: true, specimen_count: 6, pending: 6 });
   });
 
@@ -600,20 +591,22 @@ describe("setSpecimenCount", () => {
     date_start: `DATE '${SETTLED_SEASON}-07-14'`,
     date_end: `DATE '${SETTLED_SEASON}-07-14'`,
   };
-  const releases = async (s: Awaited<ReturnType<typeof setup>>) =>
-    rows(s.conn, `SELECT sample_id, released_by, reason FROM sample_print_release ORDER BY sample_id`);
+  const events = async (s: Awaited<ReturnType<typeof setup>>) =>
+    rows(s.conn, `SELECT sample_id, action, person_id, reason FROM sample_print_release_event ORDER BY entity_id`);
 
-  it("writes the release with the count, whatever the season, and credits the person who set it", async () => {
+  it("writes the release with a changed count, in any season, and credits the person who set it", async () => {
     const s = await setup();
     const settled = await trapSample(s, { sample_number: "'T-2'", ...settledDates });
     const current = await trapSample(s);
     expect(await rows(s.conn, `SELECT count(*) FROM pending_print_sample WHERE sample_id = ${settled}`)).toEqual([[0n]]);
     expect(await set(s, settled, "5", "bottle opened")).toMatchObject({ outcome: "saved", pending: 5 });
+    // An active season's sample prints without a release, but a changed count writes one all
+    // the same, so it still prints if the sample settles before a run takes it.
     expect(await set(s, current, "5")).toMatchObject({ outcome: "saved", pending: 5 });
     const [[sam]] = (await rows(s.conn, `SELECT person_id FROM inat_account WHERE login = 'samstaff'`)) as [[number]];
-    expect(await rows(s.conn, `SELECT sample_id, released_by, reason FROM sample_print_release ORDER BY sample_id`)).toEqual([
-      [settled, sam, "bottle opened"],
-      [current, sam, null],
+    expect(await events(s)).toEqual([
+      [settled, "release", sam, "bottle opened"],
+      [current, "release", sam, null],
     ]);
   });
 
@@ -621,31 +614,21 @@ describe("setSpecimenCount", () => {
     const s = await setup();
     const settled = await trapSample(s, { sample_number: "'T-2'", ...settledDates });
     expect(await set(s, settled, "3")).toMatchObject({ ok: true, outcome: "unchanged", specimen_count: 3, pending: 0 });
-    expect(await releases(s)).toEqual([]);
+    expect(await events(s)).toEqual([]);
     // A changed count, then the same again: one release, from the change.
     expect(await set(s, settled, "4")).toMatchObject({ outcome: "saved", pending: 4 });
     expect(await set(s, settled, "4")).toMatchObject({ outcome: "unchanged" });
-    expect(await releases(s)).toHaveLength(1);
+    expect(await events(s)).toHaveLength(1);
   });
 
-  it("releases a settled sample entered in Beeline with its place stamped from its point, after the count", async () => {
-    const s = await setup({ gazetteer: true });
-    const entered = await trapSample(s, { sample_number: "'T-5'", ...settledDates, county: "'Malheur'", state_province: "'ID'" });
-    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
-    expect(await set(s, entered, "5", "recount")).toMatchObject({ ok: true, outcome: "saved", specimen_count: 5, pending: 5 });
-    expect(await releases(s)).toEqual([[entered, expect.any(Number), "recount"]]);
-    // The point is in Benton County, Oregon; the typed place was somewhere else.
-    expect(await rows(s.conn, `SELECT state_province, county FROM sample WHERE entity_id = ${entered}`)).toEqual([["OR", "Benton"]]);
-  });
-
-  it("saves the count of a settled sample entered in Beeline but does not release it while its place cannot be worked out", async () => {
+  it("writes the count and the release in one transaction, so a failed release leaves the count as it was", async () => {
     const s = await setup();
-    const entered = await trapSample(s, { sample_number: "'T-5'", ...settledDates });
-    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
-    expect(await set(s, entered, "5")).toEqual({ ok: false, refusal: "place_not_derived" });
-    expect(await countOf(s, entered)).toBe(5);
-    expect(await releases(s)).toEqual([]);
-    expect(await rows(s.conn, `SELECT count(*) FROM pending_print_sample WHERE sample_id = ${entered}`)).toEqual([[0n]]);
+    const settled = await trapSample(s, { sample_number: "'T-2'", ...settledDates });
+    // A person who does not exist makes the release's insert fail after the count was written.
+    const ghost = { ...s.sam, signedInPersonId: 987654 };
+    await expect(setSpecimenCount(s.deps, ghost, settled, { count: "7", note: "", problemFor })).rejects.toThrow();
+    expect(await countOf(s, settled)).toBe(3);
+    expect(await events(s)).toEqual([]);
   });
 
   it("writes no release for a count it refuses", async () => {
@@ -653,7 +636,7 @@ describe("setSpecimenCount", () => {
     const settled = await trapSample(s, { sample_number: "'T-2'", ...settledDates, specimen_count: "8" });
     await s.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${settled}, 5)`);
     expect(await set(s, settled, "4")).toMatchObject({ refusal: "invalid" });
-    expect(await releases(s)).toEqual([]);
+    expect(await events(s)).toEqual([]);
   });
 
   it("refuses a count that still follows its observation, and allows it once the sample is printed", async () => {
@@ -687,14 +670,13 @@ describe("releaseLabels", () => {
     date_start: `DATE '${SETTLED_SEASON}-07-14'`,
     date_end: `DATE '${SETTLED_SEASON}-07-14'`,
   };
-  const settledSample = (s: Awaited<ReturnType<typeof setup>>, extra: Record<string, string> = {}) =>
+  type World = Awaited<ReturnType<typeof setup>>;
+  const settledSample = (s: World, extra: Record<string, string> = {}) =>
     insertCleanSample(s.conn, { sample_number: "'S-1'", kind: "'trap'", protocol: "'vane trap'", ...settledDates, ...extra });
-  const releases = async (s: Awaited<ReturnType<typeof setup>>) =>
-    rows(s.conn, `SELECT sample_id, reason FROM sample_print_release ORDER BY sample_id`);
-  const pending = async (s: Awaited<ReturnType<typeof setup>>, id: number) =>
-    rows(s.conn, `SELECT pending_count FROM pending_print_sample WHERE sample_id = ${id}`);
-  const release = (s: Awaited<ReturnType<typeof setup>>, id: number, note = "", withdraw = false) =>
-    releaseLabels(s.deps, s.sam, id, { note, withdraw });
+  const events = async (s: World) => rows(s.conn, `SELECT sample_id, action, reason FROM sample_print_release_event ORDER BY entity_id`);
+  const standing = async (s: World) => rows(s.conn, `SELECT sample_id FROM sample_print_release ORDER BY sample_id`);
+  const pending = async (s: World, id: number) => rows(s.conn, `SELECT pending_count FROM pending_print_sample WHERE sample_id = ${id}`);
+  const release = (s: World, id: number, note = "", withdraw = false) => releaseLabels(s.deps, s.sam, id, { note, withdraw });
 
   it("is for staff only, never while impersonating, and not for a missing sample", async () => {
     const s = await setup();
@@ -702,105 +684,86 @@ describe("releaseLabels", () => {
     expect(await releaseLabels(s.deps, s.alice, id, { note: "" })).toEqual({ ok: false, refusal: "not_admin" });
     expect(await releaseLabels(s.deps, { ...s.sam, impersonating: true }, id, { note: "" })).toEqual({ ok: false, refusal: "impersonating" });
     expect(await release(s, 999999)).toEqual({ ok: false, refusal: "not_found" });
-    expect(await releases(s)).toEqual([]);
+    expect(await events(s)).toEqual([]);
   });
 
   it("refuses a sample from an active season, which prints without one", async () => {
     const s = await setup();
     expect(await release(s, s.unlinked)).toEqual({ ok: false, refusal: "not_settled" });
-    expect(await releases(s)).toEqual([]);
+    expect(await events(s)).toEqual([]);
   });
 
   it("refuses to release a sample whose count still follows its observation, until a label is on paper", async () => {
     const s = await setup();
     const id = await settledSample(s, { sample_number: "'S-9'", inat_observation_id: "556677" });
     expect(await release(s, id)).toEqual({ ok: false, refusal: "count_follows_observation" });
-    expect(await releases(s)).toEqual([]);
-    // Withdrawing is never refused for this reason.
+    expect(await events(s)).toEqual([]);
+    // Withdrawing a release that is not there is no refusal of this kind.
     expect(await release(s, id, "", true)).toMatchObject({ outcome: "unchanged" });
     // Once a label is on paper the count no longer follows, and the release is allowed.
     await s.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1)`);
     expect(await release(s, id)).toMatchObject({ ok: true, outcome: "saved" });
   });
 
-  it("releases a settled sample, and answers unchanged the second time", async () => {
+  it("releases a settled sample, and answers unchanged the second time without writing a row", async () => {
     const s = await setup();
     const id = await settledSample(s);
     expect(await pending(s, id)).toEqual([]);
-    expect(await release(s, id, "bottle is unlabelled")).toEqual({ ok: true, outcome: "saved", pending: 3, labels_in_run: 0, place_settled: true });
-    expect(await releases(s)).toEqual([[id, "bottle is unlabelled"]]);
+    expect(await release(s, id, "bottle is unlabelled")).toEqual({ ok: true, outcome: "saved", pending: 3 });
+    expect(await events(s)).toEqual([[id, "release", "bottle is unlabelled"]]);
     expect(await pending(s, id)).toEqual([[3]]);
-    expect(await release(s, id, "again")).toMatchObject({ ok: true, outcome: "unchanged", pending: 3 });
-    expect(await releases(s)).toEqual([[id, "bottle is unlabelled"]]);
+    expect(await release(s, id, "again")).toEqual({ ok: true, outcome: "unchanged", pending: 3 });
+    expect(await events(s)).toEqual([[id, "release", "bottle is unlabelled"]]);
   });
 
-  it("withdraws a release, answers unchanged when there is none, and allows it for an active season", async () => {
+  it("keeps a row for each release and withdrawal, and answers unchanged for a withdrawal that withdraws nothing", async () => {
     const s = await setup();
     const id = await settledSample(s);
-    expect(await release(s, id, "", true)).toMatchObject({ ok: true, outcome: "unchanged", pending: 0 });
-    await release(s, id);
-    expect(await release(s, id, "no longer wanted", true)).toEqual({ ok: true, outcome: "removed", pending: 0, labels_in_run: 0, place_settled: true });
-    // The row stays as the record, marked withdrawn, and the sample is held back again.
-    expect(await rows(s.conn, `SELECT withdrawn_by IS NOT NULL, withdrawn_at IS NOT NULL, withdraw_reason FROM sample_print_release WHERE sample_id = ${id}`)).toEqual([[true, true, "no longer wanted"]]);
+    expect(await release(s, id, "", true)).toEqual({ ok: true, outcome: "unchanged", pending: 0 });
+    expect(await events(s)).toEqual([]);
+    await release(s, id, "first");
+    expect(await release(s, id, "no longer wanted", true)).toEqual({ ok: true, outcome: "removed", pending: 0 });
+    expect(await standing(s)).toEqual([]);
     expect(await rows(s.conn, `SELECT count(*) FROM settled_unreleased_sample WHERE sample_id = ${id}`)).toEqual([[1n]]);
     expect(await pending(s, id)).toEqual([]);
     expect(await release(s, id, "", true)).toMatchObject({ outcome: "unchanged" });
-    // A new release clears the withdrawal and takes the new reason.
     expect(await release(s, id, "found it again")).toMatchObject({ outcome: "saved", pending: 3 });
-    expect(await rows(s.conn, `SELECT reason, withdrawn_at IS NULL, withdrawn_by IS NULL, withdraw_reason IS NULL FROM sample_print_release WHERE sample_id = ${id}`)).toEqual([["found it again", true, true, true]]);
-    await release(s, id, "", true);
-    // Withdrawing is allowed whatever the season: it only changes what is pending.
-    await s.conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${s.unlinked})`);
+    expect(await events(s)).toEqual([
+      [id, "release", "first"],
+      [id, "withdraw", "no longer wanted"],
+      [id, "release", "found it again"],
+    ]);
+    expect(await rows(s.conn, `SELECT reason FROM sample_print_release WHERE sample_id = ${id}`)).toEqual([["found it again"]]);
+  });
+
+  it("allows a withdrawal for a sample of an active season, whatever its release", async () => {
+    const s = await setup();
+    await s.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${s.unlinked}, 'release')`);
     expect(await release(s, s.unlinked, "", true)).toMatchObject({ outcome: "removed" });
   });
 
-  it("stamps the place from the point as it releases a settled sample entered in Beeline, in the one step", async () => {
-    const s = await setup({ gazetteer: true });
-    const id = await settledSample(s, { county: "'Malheur'", state_province: "'ID'" });
-    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${id})`);
-    expect(await release(s, id, "unlabelled")).toMatchObject({ ok: true, outcome: "saved", pending: 3, place_settled: true });
-    expect(await rows(s.conn, `SELECT state_province, county FROM sample WHERE entity_id = ${id}`)).toEqual([["OR", "Benton"]]);
-    expect(await releases(s)).toEqual([[id, "unlabelled"]]);
-    // A run prepared now freezes the place the point gives.
-    await prepareRun(s.conn, { atlasId: null, personId: s.sam.personId, now: new Date("2026-09-21T16:00:00Z") });
-    expect(await rows(s.conn, `SELECT DISTINCT location_text FROM printed_label pl JOIN specimen sp ON sp.entity_id = pl.specimen_id WHERE sp.sample_id = ${id}`)).toEqual([["USA:OR:BentonCo Corvallis"]]);
-  });
-
-  it("releases nothing when the place that follows the point cannot be worked out yet", async () => {
-    const s = await setup();
-    const id = await settledSample(s, { county: "'Malheur'", state_province: "'ID'" });
-    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${id})`);
-    expect(await release(s, id)).toEqual({ ok: false, refusal: "place_not_derived" });
-    expect(await releases(s)).toEqual([]);
-    // The point is derived only against a gazetteer that is on disk.
-    const missing = await setup();
-    const other = await settledSample(missing);
-    await missing.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${other})`);
-    missing.deps.derivePaths = { gazetteerPath: "/nonexistent/gazetteer.duckdb" };
-    expect(await release(missing, other)).toEqual({ ok: false, refusal: "place_not_derived" });
-    expect(await releases(missing)).toEqual([]);
-  });
-
-  it("is refused while a sync job runs, and writes nothing", async () => {
-    const s = await setup();
-    const id = await settledSample(s);
-    s.setRunning(true);
-    expect(await release(s, id)).toEqual({ ok: false, refusal: "busy" });
-    expect(await releases(s)).toEqual([]);
-    s.setRunning(false);
-    expect(await release(s, id)).toMatchObject({ outcome: "saved" });
-  });
-
-  it("says how many labels a withdrawn release leaves in a run that has not printed, and leaves them there", async () => {
+  it("refuses a withdrawal while the sample's labels are in a prepared print run, and allows it once the run is canceled", async () => {
     const s = await setup();
     const id = await settledSample(s);
     await release(s, id);
-    await prepareRun(s.conn, { atlasId: null, personId: s.sam.personId, now: new Date("2026-09-21T16:00:00Z") });
-    const held = () =>
-      rows(s.conn, `SELECT count(*) FROM printed_label pl JOIN specimen sp ON sp.entity_id = pl.specimen_id WHERE sp.sample_id = ${id}`);
-    expect(await held()).toEqual([[3n]]);
-    expect(await release(s, id, "", true)).toMatchObject({ ok: true, outcome: "removed", pending: 0, labels_in_run: 3 });
-    // The run still holds them: a withdrawal changes what is pending, not what was frozen.
-    expect(await held()).toEqual([[3n]]);
+    const run = await prepareRun(s.conn, { atlasId: null, personId: s.sam.personId, now: new Date("2026-09-21T16:00:00Z") });
+    expect(run).toMatchObject({ labels: 9 });
+    expect(await release(s, id, "", true)).toEqual({ ok: false, refusal: "labels_in_run" });
+    // Nothing was written, so the release stands and so do the frozen labels.
+    expect(await standing(s)).toEqual([[id]]);
+    expect(await events(s)).toEqual([[id, "release", null]]);
+    await cancelRun(s.conn, run!.printRunId, { personId: s.sam.personId, note: "wrong week" });
+    expect(await release(s, id, "", true)).toMatchObject({ ok: true, outcome: "removed" });
+    expect(await standing(s)).toEqual([]);
+  });
+
+  it("allows a withdrawal once the run has printed, since the labels are on paper then", async () => {
+    const s = await setup();
+    const id = await settledSample(s);
+    await release(s, id);
+    const run = await prepareRun(s.conn, { atlasId: null, personId: s.sam.personId, now: new Date("2026-09-21T16:00:00Z") });
+    await approveRun(s.conn, run!.printRunId, { personId: s.sam.personId, now: new Date("2026-09-21T17:00:00Z") });
+    await markPrinted(s.conn, run!.printRunId, { personId: s.sam.personId, now: new Date("2026-09-21T18:00:00Z") });
+    expect(await release(s, id, "", true)).toMatchObject({ ok: true, outcome: "removed" });
   });
 });

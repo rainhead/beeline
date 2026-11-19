@@ -156,20 +156,40 @@ describe("preparing a run", () => {
       date_start: "DATE '2024-07-14'",
       date_end: "DATE '2024-07-14'",
     });
-    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${released})`);
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${released}, 'release')`);
     expect(await rows(conn, "SELECT sample_id, pending_count FROM pending_print_sample")).toEqual([[released, 2]]);
     expect(await rows(conn, "SELECT sample_id, waiting FROM sample_labels_waiting ORDER BY sample_id")).toEqual([[released, 2]]);
     expect(await rows(conn, "SELECT sample_id FROM settled_unreleased_sample")).toEqual([[minted]]);
     expect(await prepareRun(conn, { atlasId: null, personId: ash, now: NOW })).toMatchObject({ labels: 2, samples: 1 });
-    // Withdrawn after the freeze, the labels stay frozen and nothing more is pending.
-    await conn.run(`DELETE FROM sample_print_release WHERE sample_id = ${released}`);
+    // The freeze took it out of pending, and the labels are frozen.
     expect(await rows(conn, "SELECT sample_id FROM pending_print_sample")).toEqual([]);
     expect(await count(`SELECT count(*) FROM printed_label`)).toBe(2);
   });
 
+  it("follows a sample's latest release or withdrawal, and keeps every event", async () => {
+    const sample = await insertCleanSample(conn, {
+      collector_id: String(ash),
+      kind: "'trap'",
+      specimen_count: "2",
+      date_start: "DATE '2024-07-14'",
+      date_end: "DATE '2024-07-14'",
+    });
+    const event = (action: string) => conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${sample}, '${action}')`);
+    const standing = async () => (await rows(conn, "SELECT sample_id FROM pending_print_sample")).length;
+    expect(await standing()).toBe(0);
+    await event("release");
+    expect(await standing()).toBe(1);
+    await event("withdraw");
+    expect(await standing()).toBe(0);
+    expect(await rows(conn, "SELECT sample_id FROM sample_print_release")).toEqual([]);
+    await event("release");
+    expect(await standing()).toBe(1);
+    expect(await rows(conn, "SELECT action FROM sample_print_release_event ORDER BY entity_id")).toEqual([["release"], ["withdraw"], ["release"]]);
+  });
+
   it("a release has no effect on a sample of an active season", async () => {
     const open = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "1" });
-    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${open})`);
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${open}, 'release')`);
     expect(await rows(conn, "SELECT sample_id, pending_count FROM pending_print_sample")).toEqual([[open, 1]]);
     expect(await rows(conn, "SELECT sample_id FROM settled_unreleased_sample")).toEqual([]);
   });

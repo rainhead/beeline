@@ -419,16 +419,53 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
     // A released sample from the old records has neither an observation nor an entry, so its place is the record's.
     const oldRecord = await insertCleanSample(conn, { sample_number: "'6'", ...settledDates }, ALSEA);
     await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${enteredAndReleased})`);
-    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${released}), (${enteredAndReleased}), (${oldRecord})`);
+    await release(conn, released, enteredAndReleased, oldRecord);
     // A released sample with a label on paper keeps what the label says.
     const printed = await insertCleanSample(conn, { inat_observation_id: "1107", sample_number: "'7'", ...settledDates }, ALSEA);
-    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${printed})`);
+    await release(conn, printed);
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1)`);
     const r = await deriveAreas(conn, path, { stampCounties: true });
     expect(r.countiesStamped).toBe(2);
     expect(await countyOf(conn, released)).toBe("Benton");
     expect(await countyOf(conn, enteredAndReleased)).toBe("Benton");
     for (const id of [unreleased, oldRecord, printed]) expect(await countyOf(conn, id)).toBe("BentonCo");
+  });
+
+  const release = (conn: DuckDBConnection, ...ids: number[]) =>
+    conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES ${ids.map((id) => `(${id}, 'release')`).join(", ")}`);
+  const pending = async (conn: DuckDBConnection) =>
+    (await rows(conn, `SELECT sample_id FROM pending_print_sample ORDER BY sample_id`)).map(([id]) => id);
+
+  test("a released settled sample that follows its point is not pending until the stamp has looked at it", async () => {
+    const path = join(dir, "awaiting.duckdb");
+    await buildTestGazetteer(path, "build-awaiting");
+    const conn = await storeWithPerson();
+    const settledDates = { date_start: `DATE '${SETTLED_SEASON}-07-14'`, date_end: `DATE '${SETTLED_SEASON}-07-14'` };
+    const entered = await insertCleanSample(conn, { sample_number: "'1'", kind: "'trap'", ...settledDates, county: "'Malheur'" }, ALSEA);
+    await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+    const linked = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "2201", ...settledDates }, ALSEA);
+    // From the old records: no observation, not entered. It does not follow its point, so there is nothing to wait for.
+    const oldRecord = await insertCleanSample(conn, { sample_number: "'3'", ...settledDates }, ALSEA);
+    await release(conn, entered, linked, oldRecord);
+    expect(await pending(conn)).toEqual([oldRecord]);
+    expect(await rows(conn, `SELECT sample_id FROM sample_awaiting_place ORDER BY sample_id`)).toEqual([[entered], [linked]]);
+
+    // The areas are found and the stamp runs: the place is the point's, and they are pending.
+    await deriveAreas(conn, path, { stampCounties: true });
+    expect(await countyOf(conn, entered)).toBe("Benton");
+    expect(await pending(conn)).toEqual([entered, linked, oldRecord]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_awaiting_place`)).toEqual([[0n]]);
+
+    // A point moved afterwards is not the point the stamp looked at.
+    await conn.run(`UPDATE sample_location SET latitude = 44.51 WHERE sample_id = ${entered}`);
+    expect(await pending(conn)).toEqual([linked, oldRecord]);
+    // A release written after the stamp waits for the next one, whatever the stamp found before.
+    await conn.run(`UPDATE sample_location SET latitude = 44.50 WHERE sample_id = ${entered}`);
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${entered}, 'withdraw')`);
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${entered}, 'release')`);
+    expect(await pending(conn)).toEqual([linked, oldRecord]);
+    await deriveAreas(conn, path, { stampCounties: true });
+    expect(await pending(conn)).toEqual([entered, linked, oldRecord]);
   });
 
   test("never writes a county the gazetteer does not name over one the sample has", async () => {

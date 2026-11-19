@@ -14,7 +14,7 @@ import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js"
 import { readSampleOverlay, type SampleOverlayRow } from "../src/sample-overlay.js";
 import { en } from "../src/app/messages/en.js";
 import type { Database } from "../src/model.js";
-import { approveRun, markPrinted, prepareRun } from "../src/print-run.js";
+import { approveRun, cancelRun, markPrinted, prepareRun } from "../src/print-run.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { buildTestGazetteer, createMemoryDb, currentSeasonDate, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
@@ -1361,14 +1361,20 @@ describe("releasing a settled season's sample for printing", () => {
       date_start: `DATE '${SETTLED_SEASON}-07-14'`,
       date_end: `DATE '${SETTLED_SEASON}-07-14'`,
     });
-    const releases = async () => rows(w.conn, `SELECT reason FROM sample_print_release WHERE sample_id = ${settled} AND withdrawn_at IS NULL`);
+    const releases = async () => rows(w.conn, `SELECT reason FROM sample_print_release WHERE sample_id = ${settled}`);
     const path = `/samples/${settled}/release-labels`;
     const saved = await w.send(w.keys.sam, path, { note: "bottle is unlabelled", reference: "ticket 3" });
     expect(saved.status).toBe(200);
-    expect(await json(saved)).toEqual({ sample_id: settled, outcome: "saved", pending: 3, labels_in_run: 0, place_settled: true });
+    expect(await json(saved)).toEqual({ sample_id: settled, outcome: "saved", pending: 3 });
     expect(await releases()).toEqual([["bottle is unlabelled"]]);
     expect(await json(await w.send(w.keys.sam, path, {}))).toMatchObject({ outcome: "unchanged" });
-    expect(await json(await w.send(w.keys.sam, path, { withdraw: true }))).toEqual({ sample_id: settled, outcome: "removed", pending: 0, labels_in_run: 0, place_settled: true });
+    // Once its labels are frozen into a run that has not printed, a withdrawal is refused and changes nothing.
+    await prepareRun(w.conn, { atlasId: null, personId: w.people.sam, now: new Date("2026-09-21T16:00:00Z") });
+    const inRun = await w.send(w.keys.sam, path, { withdraw: true });
+    expect([inRun.status, (await json(inRun)).error]).toEqual([409, "labels_in_run"]);
+    expect(await releases()).toEqual([["bottle is unlabelled"]]);
+    await cancelRun(w.conn, Number(((await rows(w.conn, `SELECT max(entity_id) FROM print_run`)) as [[number]])[0][0]), { personId: w.people.sam });
+    expect(await json(await w.send(w.keys.sam, path, { withdraw: true }))).toEqual({ sample_id: settled, outcome: "removed", pending: 0 });
     expect(await releases()).toEqual([]);
     const active = await w.send(w.keys.sam, `/samples/${w.linked}/release-labels`, {});
     expect([active.status, (await json(active)).error]).toEqual([409, "not_settled"]);

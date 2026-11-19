@@ -27,7 +27,7 @@
 -- where the rules about what counts live, not in a route handler.
 --
 -- It is also a rule about printing: a settled sample prints only once staff
--- have released it (sample_print_release, schema/050; beeline-3vs.7).
+-- have released it (sample_print_release_event, schema/050; beeline-3vs.7).
 -- Nothing from a settled season printed at all from 2026-10-14 until then.
 -- A full sync on the sandbox had minted 818 samples from observations the old
 -- system never recorded, 441 of them from 2018, and every one read as labels
@@ -61,14 +61,23 @@ CREATE VIEW settled_sample AS
 SELECT s.entity_id AS sample_id
 FROM sample s, season
 WHERE s.date_start < season.active_since;
-COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable. They print only once staff have released them (sample_print_release); settled_unreleased_sample is the ones that never print (Peter, 2026-10-14, 2026-11-19).';
+COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable. They print only once staff have released them (sample_print_release_event); settled_unreleased_sample is the ones that never print (Peter, 2026-10-14, 2026-11-19).';
+
+CREATE VIEW sample_print_release AS
+SELECT e.sample_id, e.person_id AS released_by, e.decided_at AS released_at, e.reason
+FROM sample_print_release_event e
+WHERE e.action = 'release'
+  AND NOT EXISTS (SELECT 1 FROM sample_print_release_event later
+                  WHERE later.sample_id = e.sample_id
+                    AND (later.decided_at > e.decided_at OR (later.decided_at = e.decided_at AND later.entity_id > e.entity_id)));
+COMMENT ON VIEW sample_print_release IS 'Samples whose latest release or withdrawal (sample_print_release_event) is a release, with who released them, when, and why. A sample staff released and then withdrew is not here, and one they released again after a withdrawal is.';
 
 CREATE VIEW settled_unreleased_sample AS
 SELECT st.sample_id
 FROM settled_sample st
 LEFT JOIN sample_print_release r ON r.sample_id = st.sample_id
-WHERE r.sample_id IS NULL OR r.withdrawn_at IS NOT NULL;
-COMMENT ON VIEW settled_unreleased_sample IS 'Samples from a settled season that staff have not released for printing, or whose release they withdrew: they never print, are never pending, are held to the loose 250 m coordinate limit and do not follow their point for place. A released settled sample is none of these: it prints like an active one.';
+WHERE r.sample_id IS NULL;
+COMMENT ON VIEW settled_unreleased_sample IS 'Samples from a settled season that staff have not released for printing, or whose release they withdrew: they never print, are never pending, are held to the loose 250 m coordinate limit and do not follow their point for place. A released settled sample is none of these: it prints like an active one, once its place is worked out where it follows its point (sample_awaiting_place, schema/150).';
 
 CREATE VIEW sample_season AS
 SELECT entity_id AS sample_id,

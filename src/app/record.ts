@@ -169,14 +169,22 @@ export interface SampleDetail {
   from_old_records: boolean;
   /** From a settled season (schema/102): its labels print only once staff have released it. */
   settled: boolean;
-  /** Staff's release of this sample for printing (sample_print_release, beeline-3vs.7): who, when and why, and whether it was withdrawn. Null when there never was one. */
+  /** Staff's latest release or withdrawal for this sample (sample_print_release_event, beeline-3vs.7): which, by whom, when and why. Null when there never was one. */
   print_release: PrintRelease | null;
   /**
-   * How many of the sample's specimens have no label on paper, by its count.
-   * Worked out only for a settled sample with no standing release, whose page offers
-   * staff the release when it is above 0; 0 for any other.
+   * How many labels the next print run would print for this sample if it were
+   * released: its count less the specimens already individuated, as
+   * pending_print_sample counts them. Worked out only for a settled sample
+   * with no standing release, whose page offers staff the release when it is
+   * above 0; 0 for any other.
    */
-  labels_not_on_paper: number;
+  labels_to_print: number;
+  /**
+   * A released settled sample that follows its point and waits for the
+   * nightly's county stamp (sample_awaiting_place, schema/150): its labels
+   * print after it.
+   */
+  awaiting_place: boolean;
   /**
    * A locality staff set over the observation's (beeline-649), with its
    * provenance: who, why, and — where the observation has since moved to a
@@ -230,12 +238,11 @@ export interface SampleDetail {
 }
 
 export interface PrintRelease {
-  /** The person's name; null when the release was written by a staff login that is no person. */
-  released_by: string | null;
-  released_at: Date;
+  action: "release" | "withdraw";
+  /** The person's name; null when it was written by a staff login that is no person. */
+  by: string | null;
+  at: Date;
   reason: string | null;
-  /** Set when staff withdrew it: a withdrawn release is no release, and its row stays as the record. */
-  withdrawn: { by: string | null; at: Date; reason: string | null } | null;
 }
 
 export interface LocalitySuggestion {
@@ -639,52 +646,39 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
 }
 
 /**
- * Whether the sample is from a settled season, whether staff released it for
- * printing, and, only where the page may offer the release, how many of its
- * specimens have no label on paper. One row by primary key, and the count
- * (which reads every printed label) only for a settled sample with no release.
+ * Whether the sample is from a settled season, staff's latest release or
+ * withdrawal for it, whether a release is waiting for the county stamp, and,
+ * only where the page may offer the release, how many labels the next run
+ * would print. One row by primary key, and the count only for a settled
+ * sample with no standing release.
  */
 async function printReleaseOf(
   db: Kysely<Database>,
   sampleId: number,
   specimenCount: number,
-): Promise<{ settled: boolean; print_release: PrintRelease | null; labels_not_on_paper: number }> {
-  const found = await sql<{
-    settled: boolean;
-    released_at: Date | null;
-    released_by: string | null;
-    reason: string | null;
-    withdrawn_at: Date | null;
-    withdrawn_by: string | null;
-    withdraw_reason: string | null;
-  }>`
+): Promise<{ settled: boolean; print_release: PrintRelease | null; labels_to_print: number; awaiting_place: boolean }> {
+  const state = await sql<{ settled: boolean; released: boolean; awaiting: boolean }>`
     SELECT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id) AS settled,
-           r.released_at, p.display_name AS released_by, r.reason,
-           r.withdrawn_at, wp.display_name AS withdrawn_by, r.withdraw_reason
-    FROM sample s
-    LEFT JOIN sample_print_release r ON r.sample_id = s.entity_id
-    LEFT JOIN person p ON p.entity_id = r.released_by
-    LEFT JOIN person wp ON wp.entity_id = r.withdrawn_by
-    WHERE s.entity_id = ${sampleId}`.execute(db);
-  const row = found.rows[0];
-  const settled = Boolean(row?.settled);
-  const release: PrintRelease | null =
-    row?.released_at == null
-      ? null
-      : {
-          released_by: row.released_by,
-          released_at: row.released_at,
-          reason: row.reason,
-          withdrawn: row.withdrawn_at == null ? null : { by: row.withdrawn_by, at: row.withdrawn_at, reason: row.withdraw_reason },
-        };
-  let notOnPaper = 0;
-  if (settled && (release === null || release.withdrawn !== null) && specimenCount > 0) {
-    const paper = await sql<{ n: number }>`
-      SELECT CAST(count(*) AS INTEGER) AS n FROM specimen_on_paper o
-      WHERE o.sample_id = ${sampleId} AND o.specimen_number <= ${specimenCount}`.execute(db);
-    notOnPaper = Math.max(0, specimenCount - Number(paper.rows[0]?.n ?? 0));
+           EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = s.entity_id) AS released,
+           EXISTS (SELECT 1 FROM sample_awaiting_place w WHERE w.sample_id = s.entity_id) AS awaiting
+    FROM sample s WHERE s.entity_id = ${sampleId}`.execute(db);
+  const latest = await sql<{ action: "release" | "withdraw"; at: Date; reason: string | null; by: string | null }>`
+    SELECT e.action, e.decided_at AS at, e.reason, p.display_name AS by
+    FROM sample_print_release_event e LEFT JOIN person p ON p.entity_id = e.person_id
+    WHERE e.sample_id = ${sampleId}
+    ORDER BY e.decided_at DESC, e.entity_id DESC LIMIT 1`.execute(db);
+  const settled = Boolean(state.rows[0]?.settled);
+  const released = Boolean(state.rows[0]?.released);
+  const row = latest.rows[0];
+  const release: PrintRelease | null = row === undefined ? null : { action: row.action, by: row.by, at: row.at, reason: row.reason };
+  let toPrint = 0;
+  if (settled && !released && specimenCount > 0) {
+    const held = await sql<{ n: number }>`
+      SELECT CAST(count(*) AS INTEGER) AS n FROM individuated_specimen i
+      WHERE i.sample_id = ${sampleId} AND i.specimen_number <= ${specimenCount}`.execute(db);
+    toPrint = Math.max(0, specimenCount - Number(held.rows[0]?.n ?? 0));
   }
-  return { settled, print_release: release, labels_not_on_paper: notOnPaper };
+  return { settled, print_release: release, labels_to_print: toPrint, awaiting_place: settled && Boolean(state.rows[0]?.awaiting) };
 }
 
 /** Everyone who collected one sample, in recordedBy order. */

@@ -282,7 +282,7 @@ const ENDPOINTS: Endpoint[] = [
     method: "POST",
     route: "/samples/:id/specimen-count",
     summary:
-      "Set how many specimens a trap sample holds, printed or not. Raising it makes the next print run number the extra bees; lowering it below the highest field-numbered specimen is refused, as is a sample whose count still follows its iNaturalist observation (change it there). `pending` is how many labels the next run would print, and is 0 for a sample from a settled season that staff have not released, which never prints. Setting the count releases the sample for printing, whatever its season, even when the count is unchanged (see `release-labels`).",
+      "Set how many specimens a trap sample holds, printed or not. Raising it makes the next print run number the extra bees; lowering it below the highest field-numbered specimen is refused, as is a sample whose count still follows its iNaturalist observation (change it there). `pending` is how many labels the next run would print, and is 0 for a sample from a settled season that staff have not released, which never prints. A count that changes also releases the sample for printing, in any season (an active season's sample prints without one, but may settle before a run takes it); a count equal to the one it has does not, so to release without changing the count use `release-labels`.",
     needs: "staff key",
     body: { count: "whole number, 0 or more, as text or number", note: "string", reference: REFERENCE },
     answers: "{ sample_id, outcome, specimen_count, pending }",
@@ -291,10 +291,10 @@ const ENDPOINTS: Endpoint[] = [
     method: "POST",
     route: "/samples/:id/release-labels",
     summary:
-      "Say that a sample from a settled season may print its labels, or with `withdraw` take that back. A settled season's sample prints only once released; one from an active season prints without, and releasing it is refused, as is releasing one whose count still follows its iNaturalist observation. Setting its count releases it as well, as does a staff entry. Releasing stamps the county, state and country from the sample's point at once, and is refused (`place_not_derived`) while the point has not been derived or while a nightly or weekly job runs; `place_settled` is false when the point lies in no county. `pending` is how many labels the next run would print; a withdrawal leaves labels already frozen into a run that has not printed in it until that run is canceled, and `labels_in_run` says how many.",
+      "Say that a sample from a settled season may print its labels, or with `withdraw` take that back. A settled season's sample prints only once released; one from an active season prints without, and releasing it is refused (`not_settled`), as is releasing one whose count still follows its iNaturalist observation (`count_follows_observation`). A changed specimen count releases it as well (see `specimen-count`), as does a staff entry. A release is a row of its own, kept with who and when. Releasing one already released, and withdrawing one that is not, change nothing and answer `unchanged`. A released sample whose county and state follow its coordinates is not pending until the nightly update has worked them out; one that does not follow its coordinates is pending at once. A withdrawal is refused (`labels_in_run`) while the sample's labels are in a print run that has not printed: cancel the run first, or let it print. A write that lost a conflict answers `busy` and did nothing. `pending` is how many labels the next run would print.",
     needs: "staff key",
     body: { note: "string, the reason", withdraw: "true to take a release away", reference: REFERENCE },
-    answers: "{ sample_id, outcome, pending, labels_in_run, place_settled }",
+    answers: "{ sample_id, outcome, pending }",
   },
   {
     method: "POST",

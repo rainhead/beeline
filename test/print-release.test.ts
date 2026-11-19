@@ -90,7 +90,7 @@ describe("the release on the sample page", () => {
     expect(page).toContain("Released for printing by Sam Staff");
     expect(page).toContain("bottle is unlabelled");
     expect(page).toContain(t.withdraw);
-    expect(page).toContain(t.withdrawHint);
+    expect(page).toContain(t.withdrawHint.replaceAll("'", "&#39;"));
     expect(page).toContain(t.releasedHint);
     expect(page).not.toContain(t.release);
     expect(await rows(s.conn, `SELECT pending_count FROM pending_print_sample WHERE sample_id = ${id}`)).toEqual([[3]]);
@@ -98,7 +98,10 @@ describe("the release on the sample page", () => {
     const withdrawn = await post(s.staff, id, { withdraw: "1" });
     expect(withdrawn.status).toBe(302);
     // The row stays as the record, and the page says who withdrew it and when, beside the offer to release again.
-    expect(await rows(s.conn, `SELECT withdrawn_by FROM sample_print_release WHERE sample_id = ${id}`)).toEqual([[s.sam]]);
+    expect(await rows(s.conn, `SELECT action, person_id FROM sample_print_release_event WHERE sample_id = ${id} ORDER BY entity_id`)).toEqual([
+      ["release", s.sam],
+      ["withdraw", s.sam],
+    ]);
     const after = await (await s.staff.request(`/samples/${id}`)).text();
     expect(after).toContain("Release withdrawn by Sam Staff");
     expect(after).toContain(t.release);
@@ -108,7 +111,7 @@ describe("the release on the sample page", () => {
   it("does not say the release is for the next run on an active season's sample that has one", async () => {
     const s = await setup();
     const active = await s.sample({ sample_number: "'T-6'" });
-    await s.conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${active})`);
+    await s.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${active}, 'release')`);
     const page = await (await s.staff.request(`/samples/${active}`)).text();
     expect(page).toContain(t.withdraw);
     expect(page).not.toContain(t.releasedHint);
@@ -122,7 +125,7 @@ describe("the release on the sample page", () => {
     const refused = await post(s.staff, active, {});
     expect([refused.status, await refused.text()]).toEqual([409, t.notSettled]);
     expect((await post(s.staff, 999999, {})).status).toBe(404);
-    expect(await rows(s.conn, `SELECT count(*) FROM sample_print_release`)).toEqual([[0n]]);
+    expect(await rows(s.conn, `SELECT count(*) FROM sample_print_release_event`)).toEqual([[0n]]);
   });
 });
 
@@ -134,7 +137,7 @@ describe("the collector's front page", () => {
     const unreleased = await s.sample({ sample_number: "'T-3'", ...settledDates });
     await s.conn.run(`UPDATE sample_location SET coordinate_uncertainty_m = 160 WHERE sample_id = ${flagged}`);
     await s.conn.run(`UPDATE sample_location SET coordinate_uncertainty_m = 500 WHERE sample_id = ${unreleased}`);
-    await s.conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${clean}), (${flagged})`);
+    await s.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${clean}, 'release'), (${flagged}, 'release')`);
 
     const dash = await loadDashboard(s.db, s.alice);
     const byId = new Map(dash.rows.map((r) => [r.sample_id, r]));
@@ -148,19 +151,17 @@ describe("the collector's front page", () => {
 });
 
 describe("the run page", () => {
-  it("names a hold on a released settled sample, and on an active one, but not on a settled sample whose release was withdrawn", async () => {
+  it("names a hold placed after the run was prepared on a released settled sample and on an active one", async () => {
     const s = await setup();
     const released = await s.sample({ sample_number: "'T-1'", ...settledDates, specimen_count: "1" });
-    const withdrawn = await s.sample({ sample_number: "'T-2'", ...settledDates, specimen_count: "1" });
     const active = await s.sample({ sample_number: "'T-3'", specimen_count: "1" });
-    await s.conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${released}), (${withdrawn})`);
-    expect(await prepareRun(s.conn, { atlasId: null, personId: s.sam, now: new Date() })).toMatchObject({ samples: 3 });
+    // A settled sample that was never released is held out of every run, so its hold is nothing to name.
+    const unreleased = await s.sample({ sample_number: "'T-2'", ...settledDates, specimen_count: "1" });
+    await s.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${released}, 'release')`);
+    expect(await prepareRun(s.conn, { atlasId: null, personId: s.sam, now: new Date() })).toMatchObject({ samples: 2 });
     const [[runId]] = (await rows(s.conn, `SELECT max(entity_id) FROM print_run`)) as [[number]];
     expect((await loadRun(s.db, runId))!.held).toEqual([]);
-    // The release is withdrawn after the freeze: the run still holds the sample, now an unreleased settled one.
-    await s.conn.run(`UPDATE sample_print_release SET withdrawn_at = current_timestamp WHERE sample_id = ${withdrawn}`);
-    expect(await rows(s.conn, `SELECT sample_id FROM settled_unreleased_sample`)).toEqual([[withdrawn]]);
-    await s.conn.run(`INSERT INTO sample_hold (sample_id, reason) VALUES (${released}, 'second thoughts'), (${withdrawn}, 'ignored'), (${active}, 'wet')`);
+    await s.conn.run(`INSERT INTO sample_hold (sample_id, reason) VALUES (${released}, 'second thoughts'), (${active}, 'wet'), (${unreleased}, 'ignored')`);
     const held = (await loadRun(s.db, runId))!.held;
     expect(held.map((h) => [h.sample_id, h.reason]).sort()).toEqual([[released, "second thoughts"], [active, "wet"]].sort());
   });

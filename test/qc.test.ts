@@ -338,7 +338,7 @@ describe("QC findings and printability", () => {
           ),
         ),
       );
-      await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${released}), (${releasedAndPrinted})`);
+      await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${released}, 'release'), (${releasedAndPrinted}, 'release')`);
       // A label on a pin already: its collector cannot tighten it, released or not.
       await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${releasedAndPrinted}, 1, '2600160')`);
       expect(await rows(conn, `SELECT uncertainty_m FROM sample_coordinate_limit WHERE sample_id = ${released}`)).toEqual([[100]]);

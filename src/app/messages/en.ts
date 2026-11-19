@@ -960,8 +960,10 @@ export const en = {
       "One sample is what one bottle or pooled set of bottles holds, from the day the traps were set to the day they were collected. " +
       "Its labels print once the specimens are pinned and counted.",
     notSaved: "Nothing was saved. Correct the fields marked below and save again.",
-    /** Shown to staff when the dates are from a season that has settled: saving releases the labels. */
-    releasesLabels: "These dates are from a season that has settled. Saving this sample lets the next print run label its bees that have no label yet.",
+    /** Shown to staff entering a sample whose dates are from a season that has settled: saving releases its labels. */
+    releasesLabelsNew: "These dates are from a season that has settled. Saving this sample lets the next print run label its bees that have no label yet.",
+    /** Shown to staff editing one: only a new specimen count releases the labels, and a save that leaves the count alone does not. */
+    releasesLabelsEdit: "These dates are from a season that has settled. Saving a new specimen count lets the next print run label this sample's bees that have no label yet.",
     trapCollectorNote: "has trap samples",
     fields: {
       sampleNumber: "Sample number",
@@ -1267,24 +1269,25 @@ export const en = {
       },
       /** Staff releasing a settled season's sample for printing, or withdrawing the release (beeline-3vs.7). */
       printRelease: {
-        /** Says what staff vouch for, and how many labels the next print run will print. */
+        /** Says what staff vouch for, and how many labels the next print run would make. */
         hint: (labels: number) =>
           `This sample is from a season that has settled, so its labels do not print. Release it only if you know its bees have no labels yet, from old Beeline or made by hand. ` +
-          `The next print run will then print ${labels === 1 ? "1 label" : `${labels} labels`}.`,
+          `The next print run will then print ${labels === 1 ? "1 label" : `${labels} labels`}, unless a flag holds the sample back.`,
         note: "Reason (optional)",
         release: "Release labels for printing",
         released: (by: string | null, day: string) => `Released for printing${by === null ? "" : ` by ${by}`} on ${day}.`,
         because: (reason: string) => `Reason: ${reason}`,
         /** Shown on a settled sample whose release stands, not on an active one. */
         releasedHint: "The next print run labels the bees that have no label yet.",
+        /** Said to staff on a released settled sample that follows its point and has not been placed yet. */
+        awaitingPlace: "Its labels print after the nightly update works out its county and state from its coordinates.",
         withdraw: "Withdraw release",
         /** Said beside the withdraw button. */
-        withdrawHint: "Labels already in a prepared print run still print unless that run is canceled.",
+        withdrawHint: "Withdrawing is refused while the sample's labels are in a prepared print run: cancel the run first, or let it print.",
         withdrawn: (by: string | null, day: string) => `Release withdrawn${by === null ? "" : ` by ${by}`} on ${day}.`,
-        /** A write conflict, or a nightly job running: nothing was done. */
-        busy: "Another change to the store got in the way, or the nightly run is running, so nothing was done. Try again in a few minutes.",
-        placeNotDerived:
-          "The county and state of this sample could not be worked out from its coordinates yet, so it was not released. Try again later, once the nightly run has found where its point is.",
+        /** A write conflict: nothing was done. */
+        busy: "Another change to the store got in the way, so nothing was done. Try again in a few minutes.",
+        labelsInRun: "This sample's labels are in a print run that has not printed, which would keep them. Cancel the run first, or let it print.",
         countFollowsObservation: "This sample's specimen count comes from its iNaturalist observation, and a past season's count copied from iNaturalist is not printed.",
         /** The reason when a sample from an active season is released: it needs none. */
         notSettled: "This sample is from a season that is still active, and an active season's labels print without a release.",

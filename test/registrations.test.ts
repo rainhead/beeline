@@ -5,7 +5,7 @@ import { createKysely } from "../src/db.js";
 import type { Database } from "../src/model.js";
 import type { Registrant } from "../src/ideal-logic.js";
 import { fingerprintEmail } from "../src/email-fingerprint.js";
-import { decideRegistration, describeRegistrants, linkBySignInEmail, recordEmailFingerprints, recordRegistrants } from "../src/registrations.js";
+import { decideRegistration, describeRegistrants, clearEmailFingerprints, linkAccountHolderBySignInEmail, linkBySignInEmail, recordEmailFingerprints, recordRegistrants } from "../src/registrations.js";
 import { createMemoryDb, rows } from "./helpers.js";
 
 /**
@@ -331,6 +331,39 @@ describe("the nightly email fingerprints", () => {
     await recordEmailFingerprints(db, [registrant({ id: "A-1", givenName: "Ada", familyName: "B" }), registrant({ id: "B-2", givenName: "Bo", familyName: "S" })], KEY);
     await recordEmailFingerprints(db, [registrant({ id: "A-1", givenName: "Ada", familyName: "B" })], Buffer.alloc(48, 6));
     expect(await fingerprints()).toEqual([["A-1", fingerprintEmail(Buffer.alloc(48, 6), "A-1@example.org")]]);
+  });
+});
+
+describe("clearing the fingerprints where the key is gone", () => {
+  it("deletes every row and says how many, then says none", async () => {
+    await fingerprinted("A-1", "a@example.org");
+    await fingerprinted("B-2", "b@example.org");
+    expect(await clearEmailFingerprints(db)).toBe(2);
+    expect(await fingerprints()).toEqual([]);
+    expect(await clearEmailFingerprints(db)).toBe(0);
+  });
+});
+
+describe("linking the account's current holder", () => {
+  const byAccount = (inatUserId: number) =>
+    linkAccountHolderBySignInEmail(db, { inatUserId, email: "eve@example.org", emailConfirmed: true, key: KEY });
+
+  it("links the person who holds the account when the link is made, not the one who held it before", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${id.Eve}, 9001, 'eveinat')`);
+    // Staff move the account to another person after sign-in read it.
+    await conn.run(`UPDATE inat_account SET person_id = ${id.Dot} WHERE inat_user_id = 9001`);
+    expect(await byAccount(9001)).toBe("E-1");
+    expect(await events()).toEqual([[id.Dot, "E-1", "sign_in_email", "sign-in"]]);
+  });
+
+  it("links the holder when nothing has moved, and nobody where no one holds the account", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    expect(await byAccount(9002)).toBeNull();
+    expect(await events()).toEqual([]);
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${id.Eve}, 9002, 'eveinat')`);
+    expect(await byAccount(9002)).toBe("E-1");
+    expect(await events()).toEqual([[id.Eve, "E-1", "sign_in_email", "sign-in"]]);
   });
 });
 

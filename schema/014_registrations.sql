@@ -36,7 +36,8 @@ COMMENT ON COLUMN ideal_logic_registrant.last_seen_at IS 'When a nightly fetch l
 -- address, so it stores a keyed fingerprint of each registration's address
 -- (src/email-fingerprint.ts): an HMAC under the secret REGISTRATION_EMAIL_KEY,
 -- which lives in the environment and never in the store. The nightly job
--- replaces the whole table from each fetch.
+-- replaces the whole table from each fetch, and empties it where the key is
+-- not set.
 --
 -- One row for every registration in Ideal Logic's answer, not only the ones
 -- ideal_logic_registrant keeps: a person who registered with no atlas and no
@@ -48,7 +49,7 @@ CREATE TABLE ideal_logic_email_fingerprint (
 );
 -- Not unique: two registrations can share an address, and then nobody is linked by it.
 CREATE INDEX ideal_logic_email_fingerprint_fp ON ideal_logic_email_fingerprint (fingerprint);
-COMMENT ON TABLE ideal_logic_email_fingerprint IS 'A keyed fingerprint of the email address of each registration in Ideal Logic, so that a person signing in with a confirmed iNaturalist email can be matched to a registration without any address being stored. Replaced whole by each night''s ideal-logic-registrants job; empty where REGISTRATION_EMAIL_KEY is not set. It cannot be turned back into an address without the secret. Someone holding both this table and the secret could test whether a guessed address is registered, which is why the secret is never stored here. Holds a row for every registration, not only the ones ideal_logic_registrant keeps, and has no name.';
+COMMENT ON TABLE ideal_logic_email_fingerprint IS 'A keyed fingerprint of the email address of each registration in Ideal Logic, so that a person signing in with a confirmed iNaturalist email can be matched to a registration without any address being stored. Replaced whole by each night''s ideal-logic-registrants job; emptied by that job, and so empty, where REGISTRATION_EMAIL_KEY is not set. It cannot be turned back into an address without the secret. Someone holding both this table and the secret could test whether a guessed address is registered, which is why the secret is never stored here. Holds a row for every registration, not only the ones ideal_logic_registrant keeps, and has no name.';
 COMMENT ON COLUMN ideal_logic_email_fingerprint.ideal_logic_id IS 'Ideal Logic''s id for the registration, as in ideal_logic_registrant. Not a foreign key: a registration with no row there is still fingerprinted.';
 COMMENT ON COLUMN ideal_logic_email_fingerprint.fingerprint IS 'HMAC-SHA256, as hex, of the registration''s email address trimmed and lower-cased, under the secret REGISTRATION_EMAIL_KEY. Not unique: two registrations may share an address, and then nothing is linked by it.';
 

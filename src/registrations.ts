@@ -242,6 +242,41 @@ export async function recordEmailFingerprints(
 }
 
 /**
+ * Delete every email fingerprint, and say how many there were. Run by the
+ * nightly job where `REGISTRATION_EMAIL_KEY` is not set: a fingerprint made
+ * under a key that has been removed can never be matched again, and the table
+ * is documented as empty without a key.
+ */
+export async function clearEmailFingerprints(db: Kysely<Database>): Promise<number> {
+  const gone = await db.deleteFrom("ideal_logic_email_fingerprint").executeTakeFirst();
+  return Number(gone.numDeletedRows);
+}
+
+/**
+ * `linkBySignInEmail` for whoever holds an iNaturalist account now. Sign-in
+ * knows the account, not who holds it when its turn in the queue comes, since
+ * staff may move the account to another person in between; so the holder is
+ * read here, inside the turn. Does nothing where nobody holds the account.
+ */
+export async function linkAccountHolderBySignInEmail(
+  db: Kysely<Database>,
+  input: { inatUserId: number; email: string | null; emailConfirmed: boolean; key: Buffer | null },
+): Promise<string | null> {
+  const holder = await db
+    .selectFrom("inat_account")
+    .select("person_id")
+    .where("inat_user_id", "=", BigInt(input.inatUserId))
+    .executeTakeFirst();
+  if (holder === undefined) return null;
+  return linkBySignInEmail(db, {
+    personId: Number(holder.person_id),
+    email: input.email,
+    emailConfirmed: input.emailConfirmed,
+    key: input.key,
+  });
+}
+
+/**
  * Link a person to the registration whose email address is the one
  * iNaturalist says is theirs, as they sign in (beeline-w8ab.7). Both ends
  * are proven: iNaturalist confirmed the address, and Ideal Logic holds it.

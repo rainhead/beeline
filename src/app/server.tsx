@@ -136,7 +136,7 @@ import {
   recentChanges,
 } from "../person-change.js";
 import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
-import { decideRegistration, linkBySignInEmail } from "../registrations.js";
+import { decideRegistration, linkAccountHolderBySignInEmail } from "../registrations.js";
 import { decideMailing } from "../mailing-instructions.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
@@ -596,7 +596,7 @@ export function createApp({
     origin: config.origin,
     environment: config.environment,
     recordOrcid: (inatUserId, orcid) => recordSignInOrcid(inatUserId, orcid),
-    linkRegistration: (personId, email, emailConfirmed) => linkRegistrationAtSignIn(personId, email, emailConfirmed),
+    linkRegistration: (inatUserId, email, emailConfirmed) => linkRegistrationAtSignIn(inatUserId, email, emailConfirmed),
     reportSignIn,
   });
 
@@ -2918,11 +2918,13 @@ export function createApp({
    * Link a person to the registration with their confirmed iNaturalist email
    * address, as they sign in (beeline-w8ab.7). In the queue with every other
    * decision about a person, since it reads whether one has been made and
-   * then records one.
+   * then records one. It takes the iNaturalist user id and finds the
+   * account's holder inside its turn, because staff may have moved the
+   * account to another person while it waited.
    */
-  const linkRegistrationAtSignIn = (personId: number, email: string | null, emailConfirmed: boolean) =>
+  const linkRegistrationAtSignIn = (inatUserId: number, email: string | null, emailConfirmed: boolean) =>
     oneDecisionAtATime(async () => {
-      await linkBySignInEmail(db, { personId, email, emailConfirmed, key: config.registrationEmailKey ?? null });
+      await linkAccountHolderBySignInEmail(db, { inatUserId, email, emailConfirmed, key: config.registrationEmailKey ?? null });
     });
 
   /**

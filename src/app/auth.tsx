@@ -159,11 +159,13 @@ export interface AuthDeps {
    */
   recordOrcid?: (inatUserId: number, orcid: string | null) => Promise<void>;
   /**
-   * Link the person to the registration that holds the email address
-   * iNaturalist reported for the account (beeline-w8ab.7). The address is
+   * Link whoever holds the account to the registration that holds the email
+   * address iNaturalist reported for it (beeline-w8ab.7). Takes the
+   * iNaturalist user id, so the holder is read when the link is made, not
+   * when sign-in read it. The address is
    * handed over for this one call and dropped.
    */
-  linkRegistration?: (personId: number, email: string | null, emailConfirmed: boolean) => Promise<void>;
+  linkRegistration?: (inatUserId: number, email: string | null, emailConfirmed: boolean) => Promise<void>;
   /** Where each callback's outcome goes; the metric and the console unless a test listens. */
   reportSignIn?: (outcome: SignInOutcome, line: string) => void;
 }
@@ -348,7 +350,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
     // the error could quote the address, so it is not logged.
     if (deps.linkRegistration !== undefined && identity.email != null && identity.emailConfirmed === true) {
       try {
-        await deps.linkRegistration(account.person_id, identity.email, true);
+        await deps.linkRegistration(identity.inatUserId, identity.email, true);
       } catch {
         console.warn("sign-in: could not link the person to a registration by email address");
       }

@@ -19,7 +19,13 @@ export type Schedule =
   | /** Once per LA calendar day, at or after this hour (schedule night jobs ≥ 0 and < 5). */
     { kind: "dailyLA"; hour: number }
   | /** Once per week: on this LA weekday (0 = Sunday), at or after this hour. */
-    { kind: "weeklyLA"; weekday: number; hour: number };
+    { kind: "weeklyLA"; weekday: number; hour: number }
+  | /**
+     * Never by the clock: started by something asking for it (the apply button, POST /api/v1/jobs/<name>), and by
+     * the scheduler's own tick whenever the job says work is `waiting`, so what a restart interrupted is picked up
+     * again. Never overdue, since not running is its ordinary state.
+     */
+    { kind: "onDemand" };
 
 export interface JobContext {
   db: Kysely<Database>;
@@ -53,6 +59,8 @@ export interface Job {
   window: JobWindow;
   /** The returned string becomes job_run.detail — say what happened, with counts. */
   run(ctx: JobContext): Promise<string | void>;
+  /** For an on-demand job: whether work is waiting for it, which the scheduler asks every tick and starts the job if so. */
+  waiting?(db: Kysely<Database>): Promise<boolean>;
 }
 
 const LA = "America/Los_Angeles";
@@ -101,6 +109,8 @@ function dueToday(now: Date, todayLA: string, last: LastRuns): boolean {
 
 export function isDue(schedule: Schedule, window: JobWindow, now: Date, last: LastRuns): boolean {
   switch (schedule.kind) {
+    case "onDemand":
+      return false;
     case "everyMinutes":
       return last.started === null || now.getTime() - last.started.getTime() >= schedule.minutes * 60_000;
     case "dailyLA": {
@@ -143,6 +153,8 @@ function laDaysBetween(from: Date, to: Date): number {
  */
 export function isOverdue(schedule: Schedule, lastSucceeded: Date, now: Date): boolean {
   switch (schedule.kind) {
+    case "onDemand":
+      return false;
     case "everyMinutes":
       return now.getTime() - lastSucceeded.getTime() > 2 * schedule.minutes * 60_000;
     case "dailyLA":
@@ -202,7 +214,9 @@ export function jobHealth(jobs: Job[], last: Map<string, LastOutcome>, now: Date
     const lastSucceeded = seen?.succeeded ?? null;
     const detail = seen?.detail ?? null;
     let problem: JobProblem | null = null;
-    if (seen === undefined || seen.started === null) problem = "never-run";
+    // A job nobody has asked for has not failed to run: only a run that failed is a problem.
+    if (job.schedule.kind === "onDemand") problem = seen?.outcome === "failed" ? "failing" : null;
+    else if (seen === undefined || seen.started === null) problem = "never-run";
     else if (seen.outcome === "failed") problem = "failing";
     else if (lastSucceeded === null) problem = "never-run";
     else if (isOverdue(job.schedule, lastSucceeded, now)) problem = "overdue";
@@ -552,9 +566,12 @@ export async function runJob(
     await finish("succeeded", detail ?? null);
     ended("succeeded");
   } catch (err) {
-    console.error(`[job ${job.name}] failed after ${took()}: ${(err as Error).stack ?? String(err)}`);
-    ended("failed", err);
-    await finish("failed", (err as Error).message);
+    // A run that ended because the process is stopping is no fault to report: it resumes when the process is back.
+    const stopped = signal.aborted || err instanceof JobInterrupted;
+    console.error(`[job ${job.name}] ${stopped ? "stopped" : "failed"} after ${took()}: ${(err as Error).stack ?? String(err)}`);
+    // Only the run's own interruption is withheld from the observer; any other error is reported, whatever the signal says.
+    ended("failed", err instanceof JobInterrupted ? undefined : err);
+    await finish("failed", stopped && !(err instanceof JobInterrupted) ? `interrupted by shutdown: ${(err as Error).message}` : (err as Error).message);
   }
 }
 
@@ -695,17 +712,28 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
       const last = await lastRuns();
       for (const job of deps.jobs) {
         if (stopping) break;
-        if (isDue(job.schedule, job.window, now(), last.get(job.name) ?? NEVER)) {
-          await track(job);
+        let start = isDue(job.schedule, job.window, now(), last.get(job.name) ?? NEVER);
+        if (!start && job.schedule.kind === "onDemand" && job.waiting !== undefined) {
+          start = await job.waiting(deps.db);
+          // The predicate took time, and a stop may have begun in it: nothing is started once it has (beeline-kgyd.4.10).
+          if (stopping) break;
         }
+        if (start) await track(job);
       }
     } finally {
       busy = null;
     }
   };
 
+  /** The tick in progress, so that stop() can wait for it and never close the store under it. */
+  let ticking: Promise<void> | null = null;
   const interval = setInterval(() => {
-    tick().catch((err: unknown) => console.error("scheduler tick failed:", err));
+    if (ticking !== null) return;
+    ticking = tick()
+      .catch((err: unknown) => console.error("scheduler tick failed:", err))
+      .finally(() => {
+        ticking = null;
+      });
   }, deps.tickMs ?? 60_000);
   interval.unref();
 
@@ -732,7 +760,11 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
       stopping = true;
       clearInterval(interval);
       const running = inFlight;
-      if (running === null) return;
+      if (running === null) {
+        // A tick between its checks starts nothing once `stopping` is set; it is waited for so that it is over.
+        if (ticking !== null) await ticking;
+        return;
+      }
       const grace = opts.graceMs ?? 0;
       if (grace > 0) await Promise.race([running, settle(grace)]);
       if (inFlight !== null) {

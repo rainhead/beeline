@@ -938,7 +938,7 @@ export const en = {
         "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. The file holds what these filters select, so filter first, for example to one collection year. Every cell is kept as text, so Excel leaves it as it is. A staff upload only lists what differs from what Beeline holds.",
       editSamples: "Download the Excel file for editing samples",
       editSamplesNote:
-        "One row for each sample, to edit when and how it was collected, who collected it, how many specimens it has, and where, or to add new trap samples. The file holds what these filters select, at most 20,000 samples, so filter first. Every cell is kept as text, so Excel leaves it as it is. Upload it back with the link beside this button: Beeline says what differs from what it has, and doesn't change any record yet.",
+        "One row for each sample, to edit when and how it was collected, who collected it, how many specimens it has, and where, or to add new trap samples. The file holds what these filters select, at most 20,000 samples, so filter first. Every cell is kept as text, so Excel leaves it as it is. Upload it back with the link beside this button: Beeline makes the new trap samples when you apply the file, and only shows what differs on existing samples, which it doesn't change yet.",
       editSamplesCut: (total: number, max: number) =>
         `These filters select ${total.toLocaleString("en-US")} samples, and the file holds only the first ${max.toLocaleString("en-US")} in this page's order. Filter further to get the rest.`,
       editNoteVolunteer:
@@ -1003,6 +1003,24 @@ export const en = {
     notAllowed: "Trap samples are entered by staff and by people who have collected trap samples before.",
     notEditableHeading: "This sample can no longer be changed here",
     notEditable: "This sample's labels are printed or about to print, so it can no longer be changed here. Ask staff to correct it.",
+    /** Staff delete a trap sample that was entered in Beeline by mistake, before anything was done with it. */
+    delete: {
+      button: "Delete this sample",
+      title: (sampleNumber: string) => `Delete trap sample ${sampleNumber}`,
+      heading: (sampleNumber: string) => `Delete trap sample ${sampleNumber}?`,
+      explain:
+        "This takes the sample out of Beeline altogether, with its collectors, its place and its atlas. It was entered in Beeline, and nothing has been printed or pinned for it. It cannot be undone: to get it back, enter it again. An upload that made it keeps its record of having done so.",
+      confirm: "Delete it",
+      cancel: "Keep it",
+      refused: {
+        not_found: "There is no trap sample with this number.",
+        not_entered: "This sample did not come from an entry in Beeline: it came from iNaturalist or the old Beeline, which are its records, so it cannot be deleted here.",
+        printed: "This sample has labels on paper, so it cannot be deleted.",
+        in_print_run: "This sample's labels are in a print run that has not been canceled or mailed, so it cannot be deleted. Cancel the run first.",
+        has_specimens: "This sample has specimens, so it cannot be deleted.",
+        has_other_records: "Something else in Beeline records this sample (a promotion record), which Beeline will not delete, so it cannot be deleted.",
+      } as Record<string, string>,
+    },
   },
 
   sampleEdit: {
@@ -1088,6 +1106,7 @@ export const en = {
       source: {
         app: "staff",
         api: "the API",
+        upload: "an uploaded file",
         legacy_promotion: "the import from old Beeline",
         observation_promotion: "iNaturalist",
         reconcile: "found at startup",
@@ -2303,7 +2322,7 @@ export const en = {
         "These two are grey, but Beeline does read them. It finds each existing sample by its sampleId, and uses sampleVersion to see whether the sample changed since you downloaded the file, so leave both as they are. The fieldNumber is the sample's number: Beeline checks it against the sample the row is for, sets the row aside if they disagree, and never changes a sample's number from this file.",
       newTopic: "A new trap sample",
       newRows:
-        "A row with a blank sampleId will become a new trap sample, with the number in its fieldNumber. Beeline doesn't create it yet: the upload only says whether the row could be used. A new trap sample needs a number that no other trap sample has, a collecting date that isn't in the future, a method, a point, a country, a state and at least one collector. A blank specimenCount is 0.",
+        "A row with a blank sampleId will become a new trap sample, with the number in its fieldNumber. Beeline makes it when the person who uploaded the file applies it. A new trap sample needs a number that no other trap sample has, a collecting date that isn't in the future, a method, a point, a country, a state and at least one collector. A blank specimenCount is 0.",
       lookupTopic: "The collectors tab",
       lookup:
         "This tab lists the people who collected a sample whose last day of collecting is in the last 24 months, once each, for looking up how a name is spelled. Beeline does not read it when the file is uploaded, so changing it changes nothing. The recordedBy column offers no list, because your spreadsheet may mark a name that isn't on it as invalid, and a collector Beeline hasn't met is ordinary.",
@@ -2339,7 +2358,7 @@ export const en = {
     title: "Edited downloads",
     heading: "Compare an edited download",
     intro:
-      "Upload an Excel file for editing specimens that you downloaded from Specimens, or one for editing samples that you downloaded from Samples, and edited. Beeline counts what differs from what it has, and gives the file back with a note on each row. It does not change any record from a staff upload yet.",
+      "Upload an Excel file for editing specimens that you downloaded from Specimens, or one for editing samples that you downloaded from Samples, and edited. Beeline counts what differs from what it has, and gives the file back with a note on each row. From a samples file, staff can apply the new rows as trap samples; differences on existing samples, and everything in a specimens file from staff, are only shown, not applied.",
     headingVolunteer: "Upload your identifications",
     introVolunteer:
       "Upload the Excel file you downloaded from Specimens and edited. Beeline says how many of your identifications it can save, and saves them when you choose. If some can't be saved, you can download your file with a note on each row saying why.",
@@ -2425,14 +2444,67 @@ export const en = {
       staffNothingChanged: "Beeline doesn't change any record from a staff upload yet.",
       downloadStaff: "Download the file with notes",
       /** The samples file's page (beeline-kgyd.4.9): counts, each with how many are in the active seasons and how many in settled ones. */
-      samplesNew: (count: number, split: string) => `${n(count)} new trap ${count === 1 ? "sample" : "samples"} could be created${split}.`,
+      samplesNew: (count: number, split: string) => `${n(count)} new trap ${count === 1 ? "sample" : "samples"} can be created${split}.`,
+      samplesHeld: (count: number, split: string) =>
+        `${n(count)} new ${count === 1 ? "row waits" : "rows wait"} for a tick below${split}, and ${count === 1 ? "is" : "are"} left out unless ticked.`,
+      heldHeading: "New rows that look like an existing sample",
+      heldColumns: { row: "Row", number: "Number in the file", like: "Looks like", anyway: "Create anyway" },
+      heldRowOfFile: (row: number, number: string) => `Row ${n(row)} of this file${number === "" ? "" : ` (${number})`}`,
+      heldAnyway: (row: number) => `Create row ${n(row)} anyway`,
+      heldRule:
+        "Looks like means the same first collector, collecting days that overlap, and a point within 100 metres, whether of a sample Beeline has or of an earlier row of this file. If the row is meant for that sample, put its sampleId in the file to compare it with that sample (changes to existing samples are not applied yet).",
       samplesCantUse: (count: number, split: string) => `${n(count)} ${count === 1 ? "row" : "rows"} can't be used: see the notes in your file${split}.`,
       samplesDiffer: (count: number, split: string) => `${n(count)} existing ${count === 1 ? "sample differs" : "samples differ"} from what Beeline has${split}.`,
       samplesSame: (count: number, split: string) => `${n(count)} ${count === 1 ? "is" : "are"} the same as Beeline has${split}.`,
       samplesUnknownCollectors: (names: string) =>
         `Beeline doesn't know these collectors, or can't tell which person is meant: ${names}. Add them on the Unclaimed or People page, or name them by their id, and upload the file again.`,
       samplesUnknownCollector: (name: string, rows: number) => `${name} (${n(rows)} ${rows === 1 ? "row" : "rows"})`,
-      samplesNothingChanged: "Beeline doesn't change any record from this file yet.",
+      samplesNothingChanged:
+        "Nothing has been changed yet. Applying this file makes its new trap samples. Changes to existing samples aren't applied yet.",
+      samplesApply: "Apply",
+      samplesApplyNote: "Beeline makes the new trap samples one at a time, in the order of the file. You can leave this page: it carries on, and the page shows how far it has got.",
+      samplesApplying: (done: number, total: number) => `Applying: ${n(done)} of ${n(total)} ${total === 1 ? "row" : "rows"} done.`,
+      samplesApplied: (when: string, by: string) => `Applied on ${when} by ${by}.`,
+      samplesQueued: (when: string, by: string) => `Queued on ${when} by ${by}, and being applied: the counts below say how far it has got.`,
+      samplesCreated: (count: number, deleted: number) =>
+        `Created ${n(count)} new trap ${count === 1 ? "sample" : "samples"}${deleted > 0 ? `, ${n(deleted)} since deleted` : ""}.`,
+      samplesStopped: (row: number) => `Applying stopped at row ${n(row)} because something went wrong. It has been reported. The rows from there on are waiting.`,
+      samplesTryAgain: "Try again",
+      samplesOthersInNotes: "What the file says of its other rows, such as changes to existing samples or rows that can't be used, is in the file with notes.",
+      /** The one box for the program's numbers, and the line above it. */
+      obasLine: (rows: number, lowest: string | null, highest: string | null, blank: number, from: string | null, to: string | null) => {
+        // `rows` counts every new row in the series, those with no number among them.
+        const numbered = rows - blank;
+        const range = (a: string | null, b: string | null) => (a === b ? `${a}` : `${a} to ${b}`);
+        const parts = [
+          ...(numbered > 0 ? [`${n(numbered)} numbered ${range(lowest, highest)}`] : []),
+          ...(blank > 0 ? [`${n(blank)} with no number, which ${blank === 1 ? "is" : "are"} given ${range(from, to)}`] : []),
+        ];
+        return `${n(rows)} new ${rows === 1 ? "row is" : "rows are"} in the OBAS series: ${parts.join(", and ")}. They are made only if you tick the box.`;
+      },
+      obasBox: "I've checked these OBAS numbers",
+      labelsReady: (count: number) =>
+        `${n(count)} of the samples to be made are in an active season and have specimens, so their labels are ready to print as soon as they are made. A print run gives their bees permanent numbers and ends the chance to delete them.`,
+      /** Deleting the samples an upload made. */
+      undoButton: "Delete the samples this upload made",
+      undo: {
+        title: "Delete the samples this upload made",
+        heading: (file: string) => `Delete the samples made from ${file}?`,
+        explain:
+          "Every sample this upload made that has not been printed, is in no print run and has no specimens is deleted, with its collectors and its place, as the Delete button on a sample does. The ones that cannot be deleted are listed afterwards with why. Each deletion is recorded, and the upload's own record of what it made stays. It cannot be undone: to get a sample back, enter it again.",
+        confirm: "Delete them",
+        cancel: "Keep them",
+        done: (deleted: number, couldNot: number) =>
+          `Deleted ${n(deleted)} ${deleted === 1 ? "sample" : "samples"}${couldNot > 0 ? `. ${n(couldNot)} could not be deleted:` : "."}`,
+        none: "No sample of this upload can be deleted.",
+        working: "The job is still working on this upload, so its samples cannot be deleted yet.",
+        row: (number: string, why: string) => `${number}: ${why}`,
+      },
+      samplesNotCreated: (count: number) => `${n(count)} ${count === 1 ? "row was" : "rows were"} not created: see the notes in the file.`,
+      samplesExistingNotApplied: "Changes to existing samples aren't applied yet; they are listed as differences only.",
+      samplesChangedSince: "The comparison with this file changed after this page was shown, so nothing was applied. This is how it stands now: check it and apply again.",
+      samplesNothingTicked:
+        "Nothing was applied: every new row waits for a tick, and none was ticked. Tick create anyway on the look-alike rows you want made, or the OBAS box, or put the sampleId of the existing sample in the file to compare the row with that sample (changes to existing samples are not applied yet).",
       /** After a count: how many of the rows are in seasons Beeline still asks about and how many in settled ones. */
       split: (active: number, settled: number, unplaced: number) =>
         ` (${[
@@ -2462,7 +2534,17 @@ export const en = {
       grey: "Your changes to the grey columns aren't saved. Beeline reads only scientificName, sex and caste.",
       cell: (column: string, was: string, says: string) => `${column} was ${was}, file says ${says}`,
       nothing: "blank",
-      newTrap: "New trap sample. Beeline doesn't create it yet.",
+      newTrap: "New trap sample, ready to be created when you apply the file.",
+      newTrapHeld: (number: string) =>
+        `New trap sample, not created yet: it looks like ${number === "" ? "a sample Beeline already has" : `sample ${number}`}. To compare it with that sample instead, put its sampleId in this row (changes to existing samples are not applied yet). To make a new sample anyway, tick create anyway on the page before applying.`,
+      /** What applying did to a new row. */
+      waiting: "Waiting to be applied.",
+      created: (number: string) => `Created ${number}.`,
+      createdDeleted: (number: string) => `Created ${number}, since deleted.`,
+      newTrapHeldInFile: (row: number, number: string) =>
+        `New trap sample, not created yet: it looks like row ${row}${number === "" ? "" : ` (${number})`} of this file, with the same first collector, overlapping days and a point within 100 metres. If it is a different trap, tick create anyway on the page before applying.`,
+      newTrapObasHeld: "New trap sample, not created yet: its number is in the OBAS series, or blank, and a person has to confirm those numbers. Tick \"I've checked these OBAS numbers\" on the page before applying.",
+      notCreated: (why: string) => `Not created: ${why}`,
       newTrapCantUse: (why: string) => `New trap sample, can't use: ${why}`,
       /**
        * The reasons only the samples file has. The reasons it shares with the specimens file are in `reason`. Two have no
@@ -2712,9 +2794,12 @@ export const en = {
         "Turns the day's entries on Identify specimens into determinations. Until it runs, volunteers can change what they entered; after it, a change is added beside the old one. A name picked from Ecdysis's list is added to Beeline's names first.",
       "resource-budget":
         "Reads what the machine used in the last day and an hour — processor, memory, swap and disk — from Fly's metrics, and fails when it came close to a limit, so somebody looks before the machine is throttled, killed or its disk grows.",
+      "apply-uploads":
+        "Makes the trap samples that a staff member applied from an uploaded samples file, one row at a time in file order, and records what became of each row. It starts when a file is applied, and again after a restart if rows are still waiting. It does not run while the nightly or the weekly sweep runs.",
       "weekly-sweep":
         "Re-fetches the full trailing year from each project as a presence proof — the run that detects deletions and anything the incremental pulls missed — then promotes and derives elevations.",
     } as Record<string, string>,
+    onDemand: "when asked, and when work is waiting",
     everyMinutes: (minutes: number) => `every ${n(minutes)} min`,
     dailyLA: (hour: number) => `daily at ${n(hour)}:00 Pacific (night window)`,
     weeklyLA: (weekday: string, hour: number) => `${weekday}s at ${n(hour)}:00 Pacific (night window)`,

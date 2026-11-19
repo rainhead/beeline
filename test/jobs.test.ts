@@ -519,7 +519,7 @@ describe("shutdown (beeline-fth)", () => {
     await scheduler.stop({ graceMs: 20 });
     const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
     expect(run.outcome).toBe("failed");
-    expect(run.detail).toBe("aborted");
+    expect(run.detail).toBe("interrupted by shutdown: aborted");
   });
 
   it("nothing starts once stop() has been called", async () => {

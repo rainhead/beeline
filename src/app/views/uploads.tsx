@@ -95,6 +95,24 @@ export interface VolunteerPreview {
   changedSince: boolean;
 }
 
+/** What the samples file's page shows beyond the counts: the form that applies it, and what applying has done. */
+export interface SamplesPreview {
+  /** What applying would do, carried by the form so that applying refuses a page that went stale. */
+  digest: string;
+  /** The person looking is the staff member who uploaded the file, it is not applied yet, and there are rows to apply. */
+  canApply: boolean;
+  /** When it was applied and by whom, once it was. */
+  applied: { at: Date; by: string } | null;
+  /** Applying was asked for, and why nothing was applied. */
+  notice: "changed" | "nothing_ticked" | null;
+  /** The job stopped at this row of the file because something went wrong; the rest wait. */
+  stoppedRow: number | null;
+  /** Staff may choose Try again for a stopped upload. */
+  canRetry: boolean;
+  /** Staff may delete the samples this upload made (the job is not working on it, and it made some that still exist). */
+  canUndo: boolean;
+}
+
 /** Columns the file has that Beeline did not read, and tabs it did not read: a line each, only where there are any. */
 function NotRead({ m, unrecognised, otherSheets, read }: { m: Messages; unrecognised: UnrecognisedColumn[]; otherSheets: string[]; read?: string }) {
   const p = m.uploads.page;
@@ -116,6 +134,7 @@ export function UploadPreview({
   volunteer = null,
   staffSummary = null,
   samplesSummary = null,
+  samples = null,
   staff = true,
   notesCopy = false,
 }: {
@@ -127,8 +146,10 @@ export function UploadPreview({
   volunteer?: VolunteerPreview | null;
   /** Staff's file, which changes nothing. */
   staffSummary?: StaffSummary | null;
-  /** The samples file, which changes nothing. */
+  /** The samples file. */
   samplesSummary?: SamplesSummary | null;
+  /** The samples file's form and state. */
+  samples?: SamplesPreview | null;
   /** Whether the reader is staff, who alone can open the copy kept in the program's shared drive. */
   staff?: boolean;
   /** The file with notes is a copy Beeline makes, since the person's own file cannot have a column added safely. */
@@ -156,7 +177,16 @@ export function UploadPreview({
     const total = (split: SeasonSplit) => split.active + split.settled + split.unplaced;
     // Each count says how many of its rows are in the active seasons and how many in settled ones.
     const split = (of: SeasonSplit) => p.split(of.active, of.settled, of.unplaced);
+    const o = samplesSummary.outcomes;
+    if (o !== null) {
+      if (o.pending > 0) lines.push(p.samplesApplying(o.total - o.pending, o.total));
+      if (o.created > 0) lines.push(p.samplesCreated(o.created, o.deleted));
+      if (o.notCreated > 0) lines.push(p.samplesNotCreated(o.notCreated));
+      // Once applied, the page counts only what applying did; what the file says of its other rows is in its notes.
+      lines.push(p.samplesOthersInNotes);
+    }
     if (total(c.newReady) > 0) lines.push(p.samplesNew(total(c.newReady), split(c.newReady)));
+    if (total(c.newHeld) > 0) lines.push(p.samplesHeld(total(c.newHeld), split(c.newHeld)));
     if (total(c.cantUse) > 0) lines.push(p.samplesCantUse(total(c.cantUse), split(c.cantUse)));
     if (total(c.differ) > 0) lines.push(p.samplesDiffer(total(c.differ), split(c.differ)));
     if (total(c.same) > 0) lines.push(p.samplesSame(total(c.same), split(c.same)));
@@ -186,14 +216,81 @@ export function UploadPreview({
       )}
       {volunteer !== null && volunteer.changedSince && <Callout tone="warning">{p.changedSince}</Callout>}
       {staffSummary !== null && <Callout>{p.staffNothingChanged}</Callout>}
-      {samplesSummary !== null && <Callout>{p.samplesNothingChanged}</Callout>}
+      {samplesSummary !== null && samples?.notice === "changed" && <Callout tone="warning">{p.samplesChangedSince}</Callout>}
+      {samplesSummary !== null && samples?.notice === "nothing_ticked" && <Callout tone="warning">{p.samplesNothingTicked}</Callout>}
+      {samplesSummary !== null && samples?.stoppedRow != null && (
+        <Callout tone="warning">
+          {p.samplesStopped(samples.stoppedRow)}
+          {samples.canRetry && (
+            <form method="post" action={`${uploadHref(upload.entity_id)}/apply-samples/retry`}>
+              <Button>{p.samplesTryAgain}</Button>
+            </form>
+          )}
+        </Callout>
+      )}
+      {samplesSummary !== null && samples?.applied == null && <Callout>{p.samplesNothingChanged}</Callout>}
+      {/* Applied only when nothing is waiting and the job has not stopped: until then the file is queued, and says how far it has got. */}
+      {samplesSummary !== null && samples?.applied != null && samples.stoppedRow === null && (samplesSummary.outcomes?.pending ?? 0) > 0 && (
+        <Callout>{p.samplesQueued(m.format.dateTime(samples.applied.at), samples.applied.by)}</Callout>
+      )}
+      {samplesSummary !== null && samples?.applied != null && samples.stoppedRow === null && (samplesSummary.outcomes?.pending ?? 0) === 0 && (
+        <Callout tone="success">
+          {p.samplesApplied(m.format.dateTime(samples.applied.at), samples.applied.by)} {p.samplesExistingNotApplied}
+        </Callout>
+      )}
       {lines.map((line) => (
         <p>{line}</p>
       ))}
+      {samplesSummary !== null && samples?.canApply === true && samplesSummary.labelsReady > 0 && <Callout tone="warning">{p.labelsReady(samplesSummary.labelsReady)}</Callout>}
       {samplesSummary !== null && samplesSummary.unknownCollectors.length > 0 && (
         <p>{p.samplesUnknownCollectors(m.format.list(samplesSummary.unknownCollectors.map((c) => p.samplesUnknownCollector(c.name, c.rows))))}</p>
       )}
       <NotRead m={m} unrecognised={unrecognised} otherSheets={otherSheets} read={samplesSummary !== null ? "samples" : undefined} />
+      {samples !== null && samples.canApply && samplesSummary !== null && (
+        <form method="post" action={`${uploadHref(upload.entity_id)}/apply-samples`}>
+          <input type="hidden" name="digest" value={samples.digest} />
+          {samplesSummary.held.length > 0 && (
+            <>
+              <h2>{p.heldHeading}</h2>
+              <p>{p.heldRule}</p>
+              <DataTable columns={[p.heldColumns.row, p.heldColumns.number, p.heldColumns.like, p.heldColumns.anyway]}>
+                {samplesSummary.held.map((h) => (
+                  <tr>
+                    <td>{m.format.number(h.row)}</td>
+                    <td>{h.sampleNumber}</td>
+                    <td>
+                      {h.likeRow !== null ? p.heldRowOfFile(h.likeRow, h.likeNumber) : <a href={`/samples/${h.likeId}`}>{h.likeNumber}</a>}
+                    </td>
+                    <td>
+                      <input type="checkbox" name="anyway" value={String(h.row)} aria-label={p.heldAnyway(h.row)} />
+                    </td>
+                  </tr>
+                ))}
+              </DataTable>
+            </>
+          )}
+          {samplesSummary.obas !== null && (
+            <p>
+              {p.obasLine(samplesSummary.obas.rows, samplesSummary.obas.lowest, samplesSummary.obas.highest, samplesSummary.obas.blank, samplesSummary.obas.from, samplesSummary.obas.to)}
+              <br />
+              <label>
+                <input type="checkbox" name="obas" value="1" /> {p.obasBox}
+              </label>
+            </p>
+          )}
+          <p class="row">
+            <Button>{p.samplesApply}</Button>
+          </p>
+          <Meta block>{p.samplesApplyNote}</Meta>
+        </form>
+      )}
+      {samples !== null && samples.canUndo && (
+        <p class="row">
+          <LinkButton href={`${uploadHref(upload.entity_id)}/delete-samples`} variant="tonal">
+            {p.undoButton}
+          </LinkButton>
+        </p>
+      )}
       <div class="row">
         {volunteer !== null && volunteer.canSave && (
           <form method="post" action={`${uploadHref(upload.entity_id)}/apply`}>
@@ -209,6 +306,57 @@ export function UploadPreview({
       </div>
       {(staffSummary !== null || samplesSummary !== null) && notes && <Meta block>{p.staffNotes}</Meta>}
       {notes && notesCopy && <Meta block>{p.notesCopy}</Meta>}
+    </>
+  );
+}
+
+/** Deleting the samples an upload made: a page that says what goes and a form, or what was done afterwards. */
+export function UploadUndo({
+  m,
+  uploadId,
+  fileName,
+  result,
+  working,
+}: {
+  m: Messages;
+  uploadId: number;
+  fileName: string;
+  /** After the delete: how many went, and the ones that could not, with why. */
+  result: { deleted: number; couldNot: Array<{ number: string; why: string }> } | null;
+  working: boolean;
+}) {
+  const u = m.uploads.page.undo;
+  return (
+    <>
+      <PageHeader title={u.heading(fileName)} />
+      {working && <Callout tone="warning">{u.working}</Callout>}
+      {result !== null ? (
+        <>
+          <p>{u.done(result.deleted, result.couldNot.length)}</p>
+          {result.couldNot.length > 0 && (
+            <ul>
+              {result.couldNot.map((r) => (
+                <li>{u.row(r.number, r.why)}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : (
+        !working && (
+          <>
+            <p>{u.explain}</p>
+            <form method="post" action={`${uploadHref(uploadId)}/delete-samples`} class="form-column">
+              <p class="row">
+                <Button>{u.confirm}</Button>
+                <a href={uploadHref(uploadId)}>{u.cancel}</a>
+              </p>
+            </form>
+          </>
+        )
+      )}
+      <p>
+        <a href={uploadHref(uploadId)}>{m.uploads.page.title(fileName)}</a>
+      </p>
     </>
   );
 }

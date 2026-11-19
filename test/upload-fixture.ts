@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
-import { createApp } from "../src/app/server.js";
+import { createApp, type JobsDep } from "../src/app/server.js";
 import { readXlsxHere, type ReadLimits } from "../src/app/xlsx-reader.js";
 import { buildWorkbook, type TestCell } from "./workbook.js";
 import { ALL, EMPTY_QUERY, SPECIMEN_CSV_HEADER, STAFF_READER, hostNamesOnce, listSpecimens, specimenCsvRow, textCell } from "../src/app/listings.js";
@@ -157,6 +157,8 @@ export async function uploadFixture(
     archive?: UploadArchive;
     /** Awaited when saving, between reading what saving depends on and working out the plan (createApp's uploadApplyPause). */
     applyPause?: (uploadId: number) => Promise<void>;
+    /** The job registry the app starts jobs through and asks what is running (createApp's jobs). */
+    jobs?: JobsDep;
   } = {},
 ) {
   const { instance, conn, staffer, volunteer, delegate, ids } = await storeOf(options.unprinted === true);
@@ -177,6 +179,7 @@ export async function uploadFixture(
     // Never the real folder: a test that is about the copy in Drive gives a fake.
     uploadArchive: options.archive ?? null,
     uploadApplyPause: options.applyPause,
+    jobs: options.jobs,
     uploadToday: () => UPLOAD_TODAY,
     resolveSession: async () => ({ personId: people[who], login: who, iconUrl: null }),
   });

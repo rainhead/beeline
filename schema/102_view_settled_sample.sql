@@ -56,7 +56,7 @@ CREATE VIEW settled_sample AS
 SELECT s.entity_id AS sample_id
 FROM sample s, season
 WHERE s.date_start < season.active_since;
-COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable. Nothing of theirs is printed any more: pending_print_sample leaves them out (Peter, 2026-10-14).';
+COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable, though a trap sample entered in Beeline is then edited on its form only by whoever entered it and by staff (Peter, 2026-11-19). Nothing of theirs is printed any more: pending_print_sample leaves them out (Peter, 2026-10-14).';
 
 CREATE VIEW sample_season AS
 SELECT entity_id AS sample_id,

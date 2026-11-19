@@ -233,11 +233,11 @@ export const columnRule = (column: string): { reads: Reads; kind: ChangeKind } |
  *   disposition with its remarks.
  * - then the bookkeeping columns, shaded, read but not to be edited. The
  *   `sampleVersion` of the CSV is not among them: only a sample's units use
- *   it, and no file reads those today.
+ *   it, and the specimens file reads none of those.
  *
  * The comparison still holds rules for a sample's dates and method, its
- * locality and coordinates, but no file reads those columns: they wait for
- * the samples upload (beeline-kgyd.4), which will bring its own layout.
+ * locality and coordinates, but the specimens file does not read those
+ * columns: the samples file does, with its own layout (SAMPLES_LAYOUT).
  */
 export const BOOKKEEPING_COLUMNS = ["specimenId", "specimenVersion"] as const;
 
@@ -350,7 +350,7 @@ for (const [name, l] of [["specimens", SPECIMENS_LAYOUT], ["volunteer", VOLUNTEE
   for (const c of l.read) if (RULES.get(c) === undefined || RULES.get(c)!.kind === "not_applied") throw new Error(`the ${name} layout reads ${c}, which the comparison does not take`);
 }
 
-/** What the comparison can read, for the samples upload that will use it and for tests: every column that belongs to a unit. */
+/** What the comparison can read, for tests of the rules the samples file shares: every column that belongs to a unit. */
 export const UNIT_COLUMNS: readonly string[] = SPECIMEN_CSV_HEADER.filter((c) => RULES.get(c) !== undefined && RULES.get(c)!.kind !== "not_applied");
 
 /** The most row numbers an item names; a count says how many more there are. A file of thousands of rows of one sample must not print them all. */

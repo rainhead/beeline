@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { describe as describeInOrder, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
 import { SAMPLE_REASONS, planSamples, type SampleRowResult, type SamplesPlan } from "../src/app/samples-upload-plan.js";
-import { samplesNotes } from "../src/app/upload-notes.js";
+import { notesCopy, samplesNotes } from "../src/app/upload-notes.js";
 import { NOTE_COLUMN, SAMPLES_LAYOUT, parseAnyUpload, parseUpload, type ParsedUpload } from "../src/app/upload-plan.js";
 import { readXlsxHere } from "../src/app/xlsx-reader.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
@@ -420,6 +420,19 @@ describe("the upload page and the file with notes", () => {
     expect(second.counts).toEqual(first.counts);
     expect(second.rows.map((r) => [r.sampleId, reasons(r), r.differences.length])).toEqual(first.rows.map((r) => [r.sampleId, reasons(r), r.differences.length]));
     expect(second.unrecognised).toEqual([]);
+  });
+
+  it("makes a copy with the notes, in the samples file's own tab and shading, where the file cannot be patched", async () => {
+    const f = await uploadFixture();
+    const bytes = edit(await download(f), [{ id: f.ids.sampleA, set: { locality: "Albany" } }]);
+    const upload = await parsed(bytes);
+    const noted = samplesNotes(en, upload, await planSamples(f.db, f.conn, upload));
+    const copy = await notesCopy(f.db, en, upload, noted.notes, "samples");
+    const matrix = matrixOf(copy);
+    expect(matrix[0]).toEqual([...SAMPLES_LAYOUT.headings, NOTE_COLUMN]);
+    const again = await parseUpload(copy, { inThread: true }, SAMPLES_LAYOUT);
+    expect(again.ok && again.upload.unrecognised).toEqual([]);
+    expect(matrix.map((r) => r.at(-1))).toContain(en.uploads.notes.differs(en.uploads.notes.cell("locality", '"Corvallis"', '"Albany"')));
   });
 
   it("refuses the samples file from someone who is not staff, and keeps nothing", async () => {

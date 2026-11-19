@@ -6,7 +6,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [The app process, and its gate](the-app-process-and-its-gate.md) — `src/app/`, `src/app/theme/tokens.ts`
 - [The API and its keys](the-api-and-its-keys.md) — `src/app/api.ts`, `src/app/api-keys.ts`, `src/app/api-read.ts`, `src/app/api-people.ts`
 - [Browsing: scope, filters, sort](browsing-scope-filters-sort.md) — `src/app/listings.ts`, `src/app/views/listings.tsx`
-- [Loading an edited download](loading-an-edited-download.md) — `schema/047`, `src/app/upload-plan.ts`, `src/app/xlsx.ts`, `src/app/xlsx-reader.ts`, `src/app/upload-archive.ts`, `src/app/own-identification.ts`, `src/app/upload-drafts.ts`, `src/app/upload-notes.ts`, `src/app/xlsx-annotate.ts`, `src/app/views/uploads.tsx`
+- [Loading an edited download](loading-an-edited-download.md) — `schema/047`, `src/app/upload-plan.ts`, `src/app/xlsx.ts`, `src/app/xlsx-reader.ts`, `src/app/upload-archive.ts`, `src/app/own-identification.ts`, `src/app/upload-drafts.ts`, `src/app/upload-notes.ts`, `src/app/xlsx-annotate.ts`, `src/app/views/uploads.tsx`, `src/app/samples-upload-plan.ts`, `src/app/sample-workbook.ts`, `src/collector-match.ts`
 - [The front page](the-front-page.md) — `src/app/dashboard.ts`, `src/app/views/qc.tsx`
 - [Your bees](your-bees.md) — `schema/111_view_expert_identification.sql`, `src/app/your-bees.ts`, `src/app/views/your-bees.tsx`
 - [One record](one-record.md) — `src/app/record.ts`, `src/app/views/record.tsx`

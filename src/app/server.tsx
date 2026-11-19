@@ -2301,7 +2301,10 @@ export function createApp({
         })
         .execute();
     } catch (err) {
-      await rm(uploadFolder(id), { recursive: true, force: true });
+      // Both copies go, each whether or not the other could, and the error that brought us here is the one reported.
+      await rm(uploadFolder(id), { recursive: true, force: true }).catch((rmErr: Error) =>
+        console.error(`upload ${id}: its folder ${uploadFolder(id)} could not be removed (${rmErr.message})`),
+      );
       // A copy in Drive that no row names would be a file nobody can trace.
       if (driveId !== null) {
         await uploadArchive!.discard(driveId).catch((trashErr: Error) =>

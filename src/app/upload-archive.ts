@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { RECEIVED_FOLDER } from "../received-files.js";
 import { serviceAccountToken, trashFile, uploadFile, type ServiceAccountKey } from "../drive-service-account.js";
 
@@ -59,21 +60,25 @@ export function driveUploadArchive(key: ServiceAccountKey, folderId: string, tim
     async keep(file) {
       const signal = AbortSignal.timeout(timeoutMs);
       const token = await serviceAccountToken(key, signal);
+      // This attempt's own mark. Not the upload id, which a store put back from a backup can hand out again: a
+      // search by it could bin an earlier upload's copy (CodeRabbit).
+      const attempt = randomUUID();
       try {
         const stored = await uploadFile(token, {
           folderId,
           path: file.path,
           name: file.name,
           mimeType: XLSX,
-          metadata: { description: file.description, appProperties: file.properties },
+          metadata: { description: file.description, appProperties: { ...file.properties, attempt } },
           signal,
         });
         return stored.id;
       } catch (err) {
         // Drive may have stored the file and the answer been lost on the way back (CodeRabbit). The upload is then
-        // refused, so any copy that did arrive is binned, found by the upload id it carries.
-        await binStrays(token, folderId, file.properties.uploadId).catch((stray: Error) =>
-          console.error(`upload ${file.properties.uploadId}: could not look for a copy in Drive to bin (${stray.message})`),
+        // refused, so a copy this attempt left is looked for and binned. Best effort: if that fails too, the log
+        // line names the attempt, and the copy is found in the folder by that app property.
+        await binAttempt(token, folderId, attempt).catch((stray: Error) =>
+          console.error(`upload ${file.properties.uploadId}: could not look for a copy in Drive to bin, attempt ${attempt} (${stray.message})`),
         );
         throw err;
       }
@@ -85,11 +90,10 @@ export function driveUploadArchive(key: ServiceAccountKey, folderId: string, tim
   };
 }
 
-/** Bin every file in the folder that carries this upload id, for an upload that was refused after Drive may have taken it. */
-async function binStrays(token: string, folderId: string, uploadId: string | undefined): Promise<void> {
-  if (uploadId === undefined || !/^\d+$/.test(uploadId)) return;
+/** Bin the file one attempt to keep a copy left in the folder, if any: an upload that was refused after Drive may have taken it. */
+async function binAttempt(token: string, folderId: string, attempt: string): Promise<void> {
   const params = new URLSearchParams({
-    q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false and appProperties has { key='uploadId' and value='${uploadId}' }`,
+    q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false and appProperties has { key='attempt' and value='${attempt}' }`,
     fields: "files(id)",
     supportsAllDrives: "true",
     includeItemsFromAllDrives: "true",

@@ -10,8 +10,14 @@ import { ALL, EMPTY_QUERY, SPECIMEN_CSV_HEADER, STAFF_READER, hostNamesOnce, lis
 import { writeXlsx } from "../src/app/xlsx.js";
 import type { Layout } from "../src/app/upload-plan.js";
 import type { UploadArchive } from "../src/app/upload-archive.js";
-import { createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
+import { CURRENT_SEASON, createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
 import { openCopy, writeCopy } from "./promoted-store.js";
+
+/**
+ * The day the app's plans are made on, in the current season and after the fixtures' summer days, so that a test does
+ * not depend on the date it runs on: collecting dates are held when they come after today (`event_date_future`).
+ */
+export const UPLOAD_TODAY = `${CURRENT_SEASON}-12-31`;
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -171,6 +177,7 @@ export async function uploadFixture(
     // Never the real folder: a test that is about the copy in Drive gives a fake.
     uploadArchive: options.archive ?? null,
     uploadApplyPause: options.applyPause,
+    uploadToday: () => UPLOAD_TODAY,
     resolveSession: async () => ({ personId: people[who], login: who, iconUrl: null }),
   });
   const app = appAs(signedInAs);

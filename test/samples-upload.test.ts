@@ -6,7 +6,7 @@ import { notesCopy, samplesNotes } from "../src/app/upload-notes.js";
 import { NOTE_COLUMN, SAMPLES_LAYOUT, parseAnyUpload, parseUpload, type ParsedUpload } from "../src/app/upload-plan.js";
 import { readXlsxHere } from "../src/app/xlsx-reader.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
-import { edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
+import { UPLOAD_TODAY, edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 import { buildWorkbook, type TestCell } from "./workbook.js";
 
 /** The tests run at the same time: each has a store of its own, copied from one made once. */
@@ -26,7 +26,7 @@ const parsed = async (bytes: Uint8Array): Promise<ParsedUpload> => {
   if (!p.ok) throw new Error(`refused: ${p.refusal}`);
   return p.upload;
 };
-const plan = async (f: UploadFixture, bytes: Uint8Array): Promise<SamplesPlan> => planSamples(f.db, f.conn, await parsed(bytes));
+const plan = async (f: UploadFixture, bytes: Uint8Array): Promise<SamplesPlan> => planSamples(f.db, f.conn, await parsed(bytes), { today: UPLOAD_TODAY });
 const edit = (
   bytes: Uint8Array,
   edits: Array<{ id: number; set: Record<string, TestCell> }> = [],
@@ -332,6 +332,19 @@ describe("a new trap sample", () => {
     expect(p.rows.filter((r) => r.kind === "new").map(reasons)).toEqual([["event_date_future"], ["latitude_range"], ["country_unknown"], ["trap_count_invalid"]]);
   });
 
+  it("counts a change of the order of the collectors as a change, since the first is the primary", async () => {
+    const f = await uploadFixture();
+    await f.conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${f.ids.sampleA}, ${f.staffer}, 2)`);
+    const bytes = await download(f);
+    const same = await plan(f, bytes);
+    expect(rowOf(same, f.ids.sampleA).differences).toEqual([]);
+    const p = await plan(f, edit(bytes, [{ id: f.ids.sampleA, set: { recordedBy: "Sam Staff | Vera Volunteer" } }]));
+    const r = rowOf(p, f.ids.sampleA);
+    expect(r.problems).toEqual([]);
+    expect(r.differences.map((d) => d.unit)).toEqual(["collectors"]);
+    expect(r.differences[0]!.cells.find((c) => c.column === "recordedBy")).toMatchObject({ was: "Vera Volunteer | Sam Staff", fileSays: "Sam Staff | Vera Volunteer", differs: true });
+  });
+
   it("lists a collector Beeline does not know once, with the rows that name it, and cannot use those rows", async () => {
     const f = await uploadFixture();
     // A changed list of collectors of an existing sample counts too.
@@ -426,7 +439,7 @@ describe("the upload page and the file with notes", () => {
     const f = await uploadFixture();
     const bytes = edit(await download(f), [{ id: f.ids.sampleA, set: { locality: "Albany" } }]);
     const upload = await parsed(bytes);
-    const noted = samplesNotes(en, upload, await planSamples(f.db, f.conn, upload));
+    const noted = samplesNotes(en, upload, await planSamples(f.db, f.conn, upload, { today: UPLOAD_TODAY }));
     const copy = await notesCopy(f.db, en, upload, noted.notes, "samples");
     const matrix = matrixOf(copy);
     expect(matrix[0]).toEqual([...SAMPLES_LAYOUT.headings, NOTE_COLUMN]);
@@ -476,7 +489,7 @@ describe("the words", () => {
     const f = await uploadFixture();
     const bytes = await download(f);
     const upload = await parsed(bytes);
-    const noted = samplesNotes(en, upload, await planSamples(f.db, f.conn, upload));
+    const noted = samplesNotes(en, upload, await planSamples(f.db, f.conn, upload, { today: UPLOAD_TODAY }));
     expect([...noted.notes.values()]).toEqual(["", ""]);
     expect(noted.summary.counts.same.active + noted.summary.counts.same.settled).toBe(2);
   });

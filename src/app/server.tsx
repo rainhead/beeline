@@ -354,6 +354,8 @@ export interface AppDeps {
   uploadArchive?: UploadArchive | null;
   /** For tests only: awaited when saving an upload, after what saving depends on is read and before the plan is worked out, so a test can act in between. */
   uploadApplyPause?: (uploadId: number) => Promise<void>;
+  /** For tests only: the day a samples upload is planned on, so a test does not depend on the date it runs on. Absent ⇒ today in Oregon. */
+  uploadToday?: () => string;
   /** The registry mark each print run raises (config.registryMarkPath, src/registry-mark.ts). */
   registryMarkPath?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -396,6 +398,7 @@ export function createApp({
   uploadLayout,
   uploadArchive = null,
   uploadApplyPause,
+  uploadToday,
   registryMarkPath,
   programGovernance,
   programContactsPath,
@@ -2488,7 +2491,7 @@ export function createApp({
     if (kept.upload.layout.kind === "samples") {
       // Compared as the viewer sees locations: staff see every one, and someone no longer staff only their own.
       if (conn === undefined) throw new Error("comparing a samples file needs the store connection");
-      const plan = await planSamples(db, conn, kept.upload, c.get("admin") ? {} : { reader: readerOf(c) });
+      const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), today: uploadToday?.() });
       return { kind: "samples" as const, plan, noted: samplesNotes(m, kept.upload, plan) };
     }
     if (kept.staffFile) {

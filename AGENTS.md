@@ -1,6 +1,6 @@
 # Project Instructions for AI Agents
 
-This file provides instructions and context for AI coding agents working on this project. (CLAUDE.md is a symlink to this file.)
+This file provides instructions and context for AI coding agents working on this project. (CLAUDE.md is a symlink to this file.) `test/agents-md-size.test.ts` holds it under 12 KB: put detail that matters only for one kind of work in `docs/agents/` behind a pointer, not here.
 
 ## Build & Test
 
@@ -56,66 +56,12 @@ Also: `scp` and `ssh` with `-o BatchMode=yes` (fail instead of prompting), `apt-
 - **Beads make no commits at all** (Peter, 2026-10-23). Run `bd sync` without asking, after filing or changing issues and before ending a session (the SessionStart hook runs it too); it pushes the Dolt store over `refs/dolt/data`, and nothing in the working tree changes. The JSONL export is ignored; `bd export -o <file>` writes one when something needs it.
 - Don't commit someone else's uncommitted work, don't rewrite published history, and keep documentation current in the same commit as the change it describes.
 
-This is the "repository profile" the Beads block below defers to, and it overrides that block's conservative default. It is stated here, outside the managed markers, so `bd setup` cannot regenerate it away.
-
 ## Issue tracker and domain docs
 
-- Two trackers, split by audience: GitHub Issues for discussion-shaped work, customer requests and bugs someone reported; beads (`bd`) for everything else, including bugs found while working. Where this disagrees with the managed Beads block below ("use `bd` for ALL task tracking"), [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) wins. Read it before filing an issue.
+- Two trackers, split by audience: GitHub Issues for discussion-shaped work, customer requests and bugs someone reported; beads (`bd`) for everything else, including bugs found while working. Where this disagrees with `.beads/PRIME.md` ("track work in beads"), [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) wins. Read it before filing an issue.
 - Triage labels apply to GitHub Issues only: [docs/agents/triage-labels.md](docs/agents/triage-labels.md). Read it before labelling or triaging.
 - Single-context domain docs: [CONTEXT.md](CONTEXT.md) and [docs/adr/](docs/adr/); see [docs/agents/domain.md](docs/agents/domain.md). The files in `docs/agents/` configure the engineering skills (written by `/setup-matt-pocock-skills`); edit them directly.
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
-## Beads Issue Tracker
+## Beads
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Don't use `bd remember`: this repo is public, so everything in beads, memories included, can be read by anyone from `refs/dolt/data`. Keep persistent knowledge in Claude's file memory.
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
-
-## Agent Context Profiles
-
-The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
-
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
-
-## Session Completion
-
-This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
-
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
-   ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
-   git pull --rebase
-   bd sync
-   git push
-   git status
-   ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
-
-**Critical rules:**
-- Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
-- If a required sync or push is blocked, stop and report the exact command and error.
-<!-- END BEADS INTEGRATION -->
+How to track work in beads, the commands, and what to do before finishing are in [`.beads/PRIME.md`](.beads/PRIME.md), which `bd prime` prints. Claude Code's SessionStart hook runs `bd sync` and then `bd prime`, and Codex's hook adds PRIME.md to the session; if it did not appear when your session started (a subagent, or Codex without hooks), run `bd prime` before starting work. Don't run `bd setup` or `bd init` here: either writes a generic beads block back into this file, and that block contradicts the Git Authority section above. Beads data is public, like the repo, so don't use `bd remember`.

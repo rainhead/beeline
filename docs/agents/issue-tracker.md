@@ -14,8 +14,8 @@ the codebase — a question for staff, a bug a volunteer hit, a request from an 
 GitHub issue. If it is engineering work whose whole audience is whoever picks it up next, it is
 a bead. **Bugs split on the same test rather than landing wholesale in either tracker**: one a
 volunteer or staff member reported is a GitHub issue, because the reporter needs to follow it;
-one found while working is a bead (`beeline-d34`, `beeline-oyq`). Where this file and the
-managed Beads block below it disagree — that block says to use `bd` for *all* task tracking —
+one found while working is a bead (`beeline-d34`, `beeline-oyq`). Where this file and
+`.beads/PRIME.md` disagree — that file says to track work in beads —
 this file wins, and README.md is the authority behind it. When a GitHub discussion resolves into implementation work, the outcome becomes one or
 more beads that reference the issue by URL; the GitHub issue stays as the conversation.
 

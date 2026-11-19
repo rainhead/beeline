@@ -171,8 +171,9 @@ export async function clearStopped(db: Kysely<Database>, uploadId: number): Prom
   return Number(changed.numUpdatedRows) === 1;
 }
 
-/** The upload is being undone: its rows still waiting are left alone, so that nothing more is created. */
+/** The upload is being undone: its rows still waiting are left alone, so that nothing more is created, and a stop is cleared, since there is nothing left to try again. */
 export async function settleUndone(db: Kysely<Database>, uploadId: number): Promise<void> {
+  await db.updateTable("upload_applied").set({ stopped_at: null, stopped_row: null }).where("upload_id", "=", uploadId).execute();
   await db
     .updateTable("upload_sample_outcome")
     .set({ outcome: "skipped", detail: "The upload was undone, so this row was not created.", recorded_at: new Date().toISOString() })

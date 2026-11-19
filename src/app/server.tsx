@@ -2742,7 +2742,8 @@ export function createApp({
   // out again and must be the plan the page showed (the form carries its digest); then, in one transaction, the upload
   // is claimed (its key stops a second submission) and one pending row is queued for each row to make, with exactly
   // what to write. The apply-uploads job does the rows, one at a time. Refused while viewing as somebody else, for
-  // anyone but the staff member who uploaded the file, and while the nightly or the weekly sweep runs.
+  // anyone but the staff member who uploaded the file. Accepted while the nightly or the weekly sweep runs: the job waits its
+  // turn, and checks each row again when it comes.
   app.post("/uploads/:id{[0-9]+}/apply-samples", async (c) => {
     const refused = uploadsGate(c);
     if (refused !== null) return refused;

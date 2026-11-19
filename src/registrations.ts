@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import type { Database, RegistrationEvidence } from "./model.js";
 import type { Registrant } from "./ideal-logic.js";
+import { fingerprintEmail } from "./email-fingerprint.js";
 
 /**
  * What Beeline keeps of Ideal Logic's registrations, and which registration
@@ -12,8 +13,11 @@ import type { Registrant } from "./ideal-logic.js";
  * decision about one person, made by staff or loaded through the API.
  *
  * Neither writes an email address or a home address, and neither puts one in
- * a message: the fields `Registrant.email` and `Registrant.address` are not
- * read in this file at all.
+ * a message: `Registrant.address` is not read in this file at all, and
+ * `Registrant.email` only to be fingerprinted (`recordEmailFingerprints`),
+ * after which the address is dropped. `linkBySignInEmail` takes the address
+ * iNaturalist reported for a person signing in, fingerprints it the same
+ * way, and does not keep it either.
  */
 
 /**
@@ -202,6 +206,123 @@ export async function recordRegistrants(
     out.unlinked = keptIds.filter((id) => !linkedNow.has(id)).length;
   });
   return out;
+}
+
+/**
+ * Replace the whole table of email fingerprints with this fetch's
+ * (beeline-w8ab.7), in one transaction, and say how many rows it holds. One
+ * row for every registration in the fetch, not only the ones
+ * `recordRegistrants` keeps: a person who registered with no atlas and no
+ * handle must still be found when they sign in. Replaced whole because the
+ * fetch is the whole list: a registration that left Ideal Logic loses its
+ * fingerprint, and a changed key takes effect at the next fetch.
+ *
+ * Only the fingerprint is written. A registration with a blank email address
+ * has none and gets no row.
+ */
+export async function recordEmailFingerprints(
+  db: Kysely<Database>,
+  registrants: readonly Registrant[],
+  key: Buffer,
+): Promise<number> {
+  const rows = [
+    ...new Map(
+      registrants
+        .filter((r) => r.email.trim() !== "")
+        .map((r) => [r.id, { ideal_logic_id: r.id, fingerprint: fingerprintEmail(key, r.email) }]),
+    ).values(),
+  ];
+  await db.transaction().execute(async (trx) => {
+    await trx.deleteFrom("ideal_logic_email_fingerprint").execute();
+    for (let i = 0; i < rows.length; i += 200) {
+      await trx.insertInto("ideal_logic_email_fingerprint").values(rows.slice(i, i + 200)).execute();
+    }
+  });
+  return rows.length;
+}
+
+/**
+ * Delete every email fingerprint, and say how many there were. Run by the
+ * nightly job where `REGISTRATION_EMAIL_KEY` is not set: a fingerprint made
+ * under a key that has been removed can never be matched again, and the table
+ * is documented as empty without a key.
+ */
+export async function clearEmailFingerprints(db: Kysely<Database>): Promise<number> {
+  const gone = await db.deleteFrom("ideal_logic_email_fingerprint").executeTakeFirst();
+  return Number(gone.numDeletedRows);
+}
+
+/**
+ * `linkBySignInEmail` for whoever holds an iNaturalist account now. Sign-in
+ * knows the account, not who holds it when its turn in the queue comes, since
+ * staff may move the account to another person in between; so the holder is
+ * read here, inside the turn. Does nothing where nobody holds the account.
+ */
+export async function linkAccountHolderBySignInEmail(
+  db: Kysely<Database>,
+  input: { inatUserId: number; email: string | null; emailConfirmed: boolean; key: Buffer | null },
+): Promise<string | null> {
+  const holder = await db
+    .selectFrom("inat_account")
+    .select("person_id")
+    .where("inat_user_id", "=", BigInt(input.inatUserId))
+    .executeTakeFirst();
+  if (holder === undefined) return null;
+  return linkBySignInEmail(db, {
+    personId: Number(holder.person_id),
+    email: input.email,
+    emailConfirmed: input.emailConfirmed,
+    key: input.key,
+  });
+}
+
+/**
+ * Link a person to the registration whose email address is the one
+ * iNaturalist says is theirs, as they sign in (beeline-w8ab.7). Both ends
+ * are proven: iNaturalist confirmed the address, and Ideal Logic holds it.
+ * Returns the id it linked, or null where it did nothing.
+ *
+ * Does nothing unless the key is set, iNaturalist has confirmed the address
+ * and it is not blank; nor where anything has been decided about this person
+ * before (a link, an unlinking, or "no registration"), so a decision by staff
+ * always wins; nor unless exactly one registration has the fingerprint, since
+ * two registrations can share an address and then nobody can say which is
+ * the person's. The registration need not have a row in
+ * `ideal_logic_registrant`: the person may be one the nightly job did not
+ * keep, and `recordRegistrants` keeps a linked registration from the next
+ * night on.
+ *
+ * The address is fingerprinted at once and is neither stored nor put in a
+ * message. The caller is to run this in the queue of decisions about people.
+ */
+export async function linkBySignInEmail(
+  db: Kysely<Database>,
+  input: { personId: number; email: string | null; emailConfirmed: boolean; key: Buffer | null },
+): Promise<string | null> {
+  if (input.key === null || !input.emailConfirmed || input.email === null || input.email.trim() === "") return null;
+  const fingerprint = fingerprintEmail(input.key, input.email);
+  return db.transaction().execute(async (trx) => {
+    const decided = await trx
+      .selectFrom("person_registration_event")
+      .select("entity_id")
+      .where("person_id", "=", input.personId)
+      .limit(1)
+      .executeTakeFirst();
+    if (decided !== undefined) return null;
+    const matches = await trx
+      .selectFrom("ideal_logic_email_fingerprint")
+      .select("ideal_logic_id")
+      .where("fingerprint", "=", fingerprint)
+      .limit(2)
+      .execute();
+    if (matches.length !== 1) return null;
+    const idealLogicId = matches[0]!.ideal_logic_id;
+    await trx
+      .insertInto("person_registration_event")
+      .values({ person_id: input.personId, ideal_logic_id: idealLogicId, evidence: "sign_in_email", decided_by: "sign-in", reference: null })
+      .execute();
+    return idealLogicId;
+  });
 }
 
 /** What the nightly job's run says it did, for `job_run.detail`. Counts only. */

@@ -100,6 +100,10 @@ swap_size_mb = 1024
 #   token), ECDYSIS_USERNAME / ECDYSIS_PASSWORD
 #   IDEAL_LOGIC_KEY         the key for Ideal Logic's registrations API (100
 #                           requests a day)
+#   REGISTRATION_EMAIL_KEY  keys the fingerprints of registrations' email
+#                           addresses (base64, at least 32 bytes decoded:
+#                           openssl rand -base64 48). Unset, the fingerprints
+#                           and the linking at sign-in are off.
 # The nightly's pipeline token stays a file on the volume
 # (data/secrets/inat-oauth-token), which is where mintJwt reads it.
 

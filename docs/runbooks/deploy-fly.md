@@ -153,6 +153,17 @@ which the `ideal-logic-registrants` job reads each night
 the job fetches nothing and says so. The API allows 100 requests a day, so
 do not test the key in a loop.
 
+`REGISTRATION_EMAIL_KEY` keys the fingerprints of the registrations' email
+addresses, with which a person who signs in with a confirmed iNaturalist email
+is linked to the registration that has the same one. Generate it once with
+`openssl rand -base64 48` and set it with `fly secrets set`. It must decode to
+at least 32 bytes, or the app refuses to boot and says so. Unset, nothing is
+fingerprinted, nobody is linked at sign-in, and the nightly job says so in its
+detail. Changing it is safe: the next night's job replaces every fingerprint.
+Keep it out of the store and its backups, since the fingerprints are only as
+private as this secret is
+([why](../architecture/ideal-logic.md#linking-at-sign-in)).
+
 `BEELINE_DRIVE_KEY` is the service account's JSON key, whole, that the
 `store-backup` job writes with ([Backups](#backups)); `BEELINE_BACKUP_FOLDER`,
 in `fly.production.toml`, is the folder. Set both or neither, as with Ecdysis.

@@ -34,15 +34,26 @@ The province of a Canadian address is read off the first letter of its postal co
 - **An id names a person's record**, which Ideal Logic keeps as they update their details, so a link goes on finding their current address. A person can have two records under two email addresses: five names had two on 2026-11-18. The nightly job links neither of a person's two records; staff choose.
 - **Not everyone registered is a collector.** Ideal Logic also holds people who signed up only for a workshop, which is why the nightly job keeps a registration only when Beeline has a use for it.
 
-The handle a registrant types is the weakest evidence there is: of 142, seven were not the login Beeline holds for that person (typing slips, a display name, the word "yes"). So nothing links on a handle alone, and nothing links on a name alone, since 386 registrants have no relation to Beeline and any of them may share a collector's name. Three ways a link is made:
+The handle a registrant types is the weakest evidence there is: of 142, seven were not the login Beeline holds for that person (typing slips, a display name, the word "yes"). So nothing links on a handle alone, and nothing links on a name alone, since 386 registrants have no relation to Beeline and any of them may share a collector's name. Four ways a link is made:
 
 1. **The old register's email addresses**, once, by hand (`pnpm ideal-logic:link-register`, `src/link-register-emails.ts`). The registration's email address must be in the old Beeline's register against exactly one login, exactly one person must hold that login, and the full name must agree. It linked 259 of 593 people on 2026-11-18. It runs on a machine that holds the register and sends each link through the API, addressing the person by iNaturalist login (a store id can change when a store is rebuilt, a login cannot) and sending it again, up to five tries, when the API answers 429 (too many requests); it is not part of the nightly job, because the register is a frozen file that holds addresses.
 2. **The nightly job**, where the typed handle is the login of exactly one person and the full name is that person's (20 more people). It never links a person a decision has already been made about, so a person staff unlinked stays unlinked, and it never links a registration that is already linked to somebody. Staff can still link a second person to it, since a household shares one registration.
-3. **Staff**, for everybody else, on the `/registrations` page ([below](#the-registrations-page)), or through `POST /api/v1/people/<id>/registration` ([The API and its keys](the-api-and-its-keys.md)).
+3. **Sign-in**, where iNaturalist reports an email address for the account and has confirmed it, and exactly one registration has the same address ([below](#linking-at-sign-in)).
+4. **Staff**, for everybody else, on the `/registrations` page ([below](#the-registrations-page)), or through `POST /api/v1/people/<id>/registration` ([The API and its keys](the-api-and-its-keys.md)).
 
 The full name must agree, and not only the family name, because of households: two people who registered separately can share one login, which only one of them holds.
 
 The server checks that again for `register_email` evidence (`decideRegistration`, `src/registrations.ts`). The command-line tool matched on names from an exported file, and a login may have moved to another person since, so the server compares the registration's name with the person's display name as it is now, and refuses with `name_differs` if they disagree. The API answers 422 without repeating either name, and the link is left for staff to decide. Evidence of kind `staff` is not checked, since a person has already looked.
+
+## Linking at sign-in
+
+iNaturalist's `/v1/users/me` returns the signed-in account's email address and `confirmed_at`, which is set once the person confirmed that address (beeline-w8ab.7). When it is confirmed, and exactly one registration in Ideal Logic has the same address, `linkBySignInEmail` (`src/registrations.ts`) links the person to it with evidence `sign_in_email`. The person types nothing, and both ends are proven: iNaturalist confirmed the address, and Ideal Logic holds it. It does nothing for a person anything has been decided about before, including a decision that they have no registration, so staff always win. It does nothing when two registrations have the address, because then it cannot say whose it is. It runs in `oneDecisionAtATime` with the other decisions about people, and an error is logged as fixed text and never fails the sign-in. The address is held in memory for the length of the sign-in (`InatIdentity.email`, `src/app/auth.tsx`), is not logged, and is not stored.
+
+To compare without storing an address, the nightly job stores a **keyed fingerprint** of every registration's address (`ideal_logic_email_fingerprint`, `schema/014`): an HMAC-SHA256 of the address trimmed and lower-cased, under the secret `REGISTRATION_EMAIL_KEY` (`src/email-fingerprint.ts`). The table is replaced whole from each night's fetch, so a registration that left Ideal Logic loses its fingerprint and a changed key takes effect the next night. It has a row for every registration, not only those `ideal_logic_registrant` keeps, because a person who registered with no atlas and no handle must be found when they sign in; it holds no name, so it does not undo the reason for keeping fewer registrant rows. Without the secret nothing is fingerprinted and the job deletes every row of the table, since a fingerprint made under a key that is gone cannot be matched; the job's detail says so and how many it removed. Sign-in reads who holds the iNaturalist account inside the queue of decisions, so an account staff moved while it waited links the new holder.
+
+What the fingerprint protects: somebody who reads the store or a backup cannot turn a fingerprint back into an address, and cannot test a guessed address against it, without the secret, which lives only in the environment. What it does not protect: somebody who holds both the store and the secret can test whether a guessed address is registered. So the secret is never to be written to the store, a backup or a log.
+
+A person linked this way has no row in `ideal_logic_registrant` until the next night, because the job keeps a registration once it is linked. Until then the person's page says that the registration's name is read tonight.
 
 ## The registrations page
 
@@ -75,5 +86,4 @@ A printed label records the collector line as printed and no person, and the fre
 
 ## Not built yet
 
-- Linking at sign-in: iNaturalist reports the signed-in account's own confirmed email address, which could be compared with the registration's. How to compare without storing either is undecided.
 - Other instructions not to mail, and email (beeline-w8ab.6).

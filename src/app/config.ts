@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { queryCopyConflict, queryCopyFolderConflict } from "../query-copy.js";
 import { parseServiceAccountKey, type ServiceAccountKey } from "../drive-service-account.js";
 import type { EcdysisCredentials } from "../fetch-ecdysis.js";
+import { parseEmailKey } from "../email-fingerprint.js";
 import { createIdealLogicClient, type IdealLogicClient } from "../ideal-logic.js";
 import type { FlyMetricsTarget } from "../fly-usage.js";
 import type { OldBeelineCredentials } from "../legacy-copy.js";
@@ -132,6 +133,13 @@ export interface AppConfig {
    * of a print run's addresses draw on one daily count of requests.
    */
   idealLogic: IdealLogicClient | null;
+  /**
+   * The secret that keys the fingerprints of registrations' email addresses
+   * (beeline-w8ab.7), from `REGISTRATION_EMAIL_KEY`, or null where it is
+   * unset: the feature is then off, so no fingerprint is made and nobody is
+   * linked at sign-in. Boot refuses a key under 32 bytes.
+   */
+  registrationEmailKey: Buffer | null;
   /** Where the Ecdysis archive and its change-probe baseline are kept between runs. */
   ecdysisDir: string;
   /**
@@ -339,6 +347,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
         ? { token: env.FLY_METRICS_TOKEN.trim(), org: env.BEELINE_FLY_ORG?.trim() || "osu-mm", app: env.FLY_APP_NAME.trim() }
         : null,
     ecdysis: ecdysisUser !== null && ecdysisPassword !== null ? { username: ecdysisUser, password: ecdysisPassword } : null,
+    registrationEmailKey: parseEmailKey(env.REGISTRATION_EMAIL_KEY),
     idealLogic: env.IDEAL_LOGIC_KEY?.trim() ? createIdealLogicClient({ key: env.IDEAL_LOGIC_KEY.trim() }) : null,
     ecdysisDir: env.BEELINE_ECDYSIS ?? "data/ecdysis",
     driveBackup,

@@ -137,7 +137,7 @@ import {
   recentChanges,
 } from "../person-change.js";
 import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
-import { decideRegistration } from "../registrations.js";
+import { decideRegistration, linkAccountHolderBySignInEmail } from "../registrations.js";
 import { decideMailing } from "../mailing-instructions.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
@@ -202,6 +202,7 @@ import { deploymentPath } from "../deployment-path.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 import {
   atlasOptions,
+  scopePrograms,
   BY_SAMPLE_NUMBER,
   CSV_ROW_LIMIT,
   EMPTY_QUERY,
@@ -257,7 +258,7 @@ export interface JobsDep {
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir" | "idealLogic">>;
+  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir" | "idealLogic" | "registrationEmailKey">>;
   inat: InatClient;
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
@@ -604,6 +605,7 @@ export function createApp({
     origin: config.origin,
     environment: config.environment,
     recordOrcid: (inatUserId, orcid) => recordSignInOrcid(inatUserId, orcid),
+    linkRegistration: (inatUserId, email, emailConfirmed) => linkRegistrationAtSignIn(inatUserId, email, emailConfirmed),
     reportSignIn,
   });
 
@@ -965,7 +967,7 @@ export function createApp({
           problem={extra.problem}
           acting={c.get("acting").actingFor !== null}
           now={new Date()}
-          description={describeApi(config.origin, (await atlasOptions(db)).map((a) => a.code))}
+          description={describeApi(config.origin, (await atlasOptions(db)).map((a) => a.code), (await scopePrograms(db)).map((a) => a.code))}
         />,
       ),
       status,
@@ -1145,8 +1147,10 @@ export function createApp({
     const { personId } = c.get("acting");
     const admin = c.get("admin");
     const atlases = await atlasOptions(db);
+    const programs = await scopePrograms(db);
     const parsed = parseListingQuery(new URL(c.req.url).searchParams, {
       atlasCodes: atlases.map((a) => a.code),
+      programCodes: programs.map((a) => a.code),
       preferred: cookies.get(c, SCOPE_COOKIE),
     });
     // Every bulk action so far is staff's (beeline-1kb.23).
@@ -1166,7 +1170,7 @@ export function createApp({
       .where("pm.person_id", "=", personId)
       .select(["a.code", "a.name"])
       .executeTakeFirst();
-    return { personId, admin, reader: readerOf(c), atlases, query, homeAtlas: home ?? null };
+    return { personId, admin, reader: readerOf(c), atlases, programs, query, homeAtlas: home ?? null };
   };
 
   /** Who is browsing, as the usage counts see it: a role, never a person. */
@@ -1187,7 +1191,7 @@ export function createApp({
 
   app.get("/samples", async (c) => {
     const m = c.get("m");
-    const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
+    const { personId, admin, reader, atlases, programs, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("samples", "page", query, viewer(c)));
     const results = await listSamples(db, query, personId, reader, { hostNames: "common" });
     return c.html(
@@ -1201,6 +1205,7 @@ export function createApp({
           currentYear={Number(oregonToday().slice(0, 4))}
           page={results}
           atlases={atlases}
+          programs={programs}
           admin={admin}
           homeAtlas={homeAtlas}
           mayEnterTrapSamples={conn !== undefined && !c.get("acting").impersonating && (await mayEnterTrapSamples(conn, c.get("acting").personId, c.get("admin")))}
@@ -1234,7 +1239,7 @@ export function createApp({
   };
   app.get("/specimens", async (c) => {
     const m = c.get("m");
-    const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
+    const { personId, admin, reader, atlases, programs, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "page", query, viewer(c)));
     const results = await listSpecimens(db, query, personId, reader, { hostNames: "common" });
     return c.html(
@@ -1248,6 +1253,7 @@ export function createApp({
           currentYear={Number(oregonToday().slice(0, 4))}
           page={results}
           atlases={atlases}
+          programs={programs}
           admin={admin}
           homeAtlas={homeAtlas}
           reprinted={admin ? reprintedOutcome(c) : null}
@@ -2950,6 +2956,19 @@ export function createApp({
     decisionQueue = run.catch(() => {});
     return run;
   };
+
+  /**
+   * Link a person to the registration with their confirmed iNaturalist email
+   * address, as they sign in (beeline-w8ab.7). In the queue with every other
+   * decision about a person, since it reads whether one has been made and
+   * then records one. It takes the iNaturalist user id and finds the
+   * account's holder inside its turn, because staff may have moved the
+   * account to another person while it waited.
+   */
+  const linkRegistrationAtSignIn = (inatUserId: number, email: string | null, emailConfirmed: boolean) =>
+    oneDecisionAtATime(async () => {
+      await linkAccountHolderBySignInEmail(db, { inatUserId, email, emailConfirmed, key: config.registrationEmailKey ?? null });
+    });
 
   /**
    * What iNaturalist said about an account's ORCID iD as it signed in

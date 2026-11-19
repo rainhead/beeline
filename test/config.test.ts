@@ -93,3 +93,15 @@ describe("configFromEnv error reporting", () => {
     expect(configFromEnv({ FLY_IMAGE_REF: "registry.fly.io/beeline:deployment-x", BEELINE_RELEASE: "v1" }).release).toBe("v1");
   });
 });
+
+describe("configFromEnv REGISTRATION_EMAIL_KEY (beeline-w8ab.7)", () => {
+  it("is off when unset, and read when it decodes to 32 bytes or more", () => {
+    expect(configFromEnv({}).registrationEmailKey).toBeNull();
+    const key = Buffer.alloc(48, 3).toString("base64");
+    expect(configFromEnv({ REGISTRATION_EMAIL_KEY: key }).registrationEmailKey?.length).toBe(48);
+  });
+
+  it("stops boot on a key that is too short", () => {
+    expect(() => configFromEnv({ REGISTRATION_EMAIL_KEY: "c2hvcnQ=" })).toThrow(/REGISTRATION_EMAIL_KEY/);
+  });
+});

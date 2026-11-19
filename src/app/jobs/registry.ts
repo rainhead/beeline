@@ -39,7 +39,7 @@ import { describeRefresh, refreshEcdysisTaxonomy } from "../../load-ecdysis-taxo
 import { join } from "node:path";
 import { fetchEcdysisTaxonomyInChild } from "../../fetch-ecdysis-taxonomy-child.js";
 import type { Job, JobContext } from "./framework.js";
-import { describeRegistrants, recordRegistrants } from "../../registrations.js";
+import { clearEmailFingerprints, describeRegistrants, recordEmailFingerprints, recordRegistrants } from "../../registrations.js";
 
 /** A fresh JWT per run (src/inat-jwt.ts); a failed mint aborts the job. */
 const mintJwt = () => mintPipelineJwt();
@@ -576,6 +576,7 @@ export function buildJobs(
         | "ecdysis"
         | "ecdysisDir"
         | "idealLogic"
+        | "registrationEmailKey"
         | "driveBackup"
         | "oldBeeline"
         | "backupsDir"
@@ -846,13 +847,36 @@ export function buildJobs(
       schedule: { kind: "dailyLA", hour: 1 },
       window: "night",
       async run(ctx) {
-        if (!config.idealLogic) return "no Ideal Logic key (IDEAL_LOGIC_KEY) — nothing to fetch";
+        // Without the fingerprint key the table is emptied first, before
+        // anything can return early or fail: a fingerprint made under a key
+        // that is gone cannot be matched, and nothing should keep it.
+        const key = config.registrationEmailKey ?? null;
+        let cleared: string | null = null;
+        if (key === null) {
+          cleared = await ctx.step("clear email fingerprints", async () => {
+            const removed = await clearEmailFingerprints(ctx.db);
+            return removed === 0
+              ? "email fingerprints off"
+              : `email fingerprints off (no REGISTRATION_EMAIL_KEY); ${removed} removed`;
+          });
+        }
+        if (!config.idealLogic) {
+          const nothing = "no Ideal Logic key (IDEAL_LOGIC_KEY) — nothing to fetch";
+          return cleared === null ? nothing : `${nothing}; ${cleared}`;
+        }
         const client = config.idealLogic;
         const registrants = await ctx.step("fetch registrations", () => client.fetchRegistrants({ signal: ctx.signal }));
         const recorded = await ctx.step("record and link", () =>
           recordRegistrants(ctx.db, registrants, { decidedBy: "ideal-logic-registrants" }),
         );
-        return describeRegistrants(recorded);
+        // With the key, the whole table is replaced from this fetch, so a
+        // registration that left Ideal Logic loses its fingerprint and a
+        // changed key takes effect tonight.
+        const fingerprints =
+          key === null
+            ? cleared
+            : `${await ctx.step("fingerprint emails", () => recordEmailFingerprints(ctx.db, registrants, key))} email fingerprints`;
+        return `${describeRegistrants(recorded)}; ${fingerprints}`;
       },
     },
     {

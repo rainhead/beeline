@@ -8,7 +8,7 @@ import { ReadQueue } from "./api-queue.js";
 import { registerPeopleRoutes, type PeopleDeps } from "./api-people.js";
 import { registerReadRoutes, type ReadDeps } from "./api-read.js";
 import { describeApi } from "./api-description.js";
-import { atlasOptions } from "./listings.js";
+import { atlasOptions, scopePrograms } from "./listings.js";
 import { isWriteConflict } from "../write-conflict.js";
 import type { CorrectionDeps } from "./sample-corrections.js";
 import type { Messages } from "./messages/index.js";
@@ -281,7 +281,7 @@ export function createApi({
   // anything (beeline-pnqr.2). Behind the same key check as everything else.
   api.get("/", async (c) => {
     const origin = read?.origin ?? new URL(c.req.url).origin;
-    return c.json(describeApi(origin, (await atlasOptions(db)).map((a) => a.code)));
+    return c.json(describeApi(origin, (await atlasOptions(db)).map((a) => a.code), (await scopePrograms(db)).map((a) => a.code)));
   });
 
   // Reading samples and specimens as the pages show them (beeline-pnqr.2),

@@ -649,7 +649,11 @@ function RegistrationCard({
       {g.ideal_logic_id !== null ? (
         <>
           <p>
-            {g.registrant === null ? p.registrationUnknown : p.registrationOf(g.registrant)}
+            {g.registrant !== null
+              ? p.registrationOf(g.registrant)
+              : g.registrant_pending
+                ? p.registrationNamePending
+                : p.registrationUnknown}
           </p>
           <Meta block>
             {p.registrationId}: <code>{g.ideal_logic_id}</code> · {p.registrationEvidence}:{" "}

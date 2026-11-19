@@ -2,11 +2,17 @@ import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applySchema, createMemoryDb } from "../src/build-db.js";
+import { applySchema } from "../src/build-db.js";
 import { loadSpatial, openDuckDb } from "../src/db.js";
 import type { PromotionInputs } from "../src/promote-legacy.js";
 
-export { createMemoryDb };
+/**
+ * A fresh in-memory store with the real schema applied, of the caller's own: a
+ * copy of the schema built once per run (test/store-template.ts, beeline-tl4q).
+ * test/store-template.test.ts holds the copy equal to a store built from
+ * schema/*.sql, which is createMemoryDb in src/schema.ts.
+ */
+export { schemaCopy as createMemoryDb } from "./store-template.js";
 
 /**
  * The same schema, in a FILE rather than in memory — the shape production

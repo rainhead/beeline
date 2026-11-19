@@ -781,6 +781,22 @@ describe("what staff are told, and who sees what", () => {
   });
 });
 
+describe("a look-alike that appears after Apply", () => {
+  it("is caught in the creating transaction, under the print runs' lock, which is rolled back, and the row is left alone", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1)]);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    // Between Apply and the job reaching the row, somebody saves a sample of Vera's at the same place on the same days.
+    const [[id]] = (await rows(f.conn, `INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
+      VALUES ('trap', 'OBAS-00099', DATE '${day(9)}', DATE '${day(11)}', 'USA', 'OR', 'vane trap') RETURNING entity_id`)) as [[number]];
+    await f.conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${id}, ${f.volunteer}, 1)`);
+    await f.conn.run(`INSERT INTO sample_location (sample_id, latitude, longitude, source) VALUES (${id}, 44.51, -123.2, 'staff_entry')`);
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 1, stopped: 0 });
+    expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011'`)).toEqual([[0n]]);
+    expect(String((await outcomes(f))[0]![3])).toContain("OBAS-00099");
+  });
+});
+
 describe("spellings of the program's series", () => {
   it("cannot be used unless written exactly, and a sample that has one holds the number in every spelling", async () => {
     const f = await uploadFixture();

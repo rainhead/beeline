@@ -64,4 +64,4 @@ Also: `scp` and `ssh` with `-o BatchMode=yes` (fail instead of prompting), `apt-
 
 ## Beads
 
-The SessionStart hook runs `bd sync` and then `bd prime`, which prints [`.beads/PRIME.md`](.beads/PRIME.md): how to track work in beads, the commands, and what to do before finishing. Beads data is public, like the repo, so don't use `bd remember`.
+How to track work in beads, the commands, and what to do before finishing are in [`.beads/PRIME.md`](.beads/PRIME.md), which `bd prime` prints. Claude Code's SessionStart hook runs `bd sync` and then `bd prime`, and Codex's hook adds PRIME.md to the session; if it did not appear when your session started (a subagent, or Codex without hooks), run `bd prime` before filing or changing an issue. Beads data is public, like the repo, so don't use `bd remember`.

@@ -4,6 +4,19 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, test, vi } from "vitest";
 import { createMemoryDb as buildFromSchema } from "../src/schema.js";
+
+/**
+ * What existsSync answers for a path, where a test needs to say: undefined
+ * asks the file system. It lets a test put an event between templateFile
+ * looking for its template and reading the lock, which no real timing can
+ * arrange reliably.
+ */
+const existsOverride = vi.hoisted(() => ({ answer: (_path: string): boolean | undefined => undefined }));
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  const existsSync = (path: import("node:fs").PathLike) => existsOverride.answer(String(path)) ?? fs.existsSync(path);
+  return { ...fs, existsSync, default: { ...fs, existsSync } };
+});
 import { createMemoryDb } from "./helpers.js";
 import { sessionState, storeContents, templateFile } from "./store-template.js";
 
@@ -73,6 +86,29 @@ describe("the lock on a template being built", () => {
     await expect(templateFile(name, build)).rejects.toThrow(`was left by process ${gone}, which is no longer running`);
     expect(build).not.toHaveBeenCalled();
     await rm(lock);
+  });
+
+  test("left by a builder that published the template and exited is no fault: the waiter takes the template", async () => {
+    const name = `published-${process.pid}`;
+    const { done, lock } = await files(name);
+    // The order CodeRabbit found: the waiter looks for the template and finds
+    // none; the builder renames it into place and exits, its lock still
+    // there for the moment; the waiter then reads the lock and finds its
+    // process gone.
+    const gone = spawnSync(process.execPath, ["-e", ""]).pid!;
+    await writeFile(lock, String(gone));
+    await writeFile(done, "");
+    let looked = 0;
+    existsOverride.answer = (path) => (path === done && looked++ === 0 ? false : undefined);
+    try {
+      const build = vi.fn(async () => {});
+      await expect(templateFile(name, build)).resolves.toBe(done);
+      expect(build).not.toHaveBeenCalled();
+      expect(looked).toBeGreaterThan(1);
+    } finally {
+      existsOverride.answer = () => undefined;
+      await rm(lock, { force: true });
+    }
   });
 
   test("is waited on without timers, so a test that fakes them still gets its template", async () => {

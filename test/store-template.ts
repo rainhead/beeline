@@ -108,7 +108,7 @@ export async function copyDatabase(conn: DuckDBConnection, from: string, to: str
  * fails removes the lock, and the next test to ask tries again.
  *
  * A worker that crashes while building leaves the lock behind. A waiter that
- * finds the lock's process gone says so at once rather than waiting out its
+ * finds the lock's process gone, and no finished template, says so at once rather than waiting out its
  * test's timeout, which is shorter than any wait here. It does not take the
  * lock over: two waiters could both find it stale, and the second would remove
  * the lock the first had just taken.
@@ -136,6 +136,9 @@ export async function templateFile(name: string, build: (path: string) => Promis
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       const owner = await lockOwner(lock);
       if (owner !== undefined && !isRunning(owner)) {
+        // The builder may have published the template and exited between
+        // this waiter looking for the template and reading the lock.
+        if (existsSync(done)) break;
         throw new Error(`${lock} was left by process ${owner}, which is no longer running: did it crash while building ${done}?`);
       }
       if (polls >= 1200) throw new Error(`waited two minutes for ${done} while process ${owner ?? "unknown"} held ${lock}`);

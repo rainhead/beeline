@@ -138,7 +138,7 @@ const REFUSALS = {
 // Every refusal a correction can make. `adoptLocality` has no endpoint of its
 // own, since `setPlace` adopts an offered name; it is listed so that the
 // switch below also covers its refusals, `changed` among them.
-type AnyFailure = Extract<
+export type AnyFailure = Extract<
   | AdoptLocalityResult
   | EditSampleResult
   | SetPlaceResult
@@ -186,6 +186,22 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     }
     default:
       return unreachable(failure);
+  }
+}
+
+/**
+ * The sentence for a refused correction, as the API words it: the writer's own words for `invalid` and `unresolved`,
+ * and the table's for every other refusal. The samples upload records these beside a change it could not apply, so a
+ * person reads in a note what a program is told.
+ */
+export function refusalSentence(failure: AnyFailure): string {
+  switch (failure.refusal) {
+    case "invalid":
+      return failure.problem;
+    case "unresolved":
+      return failure.reason;
+    default:
+      return REFUSALS[failure.refusal].message;
   }
 }
 

@@ -182,6 +182,10 @@ export function UploadPreview({
       if (o.pending > 0) lines.push(p.samplesApplying(o.total - o.pending, o.total));
       if (o.created > 0) lines.push(p.samplesCreated(o.created, o.deleted));
       if (o.notCreated > 0) lines.push(p.samplesNotCreated(o.notCreated));
+      if (o.changes.applied > 0) lines.push(p.samplesChangedCount(o.changes.samples, o.changes.applied));
+      if (o.changes.unchanged > 0) lines.push(p.changesUnchanged(o.changes.unchanged));
+      if (o.changes.notApplied > 0) lines.push(p.changesNotApplied(o.changes.notApplied));
+      if (o.changes.notChosen > 0) lines.push(p.changesNotChosen(o.changes.notChosen));
       // Once applied, the page counts only what applying did; what the file says of its other rows is in its notes.
       lines.push(p.samplesOthersInNotes);
     }
@@ -235,7 +239,7 @@ export function UploadPreview({
       )}
       {samplesSummary !== null && samples?.applied != null && samples.stoppedRow === null && (samplesSummary.outcomes?.pending ?? 0) === 0 && (
         <Callout tone="success">
-          {p.samplesApplied(m.format.dateTime(samples.applied.at), samples.applied.by)} {p.samplesExistingNotApplied}
+          {p.samplesApplied(m.format.dateTime(samples.applied.at), samples.applied.by)}
         </Callout>
       )}
       {lines.map((line) => (
@@ -267,6 +271,33 @@ export function UploadPreview({
                   </tr>
                 ))}
               </DataTable>
+            </>
+          )}
+          {samplesSummary.changes !== null && (
+            <>
+              <h2>{p.changesHeading}</h2>
+              {samplesSummary.changes.samples > 0 && <p>{p.changesLine(samplesSummary.changes.samples)}</p>}
+              {samplesSummary.changes.points.moving > 0 && (
+                <p>{p.pointsLine(samplesSummary.changes.points.moving, samplesSummary.changes.points.far, m.uploads.notes.distance(samplesSummary.changes.points.largest))}</p>
+              )}
+              {samplesSummary.changes.cantApply > 0 && <p>{p.cantApplyLine(samplesSummary.changes.cantApply)}</p>}
+              {samplesSummary.changes.kinds.length > 0 && (
+                <>
+                  <p>{p.changesChoose}</p>
+                  {/* Posted with the button, so that the kinds left unticked are told apart from a form that sent none. */}
+                  <input type="hidden" name="kinds_shown" value="1" />
+                  <ul>
+                    {samplesSummary.changes.kinds.map((k) => (
+                      <li>
+                        <label>
+                          <input type="checkbox" name="kind" value={k.unit} checked={k.chosen} /> {p.changeKind(p.changeKinds[k.unit] ?? k.unit, k.samples)}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                  {samplesSummary.changes.kinds.some((k) => k.unit === "coordinates") && <Meta block>{p.changeCoordinatesNote}</Meta>}
+                </>
+              )}
             </>
           )}
           {samplesSummary.obas !== null && (

@@ -54,11 +54,11 @@ export interface Actor {
    * The door the request came through. It is recorded as the `source` of the
    * history entries the correction makes. Absent means a page.
    */
-  via?: "page" | "api";
+  via?: "page" | "api" | "upload";
 }
 
-/** The `source` a correction's history entries carry: `app` for a page, `api` for the API. */
-const sourceOf = (actor: Actor): SampleChangeSource => (actor.via === "api" ? "api" : "app");
+/** The `source` a correction's history entries carry: `app` for a page, `api` for the API, `upload` for an uploaded samples file. */
+const sourceOf = (actor: Actor): SampleChangeSource => (actor.via === "api" ? "api" : actor.via === "upload" ? "upload" : "app");
 
 /**
  * What a correction did, as the writer reported it: it wrote a value, took one
@@ -432,6 +432,11 @@ export interface SetPlaceInput {
   /** What the place editor's one combobox holds. */
   locality: string;
   reasonFor: (basis: LocalitySuggestion["basis"]) => string;
+  /**
+   * Why, where the caller says (the samples upload names itself): kept with a locality that is written in, and as the
+   * history's reason where the writer has none of its own. The pages and the API give none, so their records are as before.
+   */
+  note?: string;
 }
 
 export type SetPlaceResult =
@@ -481,7 +486,7 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
       // Blank clears it, as on the form.
       if (name === (sample.locality ?? "")) return { ok: true, outcome: "unchanged" };
       if ((await setTrapSampleLocality(printWriter, sample.sample_id, name)) === "printed") return refused("printed");
-      await recordTrapChange(deps, actor.login, sample.sample_id, { source: sourceOf(actor) });
+      await recordTrapChange(deps, actor.login, sample.sample_id, { source: sourceOf(actor), reason: form.note?.trim() || undefined });
       return { ok: true, outcome: "saved" };
     }
     const writeDeps = { db, conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath };
@@ -514,14 +519,14 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
       result = await adoptSuggestedLocality(writeDeps, target, { suggestion: suggestion.locality, reason, author: actor.login });
     } else {
       if (!admin) return refused("only_offered");
-      result = await setStaffLocality(writeDeps, target, { value: name, remove: false, note: "", author: actor.login });
+      result = await setStaffLocality(writeDeps, target, { value: name, remove: false, note: form.note?.trim() ?? "", author: actor.login });
     }
     if (result.outcome === "not_applied") return refused("not_applied");
     const bad = overlayRefusal(result);
     if (bad !== null) return bad;
     if (result.outcome === "no_staging") return refused("no_staging");
     if (result.outcome === "saved" || result.outcome === "removed") {
-      await recordChange(deps, sample.sample_id, actor, reason, "locality change");
+      await recordChange(deps, sample.sample_id, actor, reason ?? (form.note?.trim() || undefined), "locality change");
     }
     return { ok: true, outcome: outcomeOf(result) };
   });

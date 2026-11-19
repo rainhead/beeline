@@ -3,7 +3,8 @@ import type { Database } from "../model.js";
 import type { Messages } from "./messages/en.js";
 import { samplesWorkbook } from "./sample-workbook.js";
 import { type OutcomeRow } from "./samples-upload-apply.js";
-import { countRows, isHeld, type SampleRowResult, type SamplesCounts, type SamplesPlan, type UnknownCollector } from "./samples-upload-plan.js";
+import type { QueuedUnit } from "./samples-upload-change.js";
+import { SAMPLES_UNITS, countRows, isHeld, type SampleRowResult, type SamplesCounts, type SamplesPlan, type SamplesUnit, type UnknownCollector } from "./samples-upload-plan.js";
 import { specimenWorkbook, type Audience } from "./specimen-workbook.js";
 import type { DraftPlan } from "./upload-drafts.js";
 import { NOTE_COLUMN, type HeldItem, type ParsedUpload, type UploadPlan } from "./upload-plan.js";
@@ -55,17 +56,30 @@ export interface HeldRow {
   likeRow: number | null;
 }
 
-/** What applying did, counted over the rows it queued. */
+/** What applying did, counted over what it queued. */
 export interface OutcomeSummary {
-  /** Rows queued, whatever became of them. */
+  /** New rows and changes queued for the job, whatever became of them. */
   total: number;
-  /** Rows still waiting for the job. */
+  /** Of them, still waiting for the job. */
   pending: number;
   created: number;
   /** Of the samples made, those since deleted. */
   deleted: number;
-  /** Rows refused or left alone: not created. */
+  /** New rows refused or left alone: not created. */
   notCreated: number;
+  /** Changes to existing samples: how many samples had one made, how many changes were made, were already as the file says, were not applied, and were not chosen. */
+  changes: { samples: number; applied: number; unchanged: number; notApplied: number; notChosen: number };
+}
+
+/** What applying would do to existing samples, for the page before the file is applied. */
+export interface ChangesPreview {
+  /** Samples with a change that can be queued. */
+  samples: number;
+  /** Each kind of change that some sample has, how many samples have one, and whether it is ticked. In the order the page lists them. */
+  kinds: Array<{ unit: SamplesUnit; samples: number; chosen: boolean }>;
+  points: { moving: number; far: number; largest: number };
+  /** Changes a correction would refuse, which are not queued. */
+  cantApply: number;
 }
 
 /** The rows whose number is in the OBAS series, or blank, which wait for the one box "I've checked these OBAS numbers". */
@@ -93,6 +107,8 @@ export interface SamplesSummary {
   outcomes: OutcomeSummary | null;
   /** Rows to be made, with nothing wrong, whose number is in the OBAS series or blank. Null once the file is applied. */
   obas: ObasSummary | null;
+  /** Changes to existing samples, before the file is applied. */
+  changes: ChangesPreview | null;
   /** New rows to be made that are in an active season and have specimens, whose labels can be printed as soon as they are made. */
   labelsReady: number;
 }
@@ -200,17 +216,49 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
     }
     return [...said].join(" ");
   };
+  const label = (unit: string) => m.uploads.page.changeKinds[unit] ?? unit;
   const notes = new Map<number, string>();
   // What applying did to a row says what became of it, and replaces what the comparison would say of the row now: a
-  // sample made from a new row makes the row read as a number Beeline already has.
-  const done = new Map(outcomes.map((o) => [o.row_number, o]));
+  // sample made from a new row makes the row read as a number Beeline already has, and a sample changed by its row
+  // reads as different from the file's version.
+  const done = new Map<number, OutcomeRow[]>();
+  for (const o of outcomes) (done.get(o.row_number) ?? done.set(o.row_number, []).get(o.row_number)!).push(o);
+  /** What applying did to one change of an existing sample's row. */
+  const changeNote = (o: OutcomeRow): string => {
+    const queued = o.payload === null ? null : (JSON.parse(o.payload) as Partial<QueuedUnit>);
+    switch (o.outcome) {
+      case "applied": {
+        const said = (v: string) => (v === "" ? n.nothing : `"${v}"`);
+        const cells = (queued?.cells ?? []).map((c) => n.appliedCell(c.column, said(c.was), said(c.fileSays)));
+        return n.unitApplied(cells.length > 0 ? cells.join("; ") : label(o.unit));
+      }
+      case "unchanged":
+        return n.unitUnchanged(label(o.unit));
+      case "pending":
+        return n.waiting;
+      default:
+        return n.unitNotApplied(label(o.unit), o.detail ?? "");
+    }
+  };
   for (const { row } of upload.rows) {
-    const o = done.get(row);
+    const here = done.get(row);
+    const o = here?.find((x) => x.unit === "row");
     if (o !== undefined) {
       notes.set(row, o.outcome === "pending" ? n.waiting : o.outcome === "created" ? (o.deleted ? n.createdDeleted(o.sample_number ?? "") : n.created(o.sample_number ?? "")) : n.notCreated(redact && o.outcome === "skipped" ? (o.detail ?? "").replace(/It looks like sample [^:]+:/, "It looks like a sample Beeline already has:") : (o.detail ?? "")));
       continue;
     }
     const r = byRow.get(row);
+    if (here !== undefined) {
+      // An existing sample's row: each change as it ended, and what the comparison finds wrong with the cells that were not queued.
+      const parts = here.map(changeNote);
+      const decided = new Set(here.map((x) => x.unit));
+      if (r !== undefined) {
+        const rest = r.problems.filter((p) => p.reason !== "sample_changed_since" && (p.unit === null || !decided.has(p.unit)));
+        if (rest.length > 0) parts.push(n.cantUse(reasons({ ...r, problems: rest })));
+      }
+      notes.set(row, parts.join(" "));
+      continue;
+    }
     if (r === undefined) continue;
     const parts: string[] = [];
     if (r.kind === "new") {
@@ -234,6 +282,10 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
       if (r.problems.length > 0) parts.push(n.cantUse(reasons(r)));
       const changed = r.differences.map((d) => cellsText(m, d.cells.filter((c) => c.differs)));
       if (changed.length > 0) parts.push(n.differs(changed.join("; ")));
+      for (const d of r.differences) {
+        if (d.metres !== null && d.metres > 0) parts.push(n.moves(n.distance(d.metres)));
+        if (d.refusal !== null) parts.push(n.cantApply(label(d.unit), d.refusal));
+      }
     }
     notes.set(row, parts.join(" "));
   }
@@ -246,16 +298,6 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
             ? [{ row: r.row, sampleNumber: r.create.form.sample_number, likeId: r.create.lookalike.sampleId, likeNumber: r.create.lookalike.sampleNumber, likeRow: r.create.lookalike.fileRow ?? null }]
             : [],
         );
-  const outcomeSummary: OutcomeSummary | null =
-    done.size === 0
-      ? null
-      : {
-          total: done.size,
-          pending: [...done.values()].filter((o) => o.outcome === "pending").length,
-          created: [...done.values()].filter((o) => o.outcome === "created").length,
-          deleted: [...done.values()].filter((o) => o.deleted).length,
-          notCreated: [...done.values()].filter((o) => o.outcome === "refused" || o.outcome === "skipped").length,
-        };
   // The series' numbers waiting for confirmation, over the rows that are still to be made.
   const toMake = open.filter((r) => r.problems.length === 0 && r.create !== null);
   const seriesRows = toMake.filter((r) => r.create!.obas);
@@ -265,9 +307,46 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
       ? null
       : { rows: seriesRows.length, lowest: given[0] ?? null, highest: given.at(-1) ?? null, blank: plan.numbering.blank, from: plan.numbering.from, to: plan.numbering.to };
   const labelsReady = done.size > 0 ? 0 : toMake.filter((r) => r.season === "active" && Number(r.create!.form.specimen_count) > 0).length;
+  const changes: ChangesPreview | null =
+    done.size > 0 || (plan.changes.samples === 0 && plan.changes.cantApply === 0)
+      ? null
+      : {
+          samples: plan.changes.samples,
+          kinds: SAMPLES_UNITS.filter((u) => plan.changes.byUnit[u] > 0).map((unit) => ({
+            unit,
+            samples: plan.changes.byUnit[unit],
+            chosen: plan.rows.some((r) => r.differences.some((d) => d.unit === unit && d.refusal === null && d.chosen)),
+          })),
+          points: plan.changes.points,
+          cantApply: plan.changes.cantApply,
+        };
   return {
     notes,
-    summary: { kind: "samples", rows: upload.rows.length, counts: done.size === 0 ? plan.counts : countRows(open), unknownCollectors: plan.unknownCollectors, held, outcomes: outcomeSummary, obas, labelsReady },
+    summary: { kind: "samples", rows: upload.rows.length, counts: done.size === 0 ? plan.counts : countRows(open), unknownCollectors: plan.unknownCollectors, held, outcomes: summaryOfOutcomes(m, outcomes), obas, labelsReady, changes },
+  };
+}
+
+/** What applying did, counted from the outcome rows; null before the file is applied. */
+function summaryOfOutcomes(m: Messages, outcomes: readonly OutcomeRow[]): OutcomeSummary | null {
+  if (outcomes.length === 0) return null;
+  const rows = outcomes.filter((o) => o.unit === "row");
+  const units = outcomes.filter((o) => o.unit !== "row");
+  const count = (list: readonly OutcomeRow[], outcome: OutcomeRow["outcome"]) => list.filter((o) => o.outcome === outcome).length;
+  const notChosen = units.filter((o) => o.outcome === "skipped" && o.detail === m.uploads.changes.notChosen).length;
+  return {
+    // What was queued for the job: the claim keeps a payload for it, and for nothing it settled itself.
+    total: outcomes.filter((o) => o.queued).length,
+    pending: count(outcomes, "pending"),
+    created: count(rows, "created"),
+    deleted: outcomes.filter((o) => o.deleted).length,
+    notCreated: count(rows, "refused") + count(rows, "skipped"),
+    changes: {
+      samples: new Set(units.filter((o) => o.outcome === "applied").map((o) => o.row_number)).size,
+      applied: count(units, "applied"),
+      unchanged: count(units, "unchanged"),
+      notApplied: count(units, "refused") + count(units, "skipped") - notChosen,
+      notChosen,
+    },
   };
 }
 
@@ -275,24 +354,18 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
  * The samples file's page once it is applied: what was done to each row, read from the outcome rows without working the
  * comparison out again. The notes for each row come from the full plan, only for the file with notes.
  */
-export function samplesClaimedSummary(upload: ParsedUpload, outcomes: readonly OutcomeRow[]): SamplesSummary {
+export function samplesClaimedSummary(m: Messages, upload: ParsedUpload, outcomes: readonly OutcomeRow[]): SamplesSummary {
   const split = () => ({ active: 0, settled: 0, unplaced: 0 });
-  const mine = outcomes;
   return {
     kind: "samples",
     rows: upload.rows.length,
     counts: { rows: split(), newReady: split(), newHeld: split(), cantUse: split(), differ: split(), same: split() },
     unknownCollectors: [],
     held: [],
-    outcomes: {
-      total: mine.length,
-      pending: mine.filter((o) => o.outcome === "pending").length,
-      created: mine.filter((o) => o.outcome === "created").length,
-      deleted: mine.filter((o) => o.deleted).length,
-      notCreated: mine.filter((o) => o.outcome === "refused" || o.outcome === "skipped").length,
-    },
+    outcomes: summaryOfOutcomes(m, outcomes),
     obas: null,
     labelsReady: 0,
+    changes: null,
   };
 }
 

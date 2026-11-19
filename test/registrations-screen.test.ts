@@ -9,7 +9,7 @@ import { createKysely } from "../src/db.js";
 import { approveRun, markMailed, markPrinted, prepareRun } from "../src/print-run.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
-import { createMemoryDb, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
+import { createMemoryDb, currentSeasonDate, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 
 /**
  * The staff screen for registrations (beeline-w8ab.2). Everyone here is
@@ -29,7 +29,7 @@ async function stageObserver(conn: DuckDBConnection, id: number, userId: number,
   const o = {
     id,
     uuid: `uuid-${id}`,
-    observed_on: "2026-07-14",
+    observed_on: currentSeasonDate(7, 14),
     geojson: { coordinates: [-123.262, 44.5646], type: "Point" },
     positional_accuracy: 30,
     public_positional_accuracy: 30,
@@ -83,13 +83,15 @@ async function setup() {
 
   // Di's labels are in a run that was mailed; Bo's are in a run not yet mailed.
   await insertCleanSample(conn, { collector_id: String(ids.di), sample_number: "'1'" });
-  const at = new Date("2026-09-21T16:00:00Z");
+  // Dated from today, never a written year: a year written here settles and
+  // the test fails the next spring (AGENTS.md, beeline-a0lj).
+  const at = new Date();
   const mailed = (await prepareRun(conn, { atlasId: null, personId: sam, now: at }))!.printRunId;
   await approveRun(conn, mailed, { personId: sam, now: at });
   await markPrinted(conn, mailed, { personId: sam, now: at });
   await markMailed(conn, mailed, { personId: sam, now: at });
   await insertCleanSample(conn, { collector_id: String(ids.bo), sample_number: "'1'" });
-  await prepareRun(conn, { atlasId: null, personId: sam, now: new Date("2026-09-22T16:00:00Z") });
+  await prepareRun(conn, { atlasId: null, personId: sam, now: new Date(at.getTime() + 60_000) });
   // Cy's only sample is from a settled season, so nothing of it is waiting.
   await insertCleanSample(conn, {
     collector_id: String(ids.cy),

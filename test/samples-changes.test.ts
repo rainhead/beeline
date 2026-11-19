@@ -341,6 +341,39 @@ describe("a change a correction would refuse", () => {
   });
 });
 
+describe("a change a correction refuses only when the job meets it", () => {
+  it("refuses a net sample made a trap sample whose number a trap sample took after the page", async () => {
+    const f = await uploadFixture();
+    const net = await insertCleanSample(f.conn, { sample_number: "'N-3'", date_start: `DATE '${day(22)}'`, date_end: `DATE '${day(22)}'`, collector_id: String(f.volunteer) });
+    await oldRecords(f, net, "rec-n3", "aerial net");
+    const { location, digest } = await offered(f, [{ id: net, set: { eventDate: `${day(22)}/${day(25)}` } }]);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    await trapSample(f, { sample_number: "'N-3'" });
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", c.becomesTrapNumberTaken("N-3")] });
+    expect(await rows(f.conn, `SELECT kind FROM sample WHERE entity_id = ${net}`)).toEqual([["net"]]);
+  });
+
+  it("refuses a method change when a print run that has not printed took the sample after the page", async () => {
+    const f = await uploadFixture("staffer", { unprinted: true });
+    const c1 = f.ids.c1!;
+    await f.conn.run(`UPDATE sample SET kind = 'trap', date_end = date_end + 3, protocol = 'vane trap' WHERE entity_id = ${f.ids.sampleC}`);
+    await f.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${f.ids.sampleC}, ${f.staffer})`);
+    // The run's label is taken away while the page is made, and put back before the job runs.
+    const label = (await rows(f.conn, `SELECT print_run_id, sheet, cell, location_text, coordinates_text, date_text, collector_text, method_text, number_text, latitude, longitude, CAST(date_start AS VARCHAR), CAST(date_end AS VARCHAR) FROM printed_label WHERE specimen_id = ${c1}`))[0]!;
+    await f.conn.run(`DELETE FROM printed_label WHERE specimen_id = ${c1}`);
+    const { location, digest } = await offered(f, [{ id: f.ids.sampleC!, set: { samplingProtocol: "pan trap" } }]);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    await f.conn.run(
+      `INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text, collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
+       VALUES (${label[0]}, ${c1}, ${label[1]}, ${label[2]}, '${label[3]}', '${label[4]}', '${label[5]}', '${label[6]}', '${label[7]}', '${label[8]}', ${label[9]}, ${label[10]}, DATE '${label[11]}', DATE '${label[12]}')`,
+    );
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", c.methodInPrintRun] });
+    expect(await rows(f.conn, `SELECT protocol FROM sample WHERE entity_id = ${f.ids.sampleC}`)).toEqual([["vane trap"]]);
+  });
+});
+
 describe("the row's version", () => {
   it("is checked once, before the row's first change: a sample changed in Beeline since the download has every change refused", async () => {
     const f = await uploadFixture();

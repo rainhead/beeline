@@ -2488,7 +2488,7 @@ export const en = {
       changesNotApplied: (count: number) => `${n(count)} ${count === 1 ? "change was" : "changes were"} not applied: see the notes in the file.`,
       changesNotChosen: (count: number) => `${n(count)} ${count === 1 ? "change was" : "changes were"} not ticked, so left as they are: see the notes in the file.`,
       changesUnchanged: (count: number) => `${n(count)} ${count === 1 ? "change was" : "changes were"} already as the file says.`,
-      samplesApplying: (done: number, total: number) => `Applying: ${n(done)} of ${n(total)} ${total === 1 ? "row" : "rows"} done.`,
+      samplesApplying: (done: number, total: number) => `Applying: ${n(done)} of ${n(total)} ${total === 1 ? "step" : "steps"} done, a step being a new trap sample or one kind of change to an existing sample.`,
       samplesApplied: (when: string, by: string) => `Applied on ${when} by ${by}.`,
       samplesQueued: (when: string, by: string) => `Queued on ${when} by ${by}, and being applied: the counts below say how far it has got.`,
       samplesCreated: (count: number, deleted: number) =>

@@ -1253,6 +1253,11 @@ describe("taking the observation's location", () => {
     expect(answer.message).toContain("Nothing applies it later on its own");
     expect(answer.message).not.toContain("nightly");
     expect((await send()).status).toBe(200);
+    // Recorded under the name the answer gives, as the edit's thrown conflict is.
+    expect((await w.uses()).map((u) => [u[2], u[4], u[6]])).toEqual([
+      ["/samples/:id/country-state-county", "recorded_not_applied", 409],
+      ["/samples/:id/country-state-county", "saved", 200],
+    ]);
     expect(((await rows(w.conn, `SELECT county FROM sample WHERE entity_id = ${w.legacy}`)) as string[][])[0]![0]).toBe("Walla Walla");
   });
 });

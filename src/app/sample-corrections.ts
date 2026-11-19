@@ -229,18 +229,33 @@ export async function recordTrapChange(
   deps: Pick<CorrectionDeps, "db" | "samplePaths">,
   login: string,
   sampleId: number,
+  options: { source?: SampleChangeSource; created?: boolean; reason?: string } = {},
+): Promise<void> {
+  await recordTrapChanges(deps, login, [sampleId], options);
+}
+
+/**
+ * `recordTrapChange` for several samples in one pass over the log, credited alike. A narrowed pass patches and
+ * rewrites the whole snapshot file however few samples it names (11 MB on production, about 0.65 s), so a caller that
+ * makes many samples at once records them together rather than paying that for each (beeline-kgyd.4.10).
+ */
+export async function recordTrapChanges(
+  deps: Pick<CorrectionDeps, "db" | "samplePaths">,
+  login: string,
+  sampleIds: readonly number[],
   { source = "app", created = false, reason }: { source?: SampleChangeSource; created?: boolean; reason?: string } = {},
 ): Promise<void> {
+  if (sampleIds.length === 0) return;
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
       source,
       author: login,
       reason,
-      where: `s.entity_id = ${sampleId}`,
+      where: sampleIds.length === 1 ? `s.entity_id = ${sampleIds[0]}` : `s.entity_id IN (${sampleIds.map(Number).join(", ")})`,
       created,
     });
   } catch (err) {
-    console.warn(`could not record the change to trap sample ${sampleId}: ${(err as Error).message}`);
+    console.warn(`could not record the change to trap sample(s) ${sampleIds.join(", ")}: ${(err as Error).message}`);
   }
 }
 

@@ -225,6 +225,8 @@ the app no longer reads such a file.
 `fly deploy -c fly.production.toml`. The machine is replaced in place: migrations run, then the app
 starts. Downtime is one boot.
 
+**A deploy while a samples file is being applied** (beeline-kgyd.4.10) loses nothing. The `apply-uploads` job stops at a row boundary when the machine is told to shut down (a minute's grace, the nightly's rule), the rows it did have their outcome and the rest stay `pending` in `upload_sample_outcome`, and the scheduler starts the job again within a minute of the app coming back. The uploader's page shows "Applying: N of M" meanwhile. The migration for it is 0110, a new empty table.
+
 **A change to the curated person overlay is not live after a deploy.** The
 app reads `ingest/person-overlay.csv` at boot only to guard the admin seed; it
 applies nothing from it. Only a legacy promotion, `pnpm person:apply`, and the

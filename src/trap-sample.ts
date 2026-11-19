@@ -401,12 +401,12 @@ export type DeleteRefusal = "not_found" | "not_entered" | "printed" | "in_print_
  * Asked of the store itself, so a table added later is deleted from without anyone remembering to say so.
  */
 async function satelliteTables(conn: DuckDBConnection): Promise<string[]> {
-  const found = await rows<{ table_name: string; columns: { items: string[] } }>(
+  const found = await rows<{ table_name: string; columns: string[] | { items: string[] } }>(
     conn,
     `SELECT table_name, constraint_column_names AS columns FROM duckdb_constraints()
      WHERE constraint_type = 'FOREIGN KEY' AND referenced_table = 'sample' AND table_name <> 'specimen'`,
   );
-  return found.map((r) => `${r.table_name}:${r.columns.items.join(",")}`).sort();
+  return found.map((r) => `${r.table_name}:${(Array.isArray(r.columns) ? r.columns : r.columns.items).join(",")}`).sort();
 }
 
 /**
@@ -420,13 +420,16 @@ export function deleteTrapSample(conn: DuckDBConnection, id: number): Promise<{ 
     const found = await deletable(conn, id);
     if ("refused" in found) return found;
     const tables = await satelliteTables(conn);
+    // Two transactions, because DuckDB will not delete a referenced row in the transaction that removed its references
+    // (the limit printing.md names for cancelling a run). A crash between them leaves a sample with no collector, which
+    // sample_primary_collector_invalid names and which deleting again finishes.
     await inTransaction(conn, async () => {
       for (const t of tables) {
         const [table, columns] = t.split(":");
         for (const column of columns!.split(",")) await conn.run(`DELETE FROM "${table}" WHERE "${column}" = $1`, [id] as never);
       }
-      await conn.run(`DELETE FROM sample WHERE entity_id = $1`, [id] as never);
     });
+    await conn.run(`DELETE FROM sample WHERE entity_id = $1`, [id] as never);
     return { deleted: found.number };
   });
 }
@@ -440,7 +443,7 @@ export async function deletable(conn: DuckDBConnection, id: number): Promise<{ n
             EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id) AS printed,
             EXISTS (SELECT 1 FROM sample_label_in_progress l WHERE l.sample_id = s.entity_id) AS in_run,
             (SELECT count(*)::INTEGER FROM specimen sp WHERE sp.sample_id = s.entity_id) AS specimens
-     FROM sample s WHERE s.entity_id = $1 AND s.kind = 'trap'`,
+     FROM sample s WHERE s.entity_id = $1`,
     [id],
   );
   const r = found[0];

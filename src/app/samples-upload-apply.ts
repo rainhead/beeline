@@ -4,7 +4,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { checkTrapSample, createTrapSample, findLookalikes, numberTakenProblem, type TrapSampleForm } from "../trap-sample.js";
 import type { CorrectionDeps } from "./sample-corrections.js";
-import { recordTrapChange } from "./sample-corrections.js";
+import { recordTrapChanges } from "./sample-corrections.js";
 import { onSample } from "./sample-queue.js";
 import type { NewRowCreate, SampleRowResult, SamplesPlan } from "./samples-upload-plan.js";
 
@@ -184,31 +184,68 @@ async function settle(db: Kysely<Database>, p: Pending, outcome: "refused" | "sk
 /** The reason a sample made from an upload carries in its history, so the history names the upload. */
 export const historyReason = (uploadId: number) => `From upload ${uploadId}`;
 
+/** The samples an upload has made so far. */
+async function madeBy(db: Kysely<Database>, uploadId: number): Promise<number[]> {
+  const made = await db.selectFrom("upload_sample_outcome").select("sample_id").where("upload_id", "=", uploadId).where("outcome", "=", "created").execute();
+  return made.flatMap((r) => (r.sample_id === null ? [] : [Number(r.sample_id)]));
+}
+
+/** Samples made and not yet entered in the history, which are entered together under one author and reason. */
+interface Unrecorded {
+  uploadId: number;
+  login: string;
+  ids: number[];
+}
+
+/**
+ * How many samples are entered in the history in one pass. A pass over one sample rewrites the whole snapshot file,
+ * which on a copy of production (11 MB) took 0.67 s of the 0.7 s a row took; twenty-five at a time it is shared.
+ * A crash loses the entry of at most this many samples, which the next full pass writes under `reconcile` instead,
+ * without the author and the reason.
+ */
+export const HISTORY_BATCH = 25;
+
+/** Enter the samples made so far in the history, each in its own turn of the sample's queue. */
+async function recordMade(deps: ApplyDeps, pending: Unrecorded | null): Promise<void> {
+  if (pending === null || pending.ids.length === 0) return;
+  const ids = [...pending.ids];
+  pending.ids.length = 0;
+  // Turns are taken one inside another, for ids nobody else is waiting on: the samples are new.
+  const inTurns = (rest: number[]): Promise<void> => (rest.length === 0
+    ? recordTrapChanges(deps, pending.login, ids, { source: "upload", created: true, reason: historyReason(pending.uploadId) })
+    : onSample(rest[0]!, () => inTurns(rest.slice(1))));
+  await inTurns(ids);
+}
+
 /** Make one trap sample from a queued row, or say why not. */
-async function createRow(deps: ApplyDeps, p: Pending): Promise<"created" | "refused" | "skipped"> {
+async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "created"; id: number } | { outcome: "refused" | "skipped" }> {
   const queued = JSON.parse(p.payload ?? "null") as QueuedRow | null;
   if (queued === null) {
     await settle(deps.db, p, "refused", "Nothing was queued for this row.");
-    return "refused";
+    return { outcome: "refused" };
   }
   // The trap form's own check, again, with the ids the collectors came to.
   const checked = await checkTrapSample(deps.conn, queued.form, null);
   if ("problems" in checked) {
     await settle(deps.db, p, "refused", Object.values(checked.problems).join(" "));
-    return "refused";
+    return { outcome: "refused" };
   }
   const sample = checked.sample;
   if (!queued.anyway) {
-    const [like] = await findLookalikes(deps.conn, {
-      firstCollectorId: sample.collector_ids[0]!,
-      dateStart: sample.date_start,
-      dateEnd: sample.date_end,
-      latitude: sample.latitude,
-      longitude: sample.longitude,
-    });
+    // Not the samples this same upload has made: its rows are the file's own, and two traps at one site on the same days are two samples.
+    const siblings = new Set(await madeBy(deps.db, p.upload_id));
+    const [like] = (
+      await findLookalikes(deps.conn, {
+        firstCollectorId: sample.collector_ids[0]!,
+        dateStart: sample.date_start,
+        dateEnd: sample.date_end,
+        latitude: sample.latitude,
+        longitude: sample.longitude,
+      })
+    ).filter((l) => !siblings.has(l.sampleId));
     if (like !== undefined) {
       await settle(deps.db, p, "skipped", lookalikeSentence(like.sampleNumber));
-      return "skipped";
+      return { outcome: "skipped" };
     }
   }
   // The outcome is written in the sample's own transaction, so a crash cannot leave a sample that no row names.
@@ -221,11 +258,9 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<"created" | "refu
   });
   if (made === "taken") {
     await settle(deps.db, p, "refused", numberTakenProblem(sample.sample_number));
-    return "refused";
+    return { outcome: "refused" };
   }
-  // Entered in the sample's history as arriving, under whoever applied the file, in the sample's own turn.
-  await onSample(made, () => recordTrapChange(deps, p.login ?? "", made, { source: "upload", created: true, reason: historyReason(p.upload_id) }));
-  return "created";
+  return { outcome: "created", id: made };
 }
 
 export interface ApplyResult {
@@ -243,22 +278,38 @@ export interface ApplyResult {
 export async function applyPending(deps: ApplyDeps): Promise<ApplyResult> {
   const step = deps.step ?? ((_label, fn) => fn());
   const result: ApplyResult = { created: 0, refused: 0, skipped: 0 };
-  for (;;) {
-    const next = await nextPending(deps.db);
-    if (next === undefined) return result;
-    const done = await step(`upload ${next.upload_id} row ${next.row_number}`, async () => {
-      try {
-        if (next.unit === ROW_UNIT) return await createRow(deps, next);
-        await settle(deps.db, next, "refused", `Beeline does not apply a ${next.unit} change yet.`);
-        return "refused" as const;
-      } catch (err) {
-        console.error(`[apply-uploads] upload ${next.upload_id} row ${next.row_number} failed: ${(err as Error).stack ?? String(err)}`);
-        await settle(deps.db, next, "refused", `It could not be created: ${(err as Error).message}`);
-        return "refused" as const;
+  let unrecorded: Unrecorded | null = null;
+  try {
+    for (;;) {
+      const next = await nextPending(deps.db);
+      // The samples made so far are entered before the work changes hands to another upload or author.
+      if (unrecorded !== null && (next === undefined || next.upload_id !== unrecorded.uploadId)) {
+        await recordMade(deps, unrecorded);
+        unrecorded = null;
       }
-    });
-    result[done]++;
-    await deps.afterRow?.({ uploadId: next.upload_id, row: next.row_number });
+      if (next === undefined) return result;
+      const done = await step(`upload ${next.upload_id} row ${next.row_number}`, async (): Promise<Awaited<ReturnType<typeof createRow>>> => {
+        try {
+          if (next.unit === ROW_UNIT) return await createRow(deps, next);
+          await settle(deps.db, next, "refused", `Beeline does not apply a ${next.unit} change yet.`);
+          return { outcome: "refused" };
+        } catch (err) {
+          console.error(`[apply-uploads] upload ${next.upload_id} row ${next.row_number} failed: ${(err as Error).stack ?? String(err)}`);
+          await settle(deps.db, next, "refused", `It could not be created: ${(err as Error).message}`);
+          return { outcome: "refused" };
+        }
+      });
+      result[done.outcome]++;
+      if (done.outcome === "created") {
+        unrecorded ??= { uploadId: next.upload_id, login: next.login ?? "", ids: [] };
+        unrecorded.ids.push(done.id);
+        if (unrecorded.ids.length >= HISTORY_BATCH) await recordMade(deps, unrecorded);
+      }
+      await deps.afterRow?.({ uploadId: next.upload_id, row: next.row_number });
+    }
+  } finally {
+    // Also when the job is stopped between rows: what was made is entered before it ends.
+    await recordMade(deps, unrecorded);
   }
 }
 

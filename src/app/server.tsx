@@ -15,7 +15,6 @@ import { registerAuthRoutes, signInHref, type AuthDeps, type InatClient } from "
 import { OLD_BEELINE_ORIGIN, registerOldBeelineRedirects } from "./old-beeline.js";
 import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
-import { en } from "./messages/en.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { createApi, refuseStrayCredentials, type ApiDeps } from "./api.js";
@@ -74,7 +73,7 @@ import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
-import { addressRows, needsLookup, runCollectors, runHasRegistration } from "./print-run-addresses.js";
+import { addressRows, needsLookup, runCollectors, runHasRegistration, type RunCollectors } from "./print-run-addresses.js";
 import { IdealLogicError, type Registrant } from "../ideal-logic.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
@@ -2538,16 +2537,23 @@ export function createApp({
     // The fetch can take a minute. Read the run again afterwards, so that a
     // run canceled meanwhile is refused, and read its collectors and their
     // registration links only now, so the file reflects the store as it is.
-    const after = await loadRun(db, id);
-    if (after === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
-    if (after.state === "canceled") return canceled();
-    const inRun = await runCollectors(db, id);
+    const readRun = async (): Promise<Response | RunCollectors> => {
+      const after = await loadRun(db, id);
+      if (after === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
+      if (after.state === "canceled") return canceled();
+      return runCollectors(db, id);
+    };
+    let inRun = await readRun();
+    if (inRun instanceof Response) return inRun;
     // Staff may have switched a collector from keeping the labels in the lab
-    // back to mailing them while the first check was made and now. If nobody
-    // was looked up then and somebody needs it now, look them up now.
+    // back to mailing them between the first check and that read. If nobody
+    // was looked up then and somebody needs it now, look them up now, and
+    // read the run again after that wait too, for the same reasons.
     if (needsLookup(inRun) && !fetched) {
       const failed = await fetchRegistrants();
       if (failed !== null) return failed;
+      inRun = await readRun();
+      if (inRun instanceof Response) return inRun;
     }
     const rows = addressRows(inRun, registrants);
     // Who and how many, never a name or an address.

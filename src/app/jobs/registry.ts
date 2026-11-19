@@ -847,25 +847,34 @@ export function buildJobs(
       schedule: { kind: "dailyLA", hour: 1 },
       window: "night",
       async run(ctx) {
-        if (!config.idealLogic) return "no Ideal Logic key (IDEAL_LOGIC_KEY) — nothing to fetch";
+        // Without the fingerprint key the table is emptied first, before
+        // anything can return early or fail: a fingerprint made under a key
+        // that is gone cannot be matched, and nothing should keep it.
+        const key = config.registrationEmailKey ?? null;
+        let cleared: string | null = null;
+        if (key === null) {
+          cleared = await ctx.step("clear email fingerprints", async () => {
+            const removed = await clearEmailFingerprints(ctx.db);
+            return removed === 0
+              ? "email fingerprints off"
+              : `email fingerprints off (no REGISTRATION_EMAIL_KEY); ${removed} removed`;
+          });
+        }
+        if (!config.idealLogic) {
+          const nothing = "no Ideal Logic key (IDEAL_LOGIC_KEY) — nothing to fetch";
+          return cleared === null ? nothing : `${nothing}; ${cleared}`;
+        }
         const client = config.idealLogic;
         const registrants = await ctx.step("fetch registrations", () => client.fetchRegistrants({ signal: ctx.signal }));
         const recorded = await ctx.step("record and link", () =>
           recordRegistrants(ctx.db, registrants, { decidedBy: "ideal-logic-registrants" }),
         );
-        // The whole table is replaced from this fetch, so a registration that
-        // left Ideal Logic loses its fingerprint and a changed key takes
-        // effect tonight. Without the key the table is emptied, since a
-        // fingerprint made under a key that is gone cannot be matched.
-        const key = config.registrationEmailKey;
+        // With the key, the whole table is replaced from this fetch, so a
+        // registration that left Ideal Logic loses its fingerprint and a
+        // changed key takes effect tonight.
         const fingerprints =
-          key === undefined || key === null
-            ? await ctx.step("clear email fingerprints", async () => {
-                const removed = await clearEmailFingerprints(ctx.db);
-                return removed === 0
-                  ? "email fingerprints off"
-                  : `email fingerprints off (no REGISTRATION_EMAIL_KEY); ${removed} removed`;
-              })
+          key === null
+            ? cleared
             : `${await ctx.step("fingerprint emails", () => recordEmailFingerprints(ctx.db, registrants, key))} email fingerprints`;
         return `${describeRegistrants(recorded)}; ${fingerprints}`;
       },

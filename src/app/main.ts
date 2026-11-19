@@ -11,6 +11,7 @@ import { ensureSampleOverlayFile } from "../sample-overlay.js";
 import { ensureProgramContactsFile } from "../program-contacts.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs, DEM_DIR, GAZETTEER_PATH, storeFiles } from "./jobs/registry.js";
+import { serverUploadArchive } from "./upload-archive.js";
 import { createApp } from "./server.js";
 import { flushErrorReporting, initErrorReporting, jobCheckIns, reportError } from "./error-reporting.js";
 import { checkRegistryMark, currentCatalog } from "../registry-mark.js";
@@ -229,6 +230,10 @@ const app = createApp({
   derivePaths: { demDir: DEM_DIR, gazetteerPath: GAZETTEER_PATH },
   printRunsDir: config.printRunsDir,
   uploadsDir: config.uploadsDir,
+  // Each upload is also kept in the Drive folder of received files, with the
+  // key the nightly backup uses (beeline-kgyd.1), in production only; on disk
+  // only anywhere else.
+  uploadArchive: serverUploadArchive(config.driveBackup?.key ?? null, config.environment),
   registryMarkPath: config.registryMarkPath,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

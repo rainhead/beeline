@@ -79,6 +79,7 @@ import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, t
 import { specimenWorkbook } from "./specimen-workbook.js";
 import { MAX_FILE_BYTES, comparePlan, parseUpload, type Layout as UploadLayout, type Parsed } from "./upload-plan.js";
 import type { ReadLimits } from "./xlsx-reader.js";
+import { keptName, type UploadArchive } from "./upload-archive.js";
 import {
   listRuns,
   loadRun,
@@ -326,6 +327,12 @@ export interface AppDeps {
   uploadReadLimits?: Partial<ReadLimits>;
   /** Which columns an upload is read for; the specimens file's by default. A test of the page gives a wider one, since no file yet reads a sample's columns. */
   uploadLayout?: UploadLayout;
+  /**
+   * Where an upload is kept besides the disk (src/app/upload-archive.ts): the
+   * Drive folder of received files on the server, nowhere in a test or on a
+   * workstation without the key. Absent ⇒ the file is kept on disk only.
+   */
+  uploadArchive?: UploadArchive | null;
   /** The registry mark each print run raises (config.registryMarkPath, src/registry-mark.ts). */
   registryMarkPath?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -366,6 +373,7 @@ export function createApp({
   uploadsDir,
   uploadReadLimits,
   uploadLayout,
+  uploadArchive = null,
   registryMarkPath,
   programGovernance,
   programContactsPath,
@@ -2213,7 +2221,7 @@ export function createApp({
       .orderBy("uploaded_at", "desc")
       .orderBy("entity_id", "desc")
       .execute();
-  const uploadForm = async (c: Context<AppEnv>, refusal: string | null, status: 200 | 400) => {
+  const uploadForm = async (c: Context<AppEnv>, refusal: string | null, status: 200 | 400 | 503) => {
     const m = c.get("m");
     return c.html(
       await page(c, m.uploads.title, <Uploads m={m} uploads={await ownUploads(c.get("session").personId)} refusal={refusal} />),
@@ -2257,6 +2265,11 @@ export function createApp({
       return errorResponse(c, "failed", { err: err as Error });
     }
     const keptAt = uploadFile(id);
+    const session = c.get("session");
+    // Kept in Drive once it is read and before its row is written, so a file
+    // that is refused never reaches Drive, and a row never names a copy that
+    // is not there (beeline-kgyd.1).
+    let driveId: string | null = null;
     try {
       await writeFile(keptAt, bytes);
       const parsed = await parseUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits, uploadLayout);
@@ -2264,21 +2277,46 @@ export function createApp({
         await rm(uploadFolder(id), { recursive: true, force: true });
         return uploadForm(c, refusalText(m, parsed), 400);
       }
+      const uploadedAt = new Date();
+      if (uploadArchive !== null) {
+        try {
+          driveId = await uploadArchive.keep({
+            path: keptAt,
+            name: keptName(id, session.login, oregonToday(uploadedAt), fileName),
+            description: m.uploads.keptDescription(id, session.login),
+            properties: { uploadId: String(id), uploadedBy: session.login },
+          });
+        } catch (err) {
+          console.error(`upload ${id} refused: the copy for Drive was not kept (${(err as Error).message})`);
+          await rm(uploadFolder(id), { recursive: true, force: true });
+          return uploadForm(c, m.uploads.refused.not_kept!, 503);
+        }
+      }
       await db
         .insertInto("upload")
         .values({
           entity_id: id,
-          uploaded_by: c.get("session").personId,
-          uploaded_at: new Date().toISOString(),
+          uploaded_by: session.personId,
+          uploaded_at: uploadedAt.toISOString(),
           file_name: fileName,
           sha256: createHash("sha256").update(bytes).digest("hex"),
           byte_size: bytes.byteLength,
           row_count: parsed.upload.rows.length,
           reference,
+          drive_file_id: driveId,
         })
         .execute();
     } catch (err) {
-      await rm(uploadFolder(id), { recursive: true, force: true });
+      // Both copies go, each whether or not the other could, and the error that brought us here is the one reported.
+      await rm(uploadFolder(id), { recursive: true, force: true }).catch((rmErr: Error) =>
+        console.error(`upload ${id}: its folder ${uploadFolder(id)} could not be removed (${rmErr.message})`),
+      );
+      // A copy in Drive that no row names would be a file nobody can trace.
+      if (driveId !== null) {
+        await uploadArchive!.discard(driveId).catch((trashErr: Error) =>
+          console.error(`upload ${id}: its copy in Drive, ${driveId}, names no upload and could not be binned (${trashErr.message})`),
+        );
+      }
       throw err;
     }
     return c.redirect(uploadHref(id), 303);
@@ -2293,7 +2331,7 @@ export function createApp({
     const row = await db
       .selectFrom("upload as u")
       .innerJoin("person as p", "p.entity_id", "u.uploaded_by")
-      .select(["u.entity_id", "u.file_name", "u.uploaded_at", "u.row_count", "u.reference", "u.sha256", "p.display_name as uploader"])
+      .select(["u.entity_id", "u.file_name", "u.uploaded_at", "u.row_count", "u.reference", "u.sha256", "u.drive_file_id", "p.display_name as uploader"])
       .where("u.entity_id", "=", id)
       .executeTakeFirst();
     if (row === undefined) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });

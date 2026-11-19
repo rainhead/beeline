@@ -1,6 +1,7 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
 import { sampleHref, specimenHref } from "../record.js";
+import { driveFileHref } from "../upload-archive.js";
 import {
   CHANGE_KINDS,
   HOLD_REASONS,
@@ -36,6 +37,8 @@ export interface UploadListRow {
 export interface UploadDetail extends UploadListRow {
   uploader: string;
   reference: string | null;
+  /** The copy in the Drive folder of received files, if one was kept. */
+  drive_file_id: string | null;
 }
 
 export function Uploads({
@@ -244,6 +247,11 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
         <a href="/uploads">{p.back}</a>
       </p>
       {upload.reference !== null && <Meta block>{p.reference(upload.reference)}</Meta>}
+      {upload.drive_file_id !== null && (
+        <Meta block>
+          <a href={driveFileHref(upload.drive_file_id)}>{p.keptInDrive}</a>
+        </Meta>
+      )}
       <Callout>{p.notChanged}</Callout>
       {plan.unrecognised.length > 0 && <Unrecognised m={m} columns={plan.unrecognised} />}
       {plan.otherSheets.length > 0 && (

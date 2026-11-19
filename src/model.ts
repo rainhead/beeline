@@ -1255,7 +1255,7 @@ export interface WorksheetDeterminationTable {
   loaded_at: Timestamped;
 }
 
-/** A file somebody uploaded to be compared with what Beeline says (schema/047, beeline-kgyd). The bytes are on disk. */
+/** A file somebody uploaded to be compared with what Beeline says (schema/047, beeline-kgyd). The bytes are on disk, and a copy in Drive. */
 export interface UploadTable {
   entity_id: Generated<number>;
   uploaded_by: number;
@@ -1265,6 +1265,8 @@ export interface UploadTable {
   byte_size: number;
   row_count: number;
   reference: string | null;
+  /** The copy in the Drive folder of received files (beeline-kgyd.1); null where the app keeps none. */
+  drive_file_id: string | null;
 }
 
 /** An old-Beeline record promotion set aside as a second print, tied to its specimen (beeline-iuva). */

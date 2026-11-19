@@ -2307,7 +2307,10 @@ export const en = {
       protected_file:
         "This file is protected, with a password or a sensitivity label, or it is an older .xls file, so Beeline cannot read it. Save an unprotected copy as an Excel workbook (.xlsx) and upload that.",
       no_rows: "That file has a row of column names and nothing after it.",
+      not_kept: "Beeline could not keep a copy of the file just now, so it did not take it. Nothing was saved. Try again in a few minutes.",
     } as Record<string, string>,
+    /** The description of the copy kept in the Drive folder of received files, which anyone browsing the folder reads. */
+    keptDescription: (id: number, login: string) => `Uploaded to Beeline by ${login} as upload ${id}, on the Edited downloads page.`,
     refusedRepeatedColumn: (column: string) =>
       `The column ${column} is in this file more than once, so Beeline cannot tell which one to read. Delete the extra one and upload the file again.`,
     refusedNoSuchSheet: (tabs: string) =>
@@ -2320,6 +2323,7 @@ export const en = {
       back: "All uploads",
       uploaded: (when: string, who: string) => `Uploaded ${when} by ${who}`,
       reference: (reference: string) => `Request behind the file: ${reference}`,
+      keptInDrive: "Open the copy kept in Drive",
       notChanged:
         "Nothing has been changed. This page only says what differs between the file and what Beeline says now. Beeline does not apply changes from a file yet. When it can, it will check each change against its own rules, for instance that a name is in the taxonomy and a determiner is someone it knows, and it will refuse some changes that are listed here as differences. None of those checks is made on this page.",
       otherSheetsHeading: "Tabs that were not read",

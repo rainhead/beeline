@@ -10,6 +10,7 @@ import { rows } from "./helpers.js";
 import { CURRENT_SEASON } from "./helpers.js";
 import { bytesOf, edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 import { buildWorkbook, serialOf } from "./workbook.js";
+import { driveUploadArchive, serverUploadArchive, type KeptFile, type UploadArchive } from "../src/app/upload-archive.js";
 
 /**
  * This file tests how the page shows every kind of unit, though the specimens file reads only a specimen's two: a
@@ -166,6 +167,103 @@ describe("uploading a file", () => {
     expect(Buffer.compare(await readFile(join(f.paths.uploadsDir, String(id), "upload.xlsx")), Buffer.from(bytes))).toBe(0);
     // And in the person's list, as a link.
     expect(await (await f.app.request("/uploads")).text()).toContain(`<a href="/uploads/${id}">C:\\Users\\x\\my edited file.xlsx</a>`);
+  });
+});
+
+/** An archive that keeps nothing anywhere: it records what it was asked to keep, and fails where a test says. */
+function fakeArchive(behaviour: { keep?: (file: KeptFile) => Promise<void> } = {}) {
+  const kept: KeptFile[] = [];
+  const discarded: string[] = [];
+  const archive: UploadArchive = {
+    async keep(file) {
+      await behaviour.keep?.(file);
+      kept.push(file);
+      return `drive-${kept.length}`;
+    },
+    async discard(id) {
+      discarded.push(id);
+    },
+  };
+  return { archive, kept, discarded };
+}
+
+describe("keeping the file in Drive (beeline-kgyd.1)", () => {
+  it("keeps an accepted file in Drive, named so a person can find it, and records where", async () => {
+    const fake = fakeArchive();
+    const f = await wideFixture("staffer", { archive: fake.archive });
+    const res = await upload(f, await f.download(), "my bees.xlsx");
+    expect(res.status).toBe(303);
+    const [[id, driveId]] = (await rows(f.conn, `SELECT entity_id, drive_file_id FROM upload`)) as [[number, string]];
+    expect(driveId).toBe("drive-1");
+    expect(fake.kept).toHaveLength(1);
+    const file = fake.kept[0]!;
+    // The file it sent is the one on disk, under its own folder.
+    expect(file.path).toBe(join(f.paths.uploadsDir, String(id), "upload.xlsx"));
+    expect(file.name).toMatch(/^upload \d+ staffer \d{4}-\d{2}-\d{2} my bees\.xlsx$/);
+    expect(file.name.startsWith(`upload ${id} `)).toBe(true);
+    expect(file.description).toBe(en.uploads.keptDescription(id, "staffer"));
+    expect(file.properties).toEqual({ uploadId: String(id), uploadedBy: "staffer" });
+    // The preview links staff to the copy.
+    expect(await (await f.app.request(`/uploads/${id}`)).text()).toContain(`href="https://drive.google.com/file/d/drive-1/view"`);
+  });
+
+  it("never sends a refused file to Drive", async () => {
+    const fake = fakeArchive();
+    const f = await wideFixture("staffer", { archive: fake.archive });
+    expect((await upload(f, buildWorkbook([["fieldNumber"], ["OBA10001"]]))).status).toBe(400);
+    expect(fake.kept).toEqual([]);
+    expect(await uploadCount(f)).toBe(0);
+  });
+
+  it("refuses the upload when Drive does not keep the file, and keeps nothing at all", async () => {
+    const fake = fakeArchive({ keep: () => Promise.reject(new Error("Drive answered 503")) });
+    const f = await wideFixture("staffer", { archive: fake.archive });
+    const res = await upload(f, await f.download());
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain(esc(en.uploads.refused.not_kept!));
+    expect(await uploadCount(f)).toBe(0);
+    expect(await kept(f)).toEqual([]);
+  });
+
+  it("bins the copy in Drive when the upload's row cannot be written after it", async () => {
+    // The fake writes a row with the upload's own id while Drive "stores" the file, so the app's insert then fails.
+    let f: UploadFixture | undefined;
+    const fake = fakeArchive({
+      keep: async (file) => {
+        const id = Number(/^upload (\d+) /.exec(file.name)![1]);
+        await f!.conn.run(
+          `INSERT INTO upload (entity_id, uploaded_by, uploaded_at, file_name, sha256, byte_size, row_count) VALUES (${id}, ${f!.staffer}, now(), 'other.xlsx', '${"a".repeat(64)}', 1, 1)`,
+        );
+      },
+    });
+    f = await wideFixture("staffer", { archive: fake.archive });
+    const res = await upload(f, await f.download());
+    expect(res.status).toBe(500);
+    expect(fake.discarded).toEqual(["drive-1"]);
+    expect(await kept(f)).toEqual([]);
+    expect(await rows(f.conn, `SELECT file_name, drive_file_id FROM upload`)).toEqual([["other.xlsx", null]]);
+  });
+
+  it("keeps the file on disk only, and links to nothing, where the app has no key, as in every test", async () => {
+    const f = await wideFixture();
+    const res = await upload(f, await f.download());
+    expect(res.status).toBe(303);
+    expect(await rows(f.conn, `SELECT drive_file_id FROM upload`)).toEqual([[null]]);
+    expect(await (await f.app.request(res.headers.get("location")!)).text()).not.toContain("drive.google.com");
+  });
+
+  it("will not make a Drive archive under Vitest, so no test can write to the real folder", () => {
+    expect(() => driveUploadArchive({ client_email: "x@example.com", private_key: "k", token_uri: "https://example.com" }, "folder")).toThrow(/Vitest/);
+    const key = { client_email: "x@example.com", private_key: "k", token_uri: "https://example.com" };
+    expect(() => serverUploadArchive(key, "production")).toThrow(/Vitest/);
+    expect(serverUploadArchive(null, "production")).toBeNull();
+  });
+
+  it("keeps nothing in Drive outside production, even with the key: the folder is production's", () => {
+    const key = { client_email: "x@example.com", private_key: "k", token_uri: "https://example.com" };
+    // Not made at all, so not even the Vitest guard is reached.
+    expect(serverUploadArchive(key, "development")).toBeNull();
+    expect(serverUploadArchive(key, "sandbox")).toBeNull();
   });
 });
 

@@ -55,6 +55,15 @@ export interface InatIdentity {
    * same as saying there is none.
    */
   orcid?: string | null;
+  /**
+   * The email address iNaturalist holds for the account, and whether the
+   * person has confirmed it (`confirmed_at` is set). Held in memory for the
+   * length of the sign-in and never logged or stored: the only use is the
+   * keyed fingerprint `linkBySignInEmail` compares (beeline-w8ab.7). Absent
+   * where a client does not say.
+   */
+  email?: string | null;
+  emailConfirmed?: boolean;
 }
 
 /** The iNaturalist side of sign-in — injectable so tests never hit the network. */
@@ -111,7 +120,14 @@ export function inatClient(creds: InatCredentials): InatClient {
       const meRes = await fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${jwt}` } });
       if (!meRes.ok) throw new Error(`identity fetch failed: ${meRes.status}`);
       const me = (await meRes.json()) as {
-        results: Array<{ id: number; login: string; icon_url?: string | null; orcid?: string | null }>;
+        results: Array<{
+          id: number;
+          login: string;
+          icon_url?: string | null;
+          orcid?: string | null;
+          email?: string | null;
+          confirmed_at?: string | null;
+        }>;
       };
       const user = me.results[0];
       if (!user) throw new Error("identity fetch returned no user");
@@ -123,6 +139,8 @@ export function inatClient(creds: InatCredentials): InatClient {
         // that does not read as an iD says nothing either way, so it leaves
         // what is stored alone rather than erasing it as "none".
         orcid: user.orcid ? (parseOrcid(user.orcid) ?? undefined) : null,
+        email: user.email ?? null,
+        emailConfirmed: user.confirmed_at != null,
       };
     },
   };
@@ -140,6 +158,14 @@ export interface AuthDeps {
    * is, so it is when an iD they connected arrives — no schedule needed.
    */
   recordOrcid?: (inatUserId: number, orcid: string | null) => Promise<void>;
+  /**
+   * Link whoever holds the account to the registration that holds the email
+   * address iNaturalist reported for it (beeline-w8ab.7). Takes the
+   * iNaturalist user id, so the holder is read when the link is made, not
+   * when sign-in read it. The address is
+   * handed over for this one call and dropped.
+   */
+  linkRegistration?: (inatUserId: number, email: string | null, emailConfirmed: boolean) => Promise<void>;
   /** Where each callback's outcome goes; the metric and the console unless a test listens. */
   reportSignIn?: (outcome: SignInOutcome, line: string) => void;
 }
@@ -318,6 +344,16 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
         )}`,
         403,
       );
+    }
+
+    // Like the ORCID iD, never fails the sign-in. The message is fixed text:
+    // the error could quote the address, so it is not logged.
+    if (deps.linkRegistration !== undefined && identity.email != null && identity.emailConfirmed === true) {
+      try {
+        await deps.linkRegistration(identity.inatUserId, identity.email, true);
+      } catch {
+        console.warn("sign-in: could not link the person to a registration by email address");
+      }
     }
 
     const sessionId = await createSession(deps.db, identity.inatUserId);

@@ -136,7 +136,7 @@ import {
   recentChanges,
 } from "../person-change.js";
 import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
-import { decideRegistration } from "../registrations.js";
+import { decideRegistration, linkAccountHolderBySignInEmail } from "../registrations.js";
 import { decideMailing } from "../mailing-instructions.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
@@ -256,7 +256,7 @@ export interface JobsDep {
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir" | "idealLogic">>;
+  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir" | "idealLogic" | "registrationEmailKey">>;
   inat: InatClient;
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
@@ -596,6 +596,7 @@ export function createApp({
     origin: config.origin,
     environment: config.environment,
     recordOrcid: (inatUserId, orcid) => recordSignInOrcid(inatUserId, orcid),
+    linkRegistration: (inatUserId, email, emailConfirmed) => linkRegistrationAtSignIn(inatUserId, email, emailConfirmed),
     reportSignIn,
   });
 
@@ -2912,6 +2913,19 @@ export function createApp({
     decisionQueue = run.catch(() => {});
     return run;
   };
+
+  /**
+   * Link a person to the registration with their confirmed iNaturalist email
+   * address, as they sign in (beeline-w8ab.7). In the queue with every other
+   * decision about a person, since it reads whether one has been made and
+   * then records one. It takes the iNaturalist user id and finds the
+   * account's holder inside its turn, because staff may have moved the
+   * account to another person while it waited.
+   */
+  const linkRegistrationAtSignIn = (inatUserId: number, email: string | null, emailConfirmed: boolean) =>
+    oneDecisionAtATime(async () => {
+      await linkAccountHolderBySignInEmail(db, { inatUserId, email, emailConfirmed, key: config.registrationEmailKey ?? null });
+    });
 
   /**
    * What iNaturalist said about an account's ORCID iD as it signed in

@@ -233,6 +233,12 @@ export interface PersonRegistration {
   decided: boolean;
   ideal_logic_id: string | null;
   registrant: string | null;
+  /**
+   * True where the person is linked, by their email address at sign-in, to a
+   * registration the nightly job has not yet kept a row for, so its name is
+   * not known yet. It is read at the next run.
+   */
+  registrant_pending: boolean;
   evidence: string | null;
   decided_by: string | null;
   decided_at: Date | null;
@@ -247,7 +253,7 @@ export async function registrationOf(db: Kysely<Database>, personId: number): Pr
     .limit(1)
     .executeTakeFirst();
   if (latest === undefined) {
-    return { decided: false, ideal_logic_id: null, registrant: null, evidence: null, decided_by: null, decided_at: null };
+    return { decided: false, ideal_logic_id: null, registrant: null, registrant_pending: false, evidence: null, decided_by: null, decided_at: null };
   }
   const who =
     latest.ideal_logic_id === null
@@ -261,6 +267,7 @@ export async function registrationOf(db: Kysely<Database>, personId: number): Pr
     decided: true,
     ideal_logic_id: latest.ideal_logic_id,
     registrant: who === undefined ? null : `${who.given_name} ${who.family_name}`,
+    registrant_pending: who === undefined && latest.ideal_logic_id !== null && latest.evidence === "sign_in_email",
     evidence: latest.evidence,
     decided_by: latest.decided_by,
     decided_at: latest.decided_at,

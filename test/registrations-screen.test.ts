@@ -311,6 +311,22 @@ describe("the registration on a person's page", () => {
     expect(await (await get(`/people/${ids.ada}`)).text()).toContain("No registration (decided by samstaff");
   });
 
+  it("shows a registration linked at sign-in before the nightly job has read its name, and with the evidence in words", async () => {
+    const { get, conn, ids } = await setup();
+    const p = en.people;
+    // Cy has no row for NEW-9 in ideal_logic_registrant: the job did not keep it.
+    await conn.run(
+      `INSERT INTO person_registration_event (person_id, ideal_logic_id, evidence, decided_by) VALUES (${ids.cy}, 'NEW-9', 'sign_in_email', 'sign-in')`,
+    );
+    const page = await (await get(`/people/${ids.cy}`)).text();
+    expect(page).toContain(p.registrationNamePending);
+    expect(page).toContain("NEW-9");
+    expect(page).toContain(p.registrationEvidenceKinds.sign_in_email);
+    expect(page).toContain("they signed in to Beeline with the email address of this registration");
+    expect(page).not.toContain(p.registrationUnknown);
+    expect(page).toContain("Decided by sign-in");
+  });
+
   it("lets staff link a person they recorded as having no registration, from the person's page", async () => {
     const { get, post, conn, db, ids } = await setup();
     await post(`/registrations/${ids.bo}/none`);

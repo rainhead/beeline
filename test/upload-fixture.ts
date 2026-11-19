@@ -236,6 +236,10 @@ export function edited(
     renameColumns?: Record<string, string>;
     addColumns?: Record<string, string>;
     dropRows?: number[];
+    /** The column that names a row, which an edit's `id` is in: `sampleId` for the samples file. */
+    idColumn?: string;
+    /** Rows added after the last, each by heading; a heading it does not give is left blank. */
+    addRows?: Array<Record<string, TestCell>>;
     /** The sheet's name, and other sheets of the workbook (see buildWorkbook). */
     sheets?: { name?: string; others?: string[]; before?: boolean; date1904?: boolean };
   } = {},
@@ -245,7 +249,7 @@ export function edited(
   const tab = readXlsxHere(download);
   const tabName = tab.ok ? tab.sheet.name : "specimens";
   const head = records[0]!;
-  const idAt = head.indexOf("specimenId");
+  const idAt = head.indexOf(options.idColumn ?? "specimenId");
   const drop = new Set((options.dropColumns ?? []).map((c) => head.indexOf(c)));
   const rows: TestCell[][] = records
     .filter((r, i) => i === 0 || !(options.dropRows ?? []).includes(Number(r[idAt])))
@@ -263,6 +267,9 @@ export function edited(
       for (const [name, value] of Object.entries(options.addColumns ?? {})) cells.push(i === 0 ? name : value);
       return cells;
     });
+  for (const added of options.addRows ?? []) {
+    rows.push(head.filter((_, at) => !drop.has(at)).map((h) => added[h] ?? null));
+  }
   return buildWorkbook(rows, { name: tabName, ...options.sheets });
 }
 

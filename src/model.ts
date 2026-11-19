@@ -1279,6 +1279,7 @@ export interface UploadAppliedTable {
 
 /** A trap sample staff deleted (schema/048, beeline-kgyd.4.10). */
 export interface SampleDeletionTable {
+  entity_id: Generated<number>;
   sample_id: number;
   sample_number: string;
   deleted_by: number;
@@ -1296,6 +1297,7 @@ export interface UploadSampleOutcomeTable {
   sample_number: string | null;
   payload: string | null;
   detail: string | null;
+  attempts: ColumnType<number, number | undefined, number>;
   recorded_at: ColumnType<Date, Date | string, Date | string>;
 }
 

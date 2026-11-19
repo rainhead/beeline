@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { matchCollectors, matchName, readPeople, type MatchedCollector } from "../collector-match.js";
 import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
-import { PROGRAM_SERIES, checkTrapSample, findLookalikes, highestSampleNumber, seriesNumberProblem, seriesReach, type Lookalike, type TrapSampleForm } from "../trap-sample.js";
+import { PROGRAM_SERIES, checkTrapSample, findLookalikes, highestSampleNumber, seriesNumberProblem, type Lookalike, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import {
@@ -517,16 +517,15 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   }
 
   // The program's own numbers are guarded: a number far above the series would move the next one offered for good. The
-  // file's own run of numbers extends the reach, but only the numbers of rows that will be made: a row that cannot be
-  // used, or waits to be ticked, or repeats a number, stretches nothing.
+  // bound is the highest number in Beeline plus the file's rows in the series that have nothing else wrong, plus the
+  // margin (seriesNumberProblem): it depends on no other row's outcome or tick. The job asks again with the same count,
+  // which it finds as the upload's queued rows.
   const candidates = results.filter((r) => r.kind === "new" && r.create !== null);
-  if (candidates.some((r) => r.create!.form.sample_number.startsWith(PROGRAM_SERIES))) {
-    const reach = seriesReach(
-      await highestSampleNumber(conn),
-      candidates.filter((r) => r.create!.lookalike === null || r.create!.anyway).map((r) => r.create!.form.sample_number),
-    );
+  const own = candidates.filter((r) => r.create!.form.sample_number.startsWith(PROGRAM_SERIES));
+  if (own.length > 0) {
+    const highest = await highestSampleNumber(conn);
     for (const r of candidates) {
-      const wrong = seriesNumberProblem(r.create!.form.sample_number, reach);
+      const wrong = seriesNumberProblem(r.create!.form.sample_number, highest, own.length);
       if (wrong === null) continue;
       r.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: wrong, cells: [] });
       r.create = null;

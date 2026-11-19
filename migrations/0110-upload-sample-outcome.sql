@@ -15,6 +15,7 @@ CREATE TABLE upload_sample_outcome (
   sample_number TEXT,
   payload       TEXT,
   detail        TEXT,
+  attempts      INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   recorded_at   TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (upload_id, row_number, unit)
 );
@@ -26,6 +27,7 @@ COMMENT ON COLUMN upload_sample_outcome.sample_id IS 'The sample made or changed
 COMMENT ON COLUMN upload_sample_outcome.sample_number IS 'The sample''s number as the file gave it, so the record still says which sample it was after the sample is gone.';
 COMMENT ON COLUMN upload_sample_outcome.payload IS 'What the job is to write, as JSON, worked out and checked when the upload was applied, including the person ids its collectors came to. The job writes exactly this, so it does not depend on the file or on matching names again.';
 COMMENT ON COLUMN upload_sample_outcome.detail IS 'For a refused or skipped row, the sentence saying why.';
+COMMENT ON COLUMN upload_sample_outcome.attempts IS 'How many times the job failed on this row for a reason nobody foresaw, which left it pending. A third failure refuses the row, with the error as its detail, so one stuck row does not block the rows behind it. A run that ended because the process was stopping is not an attempt.';
 COMMENT ON COLUMN upload_sample_outcome.recorded_at IS 'When the row was queued, and then when its outcome was recorded.';
 
 -- A trap sample entered in Beeline and deleted by staff (beeline-kgyd.4.10). Written in the same transaction that
@@ -33,14 +35,15 @@ COMMENT ON COLUMN upload_sample_outcome.recorded_at IS 'When the row was queued,
 -- and a deletion that was finished stays visible: the sample change log cannot say that a sample is gone (ADR 0007),
 -- and a change that leaves no trace is one nobody can see. No foreign key to sample, since the sample is gone.
 CREATE TABLE sample_deletion (
-  sample_id     INTEGER PRIMARY KEY,
+  entity_id     INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  sample_id     INTEGER NOT NULL,
   sample_number TEXT NOT NULL,
   deleted_by    INTEGER NOT NULL REFERENCES person(entity_id),
   deleted_at    TIMESTAMPTZ NOT NULL,
   reason        TEXT
 );
-COMMENT ON TABLE sample_deletion IS 'A trap sample entered in Beeline that staff deleted, with who and when (src/trap-sample.ts deleteTrapSample). Written in the transaction that removes the sample''s satellite rows, ahead of the sample row, so a deletion cut short between the two is finished by deleting again. The row stays after the sample is gone. No foreign key to sample, since the sample no longer exists; an id the store draws again after being put back to an earlier copy can meet an old row here, which is why finishing a deletion also requires that the sample has no collector.';
-COMMENT ON COLUMN sample_deletion.sample_id IS 'The id the sample had. Not a foreign key.';
+COMMENT ON TABLE sample_deletion IS 'A trap sample entered in Beeline that staff deleted, with who and when (src/trap-sample.ts deleteTrapSample). Written in the transaction that removes the sample''s satellite rows, ahead of the sample row, so a deletion cut short between the two is finished by deleting again. The row stays after the sample is gone. An entity (ADR 0002) with its own key, and no foreign key to sample, since the sample no longer exists: an id the store draws again after being put back to an earlier copy can have several records, a fresh deletion always writes a new one, and finishing a cut-short deletion (a sample with a record, no entry mark and no collector) writes none.';
+COMMENT ON COLUMN sample_deletion.sample_id IS 'The id the sample had. Not a foreign key and not unique.';
 COMMENT ON COLUMN sample_deletion.sample_number IS 'The number the sample had, so the record says which sample it was.';
 COMMENT ON COLUMN sample_deletion.deleted_by IS 'The person signed in who deleted it.';
 COMMENT ON COLUMN sample_deletion.deleted_at IS 'When its satellite rows were removed, which is when the deletion began.';

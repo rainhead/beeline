@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { checkTrapSample, createTrapSample, findLookalikes, highestSampleNumber, numberTakenProblem, seriesNumberProblem, seriesReach, PROGRAM_SERIES, type TrapSampleForm } from "../trap-sample.js";
+import { checkTrapSample, createTrapSample, findLookalikes, highestSampleNumber, numberTakenProblem, seriesNumberProblem, PROGRAM_SERIES, type TrapSampleForm } from "../trap-sample.js";
+import { JobInterrupted } from "./jobs/framework.js";
 import type { CorrectionDeps } from "./sample-corrections.js";
 import { recordTrapChanges } from "./sample-corrections.js";
 import { onSample } from "./sample-queue.js";
@@ -145,6 +146,11 @@ export interface ApplyDeps {
   /** The print runs' connection, which every write of a trap sample goes through (src/trap-sample.ts). */
   printWriter: DuckDBConnection;
   samplePaths: CorrectionDeps["samplePaths"];
+  /**
+   * The job's abort signal: set when the process is being stopped. No creation begins once it is, and an error met
+   * with it set is the stop and not a fault of the row.
+   */
+  signal?: AbortSignal;
   /** Runs one unit of work as a step of the job (the framework's), so a shutdown stops the job between rows. */
   step?: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
   /** Tests only: told after each row is done. */
@@ -159,11 +165,12 @@ interface Pending {
   payload: string | null;
   applied_by: number;
   login: string | null;
+  attempts: number;
 }
 
 async function nextPending(db: Kysely<Database>): Promise<Pending | undefined> {
   const found = await sql<Pending>`
-    SELECT o.upload_id, o.row_number, o.unit, o.sample_number, o.payload, a.applied_by,
+    SELECT o.upload_id, o.row_number, o.unit, o.sample_number, o.payload, o.attempts, a.applied_by,
            (SELECT min(i.login) FROM inat_account i WHERE i.person_id = a.applied_by) AS login
     FROM upload_sample_outcome o
     JOIN upload_applied a ON a.upload_id = o.upload_id
@@ -187,12 +194,6 @@ async function settle(db: Kysely<Database>, p: Pending, outcome: "refused" | "sk
 
 /** The reason a sample made from an upload carries in its history, so the history names the upload. */
 export const historyReason = (uploadId: number) => `From upload ${uploadId}`;
-
-/** The samples an upload has made so far. */
-async function madeBy(db: Kysely<Database>, uploadId: number): Promise<number[]> {
-  const made = await db.selectFrom("upload_sample_outcome").select("sample_id").where("upload_id", "=", uploadId).where("outcome", "=", "created").execute();
-  return made.flatMap((r) => (r.sample_id === null ? [] : [Number(r.sample_id)]));
-}
 
 /** Samples made and not yet entered in the history, which are entered together under one author and reason. */
 interface Unrecorded {
@@ -230,6 +231,26 @@ async function recordMade(deps: ApplyDeps, pending: Unrecorded | null): Promise<
   }
 }
 
+/** What was queued for a row, if it is the shape the job writes from; otherwise why not. */
+function readQueued(payload: string | null): QueuedRow | { unreadable: string } {
+  if (payload === null) return { unreadable: "nothing is stored" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch (err) {
+    return { unreadable: `not JSON: ${(err as Error).message}` };
+  }
+  const q = parsed as { form?: Record<string, unknown>; anyway?: unknown } | null;
+  const form = q?.form;
+  if (typeof form !== "object" || form === null) return { unreadable: "no form" };
+  for (const key of ["sample_number", "date_start", "date_end", "method", "trap_count", "specimen_count", "latitude", "longitude", "uncertainty", "country", "state_province", "county", "locality"]) {
+    if (typeof form[key] !== "string") return { unreadable: `${key} is not text` };
+  }
+  if (!Array.isArray(form.collectors) || !form.collectors.every((c) => typeof c === "string")) return { unreadable: "collectors is not a list of text" };
+  if (typeof q?.anyway !== "boolean") return { unreadable: "anyway is not true or false" };
+  return q as unknown as QueuedRow;
+}
+
 /** A look-alike found inside the creating transaction, which aborts it. */
 class LookalikeFound extends Error {
   constructor(readonly sampleNumber: string) {
@@ -239,9 +260,9 @@ class LookalikeFound extends Error {
 
 /** Make one trap sample from a queued row, or say why not. */
 async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "created"; id: number; release: () => void } | { outcome: "refused" | "skipped" }> {
-  const queued = JSON.parse(p.payload ?? "null") as QueuedRow | null;
-  if (queued === null) {
-    await settle(deps.db, p, "refused", "Nothing was queued for this row.");
+  const queued = readQueued(p.payload);
+  if ("unreadable" in queued) {
+    await settle(deps.db, p, "refused", `What was queued for this row cannot be read (${queued.unreadable}), so it was not created.`);
     return { outcome: "refused" };
   }
   // The trap form's own check, again, with the ids the collectors came to.
@@ -251,11 +272,18 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
     return { outcome: "refused" };
   }
   const sample = checked.sample;
-  // The guard on the program's own numbers again, against the store as it is now with this upload's own numbers (those
-  // already made are in the store; those waiting extend the reach as they did in the preview).
+  // The guard on the program's own numbers again, with the preview's bound: the highest number as the upload found it
+  // (leaving out what it has made since, so a resumed run gives the answer the first run would have) and the upload's
+  // own rows in the series, which are all of its rows, whatever became of them.
   if (sample.sample_number.startsWith(PROGRAM_SERIES)) {
-    const waiting = await deps.db.selectFrom("upload_sample_outcome").select("sample_number").where("upload_id", "=", p.upload_id).where("outcome", "=", "pending").execute();
-    const wrong = seriesNumberProblem(sample.sample_number, seriesReach(await highestSampleNumber(deps.conn), waiting.flatMap((w) => (w.sample_number === null ? [] : [w.sample_number]))));
+    const own = await deps.db
+      .selectFrom("upload_sample_outcome")
+      .select(({ fn }) => fn.countAll<number>().as("n"))
+      .where("upload_id", "=", p.upload_id)
+      .where("unit", "=", ROW_UNIT)
+      .where("sample_number", "like", `${PROGRAM_SERIES}%`)
+      .executeTakeFirstOrThrow();
+    const wrong = seriesNumberProblem(sample.sample_number, await highestSampleNumber(deps.conn, PROGRAM_SERIES, p.upload_id), Number(own.n));
     if (wrong !== null) {
       await settle(deps.db, p, "refused", wrong);
       return { outcome: "refused" };
@@ -265,15 +293,18 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
   // are two samples. Asked now to skip the row cheaply, and again in the creating transaction, under the print runs'
   // lock, where a trap form entry committed meanwhile is caught.
   const lookalike = async (conn: DuckDBConnection, except?: number) => {
-    const siblings = new Set(await madeBy(deps.db, p.upload_id));
-    const found = await findLookalikes(conn, {
-      firstCollectorId: sample.collector_ids[0]!,
-      dateStart: sample.date_start,
-      dateEnd: sample.date_end,
-      latitude: sample.latitude,
-      longitude: sample.longitude,
-    });
-    return found.find((l) => l.sampleId !== except && !siblings.has(l.sampleId));
+    const [found] = await findLookalikes(
+      conn,
+      {
+        firstCollectorId: sample.collector_ids[0]!,
+        dateStart: sample.date_start,
+        dateEnd: sample.date_end,
+        latitude: sample.latitude,
+        longitude: sample.longitude,
+      },
+      { sampleId: except, uploadId: p.upload_id },
+    );
+    return found;
   };
   if (!queued.anyway) {
     const like = await lookalike(deps.conn);
@@ -282,6 +313,9 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
       return { outcome: "skipped" };
     }
   }
+  // No creation begins once the process is stopping: its transaction is on the print connection, which a stop does not
+  // interrupt, since a print run shares it.
+  if (deps.signal?.aborted) throw new JobInterrupted(`making ${sample.sample_number}`);
   // The outcome is written in the sample's own transaction, so a crash cannot leave a sample that no row names.
   // Its queue turn is taken here, before the sample is visible to anyone, and held until the history pass has read it.
   let release: (() => void) | undefined;
@@ -315,6 +349,9 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
   return { outcome: "created", id: made, release: release! };
 }
 
+/** How many times a row may fail for a reason nobody foresaw before it is refused and the rows behind it go on. */
+export const MAX_ATTEMPTS = 3;
+
 export interface ApplyResult {
   created: number;
   refused: number;
@@ -327,7 +364,9 @@ export interface ApplyResult {
  * the job again when the process is back (`applyWaiting`). A row is recorded as refused only for a problem the code
  * recognises (the trap form's checks, a number taken, a look-alike, the guard on numbers). Anything else, an
  * interruption or a write conflict or an error nobody foresaw, leaves the row pending and ends the run as failed, so
- * the next run tries it again; the scheduler waits ON_DEMAND_RETRY_MS after a failure of that kind.
+ * the next run tries it again; the scheduler waits ON_DEMAND_RETRY_MS after a failure of that kind. An error counts
+ * as an attempt on the row (a stop does not), and the third refuses the row with the error as its detail, so one
+ * stuck row does not hold up the rows behind it.
  */
 export async function applyPending(deps: ApplyDeps): Promise<ApplyResult> {
   const step = deps.step ?? ((_label, fn) => fn());
@@ -343,9 +382,24 @@ export async function applyPending(deps: ApplyDeps): Promise<ApplyResult> {
       }
       if (next === undefined) return result;
       const done = await step(`upload ${next.upload_id} row ${next.row_number}`, async (): Promise<Awaited<ReturnType<typeof createRow>>> => {
-        if (next.unit === ROW_UNIT) return await createRow(deps, next);
-        await settle(deps.db, next, "refused", `Beeline does not apply a ${next.unit} change yet.`);
-        return { outcome: "refused" };
+        try {
+          if (next.unit === ROW_UNIT) return await createRow(deps, next);
+          await settle(deps.db, next, "refused", `Beeline does not apply a ${next.unit} change yet.`);
+          return { outcome: "refused" };
+        } catch (err) {
+          // The stop is not the row's fault: it stays pending, and is not counted.
+          if (deps.signal?.aborted || err instanceof JobInterrupted || /INTERRUPT/i.test((err as Error).message)) throw err;
+          const attempts = next.attempts + 1;
+          console.error(`[apply-uploads] upload ${next.upload_id} row ${next.row_number} failed (attempt ${attempts} of ${MAX_ATTEMPTS}): ${(err as Error).stack ?? String(err)}`);
+          if (attempts < MAX_ATTEMPTS) {
+            await sql`UPDATE upload_sample_outcome SET attempts = ${attempts}
+                      WHERE upload_id = ${next.upload_id} AND row_number = ${next.row_number} AND unit = ${next.unit} AND outcome = 'pending'`.execute(deps.db);
+            throw err;
+          }
+          await sql`UPDATE upload_sample_outcome SET attempts = ${attempts} WHERE upload_id = ${next.upload_id} AND row_number = ${next.row_number} AND unit = ${next.unit}`.execute(deps.db);
+          await settle(deps.db, next, "refused", `It could not be created: ${(err as Error).message}`);
+          return { outcome: "refused" };
+        }
       });
       result[done.outcome]++;
       if (done.outcome === "created") {

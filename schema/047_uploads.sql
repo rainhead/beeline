@@ -64,6 +64,7 @@ CREATE TABLE upload_sample_outcome (
   sample_number TEXT,
   payload       TEXT,
   detail        TEXT,
+  attempts      INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   recorded_at   TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (upload_id, row_number, unit)
 );
@@ -75,4 +76,5 @@ COMMENT ON COLUMN upload_sample_outcome.sample_id IS 'The sample made or changed
 COMMENT ON COLUMN upload_sample_outcome.sample_number IS 'The sample''s number as the file gave it, so the record still says which sample it was after the sample is gone.';
 COMMENT ON COLUMN upload_sample_outcome.payload IS 'What the job is to write, as JSON, worked out and checked when the upload was applied, including the person ids its collectors came to. The job writes exactly this, so it does not depend on the file or on matching names again.';
 COMMENT ON COLUMN upload_sample_outcome.detail IS 'For a refused or skipped row, the sentence saying why.';
+COMMENT ON COLUMN upload_sample_outcome.attempts IS 'How many times the job failed on this row for a reason nobody foresaw, which left it pending. A third failure refuses the row, with the error as its detail, so one stuck row does not block the rows behind it. A run that ended because the process was stopping is not an attempt.';
 COMMENT ON COLUMN upload_sample_outcome.recorded_at IS 'When the row was queued, and then when its outcome was recorded.';

@@ -137,13 +137,18 @@ export async function nextSampleNumber(conn: DuckDBConnection, prefix = "OBAS-")
   return `${prefix}${String((await highestSampleNumber(conn, prefix)) + 1).padStart(5, "0")}`;
 }
 
-/** The highest number after the prefix on any sample, 0 if none has the prefix: what the next number offered counts from. */
-export async function highestSampleNumber(conn: DuckDBConnection, prefix = "OBAS-"): Promise<number> {
+/**
+ * The highest number after the prefix on any sample, 0 if none has the prefix: what the next number offered counts from.
+ * `exceptMadeByUpload` leaves out the samples that upload has made, which is the highest the upload's own rows were
+ * judged against, whatever of them is made by now.
+ */
+export async function highestSampleNumber(conn: DuckDBConnection, prefix = "OBAS-", exceptMadeByUpload: number | null = null): Promise<number> {
   const found = await rows<{ n: number | null }>(
     conn,
     `SELECT max(TRY_CAST(substr(sample_number, length($1) + 1) AS INTEGER))::INTEGER AS n
-     FROM sample WHERE starts_with(sample_number, $1)`,
-    [prefix],
+     FROM sample WHERE starts_with(sample_number, $1)
+       AND ($2::INTEGER IS NULL OR entity_id NOT IN (SELECT o.sample_id FROM upload_sample_outcome o WHERE o.upload_id = $2 AND o.outcome = 'created' AND o.sample_id IS NOT NULL))`,
+    [prefix, exceptMadeByUpload],
   );
   return found[0]?.n ?? 0;
 }
@@ -159,36 +164,19 @@ export const PROGRAM_SERIES = "OBAS-";
 export const SERIES_MARGIN = 50;
 
 /**
- * How far a file's new numbers in the program's series may reach: from the highest in Beeline, each number of the
- * file in turn, smallest first, extends the reach if it is within SERIES_MARGIN of it. So a year's batch of
- * consecutive numbers is taken whole, however long, while one number that jumps ahead of the run is not.
- */
-export function seriesReach(highest: number, numbers: readonly string[]): number {
-  const own = numbers
-    .filter((n) => n.startsWith(PROGRAM_SERIES) && /^\d{5}$/.test(n.slice(PROGRAM_SERIES.length)))
-    .map((n) => Number(n.slice(PROGRAM_SERIES.length)))
-    .sort((a, b) => a - b);
-  let reach = highest;
-  for (const n of own) {
-    if (n > reach + SERIES_MARGIN) break;
-    reach = Math.max(reach, n);
-  }
-  return reach;
-}
-
-/**
  * The sentence saying why a number in the program's series cannot be used, or null if it can. A number outside the
- * series is not judged: a collector's own numbers are theirs. `highest` is the highest number in Beeline, or the
- * reach of a file's own numbers (seriesReach).
+ * series is not judged: a collector's own numbers are theirs. The bound is simple and depends on no other row's
+ * outcome: five digits, and at most the highest number in Beeline, plus the number of new `OBAS-` rows in the file
+ * (`ownRows`, so a year's batch of consecutive numbers is taken whole), plus SERIES_MARGIN.
  */
-export function seriesNumberProblem(sampleNumber: string, highest: number): string | null {
+export function seriesNumberProblem(sampleNumber: string, highest: number, ownRows = 0): string | null {
   if (!sampleNumber.startsWith(PROGRAM_SERIES)) return null;
   const digits = sampleNumber.slice(PROGRAM_SERIES.length);
   if (!/^\d{5}$/.test(digits)) {
     return `A number starting ${PROGRAM_SERIES} is the program's own and is written ${PROGRAM_SERIES} and five digits, such as ${PROGRAM_SERIES}00657.`;
   }
-  if (Number(digits) > highest + SERIES_MARGIN) {
-    return `${sampleNumber} is more than ${SERIES_MARGIN} past ${PROGRAM_SERIES}${String(highest).padStart(5, "0")}, the highest in Beeline or reached by the numbers before it, and one mistyped number would move the next one offered for good. Check it, or enter the sample on its own form.`;
+  if (Number(digits) > highest + ownRows + SERIES_MARGIN) {
+    return `${sampleNumber} is more than ${SERIES_MARGIN} past what this file's new numbers would reach from ${PROGRAM_SERIES}${String(highest).padStart(5, "0")}, the highest in Beeline, and one mistyped number would move the next one offered for good. Check it, or enter the sample on its own form.`;
   }
   return null;
 }
@@ -210,6 +198,8 @@ export interface Lookalike {
 export async function findLookalikes(
   conn: DuckDBConnection,
   sample: { firstCollectorId: number; dateStart: string; dateEnd: string; latitude: number; longitude: number },
+  /** Samples not to count: the one being made, and those a samples file's apply has made already (its own rows are not look-alikes of one another). */
+  excluding: { sampleId?: number; uploadId?: number } = {},
 ): Promise<Lookalike[]> {
   // A box a little wider than the distance first, which a place's coordinates can answer from their own order, then
   // the great-circle distance for what is inside it.
@@ -222,6 +212,10 @@ export async function findLookalikes(
      JOIN sample s ON s.entity_id = c.sample_id
      JOIN sample_location l ON l.sample_id = s.entity_id
      WHERE c.person_id = $1 AND c.position = 1
+       AND s.entity_id IS DISTINCT FROM $9::INTEGER
+       AND ($10::INTEGER IS NULL OR NOT EXISTS (
+             SELECT 1 FROM upload_sample_outcome o
+             WHERE o.upload_id = $10 AND o.sample_id = s.entity_id AND o.outcome = 'created'))
        AND s.date_start <= $3::DATE AND s.date_end >= $2::DATE
        AND l.latitude BETWEEN $4 - $6 AND $4 + $6
        AND l.longitude BETWEEN $5 - $7 AND $5 + $7
@@ -230,7 +224,7 @@ export async function findLookalikes(
              cos(radians($4)) * cos(radians(l.latitude)) * power(sin(radians(l.longitude - $5) / 2), 2)
            )) <= $8
      ORDER BY s.entity_id`,
-    [sample.firstCollectorId, sample.dateStart, sample.dateEnd, sample.latitude, sample.longitude, degrees, reach, LOOKALIKE_METRES],
+    [sample.firstCollectorId, sample.dateStart, sample.dateEnd, sample.latitude, sample.longitude, degrees, reach, LOOKALIKE_METRES, excluding.sampleId ?? null, excluding.uploadId ?? null],
   );
   return found.map((r) => ({ sampleId: r.entity_id, sampleNumber: r.sample_number }));
 }
@@ -450,11 +444,13 @@ export function deleteTrapSample(
     if ("refused" in found) return found;
     const tables = await satelliteTables(conn);
     await inTransaction(conn, async () => {
-      await conn.run(
-        `INSERT INTO sample_deletion (sample_id, sample_number, deleted_by, deleted_at, reason)
-         SELECT $1, $2, $3, now(), $4 WHERE NOT EXISTS (SELECT 1 FROM sample_deletion WHERE sample_id = $1)`,
-        [id, found.number, deletedBy, reason] as never,
-      );
+      // A fresh deletion always writes a record of its own; finishing a cut-short one finds its record there already.
+      if (!found.cutShort) {
+        await conn.run(
+          `INSERT INTO sample_deletion (sample_id, sample_number, deleted_by, deleted_at, reason) VALUES ($1, $2, $3, now(), $4)`,
+          [id, found.number, deletedBy, reason] as never,
+        );
+      }
       for (const t of tables) {
         const [table, columns] = t.split(":");
         for (const column of columns!.split(",")) await conn.run(`DELETE FROM "${table}" WHERE "${column}" = $1`, [id] as never);
@@ -470,7 +466,7 @@ export function deleteTrapSample(
  * writing. A sample whose deletion was cut short, so that it has a `sample_deletion` row and no entry mark and no
  * collector left, may be deleted again to finish it.
  */
-export async function deletable(conn: DuckDBConnection, id: number): Promise<{ number: string } | { refused: DeleteRefusal }> {
+export async function deletable(conn: DuckDBConnection, id: number): Promise<{ number: string; cutShort: boolean } | { refused: DeleteRefusal }> {
   const found = await rows<{ sample_number: string; entered: boolean; cut_short: boolean; printed: boolean; in_run: boolean; specimens: number }>(
     conn,
     `SELECT s.sample_number,
@@ -490,7 +486,7 @@ export async function deletable(conn: DuckDBConnection, id: number): Promise<{ n
   if (r.printed) return { refused: "printed" };
   if (r.in_run) return { refused: "in_print_run" };
   if (r.specimens > 0) return { refused: "has_specimens" };
-  return { number: r.sample_number };
+  return { number: r.sample_number, cutShort: r.cut_short };
 }
 
 /** A sample entered in Beeline, as its form shows it; null if it is not one. */

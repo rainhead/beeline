@@ -1003,6 +1003,7 @@ export function buildJobs(
           conn: ctx.conn,
           printWriter: extras.printConn,
           samplePaths,
+          signal: ctx.signal,
           step: ctx.step,
         });
         return describeApply(result);

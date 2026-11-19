@@ -7,7 +7,7 @@ import { startScheduler, runJob, ON_DEMAND_RETRY_MS, type Job } from "../src/app
 import { onSample } from "../src/app/sample-queue.js";
 import { planSamples } from "../src/app/samples-upload-plan.js";
 import { SAMPLES_LAYOUT, parseUpload } from "../src/app/upload-plan.js";
-import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, seriesNumberProblem, seriesReach, SERIES_MARGIN } from "../src/trap-sample.js";
+import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, seriesNumberProblem, SERIES_MARGIN } from "../src/trap-sample.js";
 import { parseSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { duckdbReader } from "../src/person-change.js";
 import { CURRENT_SEASON, rows } from "./helpers.js";
@@ -350,13 +350,10 @@ describe("the guard on new numbers", () => {
     expect(seriesNumberProblem(`OBAS-${String(11 + SERIES_MARGIN).padStart(5, "0")}`, 10)).toContain("one mistyped number would move the next one offered for good");
     expect(seriesNumberProblem("OBAS-123", 10)).toContain("five digits");
     expect(seriesNumberProblem("OBAS-000123", 10)).toContain("five digits");
-    // A run of consecutive numbers reaches as far as it goes; a number that jumps ahead of it does not.
-    const run = Array.from({ length: 120 }, (_, i) => `OBAS-${String(11 + i).padStart(5, "0")}`);
-    expect(seriesReach(10, run)).toBe(130);
-    expect(seriesReach(10, [...run, "OBAS-12345"])).toBe(130);
-    expect(seriesNumberProblem("OBAS-12345", seriesReach(10, [...run, "OBAS-12345"]))).toContain("one mistyped number");
-    expect(seriesReach(10, ["OBAS-00100", "OBAS-00055"])).toBe(100);
-    expect(seriesReach(10, ["OBAS-abc", "X-00011"])).toBe(10);
+    // The file's own rows in the series widen the bound by their number, whatever became of them.
+    expect(seriesNumberProblem("OBAS-00180", 10, 120)).toBeNull();
+    expect(seriesNumberProblem("OBAS-00181", 10, 120)).toContain("one mistyped number");
+    expect(seriesNumberProblem("OBAS-12345", 10, 120)).toContain("one mistyped number");
     expect(seriesNumberProblem("OBAS-1234x", 10)).toContain("five digits");
     // Another series is the collector's own.
     expect(seriesNumberProblem("UP-99999", 10)).toBeNull();
@@ -492,11 +489,16 @@ describe("a run that is cut short", () => {
 
   it("leaves the row pending after an unexpected error, but records a problem the code recognises as refused", async () => {
     const f = await uploadFixture();
-    const { location, digest } = await offered(f, [newRow(1)]);
+    const { location, digest } = await offered(f, [newRow(1), newRow(2)]);
     await apply(f, location, { digest });
-    await f.conn.run(`UPDATE upload_sample_outcome SET payload = '{"form": 5}'`);
-    await expect(applyPending(deps(f))).rejects.toThrow();
-    expect((await outcomes(f)).map((r) => r[1])).toEqual(["pending"]);
+    // A payload that is not the shape the job writes from is refused at once, with a diagnostic, and the rows behind go on.
+    await f.conn.run(`UPDATE upload_sample_outcome SET payload = '{"form": 5}' WHERE sample_number = 'OBAS-00011'`);
+    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 1, skipped: 0 });
+    expect((await outcomes(f)).map((r) => r[1])).toEqual(["refused", "created"]);
+    expect(String((await outcomes(f))[0]![3])).toContain("cannot be read (no form)");
+    await f.conn.run(`UPDATE upload_sample_outcome SET outcome = 'pending', payload = 'not json' WHERE sample_number = 'OBAS-00011'`);
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0 });
+    expect(String((await outcomes(f))[0]![3])).toContain("not JSON");
     // A number far past the series is a problem the guard recognises, said again at the row's turn.
     const g = await uploadFixture();
     const queued = await offered(g, [newRow(1)]);
@@ -504,6 +506,51 @@ describe("a run that is cut short", () => {
     await g.conn.run(`UPDATE upload_sample_outcome SET payload = replace(payload, 'OBAS-00011', 'OBAS-09999')`);
     expect(await applyPending(deps(g))).toEqual({ created: 0, refused: 1, skipped: 0 });
     expect(String((await outcomes(g))[0]![3])).toContain("one mistyped number");
+  });
+
+  it("refuses a row on its third failure and goes on to the rows behind it, counting no attempt for a stop", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1), newRow(2)]);
+    await apply(f, location, { digest });
+    const failing = () => {
+      let first = true;
+      return new Proxy(f.conn, {
+        get(target, key) {
+          const value = Reflect.get(target, key) as unknown;
+          if (key !== "runAndReadAll" || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
+          return async (...args: unknown[]) => {
+            if (first) {
+              first = false;
+              throw new Error("boom");
+            }
+            return (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        },
+      });
+    };
+    const attempts = async () => (await rows(f.conn, `SELECT attempts, outcome FROM upload_sample_outcome ORDER BY row_number`)) as Array<[number, string]>;
+    await expect(applyPending(deps(f, { conn: failing() }))).rejects.toThrow("boom");
+    expect(await attempts()).toEqual([[1, "pending"], [0, "pending"]]);
+    // A stop is no attempt.
+    const stopped = new AbortController();
+    stopped.abort();
+    await expect(applyPending(deps(f, { conn: failing(), signal: stopped.signal }))).rejects.toThrow("boom");
+    expect(await attempts()).toEqual([[1, "pending"], [0, "pending"]]);
+    await expect(applyPending(deps(f, { conn: failing() }))).rejects.toThrow("boom");
+    expect(await applyPending(deps(f, { conn: failing() }))).toEqual({ created: 1, refused: 1, skipped: 0 });
+    expect(await attempts()).toEqual([[3, "refused"], [0, "created"]]);
+    expect(String((await outcomes(f))[0]![3])).toContain("It could not be created: boom");
+  });
+
+  it("starts no creation once the signal is set", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1)]);
+    await apply(f, location, { digest });
+    const stopped = new AbortController();
+    stopped.abort();
+    await expect(applyPending(deps(f, { signal: stopped.signal }))).rejects.toThrow(/interrupted by shutdown/);
+    expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011'`)).toEqual([[0n]]);
+    expect(await rows(f.conn, `SELECT attempts, outcome FROM upload_sample_outcome`)).toEqual([[0, "pending"]]);
   });
 
   it("does not report a run that was stopped, backs off a run that failed, and resumes one that was interrupted", async () => {
@@ -535,7 +582,9 @@ describe("a run that is cut short", () => {
       },
     };
     const scheduler = startScheduler({ db: f.db, conn: f.conn, jobs: [failing], tickMs: 20 });
-    await new Promise((r) => setTimeout(r, 400));
+    // Until the first failed run is recorded; only then can a second be refused for the pause.
+    for (let i = 0; i < 100 && Number((await rows(f.conn, `SELECT count(*) FROM job_run WHERE job_name = 'failing' AND outcome = 'failed'`))[0]![0]) === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 300));
     await scheduler.stop({ graceMs: 1000 });
     expect(runs).toBe(1);
     expect(ON_DEMAND_RETRY_MS).toBe(5 * 60_000);
@@ -610,6 +659,15 @@ describe("an interrupted delete and its record", () => {
     expect((await f.app.request(`/samples/${id}/delete`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() })).status).toBe(302);
     expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE entity_id = ${id}`)).toEqual([[0n]]);
     expect(await rows(f.conn, `SELECT count(*) FROM sample_deletion WHERE sample_id = ${id}`)).toEqual([[1n]]);
+    // An id drawn again: an old record for it, then a new sample with that id deleted, writes a record of its own.
+    const g = await uploadFixture();
+    const queued = await offered(g, [newRow(1)]);
+    await apply(g, queued.location, { digest: queued.digest });
+    await applyPending(deps(g));
+    const [[reused]] = (await rows(g.conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00011'`)) as [[number]];
+    await g.conn.run(`INSERT INTO sample_deletion (sample_id, sample_number, deleted_by, deleted_at) VALUES (${reused}, 'OLD-1', ${g.staffer}, now() - INTERVAL 1 DAY)`);
+    expect(await deleteTrapSample(g.conn, reused, g.staffer)).toEqual({ deleted: "OBAS-00011" });
+    expect(await rows(g.conn, `SELECT sample_number FROM sample_deletion WHERE sample_id = ${reused} ORDER BY entity_id`)).toEqual([["OLD-1"], ["OBAS-00011"]]);
     // A sample with an old deletion row that is not cut short (it is not an entered one) is not deletable.
     await f.conn.run(`INSERT INTO sample_deletion (sample_id, sample_number, deleted_by, deleted_at) VALUES (${f.ids.sampleA}, 'x', ${f.staffer}, now())`);
     expect(await deleteTrapSample(f.conn, f.ids.sampleA, f.staffer)).toEqual({ refused: "not_entered" });

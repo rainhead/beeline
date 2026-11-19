@@ -10,6 +10,7 @@ import {
   holdSample,
   setCoordinates,
   setPlace,
+  setSpecimenCount,
   setTrapCount,
   takeLocation,
   waiveFlag,
@@ -19,7 +20,7 @@ import {
 } from "../src/app/sample-corrections.js";
 import { withPromotionLock } from "../src/app/promotion-lock.js";
 import { onSample } from "../src/app/sample-queue.js";
-import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 
 /**
  * The refusals each sample correction makes by itself, without a page
@@ -494,5 +495,110 @@ describe("setTrapCount", () => {
     const s = await setup();
     const id = await trapSample(s, { sample_number: "'T-4'", protocol: "'pan traps'", sampling_effort: "NULL" });
     expect(await setTrapCount(s.deps, s.sam, id, { count: "1", note: "", problemFor })).toMatchObject({ effort: "1 pan traps" });
+  });
+});
+
+describe("setSpecimenCount", () => {
+  const problemFor = (p: string, n?: number) => (n === undefined ? `problem: ${p}` : `problem: ${p} ${n}`);
+  const trapSample = async (s: Awaited<ReturnType<typeof setup>>, extra: Record<string, string> = {}) =>
+    insertCleanSample(s.conn, {
+      collector_id: "(SELECT min(entity_id) FROM person)",
+      sample_number: "'T-1'",
+      kind: "'trap'",
+      protocol: "'vane trap'",
+      specimen_count: "3",
+      ...extra,
+    });
+  const countOf = async (s: Awaited<ReturnType<typeof setup>>, id: number) =>
+    ((await rows(s.conn, `SELECT specimen_count FROM sample WHERE entity_id = ${id}`)) as number[][])[0]![0];
+  const set = (s: Awaited<ReturnType<typeof setup>>, id: number, count: string | number, note = "") =>
+    setSpecimenCount(s.deps, s.sam, id, { count, note, problemFor });
+
+  it("raises and lowers the count, and records each change under staff with the note", async () => {
+    const s = await setup();
+    const id = await trapSample(s);
+    await recordSampleChanges(duckdbReader(s.conn), s.deps.samplePaths, { source: "observation_promotion" });
+    expect(await set(s, id, "5", "found two more")).toMatchObject({ ok: true, outcome: "saved", specimen_count: 5 });
+    expect(await set(s, id, 2)).toMatchObject({ ok: true, outcome: "saved", specimen_count: 2 });
+    expect(await set(s, id, " 0 ")).toMatchObject({ ok: true, outcome: "saved", specimen_count: 0 });
+    expect(await countOf(s, id)).toBe(0);
+    const log = (await readSampleChanges(s.paths.sampleChangesPath)).filter((c) => c.field === "specimen_count" && c.source !== "observation_promotion");
+    expect(log.map((c) => [c.new_value, c.author, c.reason])).toEqual([
+      ["5", "samstaff", "found two more"],
+      ["2", "samstaff", ""],
+      ["0", "samstaff", ""],
+    ]);
+  });
+
+  it("answers unchanged for the count it already has, and records nothing", async () => {
+    const s = await setup();
+    const id = await trapSample(s);
+    await recordSampleChanges(duckdbReader(s.conn), s.deps.samplePaths, { source: "observation_promotion" });
+    const before = (await readSampleChanges(s.paths.sampleChangesPath)).length;
+    expect(await set(s, id, "3")).toMatchObject({ ok: true, outcome: "unchanged", specimen_count: 3 });
+    expect((await readSampleChanges(s.paths.sampleChangesPath)).length).toBe(before);
+  });
+
+  it("is for staff only, never while impersonating, and not for a missing sample", async () => {
+    const s = await setup();
+    const id = await trapSample(s);
+    const input = { count: "4", note: "", problemFor };
+    expect(await setSpecimenCount(s.deps, s.alice, id, input)).toEqual({ ok: false, refusal: "not_admin" });
+    expect(await setSpecimenCount(s.deps, { ...s.sam, impersonating: true }, id, input)).toEqual({ ok: false, refusal: "impersonating" });
+    expect(await setSpecimenCount(s.deps, s.sam, 999999, input)).toEqual({ ok: false, refusal: "not_found" });
+    expect(await countOf(s, id)).toBe(3);
+  });
+
+  it("refuses a count that is not a whole number of at most six digits", async () => {
+    const s = await setup();
+    const id = await trapSample(s);
+    for (const bad of ["", "-1", "2.5", "six", "1e3", "1234567", "007"]) {
+      expect(await set(s, id, bad)).toEqual({ ok: false, refusal: "invalid", problem: "problem: count" });
+    }
+    expect(await set(s, id, "999999")).toMatchObject({ ok: true, specimen_count: 999999 });
+  });
+
+  it("refuses a net sample", async () => {
+    const s = await setup();
+    const net = await insertCleanSample(s.conn, { sample_number: "'N-1'" });
+    expect(await set(s, net, "4")).toEqual({ ok: false, refusal: "invalid", problem: "problem: net" });
+    expect(await countOf(s, net)).toBe(3);
+  });
+
+  it("refuses a count below the highest numbered specimen, and allows exactly that number", async () => {
+    const s = await setup();
+    const id = await trapSample(s, { specimen_count: "8" });
+    // A specimen row with no label is an imported one, which holds its place.
+    await s.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1), (${id}, 5)`);
+    expect(await set(s, id, "4")).toEqual({ ok: false, refusal: "invalid", problem: "problem: numbered 5" });
+    expect(await countOf(s, id)).toBe(8);
+    expect(await set(s, id, "5")).toMatchObject({ ok: true, outcome: "saved", specimen_count: 5, pending: 3 });
+    expect(await countOf(s, id)).toBe(5);
+  });
+
+  it("reports the labels the next run would print, and none for a settled season", async () => {
+    const s = await setup();
+    const current = await trapSample(s);
+    expect(await set(s, current, "6")).toMatchObject({ ok: true, specimen_count: 6, pending: 6 });
+    const settled = await trapSample(s, {
+      sample_number: "'T-2'",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+    });
+    expect(await set(s, settled, "6")).toMatchObject({ ok: true, specimen_count: 6, pending: 0 });
+  });
+
+  it("refuses a count that still follows its observation, and allows it once the sample is printed", async () => {
+    const s = await setup();
+    await s.conn.run(
+      `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw)
+       VALUES (445566, DATE '${SETTLED_SEASON}-07-14', 1, 'alice', 'T-9', '3')`,
+    );
+    const id = await trapSample(s, { sample_number: "'T-9'", inat_observation_id: "445566" });
+    expect(await set(s, id, "4")).toEqual({ ok: false, refusal: "invalid", problem: "problem: follows" });
+    expect(await countOf(s, id)).toBe(3);
+    await s.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1)`);
+    expect(await set(s, id, "4")).toMatchObject({ ok: true, outcome: "saved", specimen_count: 4 });
+    expect(await countOf(s, id)).toBe(4);
   });
 });

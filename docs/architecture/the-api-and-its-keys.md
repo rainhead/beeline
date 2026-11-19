@@ -43,6 +43,7 @@ Starting a job takes no arguments: it is the registered job, run now, as the but
 | `locality` | `locality` | the place editor: an offered name is adopted, an empty name follows iNaturalist again, any other name is staff only | a collector for their own sample; staff for any |
 | `coordinates` | `latitude`, `longitude`, `uncertainty`, `remove`, `note` | the staff coordinates form | staff |
 | `trap-count` | `count` (a whole number, or empty to take it away), `note` | none yet (the samples upload, beeline-kgyd.4, applies it) | staff |
+| `specimen-count` | `count` (a whole number, 0 or more), `note` | none yet (the samples upload, beeline-kgyd.4, applies it) | staff |
 | `take-observation-location` | `note` | "Use iNaturalist's location" | staff |
 | `hold` | `lift`, `note` | the hold on the flags card | staff |
 | `waiver` | `rule`, `remove`, `note` | the waiver on the flags card | staff |

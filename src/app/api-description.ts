@@ -255,6 +255,15 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     method: "POST",
+    route: "/samples/:id/specimen-count",
+    summary:
+      "Set how many specimens a trap sample holds, printed or not. Raising it makes the next print run number the extra bees; lowering it below the highest field-numbered specimen is refused, as is a sample whose count still follows its iNaturalist observation (change it there). `pending` is how many labels the next run would print, and is 0 for a sample from a settled season, which never prints.",
+    needs: "staff key",
+    body: { count: "whole number, 0 or more, as text or number", note: "string", reference: REFERENCE },
+    answers: "{ sample_id, outcome, specimen_count, pending }",
+  },
+  {
+    method: "POST",
     route: "/samples/:id/take-observation-location",
     summary: "Use iNaturalist's location for the sample.",
     needs: "staff key",

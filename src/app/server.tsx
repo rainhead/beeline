@@ -88,9 +88,9 @@ import {
   type Layout as UploadLayout,
   type Parsed,
   type ParsedUpload,
-  type UploadPlan,
 } from "./upload-plan.js";
-import { draftPlan, type DraftPlan, type DraftWho } from "./upload-drafts.js";
+import { draftPlan, draftState, type DraftWho } from "./upload-drafts.js";
+import { notesWorkbook, staffNotes, volunteerNotes } from "./upload-notes.js";
 import { ownIdentifications, ownVersion, withOwnIdentification } from "./own-identification.js";
 import type { ReadLimits } from "./xlsx-reader.js";
 import { keptName, type UploadArchive } from "./upload-archive.js";
@@ -2428,48 +2428,93 @@ export function createApp({
     return draftPlan(db, compared, who);
   };
 
-  const previewPage = async (c: Context<AppEnv>, row: VisibleUpload, drafts: DraftPlan | null, plan: UploadPlan, changedSince = false) => {
+  /**
+   * What a kept file says, as the person looking should be told it: a volunteer's worked out as identifications to
+   * save, staff's compared, each with a note for every row. Staff's file from someone no longer staff is compared
+   * with their own reader, so nothing withheld from them now is shown (an independent review).
+   */
+  const uploadOutcome = async (c: Context<AppEnv>, row: VisibleUpload, kept: { upload: ParsedUpload; staffFile: boolean }) => {
+    const m = c.get("m");
+    if (kept.staffFile) {
+      const plan = await comparePlan(db, kept.upload, c.get("admin") ? {} : { view: { reader: readerOf(c) } });
+      return { kind: "staff" as const, plan, noted: staffNotes(m, kept.upload, plan) };
+    }
+    const drafts = await volunteerDrafts(c, row, kept.upload);
+    return { kind: "volunteer" as const, drafts, plan: drafts.plan, noted: volunteerNotes(m, kept.upload, drafts) };
+  };
+  type UploadOutcome = Awaited<ReturnType<typeof uploadOutcome>>;
+
+  const previewPage = async (c: Context<AppEnv>, row: VisibleUpload, outcome: UploadOutcome, changedSince = false) => {
     const m = c.get("m");
     const { sha256: _kept, uploaded_by: _by, applied_at, draft_count, ...shown } = row;
     const upload: UploadDetail = shown;
     const volunteer =
-      drafts === null
+      outcome.kind === "staff"
         ? null
         : {
-            lines: drafts.lines,
-            notYours: drafts.notYours,
-            digest: drafts.digest,
-            canSave: draftWho(c, row).theirs && applied_at === null && drafts.lines.length > 0,
+            summary: outcome.noted.summary,
+            digest: outcome.drafts.digest,
+            canSave: draftWho(c, row).theirs && applied_at === null && outcome.drafts.lines.length > 0,
             applied: applied_at === null ? null : { at: applied_at, count: draft_count ?? 0 },
             changedSince,
           };
     return c.html(
-      await page(c, m.uploads.page.title(row.file_name), <UploadPreview m={m} upload={upload} plan={plan} volunteer={volunteer} />),
+      await page(
+        c,
+        m.uploads.page.title(row.file_name),
+        <UploadPreview
+          m={m}
+          upload={upload}
+          unrecognised={outcome.plan.unrecognised}
+          otherSheets={outcome.plan.otherSheets}
+          volunteer={volunteer}
+          staffSummary={outcome.kind === "staff" ? outcome.noted.summary : null}
+          staff={c.get("admin")}
+        />,
+      ),
     );
   };
 
-  app.get("/uploads/:id{[0-9]+}", async (c) => {
+  /** The upload's row and its kept file read again, as the uploader's kind of file now, or the response that says why not. */
+  const openUpload = async (c: Context<AppEnv>) => {
     const refused = uploadsGate(c);
-    if (refused !== null) return refused;
-    const m = c.get("m");
+    if (refused !== null) return { response: refused };
     const row = await visibleUpload(c, Number(c.req.param("id")));
-    if (row === null) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
-    // Read as the uploader's kind of file now. Someone made staff since keeps a file whose versions are a volunteer's,
-    // so it is held as changed since, and none of it is saved; one no longer staff has staff's file, read as staff's.
+    if (row === null) return { response: errorResponse(c, "notFound", { message: c.get("m").uploads.page.notFound }) };
+    // Someone made staff since keeps a file whose versions are a volunteer's, so its rows read as changed since and
+    // none of it is saved; one no longer staff has staff's file, read as staff's.
     const kept = await readKept(c, row, layoutFor(await isStaff(row.uploaded_by)));
-    if (kept.problem !== undefined) return kept.problem;
-    if (kept.staffFile) return previewPage(c, row, null, await comparePlan(db, kept.upload));
-    const drafts = await volunteerDrafts(c, row, kept.upload);
-    return previewPage(c, row, drafts, drafts.plan);
+    if (kept.problem !== undefined) return { response: kept.problem };
+    return { row, kept };
+  };
+
+  app.get("/uploads/:id{[0-9]+}", async (c) => {
+    const opened = await openUpload(c);
+    if (opened.response !== undefined) return opened.response;
+    return previewPage(c, opened.row, await uploadOutcome(c, opened.row, opened.kept));
   });
 
-  // Saving a volunteer's identifications as drafts. The plan is worked out
-  // again in the drafts' turn (inDraftTurn), so nothing Identify specimens
-  // saves can land between reading the drafts and writing them, and it is
-  // saved only if it is the plan the preview showed: the form carries its
-  // digest, and a plan that changed since is shown again instead. The drafts
-  // and the row saying the upload was applied go in one transaction, whose
-  // key stops a second submission saving them twice.
+  // The person's own file handed back with a note on each row, in a column at the left that an upload of the file
+  // does not read (src/app/upload-notes.ts). Worked out again each time, so after saving, the rows saved read as
+  // the same as Beeline has, and the rest keep their notes.
+  app.get("/uploads/:id{[0-9]+}/notes", async (c) => {
+    const opened = await openUpload(c);
+    if (opened.response !== undefined) return opened.response;
+    const { row, kept } = opened;
+    const outcome = await uploadOutcome(c, row, kept);
+    const bytes = await notesWorkbook(db, c.get("m"), kept.upload, outcome.noted.notes, outcome.kind === "staff" ? "staff" : "volunteer");
+    return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
+      "content-type": XLSX_CONTENT_TYPE,
+      "content-disposition": `attachment; filename="beeline-upload-${row.entity_id}-with-notes.xlsx"`,
+    });
+  });
+
+  // Saving a volunteer's identifications. The plan is worked out before the drafts' turn, since for a file of
+  // thousands of rows that takes tens of seconds and the turn holds every save on Identify specimens; it is saved
+  // only if it is the plan the page showed (the form carries its digest). In the turn, what the plan read of the
+  // specimens it will write is read again (draftState), which is quick, and if any of it changed nothing is saved
+  // and the page shows how things stand now. The drafts and the row saying the upload was saved go in one
+  // transaction, whose key stops a second submission saving them twice.
   app.post("/uploads/:id{[0-9]+}/apply", async (c) => {
     const refused = uploadsGate(c);
     if (refused !== null) return refused;
@@ -2485,12 +2530,15 @@ export function createApp({
     if (kept.problem !== undefined) return kept.problem;
     if (kept.staffFile) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
     const { who } = draftWho(c, row);
-    const outcome = await inDraftTurn(async () => {
-      // A second submission of the same preview, which waited its turn behind the first: already saved.
+    const stale = async () => previewPage(c, row, await uploadOutcome(c, row, kept), true);
+    const drafts = await volunteerDrafts(c, row, kept.upload);
+    if (drafts.digest !== asked || drafts.lines.length === 0) return stale();
+    const ids = drafts.lines.map((l) => l.write.specimenId);
+    const saved = await inDraftTurn(async () => {
+      // A second submission of the same page, which waited its turn behind the first: already saved.
       const already = await db.selectFrom("upload_applied").select("upload_id").where("upload_id", "=", row.entity_id).executeTakeFirst();
-      if (already !== undefined) return { saved: true as const };
-      const drafts = await volunteerDrafts(c, row, kept.upload);
-      if (drafts.digest !== asked || drafts.lines.length === 0) return { saved: false as const, drafts };
+      if (already !== undefined) return true;
+      if ((await draftState(db, who, ids)) !== drafts.state) return false;
       const now = new Date();
       await db.transaction().execute(async (trx) => {
         await trx
@@ -2499,10 +2547,9 @@ export function createApp({
           .execute();
         await saveDraftsInTurn(trx, who.personId, who.determinerId, drafts.lines.map((l) => l.write), now);
       });
-      return { saved: true as const };
+      return true;
     });
-    if (outcome.saved) return c.redirect(uploadHref(row.entity_id), 303);
-    return previewPage(c, row, outcome.drafts, outcome.drafts.plan, true);
+    return saved ? c.redirect(uploadHref(row.entity_id), 303) : stale();
   });
 
   // One program-year's Darwin Core archive, as the dwc-archives job wrote

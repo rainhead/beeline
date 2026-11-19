@@ -100,7 +100,6 @@ function aboutRows(m: Messages, audience: Audience): Rows {
   const layout = layoutOf(audience);
   const a = m.workbook.about;
   const v = a.volunteer;
-  const p = m.uploads.page;
   const vocabularies = choicesOf(audience);
   const takes = (column: string): string => {
     if (column === "scientificName") return audience === "staff" ? a.scientificName : v.scientificName;
@@ -111,7 +110,7 @@ function aboutRows(m: Messages, audience: Audience): Rows {
     if (words !== undefined) return a.oneOf(words.join(", "));
     switch (columnRule(column)?.reads) {
       case "number":
-        return p.heldTodo.number_unreadable!;
+        return a.numberRule;
       case "moment":
         return a.momentRule;
       default:

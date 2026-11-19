@@ -2,8 +2,9 @@ import { describe as describeInOrder, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import { en } from "../src/app/messages/en.js";
 import { ACTING_COOKIE, IMPERSONATING_COOKIE } from "../src/app/acting.js";
-import { VOLUNTEER_LAYOUT, SPECIMENS_LAYOUT } from "../src/app/upload-plan.js";
+import { NOTE_COLUMN, VOLUNTEER_LAYOUT, SPECIMENS_LAYOUT } from "../src/app/upload-plan.js";
 import { saveDrafts } from "../src/app/determine.js";
+import { draftState } from "../src/app/upload-drafts.js";
 import { commitDeterminationDrafts } from "../src/commit-determinations.js";
 import { insertCleanSample, rows } from "./helpers.js";
 import { edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
@@ -39,8 +40,22 @@ async function preview(f: UploadFixture, bytes: Uint8Array, cookie?: string) {
   const href = res.headers.get("location")!;
   const html = await (await f.app.request(href, cookie === undefined ? {} : { headers: { cookie } })).text();
   const digest = /name="digest" value="([0-9a-f]+)"/.exec(html)?.[1] ?? null;
-  return { href, html, digest };
+  return { href, html, digest, notes: await notesOf(f, href, cookie) };
 }
+
+/** The note on each row of the file handed back, by the row's specimenId cell. */
+async function notesOf(f: UploadFixture | { app: UploadFixture["app"] }, href: string, cookie?: string): Promise<Map<string, string>> {
+  const res = await f.app.request(`${href}/notes`, cookie === undefined ? {} : { headers: { cookie } });
+  expect(res.status).toBe(200);
+  const m = matrixOf(new Uint8Array(await res.arrayBuffer()));
+  expect(m[0]![0]).toBe(NOTE_COLUMN);
+  const at = m[0]!.indexOf("specimenId");
+  return new Map(m.slice(1).map((r) => [r[at]!, r[0]!]));
+}
+
+const p = en.uploads.page;
+const n = en.uploads.notes;
+const esc = (text: string) => text.replaceAll("'", "&#39;");
 
 const apply = (f: UploadFixture, href: string, digest: string, cookie?: string) => {
   const body = new FormData();
@@ -150,8 +165,8 @@ describe("a volunteer's download", () => {
     body.set("file", new File([bytes as BlobPart], "hers.xlsx", { type: XLSX_TYPE }));
     const href = (await staff.request("/uploads", { method: "POST", headers: { origin: ORIGIN }, body })).headers.get("location")!;
     const html = await (await staff.request(href)).text();
-    expect(html).toContain(en.uploads.page.held.specimen_changed_since!.replaceAll("'", "&#39;"));
-    expect(html).toContain(en.uploads.page.notChanged);
+    expect(html).toContain(esc(p.staffNothingChanged));
+    expect((await notesOf({ app: staff }, href)).get(String(f.ids.a2))).toBe(n.cantUse(n.reason.specimen_changed_since!));
   });
 
   it("offers everyone the upload page from Specimens, with words for a volunteer", async () => {
@@ -170,11 +185,14 @@ describe("uploading a volunteer's file", () => {
   it("lists their own specimen named, saves it as a draft credited to them, and the overnight commit records it as theirs", async () => {
     const f = await uploadFixture("volunteer");
     const bytes = edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus vosnesenskii", sex: "female" } }]);
-    const { href, html, digest } = await preview(f, bytes);
-    expect(html).toContain(en.uploads.page.notSavedYet);
-    expect(html).not.toContain(en.uploads.page.notChanged);
-    expect(html).toContain(en.uploads.page.save);
-    expect(html).toContain(en.uploads.page.saveNote(1, 0));
+    const { href, html, digest, notes } = await preview(f, bytes);
+    expect(html).toContain(p.ready(1));
+    expect(html).toContain(p.same(3));
+    expect(html).toContain(p.save(1));
+    expect(html).not.toContain(esc(p.staffNothingChanged));
+    // Nothing that can't be saved, so no file of notes offered; and every note blank.
+    expect(html).not.toContain(p.download);
+    expect([...notes.values()].every((note) => note === "")).toBe(true);
     expect(digest).not.toBeNull();
     expect(await drafts(f)).toEqual([]);
 
@@ -184,8 +202,11 @@ describe("uploading a volunteer's file", () => {
     expect(await drafts(f)).toEqual([[f.ids.a2, f.volunteer, "Bombus vosnesenskii", "female", null]]);
     expect(await rows(f.conn, `SELECT applied_by, draft_count FROM upload_applied`)).toEqual([[f.volunteer, 1]]);
     const after = await (await f.app.request(href)).text();
-    expect(after).toContain("Saved 1 identification from this file as drafts");
-    expect(after).not.toContain(en.uploads.page.save);
+    expect(after).toContain("Saved 1 identification on ");
+    expect(after).toContain("They are on Identify specimens now, and can be undone there until 1am Pacific.");
+    expect(after).not.toContain(p.save(1));
+    // Worked out again, the saved row now says what Beeline has.
+    expect(after).toContain(p.same(4));
 
     // Committed overnight as her own determination, never an expert's.
     await commitDeterminationDrafts(f.conn);
@@ -216,17 +237,19 @@ describe("uploading a volunteer's file", () => {
       { id: other, set: { scientificName: "Bombus", locality: "Elsewhere" } },
       { id: f.ids.a2, set: { scientificName: "Bombus" } },
     ]);
-    const { href, html, digest } = await preview(f, bytes);
-    expect(html).toContain(en.uploads.page.held.not_yours);
+    const { href, html, digest, notes } = await preview(f, bytes);
+    expect(html).toContain(esc(p.notSaved(1)));
+    expect(notes.get(String(other))).toBe(n.notSaved(n.reason.not_yours!));
     expect(html).not.toContain("Secret Creek");
     expect(html).not.toContain("Hidden Co.");
+    expect([...notes.values()].join(" ")).not.toContain("Secret Creek");
     await apply(f, href, digest!);
     expect((await drafts(f)).map((r) => r[0])).toEqual([f.ids.a2]);
 
-    // A file of one untouched row of someone else's: counted, listed nowhere.
-    const quiet = await preview(f, edited(file, [{ id: f.ids.a2, set: { scientificName: "Bombus vosnesenskii" } }]));
-    expect(quiet.html).not.toContain(en.uploads.page.held.not_yours);
-    expect(quiet.html).toContain(en.uploads.page.notYours(1).replaceAll("'", "&#39;"));
+    // A new file whose row of someone else's is untouched: the same as Beeline has, with no note.
+    const quiet = await preview(f, edited(await ownFile(f), [{ id: f.ids.a3, set: { scientificName: "Bombus" } }]));
+    expect(quiet.notes.get(String(other))).toBe("");
+    expect(quiet.html).not.toContain(esc(p.notSaved(1)));
   });
 
   it("holds what a draft cannot take, or would change, with words saying what to write", async () => {
@@ -255,17 +278,27 @@ describe("uploading a volunteer's file", () => {
       // And one that is fine.
       { id: f.ids.a2, set: { scientificName: "Bombus", sex: "male", caste: "drone" } },
     ]);
-    const { href, html, digest } = await preview(f, bytes);
-    for (const reason of ["name_not_in_tree", "name_ambiguous", "sex_not_draft", "caste_not_taken", "caste_no_sex", "drone_unsaid", "already_said"]) {
-      expect(html, reason).toContain(en.uploads.page.held[reason]!.replaceAll("'", "&#39;"));
-      expect(html, reason).toContain(en.uploads.page.heldTodo[reason]!.replaceAll("'", "&#39;"));
-    }
-    expect(html).toContain(en.uploads.page.saveNote(1, 0));
+    const { href, html, digest, notes } = await preview(f, bytes);
+    const expected: Array<[number, string]> = [
+      [notInTree, "name_not_in_tree"],
+      [ambiguous, "name_ambiguous"],
+      [gynandromorph, "sex_not_draft"],
+      [casteOnOsmia, "caste_not_taken"],
+      [casteNoSex, "caste_no_sex"],
+      [maleBombus, "drone_unsaid"],
+    ];
+    for (const [id, reason] of expected) expect(notes.get(String(id)), reason).toBe(n.notSaved(n.reason[reason]!));
+    // What another volunteer already said: the same as Beeline has, with no note.
+    expect(notes.get(String(f.ids.a3))).toBe("");
+    expect(notes.get(String(f.ids.a2))).toBe("");
+    expect(html).toContain(p.ready(1));
+    expect(html).toContain(esc(p.notSaved(6)));
+    expect(html).toContain(p.download);
     await apply(f, href, digest!);
     expect(await drafts(f)).toEqual([[f.ids.a2, f.volunteer, "Bombus", "male", "drone"]]);
   });
 
-  it("replaces a draft made on Identify specimens, and says so; holds one made there after the download", async () => {
+  it("replaces what was typed on Identify specimens before the download; holds a row changed there after it", async () => {
     const f = await uploadFixture("volunteer");
     await saveDrafts(f.db, f.volunteer, f.volunteer, [{ specimenId: f.ids.a2, animalId: null, sex: "female", caste: null }]);
     const file = await ownFile(f);
@@ -275,14 +308,31 @@ describe("uploading a volunteer's file", () => {
       { id: f.ids.a2, set: { scientificName: "Bombus vosnesenskii" } },
       { id: f.ids.a1, set: { scientificName: "Bombus" } },
     ]);
-    const { href, html, digest } = await preview(f, bytes);
-    expect(html).toContain(en.uploads.page.replacesDraft);
-    expect(html).toContain(en.uploads.page.saveNote(1, 1));
-    expect(html).toContain(en.uploads.page.held.specimen_changed_since!.replaceAll("'", "&#39;"));
+    const { href, html, digest, notes } = await preview(f, bytes);
+    expect(html).toContain(p.ready(1));
+    expect(notes.get(String(f.ids.a2))).toBe("");
+    expect(notes.get(String(f.ids.a1))).toBe(n.notSaved(n.reason.specimen_changed_since!));
     await apply(f, href, digest!);
     expect(await drafts(f)).toEqual([
       [f.ids.a1, f.volunteer, null, "male", null],
       [f.ids.a2, f.volunteer, "Bombus vosnesenskii", "female", null],
+    ]);
+  });
+
+  it("sets the sex of a draft naming a taxon Ecdysis no longer offers, keeping its name", async () => {
+    const f = await uploadFixture("volunteer");
+    // A sawfly from Ecdysis, in the thesaurus but not among the names that may be picked now (not in ecdysis_adoptable).
+    await f.conn.run(
+      `INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, fetched_on) VALUES (777001, 'genus', 'Tenthredo', 'accepted', 777001, DATE '2026-11-01')`,
+    );
+    await f.conn.run(`INSERT INTO determination_draft (specimen_id, determiner_id, ecdysis_tid, sex) VALUES (${f.ids.a2}, ${f.volunteer}, 777001, NULL)`);
+    const file = await ownFile(f);
+    expect(cellOf(file, f.ids.a2, "scientificName")).toBe("Tenthredo");
+    const { href, digest } = await preview(f, edited(file, [{ id: f.ids.a2, set: { sex: "female" } }]));
+    expect(digest).not.toBeNull();
+    expect((await apply(f, href, digest!)).status).toBe(303);
+    expect(await rows(f.conn, `SELECT CAST(ecdysis_tid AS INTEGER), animal_id, sex FROM determination_draft WHERE specimen_id = ${f.ids.a2}`)).toEqual([
+      [777001, null, "female"],
     ]);
   });
 
@@ -298,8 +348,8 @@ describe("uploading a volunteer's file", () => {
     const res = await apply(f, href, digest!);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain(en.uploads.page.changedSince);
-    expect(html).toContain(en.uploads.page.saveNote(1, 0));
+    expect(html).toContain(esc(p.changedSince));
+    expect(html).toContain(p.ready(1));
     expect(await rows(f.conn, `SELECT count(*) FROM upload_applied`)).toEqual([[0n]]);
     expect((await drafts(f)).map((r) => r[0])).toEqual([f.ids.a1]);
   });
@@ -315,6 +365,15 @@ describe("uploading a volunteer's file", () => {
     expect((await apply(f, href, digest!)).status).toBe(303);
     expect(await rows(f.conn, `SELECT count(*) FROM upload_applied`)).toEqual([[1n]]);
   });
+
+  it("re-reads, when saving, what it read of the bees to be saved, and sees a change made on Identify specimens", async () => {
+    const f = await uploadFixture("volunteer");
+    const who = { personId: f.volunteer, determinerId: f.volunteer };
+    const before = await draftState(f.db, who, [f.ids.a1, f.ids.a2]);
+    expect(await draftState(f.db, who, [f.ids.a1, f.ids.a2])).toBe(before);
+    await saveDrafts(f.db, f.volunteer, f.volunteer, [{ specimenId: f.ids.a2, sex: "female", caste: null }]);
+    expect(await draftState(f.db, who, [f.ids.a1, f.ids.a2])).not.toBe(before);
+  });
 });
 
 describe("what keeps its own reason", () => {
@@ -327,26 +386,87 @@ describe("what keeps its own reason", () => {
       { id: f.ids.a2, set: { scientificName: "Bombus", sex: "male", caste: "worker" } },
       { id: f.ids.b1, set: { scientificName: "Bombus", sex: "female", caste: "drone" } },
     ]);
-    const { html, digest } = await preview(f, bytes);
-    expect(html).toContain(en.uploads.page.held.number_disagrees);
-    expect(html).not.toContain(en.uploads.page.held.not_yours);
-    // Both rows under the one heading: a male worker and a female drone.
-    const section = html.slice(html.indexOf(en.uploads.page.held.caste_sex!)).split("<h3")[0]!;
-    expect(section).toContain(">OBA10002<");
-    expect(section).toContain(">OBA10004<");
+    const { digest, notes } = await preview(f, bytes);
+    expect(notes.get(String(f.ids.a1))).toBe(n.notSaved(n.reason.number_disagrees!));
+    // A male worker and a female drone.
+    expect(notes.get(String(f.ids.a2))).toBe(n.notSaved(n.reason.caste_sex!));
+    expect(notes.get(String(f.ids.b1))).toBe(n.notSaved(n.reason.caste_sex!));
     expect(digest).toBeNull();
   });
 
-  it("still shows the upload of someone no longer staff, read as staff's file, and saves none of it", async () => {
+  it("still shows the upload of someone no longer staff, read as staff's file, with no place now withheld from them, and saves none of it", async () => {
     const f = await uploadFixture("staffer");
-    const res = await upload(f, edited(await f.download(), [{ id: f.ids.a2, set: { scientificName: "Bombus" } }]));
+    const res = await upload(f, edited(await f.download(), [{ id: f.ids.a2, set: { scientificName: "Bombus", locality: "Elsewhere" } }]));
     const href = res.headers.get("location")!;
+    // Vera's sample, obscured on iNaturalist: its place is Vera's and staff's to see.
+    await f.conn.run(`UPDATE sample SET geoprivacy = 'obscured' WHERE entity_id = ${f.ids.sampleA}`);
+    // As staff, the notes say what Beeline holds for the place.
+    const was = n.cell("locality", '"Corvallis"', '"Elsewhere"');
+    expect((await notesOf(f, href)).get(String(f.ids.a2))).toContain(was);
     await f.conn.run(`DELETE FROM person_admin WHERE person_id = ${f.staffer}`);
     const page = await f.app.request(href);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain(en.uploads.page.notChanged);
+    expect(await page.text()).toContain(esc(p.staffNothingChanged));
+    // No longer staff, he is not shown it: what Beeline holds reads as blank.
+    const now = (await notesOf(f, href)).get(String(f.ids.a2))!;
+    expect(now).not.toContain("Corvallis");
+    expect(now).toContain(n.cell("locality", n.nothing, '"Elsewhere"'));
     expect((await apply(f, href, "0".repeat(32))).status).toBe(404);
     expect(await drafts(f)).toEqual([]);
+  });
+});
+
+describe("the page", () => {
+  it("says only the counts that are not zero, offers nothing that does nothing, and lists no rows", async () => {
+    const f = await uploadFixture("volunteer");
+    const unchanged = await preview(f, await ownFile(f));
+    expect(unchanged.html).toContain(p.same(4));
+    expect(unchanged.html).not.toMatch(/ready to save|can&#39;t be saved|grey columns|Download your file/);
+    expect(unchanged.digest).toBeNull();
+    expect(unchanged.html).not.toContain("<h2");
+    // A change to a grey column: noted, counted, never saved.
+    const grey = await preview(f, edited(await ownFile(f), [{ id: f.ids.a1, set: { locality: "Elsewhere" } }]));
+    expect(grey.html).toContain(esc(p.grey(1)));
+    expect(grey.html).toContain(p.download);
+    expect(grey.notes.get(String(f.ids.a1))).toBe(n.grey);
+    expect(grey.digest).toBeNull();
+  });
+
+  it("hands back her own file with a note on each row, which she can fix and upload again", async () => {
+    const f = await uploadFixture("volunteer");
+    const first = await preview(f, edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus imaginarius" } }]));
+    expect(first.notes.get(String(f.ids.a2))).toBe(n.notSaved(n.reason.name_not_in_tree!));
+    const noted = new Uint8Array(await (await f.app.request(`${first.href}/notes`)).arrayBuffer());
+    expect(XLSX.read(noted, { type: "array" }).SheetNames).toEqual(["specimens", "names", "words", "about"]);
+    // She fixes the name in the file with notes and uploads it: the note column is not read, and the name is ready.
+    const again = await preview(f, edited(noted, [{ id: f.ids.a2, set: { scientificName: "Bombus" } }]));
+    expect(again.html).toContain(p.ready(1));
+    expect(again.html).not.toContain("didn&#39;t read these columns");
+    expect(again.notes.get(String(f.ids.a2))).toBe("");
+  });
+
+  it("never says held, hold, draft, plan, unit, reader or layout to a volunteer, on the page, in the notes, or in the file's about tab", async () => {
+    const f = await uploadFixture("volunteer");
+    const jargon = /\b(held|hold|holds|draft|drafts|plan|unit|reader|layout)\b/i;
+    const { html } = await preview(f, edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus imaginarius" } }, { id: f.ids.a1, set: { locality: "x" } }]));
+    const text = html.replace(/<[^>]*>/g, " ");
+    expect(text).not.toMatch(jargon);
+    for (const note of Object.values(n.reason)) expect(note).not.toMatch(jargon);
+    for (const words of [n.grey, en.uploads.introVolunteer, en.uploads.headingVolunteer, en.uploads.form.fileHintVolunteer, en.uploads.refused.staff_file!, en.listings.csv.editNoteVolunteer])
+      expect(words).not.toMatch(jargon);
+    const about = XLSX.utils.sheet_to_json<string[]>(XLSX.read(await ownFile(f), { type: "array" }).Sheets.about!, { header: 1 });
+    for (const [, words] of about) expect(String(words ?? "")).not.toMatch(jargon);
+  });
+});
+
+describe("the copy in Drive", () => {
+  it("links only staff to it: a volunteer cannot open the program's shared drive", async () => {
+    const archive = { keep: async () => "drive-9", discard: async () => {} };
+    const f = await uploadFixture("volunteer", { archive });
+    const mine = await preview(f, edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus" } }]));
+    expect(await rows(f.conn, `SELECT drive_file_id FROM upload`)).toEqual([["drive-9"]]);
+    expect(mine.html).not.toContain("drive.google.com");
+    expect(await (await f.appAs("staffer").request(mine.href)).text()).toContain("https://drive.google.com/file/d/drive-9/view");
   });
 });
 
@@ -371,8 +491,7 @@ describe("whose upload it is", () => {
     const mine = await preview(f, edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus" } }, { id: other, set: { locality: "Elsewhere" } }]));
     const staff = f.appAs("staffer");
     const html = await (await staff.request(mine.href)).text();
-    expect(html).toContain(en.uploads.page.notSavedYet);
-    expect(html).toContain(en.uploads.page.kind.determination);
+    expect(html).toContain(p.ready(1));
     expect(html).not.toContain(`name="digest"`);
     // Compared as Vera: the place withheld from her is not shown, even to staff, on her preview.
     expect(html).not.toContain("Secret Creek");
@@ -409,8 +528,8 @@ describe("a delegate's upload", () => {
     const f = await uploadFixture("delegate");
     const acting = `${ACTING_COOKIE}=${encodeURIComponent("Vera Volunteer")}`;
     const file = await ownFile(f, acting, "mine");
-    const { html, digest } = await preview(f, edited(file, [{ id: f.ids.a1, set: { scientificName: "Bombus" } }]));
-    expect(html).toContain(en.uploads.page.held.not_yours);
+    const { notes, digest } = await preview(f, edited(file, [{ id: f.ids.a1, set: { scientificName: "Bombus" } }]));
+    expect(notes.get(String(f.ids.a1))).toBe(n.notSaved(n.reason.not_yours!));
     expect(digest).toBeNull();
   });
 });

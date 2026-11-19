@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import type { Database, DraftCaste, DraftSex } from "../model.js";
-import { entryRowsFor, type EntryRow } from "./determine.js";
+import { entryRowsFor, type DraftWrite, type EntryRow } from "./determine.js";
 import { ownIdentifications } from "./own-identification.js";
 import type { CellValue, HeldItem, HoldReason, SpecimenDifference, UploadPlan } from "./upload-plan.js";
 
@@ -32,10 +32,18 @@ export interface DraftWho {
   determinerId: number;
 }
 
-/** One identification from the file, as the draft it becomes. Every part is given, so nothing is taken from elsewhere. */
+/**
+ * One identification from the file, as the draft it becomes. The sex and caste are always given. The name is given
+ * too, except where the file left it as the person's own draft had it: saveDrafts then keeps the draft's name as it
+ * is, as the page does when only the sex is changed, and does not check it again, so a draft naming a taxon Ecdysis
+ * no longer offers can still have its sex set. Where there is no draft the name is always given, so it is never
+ * taken from another volunteer's identification.
+ */
 export interface DraftLine {
   difference: SpecimenDifference;
-  write: { specimenId: number; animalId: number | null; ecdysisTid: number | null; sex: DraftSex | null; caste: DraftCaste | null };
+  write: DraftWrite & { sex: DraftSex | null; caste: DraftCaste | null };
+  /** The name the draft will carry, whether given or kept. */
+  name: { animalId: number | null; ecdysisTid: number | null };
   /** The person has a draft of this specimen on Identify specimens, which this replaces. */
   replacesDraft: boolean;
 }
@@ -48,6 +56,8 @@ export interface DraftPlan {
   notYours: number;
   /** What saving would write, as a short hash: the preview's form carries it, and saving refuses a plan that changed since. */
   digest: string;
+  /** What the store said of the specimens to be written, when this was worked out (`draftState`). */
+  state: string;
 }
 
 const CHUNK = 1000;
@@ -116,6 +126,7 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
       row,
       rows: [row],
       moreRows: 0,
+      everyRow: [row],
       specimenId,
       fieldNumber,
       sampleNumber: null,
@@ -150,6 +161,7 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
         row: d.row,
         rows: [d.row],
         moreRows: 0,
+        everyRow: [d.row],
         specimenId: d.specimenId,
         fieldNumber: d.fieldNumber,
         sampleNumber: null,
@@ -172,12 +184,14 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
     let animalId: number | null;
     let ecdysisTid: number | null;
     let social: boolean;
+    let keepName = false;
     if (!name.differs) {
       // The name the person's own download gave, which may be one from Ecdysis that the tree does not hold yet.
       const mineNow = own.get(d.specimenId);
       animalId = mineNow?.animalId ?? null;
       ecdysisTid = mineNow?.ecdysisTid ?? null;
       social = animalId !== null && castes.get(animalId) === true;
+      keepName = mineNow?.draft === true;
     } else {
       const found = nodes.get(textOf(name.value)) ?? [];
       if (found.length === 0) {
@@ -213,8 +227,7 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
     }
     const write: DraftLine["write"] = {
       specimenId: d.specimenId,
-      animalId,
-      ecdysisTid,
+      ...(keepName ? {} : { animalId, ecdysisTid }),
       sex: sexWord === "" ? null : (sexWord as DraftSex),
       caste: casteWord === "" ? null : (casteWord as DraftCaste),
     };
@@ -225,15 +238,15 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
     if (
       entry.draft === null &&
       prior !== null &&
-      prior.animalId === write.animalId &&
-      write.ecdysisTid === null &&
+      prior.animalId === animalId &&
+      ecdysisTid === null &&
       prior.sex === write.sex &&
       prior.caste === write.caste
     ) {
       hold("already_said", "scientificName");
       continue;
     }
-    lines.push({ difference: d, write, replacesDraft: entry.draft !== null });
+    lines.push({ difference: d, write, name: { animalId, ecdysisTid }, replacesDraft: entry.draft !== null });
   }
 
   const order = (a: HeldItem, b: HeldItem) => a.row - b.row;
@@ -243,12 +256,34 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
     held: [...held, ...others.values()].sort(order),
     notApplied: compared.notApplied.filter((c) => yours(c.specimenId)),
   };
-  return { plan, lines, notYours, digest: digestOf(lines) };
+  return { plan, lines, notYours, digest: digestOf(lines), state: await draftState(db, who, lines.map((l) => l.write.specimenId)) };
+}
+
+/**
+ * A short hash of everything a draft plan read about these specimens that can change between working the plan out
+ * and saving it: whether the person can still name each one, their draft, the newest volunteer identification, and
+ * their own identification. Saving works the plan out before it takes the drafts' turn, since that takes tens of
+ * seconds for a file of thousands of rows and the turn holds every save on Identify specimens; inside the turn it
+ * reads this again, which is quick, and saves only if it has not changed.
+ */
+export async function draftState(db: Kysely<Database>, who: DraftWho, ids: readonly number[]): Promise<string> {
+  const entries = await reachable(db, who, ids);
+  const own = await ownIdentifications(db, who.determinerId, ids);
+  const said = ids.map((id) => {
+    const e = entries.get(id);
+    const o = own.get(id);
+    return [id, e === undefined ? null : [e.draft, e.prior], o === undefined ? null : [o.animalId, o.ecdysisTid, o.sex, o.caste, o.draft]];
+  });
+  return createHash("sha256").update(JSON.stringify(said)).digest("hex");
 }
 
 /** A short hash of what saving would write, in the file's order. */
 export const digestOf = (lines: readonly DraftLine[]): string =>
   createHash("sha256")
-    .update(JSON.stringify(lines.map((l) => [l.write.specimenId, l.write.animalId, l.write.ecdysisTid, l.write.sex, l.write.caste, l.replacesDraft])))
+    .update(
+      JSON.stringify(
+        lines.map((l) => [l.write.specimenId, "animalId" in l.write, l.name.animalId, l.name.ecdysisTid, l.write.sex, l.write.caste, l.replacesDraft]),
+      ),
+    )
     .digest("hex")
     .slice(0, 32);

@@ -675,15 +675,11 @@ describe("a unit is listed only when it is complete", () => {
     });
   });
 
-  it("has words on the page, and what to do, for every reason a unit can be held for", () => {
+  it("has a note, saying what to do, for every reason a unit can be held for", () => {
     expect(new Set(HOLD_REASONS).size).toBe(HOLD_REASONS.length);
-    for (const reason of HOLD_REASONS) {
-      expect(en.uploads.page.held[reason], reason).toBeTruthy();
-      expect(en.uploads.page.heldTodo[reason], reason).toBeTruthy();
-    }
+    for (const reason of HOLD_REASONS) expect(en.uploads.notes.reason[reason], reason).toBeTruthy();
     // And no words for a reason that does not exist.
-    expect(Object.keys(en.uploads.page.held).sort()).toEqual([...HOLD_REASONS].sort());
-    expect(Object.keys(en.uploads.page.heldTodo).sort()).toEqual([...HOLD_REASONS].sort());
+    expect(Object.keys(en.uploads.notes.reason).sort()).toEqual([...HOLD_REASONS].sort());
   });
 });
 
@@ -978,6 +974,7 @@ describe("a sample's difference counted once", () => {
         cells: [{ column: "locality", was: "Corvallis", fileSays: "Elsewhere", value: { kind: "text", text: "Elsewhere" }, differs: true }],
         rows: [2, 3],
         moreRows: 0,
+        everyRow: [2, 3],
         specimensInFile: 2,
         specimensInSample: 3,
         // Specimens with no label row at all are imported ones, whose labels are on pins.

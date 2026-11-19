@@ -77,6 +77,9 @@ export type Refusal = (typeof REFUSALS)[number];
 const _readerRefusalsAreRefusals: (typeof XLSX_REFUSALS)[number] extends Refusal ? true : never = true;
 void _readerRefusalsAreRefusals;
 
+/** The column Beeline puts at the left of a file it hands back with a note on each row (src/app/upload-notes.ts). */
+export const NOTE_COLUMN = "Beeline's note";
+
 /** The sheet of the download, and so the sheet that is read. */
 export const SHEET_NAME = "specimens";
 
@@ -369,6 +372,8 @@ export interface SampleDifference {
   rows: number[];
   /** How many more rows of the sample the file holds. */
   moreRows: number;
+  /** Every row of the sample the file holds. */
+  everyRow: number[];
   specimensInFile: number;
   specimensInSample: number;
   /** Whether any label of the sample is on paper (the printed_sample view). */
@@ -413,6 +418,8 @@ export interface HeldItem {
   rows: number[];
   /** How many more rows are concerned. */
   moreRows: number;
+  /** Every row concerned, for the note each gets in the file (src/app/upload-notes.ts). */
+  everyRow: number[];
   specimenId: number | null;
   fieldNumber: string | null;
   sampleNumber: string | null;
@@ -477,6 +484,8 @@ export interface ParsedUpload {
   layout: Layout;
   /** Column name to its position in a row. */
   columns: Map<string, number>;
+  /** Every heading of the file by its position, "" where there is none: what the file with notes repeats. */
+  header: string[];
   unrecognised: UnrecognisedColumn[];
   /** The names of the workbook's other sheets, which were not read. */
   otherSheets: string[];
@@ -500,10 +509,13 @@ export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits>
   const known = new Set<string>(SPECIMEN_CSV_HEADER);
   const columns = new Map<string, number>();
   const unrecognised: UnrecognisedColumn[] = [];
+  const headings: string[] = [];
   if (head !== undefined) {
     for (const [at, cell] of [...head.cells.entries()].sort((a, b) => a[0] - b[0])) {
       const header = cell.text.trim();
-      if (header === "") continue;
+      headings[at] = header;
+      // The column Beeline adds to a file it hands back with notes: never read, and not a column it failed to read.
+      if (header === "" || header === NOTE_COLUMN) continue;
       if (known.has(header)) {
         // Two columns of one name: which one is meant cannot be told.
         if (columns.has(header)) return { ok: false, refusal: "repeated_column", detail: header };
@@ -522,7 +534,8 @@ export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits>
   const rows = body.filter((r) => [...r.cells.values()].some((c) => c.text.trim() !== ""));
   if (rows.length > MAX_ROWS) return { ok: false, refusal: "too_many_rows" };
   if (rows.length === 0) return { ok: false, refusal: "no_rows" };
-  return { ok: true, upload: { layout, columns, unrecognised, otherSheets: read.otherSheets.filter((n) => !(REFERENCE_TABS as readonly string[]).includes(n)), rows } };
+  const header = Array.from({ length: headings.length }, (_, at) => headings[at] ?? "");
+  return { ok: true, upload: { layout, columns, header, unrecognised, otherSheets: read.otherSheets.filter((n) => !(REFERENCE_TABS as readonly string[]).includes(n)), rows } };
 }
 
 // --- Reading a cell ---
@@ -912,7 +925,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
   const hold = (
     item: Pick<HeldItem, "reason" | "row" | "specimenId" | "fieldNumber" | "detail"> &
       Partial<Pick<HeldItem, "rows" | "sampleNumber" | "sample" | "unit" | "column" | "columns" | "cells">>,
-  ) => plan.held.push({ sampleNumber: null, sample: null, unit: null, column: null, columns: [], cells: [], ...item, ...firstRows(item.rows ?? [item.row]) });
+  ) => plan.held.push({ sampleNumber: null, sample: null, unit: null, column: null, columns: [], cells: [], ...item, ...firstRows(item.rows ?? [item.row]), everyRow: item.rows ?? [item.row] });
 
   const bySample = new Map<number, MatchedRow[]>();
   const touchedRows: Array<{ sampleId: number; touched: boolean }> = [];
@@ -1117,6 +1130,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
           return { column: c, was: r.nowText, fileSays: r.fileText, value: r.value, differs: differing.includes(c) };
         }),
         ...firstRows(sampleRows.map((r) => r.row)),
+        everyRow: sampleRows.map((r) => r.row),
         specimensInFile: sampleRows.length,
         specimensInSample: facts.specimens.get(sampleId) ?? 0,
         printed: facts.printed.has(sampleId),

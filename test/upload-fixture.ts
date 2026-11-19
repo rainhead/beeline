@@ -9,6 +9,7 @@ import { buildWorkbook, type TestCell } from "./workbook.js";
 import { ALL, EMPTY_QUERY, SPECIMEN_CSV_HEADER, STAFF_READER, hostNamesOnce, listSpecimens, specimenCsvRow, textCell } from "../src/app/listings.js";
 import { writeXlsx } from "../src/app/xlsx.js";
 import type { Layout } from "../src/app/upload-plan.js";
+import type { UploadArchive } from "../src/app/upload-archive.js";
 import { createMemoryDb, insertCleanSample, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
 import { openCopy, writeCopy } from "./promoted-store.js";
 
@@ -140,7 +141,7 @@ async function buildStore(unprinted: boolean) {
 export async function uploadFixture(
   signedInAs: "staffer" | "volunteer" = "staffer",
   /** `unprinted` adds a sample (UP-3) whose one specimen is in a print run that has not printed. */
-  options: { unprinted?: boolean; readLimits?: Partial<ReadLimits>; layout?: Layout } = {},
+  options: { unprinted?: boolean; readLimits?: Partial<ReadLimits>; layout?: Layout; archive?: UploadArchive } = {},
 ) {
   const { instance, conn, staffer, volunteer, ids } = await storeOf(options.unprinted === true);
   const resolved = signedInAs === "staffer" ? staffer : volunteer;
@@ -156,6 +157,8 @@ export async function uploadFixture(
     // In this thread, unless the test is about the worker and says `inThread: false`.
     uploadReadLimits: { inThread: true, ...options.readLimits },
     uploadLayout: options.layout,
+    // Never the real folder: a test that is about the copy in Drive gives a fake.
+    uploadArchive: options.archive ?? null,
     resolveSession: async () => ({ personId: resolved, login: signedInAs, iconUrl: null }),
   });
   /** The Excel file for editing specimens, as the staff member asked for it. */

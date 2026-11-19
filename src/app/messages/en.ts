@@ -2465,6 +2465,7 @@ export const en = {
       samplesApplyNote: "Beeline makes the new trap samples one at a time, in the order of the file. You can leave this page: it carries on, and the page shows how far it has got.",
       samplesApplying: (done: number, total: number) => `Applying: ${n(done)} of ${n(total)} ${total === 1 ? "row" : "rows"} done.`,
       samplesApplied: (when: string, by: string) => `Applied on ${when} by ${by}.`,
+      samplesQueued: (when: string, by: string) => `Queued on ${when} by ${by}, and being applied: the counts below say how far it has got.`,
       samplesCreated: (count: number, deleted: number) =>
         `Created ${n(count)} new trap ${count === 1 ? "sample" : "samples"}${deleted > 0 ? `, ${n(deleted)} since deleted` : ""}.`,
       samplesStopped: (row: number) => `Applying stopped at row ${n(row)} because something went wrong. It has been reported. The rows from there on are waiting.`,

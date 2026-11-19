@@ -153,6 +153,24 @@ export async function highestSampleNumber(conn: DuckDBConnection, prefix = "OBAS
   return found[0]?.n ?? 0;
 }
 
+/** A stored number that may be a spelling of the program's series: its letters in order, with separators between them. A prefilter, then the fold decides. */
+const MAYBE_PROGRAM_SERIES = `regexp_matches(upper(sample_number), 'O[\\s\\-_./]*B[\\s\\-_./]*A[\\s\\-_./]*S')`;
+const FOLDED_NUMBER = `regexp_replace(upper(sample_number), '[\\s\\-_./]+', '', 'g')`;
+
+/**
+ * The highest number in the program's series among the numbers written as it, in any spelling: OBAS and exactly five
+ * digits after folding (so `OBAS 00040` counts, and `OBAS-100000` or `OBAS-1204` neither exhaust the series nor skew
+ * it). What a blank row's number is counted from.
+ */
+export async function highestSeriesNumber(conn: DuckDBConnection): Promise<number> {
+  const found = await rows<{ n: number | null }>(
+    conn,
+    `SELECT max(CAST(substr(f, 5) AS INTEGER))::INTEGER AS n
+     FROM (SELECT ${FOLDED_NUMBER} AS f FROM sample WHERE ${MAYBE_PROGRAM_SERIES}) WHERE regexp_full_match(f, 'OBAS[0-9]{5}')`,
+  );
+  return found[0]?.n ?? 0;
+}
+
 /** What a form carries as its number when the real one is given under the print runs' lock, so the form's own checks run. */
 export const AUTO_NUMBER_PLACEHOLDER = "(next number)";
 
@@ -195,7 +213,7 @@ export async function seriesNumberHolder(conn: DuckDBConnection, sampleNumber: s
     ? await rows<{ entity_id: number; kind: string }>(
         conn,
         `SELECT entity_id, kind FROM sample
-         WHERE starts_with(upper(sample_number), 'OBAS') AND regexp_replace(upper(sample_number), '[\\s\\-_./]+', '', 'g') = $1
+         WHERE ${MAYBE_PROGRAM_SERIES} AND ${FOLDED_NUMBER} = $1
          ORDER BY entity_id LIMIT 1`,
         [foldNumber(sampleNumber)],
       )
@@ -259,6 +277,8 @@ export async function findLookalikes(
      JOIN sample s ON s.entity_id = c.sample_id
      JOIN sample_location l ON l.sample_id = s.entity_id
      WHERE c.person_id = $1 AND c.position = 1
+       -- the first collector as sample_primary_collector has it: exactly one at position 1
+       AND (SELECT count(*) FROM sample_collector c2 WHERE c2.sample_id = s.entity_id AND c2.position = 1) = 1
        AND s.entity_id IS DISTINCT FROM $9::INTEGER
        AND ($10::INTEGER IS NULL OR NOT EXISTS (
              SELECT 1 FROM upload_sample_outcome o
@@ -507,11 +527,6 @@ export function deleteTrapSample(
   return withPrintRunLock(async () => {
     const found = await deletable(conn, id);
     if ("refused" in found) return found;
-    // Another table that names the sample is not ours to delete from: the sample stays, and the page says why.
-    for (const table of NEVER_DELETED.filter((t) => t !== "specimen")) {
-      const kept = await rows<{ n: number }>(conn, `SELECT count(*)::INTEGER AS n FROM "${table}" WHERE sample_id = $1`, [id]);
-      if ((kept[0]?.n ?? 0) > 0) return { refused: "has_other_records" as const };
-    }
     await inTransaction(conn, async () => {
       // A fresh deletion always writes a record of its own; finishing a cut-short one finds its record there already.
       if (!found.cutShort) {
@@ -553,6 +568,12 @@ export async function deletable(conn: DuckDBConnection, id: number): Promise<{ n
   if (r.printed) return { refused: "printed" };
   if (r.in_run) return { refused: "in_print_run" };
   if (r.specimens > 0) return { refused: "has_specimens" };
+  // Another table that names the sample is not ours to delete from: the sample stays, and the page says why, before the
+  // button. The delete asks again under the print runs' lock, through this.
+  for (const table of NEVER_DELETED.filter((t) => t !== "specimen")) {
+    const kept = await rows<{ n: number }>(conn, `SELECT count(*)::INTEGER AS n FROM "${table}" WHERE sample_id = $1`, [id]);
+    if ((kept[0]?.n ?? 0) > 0) return { refused: "has_other_records" };
+  }
   return { number: r.sample_number, cutShort: r.cut_short };
 }
 

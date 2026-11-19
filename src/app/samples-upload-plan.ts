@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { matchCollectors, matchName, readPeople, type MatchedCollector } from "../collector-match.js";
 import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
-import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, findLookalikes, foldNumber, highestSampleNumber, isProgramSeries, lookAlike, seriesNumberHeldProblem, seriesNumberHolder, seriesNumberProblem, type Lookalike, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
+import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, findLookalikes, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, seriesNumberHeldProblem, seriesNumberHolder, seriesNumberProblem, type Lookalike, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import {
@@ -383,8 +383,8 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   };
 
   const newNumbers = new Map<string, number[]>();
-  /** The rows of the file so far that could be made, which a later row may look like. */
-  const earlier: Array<{ row: number; number: string; facts: LookalikeFacts }> = [];
+  /** What each new row's look-alikes are judged by, for the comparison of the file's rows with each other once it is known which will be made. */
+  const factsOf = new Map<SampleRowResult, LookalikeFacts>();
 
   for (const [index, { row, cells }] of rows.entries()) {
     const { given, id } = idOf[index]!;
@@ -468,13 +468,8 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         const facts: LookalikeFacts = { firstCollectorId: first!, dateStart: sample.date_start, dateEnd: sample.date_end, latitude: sample.latitude, longitude: sample.longitude };
         const [found] = await findLookalikes(conn, facts);
         // Someone who is not staff may not see where every sample is: they are told the row is held, and not which sample.
-        let lookalike: Lookalike | null = found !== undefined && options.reader !== undefined && !options.reader.staff ? { sampleId: 0, sampleNumber: "" } : (found ?? null);
-        // Or an earlier row of this same file: two rows that share the first collector, overlapping days and a point are held alike.
-        if (found === undefined) {
-          const twin = earlier.find((e) => lookAlike(e.facts, facts));
-          if (twin !== undefined) lookalike = { sampleId: 0, sampleNumber: twin.number, fileRow: twin.row };
-        }
-        earlier.push({ row, number: fileNumber, facts });
+        const lookalike: Lookalike | null = found !== undefined && options.reader !== undefined && !options.reader.staff ? { sampleId: 0, sampleNumber: "" } : (found ?? null);
+        factsOf.set(result, facts);
         // A tick counts only for a row that looks like something, so a stale or made-up one cannot switch off a later check.
         result.create = {
           form: { ...form, sample_number: fileNumber, collectors: sample.collector_ids.map(String) },
@@ -561,7 +556,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   const numbering: SamplesPlan["numbering"] = { blank: 0, from: null, to: null };
   if (blanks.length > 0) {
     const explicit = new Set(results.filter((r) => r.kind === "new" && r.sampleNumber !== null && r.sampleNumber !== "" && isProgramSeries(r.sampleNumber)).map((r) => foldNumber(r.sampleNumber!)));
-    let next = (await highestSampleNumber(conn)) + 1;
+    let next = (await highestSeriesNumber(conn)) + 1;
     for (const r of blanks) {
       let given: string | null = null;
       while (next <= 99_999) {
@@ -583,6 +578,23 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
       numbering.from ??= given;
       numbering.to = given;
     }
+  }
+
+  // Rows of the file against each other, in file order, only those that will be made: validity, repeated numbers and
+  // numbering are settled above. A row that shares the first collector, overlapping days and a point with an earlier one
+  // waits for the same tick as a look-alike in the store.
+  const made: Array<{ r: SampleRowResult; facts: LookalikeFacts }> = [];
+  for (const r of results) {
+    const facts = factsOf.get(r);
+    if (r.create === null || facts === undefined) continue;
+    if (r.create.lookalike === null) {
+      const twin = made.find((e) => lookAlike(e.facts, facts));
+      if (twin !== undefined) {
+        r.create.lookalike = { sampleId: 0, sampleNumber: twin.r.create!.form.sample_number, fileRow: twin.r.row };
+        r.create.anyway = options.createAnyway?.has(r.row) ?? false;
+      }
+    }
+    made.push({ r, facts });
   }
 
   const counts = countRows(results);

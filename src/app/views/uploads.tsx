@@ -229,7 +229,11 @@ export function UploadPreview({
         </Callout>
       )}
       {samplesSummary !== null && samples?.applied == null && <Callout>{p.samplesNothingChanged}</Callout>}
-      {samplesSummary !== null && samples?.applied != null && (
+      {/* Applied only when nothing is waiting and the job has not stopped: until then the file is queued, and says how far it has got. */}
+      {samplesSummary !== null && samples?.applied != null && samples.stoppedRow === null && (samplesSummary.outcomes?.pending ?? 0) > 0 && (
+        <Callout>{p.samplesQueued(m.format.dateTime(samples.applied.at), samples.applied.by)}</Callout>
+      )}
+      {samplesSummary !== null && samples?.applied != null && samples.stoppedRow === null && (samplesSummary.outcomes?.pending ?? 0) === 0 && (
         <Callout tone="success">
           {p.samplesApplied(m.format.dateTime(samples.applied.at), samples.applied.by)} {p.samplesExistingNotApplied}
         </Callout>

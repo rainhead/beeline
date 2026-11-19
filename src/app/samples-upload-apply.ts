@@ -195,6 +195,8 @@ export interface ApplyDeps {
   signal?: AbortSignal;
   /** Runs one unit of work as a step of the job (the framework's), so a shutdown stops the job between rows. */
   step?: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
+  /** Tests only: the bounds of a run (APPLY_ROW_LIMIT, APPLY_TIME_LIMIT_MS), and the clock they are measured on. */
+  limits?: { rows?: number; ms?: number; now?: () => number };
   /** Tests only: told after each row is done. */
   afterRow?: (row: { uploadId: number; row: number }) => void | Promise<void>;
 }
@@ -266,6 +268,11 @@ class LookalikeFound extends Error {
 
 /** Make one trap sample from a queued row, or say why not. */
 async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "created"; id: number } | { outcome: "refused" | "skipped" }> {
+  // Only whole new rows are queued so far: any other unit is refused before its payload is read, and nothing is made.
+  if (p.unit !== ROW_UNIT) {
+    await settle(deps.db, p, "refused", "This kind of change is not applied yet, so nothing was made for it.");
+    return { outcome: "refused" };
+  }
   const queued = readQueued(p.payload);
   if ("unreadable" in queued) {
     await settle(deps.db, p, "refused", `What was queued for this row cannot be read (${queued.unreadable}), so it was not created.`);
@@ -329,6 +336,14 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
   return { outcome: "created", id: made };
 }
 
+/**
+ * How much one run does before it ends: this many rows or this long, whichever comes first. The scheduler runs one job at
+ * a time, so a run that held it until the queue was empty would keep the nightly, the backup and the exports waiting; the
+ * rows left stay pending, and the scheduler's tick resumes them, after any clock job that is due.
+ */
+export const APPLY_ROW_LIMIT = 200;
+export const APPLY_TIME_LIMIT_MS = 5 * 60_000;
+
 export interface ApplyResult {
   created: number;
   refused: number;
@@ -351,13 +366,18 @@ export async function applyPending(deps: ApplyDeps): Promise<ApplyResult> {
   const step = deps.step ?? ((_label, fn) => fn());
   const result: ApplyResult = { created: 0, refused: 0, skipped: 0, stopped: 0 };
   let failure: unknown;
+  const now = deps.limits?.now ?? (() => Date.now());
+  const rowLimit = deps.limits?.rows ?? APPLY_ROW_LIMIT;
+  const endsAt = now() + (deps.limits?.ms ?? APPLY_TIME_LIMIT_MS);
+  let done = 0;
   for (;;) {
-    const next = await nextPending(deps.db);
+    // A bounded run: the rest stays pending for the next.
+    const next = done >= rowLimit || now() >= endsAt ? undefined : await nextPending(deps.db);
     if (next === undefined) {
       if (failure !== undefined) throw failure;
       return result;
     }
-    const done = await step(`upload ${next.upload_id} row ${next.row_number}`, async (): Promise<Awaited<ReturnType<typeof createRow>> | { outcome: "stopped" }> => {
+    const outcome = await step(`upload ${next.upload_id} row ${next.row_number}`, async (): Promise<Awaited<ReturnType<typeof createRow>> | { outcome: "stopped" }> => {
       try {
         return await createRow(deps, next);
       } catch (err) {
@@ -369,7 +389,8 @@ export async function applyPending(deps: ApplyDeps): Promise<ApplyResult> {
         return { outcome: "stopped" };
       }
     });
-    result[done.outcome]++;
+    result[outcome.outcome]++;
+    done++;
     await deps.afterRow?.({ uploadId: next.upload_id, row: next.row_number });
   }
 }

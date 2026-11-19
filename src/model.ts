@@ -1282,7 +1282,7 @@ export interface SampleDeletionTable {
   sample_id: number;
   sample_number: string;
   deleted_by: number;
-  deleted_at: Timestamped;
+  deleted_at: ColumnType<Date, Date | string, Date | string>;
   reason: string | null;
 }
 
@@ -1296,7 +1296,7 @@ export interface UploadSampleOutcomeTable {
   sample_number: string | null;
   payload: string | null;
   detail: string | null;
-  recorded_at: Timestamped;
+  recorded_at: ColumnType<Date, Date | string, Date | string>;
 }
 
 /** An old-Beeline record promotion set aside as a second print, tied to its specimen (beeline-iuva). */

@@ -636,14 +636,14 @@ export const ON_DEMAND_RETRY_MS = 5 * 60_000;
 async function failedLately(db: Kysely<Database>, name: string, at: Date): Promise<boolean> {
   const last = await db
     .selectFrom("job_run")
-    .select(["started_at", "outcome", "detail"])
+    .select(["completed_at", "started_at", "outcome", "detail"])
     .where("job_name", "=", name)
     .orderBy("started_at", "desc")
     .limit(1)
     .executeTakeFirst();
   if (last === undefined || last.outcome !== "failed") return false;
   if (/^(interrupted by shutdown|orphaned)/.test(last.detail ?? "")) return false;
-  return at.getTime() - new Date(last.started_at).getTime() < ON_DEMAND_RETRY_MS;
+  return at.getTime() - new Date(last.completed_at ?? last.started_at).getTime() < ON_DEMAND_RETRY_MS;
 }
 
 export function startScheduler(deps: SchedulerDeps): Scheduler {

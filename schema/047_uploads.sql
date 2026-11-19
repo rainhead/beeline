@@ -46,7 +46,7 @@ CREATE TABLE upload_applied (
 COMMENT ON TABLE upload_applied IS 'An upload whose changes were taken up. For a volunteer''s file: its identifications written as drafts on Identify specimens, which the overnight job commits (src/commit-determinations.ts). For staff''s samples file: its rows queued to be applied, one upload_sample_outcome row each, which the apply-uploads job works through. At most one row per upload, written in the same transaction as the drafts or the queued rows. No row means nothing from the file was taken up.';
 COMMENT ON COLUMN upload_applied.applied_by IS 'The person signed in who applied it: the person the drafts are credited to, or the staff member whose samples the job creates.';
 COMMENT ON COLUMN upload_applied.applied_at IS 'When it was applied: when the drafts were saved, or when the rows were queued.';
-COMMENT ON COLUMN upload_applied.draft_count IS 'How many drafts were written for a volunteer''s file, one for each identification the preview listed; for staff''s samples file, how many rows were queued, which is how many upload_sample_outcome rows the upload has.';
+COMMENT ON COLUMN upload_applied.draft_count IS 'How many drafts were written for a volunteer''s file, one for each identification the preview listed; for staff''s samples file, how many rows were queued to be made (pending), not counting the rows left alone, which also have an upload_sample_outcome row.';
 
 -- What applying a samples file did to each row (beeline-kgyd.4.10). Written
 -- as 'pending' in the transaction that claims the upload, and updated to what

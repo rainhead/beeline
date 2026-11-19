@@ -53,6 +53,7 @@ export function digestOf(plan: SamplesPlan): string {
   const hash = createHash("sha256");
   for (const r of plan.rows) {
     if (r.create === null) continue;
+    // Held rows too, in full: a change to one between the preview and Apply refuses.
     hash.update(JSON.stringify([r.row, r.create.form, r.create.lookalike?.sampleId ?? null]));
   }
   return hash.digest("hex").slice(0, 32);
@@ -63,7 +64,7 @@ export function digestOf(plan: SamplesPlan): string {
  * nothing can be ticked any more: the row can be uploaded again, or entered on the trap form.
  */
 export const lookalikeSentence = (sampleNumber: string) =>
-  `It looks like sample ${sampleNumber}: the same first collector, overlapping days and a point within 100 metres, so it was not created. To change that sample, put its sampleId in the file and upload the file again. To make a new sample anyway, upload the row again and tick create anyway, or enter it on the trap form.`;
+  `It looks like ${sampleNumber === "" ? "a sample Beeline already has" : `sample ${sampleNumber}`}: the same first collector, overlapping days and a point within 100 metres, so it was not created. To compare it with that sample, put its sampleId in the file and upload the file again (changes to existing samples are not applied yet). To make a new sample anyway, upload the row again and tick create anyway, or enter it on the trap form.`;
 
 /**
  * Claim the upload and queue its rows, in one transaction. False if the upload was claimed already, which its key
@@ -229,6 +230,13 @@ async function recordMade(deps: ApplyDeps, pending: Unrecorded | null): Promise<
   }
 }
 
+/** A look-alike found inside the creating transaction, which aborts it. */
+class LookalikeFound extends Error {
+  constructor(readonly sampleNumber: string) {
+    super(`looks like sample ${sampleNumber}`);
+  }
+}
+
 /** Make one trap sample from a queued row, or say why not. */
 async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "created"; id: number; release: () => void } | { outcome: "refused" | "skipped" }> {
   const queued = JSON.parse(p.payload ?? "null") as QueuedRow | null;
@@ -253,18 +261,22 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
       return { outcome: "refused" };
     }
   }
-  if (!queued.anyway) {
-    // Not the samples this same upload has made: its rows are the file's own, and two traps at one site on the same days are two samples.
+  // Not the samples this same upload has made: its rows are the file's own, and two traps at one site on the same days
+  // are two samples. Asked now to skip the row cheaply, and again in the creating transaction, under the print runs'
+  // lock, where a trap form entry committed meanwhile is caught.
+  const lookalike = async (conn: DuckDBConnection, except?: number) => {
     const siblings = new Set(await madeBy(deps.db, p.upload_id));
-    const [like] = (
-      await findLookalikes(deps.conn, {
-        firstCollectorId: sample.collector_ids[0]!,
-        dateStart: sample.date_start,
-        dateEnd: sample.date_end,
-        latitude: sample.latitude,
-        longitude: sample.longitude,
-      })
-    ).filter((l) => !siblings.has(l.sampleId));
+    const found = await findLookalikes(conn, {
+      firstCollectorId: sample.collector_ids[0]!,
+      dateStart: sample.date_start,
+      dateEnd: sample.date_end,
+      latitude: sample.latitude,
+      longitude: sample.longitude,
+    });
+    return found.find((l) => l.sampleId !== except && !siblings.has(l.sampleId));
+  };
+  if (!queued.anyway) {
+    const like = await lookalike(deps.conn);
     if (like !== undefined) {
       await settle(deps.db, p, "skipped", lookalikeSentence(like.sampleNumber));
       return { outcome: "skipped" };
@@ -274,6 +286,11 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
   // Its queue turn is taken here, before the sample is visible to anyone, and held until the history pass has read it.
   let release: (() => void) | undefined;
   const made = await createTrapSample(deps.printWriter, sample, p.applied_by, async (id) => {
+    // The sample is in this transaction already, so it is not its own look-alike. One found aborts the transaction.
+    if (!queued.anyway) {
+      const like = await lookalike(deps.printWriter, id);
+      if (like !== undefined) throw new LookalikeFound(like.sampleNumber);
+    }
     const gate = new Promise<void>((resolve) => (release = resolve));
     void onSample(id, () => gate);
     await deps.printWriter.run(
@@ -281,11 +298,16 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
        WHERE upload_id = $2 AND row_number = $3 AND unit = $4`,
       [id, p.upload_id, p.row_number, p.unit] as never,
     );
-  }).catch((err: unknown) => {
+  }).catch(async (err: unknown) => {
     // The transaction was rolled back, so the sample does not exist; its turn is let go.
     release?.();
+    if (err instanceof LookalikeFound) {
+      await settle(deps.db, p, "skipped", lookalikeSentence(err.sampleNumber));
+      return "skipped" as const;
+    }
     throw err;
   });
+  if (made === "skipped") return { outcome: "skipped" };
   if (made === "taken") {
     await settle(deps.db, p, "refused", numberTakenProblem(sample.sample_number));
     return { outcome: "refused" };

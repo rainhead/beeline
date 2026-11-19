@@ -692,3 +692,32 @@ describe("what staff are told, and who sees what", () => {
     expect(plan.counts.newHeld.active).toBe(1);
   });
 });
+
+describe("a look-alike that appears while the row is being made", () => {
+  it("is caught in the creating transaction, which is rolled back, and the row is left alone", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1)]);
+    await apply(f, location, { digest });
+    // After the cheap look-alike read finds nothing, somebody saves a sample at the same place on the same days.
+    const entering = new Proxy(f.conn, {
+      get(target, key) {
+        const value = Reflect.get(target, key) as unknown;
+        if (key !== "runAndReadAll" || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
+        return async (...args: unknown[]) => {
+          const result = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+          if (/FROM sample_collector c\s+JOIN sample s/.test(String(args[0]))) {
+            await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
+              VALUES ('trap', 'OBAS-00099', DATE '${day(9)}', DATE '${day(11)}', 'USA', 'OR', 'vane trap')`);
+            const [[id]] = (await rows(f.conn, `SELECT max(entity_id) FROM sample`)) as [[number]];
+            await f.conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${id}, ${f.volunteer}, 1)`);
+            await f.conn.run(`INSERT INTO sample_location (sample_id, latitude, longitude, source) VALUES (${id}, 44.5, -123.2, 'staff_entry')`);
+          }
+          return result;
+        };
+      },
+    });
+    expect(await applyPending(deps(f, { conn: entering }))).toEqual({ created: 0, refused: 0, skipped: 1 });
+    expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011'`)).toEqual([[0n]]);
+    expect(String((await outcomes(f))[0]![3])).toContain("OBAS-00099");
+  });
+});

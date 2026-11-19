@@ -2,7 +2,7 @@ import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import type { Messages } from "./messages/en.js";
 import { samplesWorkbook } from "./sample-workbook.js";
-import type { OutcomeRow } from "./samples-upload-apply.js";
+import { lookalikeSentence, type OutcomeRow } from "./samples-upload-apply.js";
 import { countRows, type SampleRowResult, type SamplesCounts, type SamplesPlan, type UnknownCollector } from "./samples-upload-plan.js";
 import { specimenWorkbook, type Audience } from "./specimen-workbook.js";
 import type { DraftPlan } from "./upload-drafts.js";
@@ -162,9 +162,9 @@ export function staffNotes(m: Messages, upload: ParsedUpload, plan: UploadPlan):
 /**
  * The samples file, which changes nothing yet: what differs, cell by cell, which rows would become new trap samples,
  * and what Beeline could not use, each as a note on its row. A row that has both a difference and something it cannot
- * use says both.
+ * use says both. `redact` is for a reader who is not staff, who is not told which sample a held row looks like.
  */
-export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPlan, outcomes: readonly OutcomeRow[] = []): Noted<SamplesSummary> {
+export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPlan, outcomes: readonly OutcomeRow[] = [], redact = false): Noted<SamplesSummary> {
   const n = m.uploads.notes;
   const byRow = new Map<number, SampleRowResult>(plan.rows.map((r) => [r.row, r]));
   const reasons = (r: SampleRowResult): string => {
@@ -187,7 +187,7 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
   for (const { row } of upload.rows) {
     const o = done.get(row);
     if (o !== undefined) {
-      notes.set(row, o.outcome === "pending" ? n.waiting : o.outcome === "created" ? n.created(o.sample_number ?? "") : n.notCreated(o.detail ?? ""));
+      notes.set(row, o.outcome === "pending" ? n.waiting : o.outcome === "created" ? n.created(o.sample_number ?? "") : n.notCreated(redact && o.outcome === "skipped" ? lookalikeSentence("") : (o.detail ?? "")));
       continue;
     }
     const r = byRow.get(row);

@@ -938,7 +938,7 @@ export const en = {
         "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. The file holds what these filters select, so filter first, for example to one collection year. Every cell is kept as text, so Excel leaves it as it is. A staff upload only lists what differs from what Beeline holds.",
       editSamples: "Download the Excel file for editing samples",
       editSamplesNote:
-        "One row for each sample, to edit when and how it was collected, who collected it, how many specimens it has, and where, or to add new trap samples. The file holds what these filters select, at most 20,000 samples, so filter first. Every cell is kept as text, so Excel leaves it as it is. Upload it back with the link beside this button: Beeline says what differs from what it has, and doesn't change any record yet.",
+        "One row for each sample, to edit when and how it was collected, who collected it, how many specimens it has, and where, or to add new trap samples. The file holds what these filters select, at most 20,000 samples, so filter first. Every cell is kept as text, so Excel leaves it as it is. Upload it back with the link beside this button: Beeline makes the new trap samples when you apply the file, and only shows what differs on existing samples, which it doesn't change yet.",
       editSamplesCut: (total: number, max: number) =>
         `These filters select ${total.toLocaleString("en-US")} samples, and the file holds only the first ${max.toLocaleString("en-US")} in this page's order. Filter further to get the rest.`,
       editNoteVolunteer:
@@ -2321,7 +2321,7 @@ export const en = {
         "These two are grey, but Beeline does read them. It finds each existing sample by its sampleId, and uses sampleVersion to see whether the sample changed since you downloaded the file, so leave both as they are. The fieldNumber is the sample's number: Beeline checks it against the sample the row is for, sets the row aside if they disagree, and never changes a sample's number from this file.",
       newTopic: "A new trap sample",
       newRows:
-        "A row with a blank sampleId will become a new trap sample, with the number in its fieldNumber. Beeline doesn't create it yet: the upload only says whether the row could be used. A new trap sample needs a number that no other trap sample has, a collecting date that isn't in the future, a method, a point, a country, a state and at least one collector. A blank specimenCount is 0.",
+        "A row with a blank sampleId will become a new trap sample, with the number in its fieldNumber. Beeline makes it when the person who uploaded the file applies it. A new trap sample needs a number that no other trap sample has, a collecting date that isn't in the future, a method, a point, a country, a state and at least one collector. A blank specimenCount is 0.",
       lookupTopic: "The collectors tab",
       lookup:
         "This tab lists the people who collected a sample whose last day of collecting is in the last 24 months, once each, for looking up how a name is spelled. Beeline does not read it when the file is uploaded, so changing it changes nothing. The recordedBy column offers no list, because your spreadsheet may mark a name that isn't on it as invalid, and a collector Beeline hasn't met is ordinary.",
@@ -2357,7 +2357,7 @@ export const en = {
     title: "Edited downloads",
     heading: "Compare an edited download",
     intro:
-      "Upload an Excel file for editing specimens that you downloaded from Specimens, or one for editing samples that you downloaded from Samples, and edited. Beeline counts what differs from what it has, and gives the file back with a note on each row. It does not change any record from a staff upload yet.",
+      "Upload an Excel file for editing specimens that you downloaded from Specimens, or one for editing samples that you downloaded from Samples, and edited. Beeline counts what differs from what it has, and gives the file back with a note on each row. From a samples file, staff can apply the new rows as trap samples; differences on existing samples, and everything in a specimens file from staff, are only shown, not applied.",
     headingVolunteer: "Upload your identifications",
     introVolunteer:
       "Upload the Excel file you downloaded from Specimens and edited. Beeline says how many of your identifications it can save, and saves them when you choose. If some can't be saved, you can download your file with a note on each row saying why.",
@@ -2450,7 +2450,7 @@ export const en = {
       heldColumns: { row: "Row", number: "Number in the file", like: "Looks like", anyway: "Create anyway" },
       heldAnyway: (row: number) => `Create row ${n(row)} anyway`,
       heldRule:
-        "Looks like means the same first collector, collecting days that overlap, and a point within 100 metres. To change an existing sample instead, put its sampleId in the file.",
+        "Looks like means the same first collector, collecting days that overlap, and a point within 100 metres. If the row is meant for that sample, put its sampleId in the file to compare it with that sample (changes to existing samples are not applied yet).",
       samplesCantUse: (count: number, split: string) => `${n(count)} ${count === 1 ? "row" : "rows"} can't be used: see the notes in your file${split}.`,
       samplesDiffer: (count: number, split: string) => `${n(count)} existing ${count === 1 ? "sample differs" : "samples differ"} from what Beeline has${split}.`,
       samplesSame: (count: number, split: string) => `${n(count)} ${count === 1 ? "is" : "are"} the same as Beeline has${split}.`,
@@ -2468,7 +2468,7 @@ export const en = {
       samplesExistingNotApplied: "Changes to existing samples aren't applied yet; they are listed as differences only.",
       samplesChangedSince: "The comparison with this file changed after this page was shown, so nothing was applied. This is how it stands now: check it and apply again.",
       samplesNothingTicked:
-        "Nothing was applied: every new row looks like a sample Beeline already has, and none was ticked. Tick create anyway on the rows you want made, or put the sampleId of the existing sample in the file to change that sample.",
+        "Nothing was applied: every new row looks like a sample Beeline already has, and none was ticked. Tick create anyway on the rows you want made, or put the sampleId of the existing sample in the file to compare the row with that sample (changes to existing samples are not applied yet).",
       samplesBusy: "Beeline is reading from iNaturalist and rewriting samples right now, so nothing was applied. Try again in a few minutes.",
       /** After a count: how many of the rows are in seasons Beeline still asks about and how many in settled ones. */
       split: (active: number, settled: number, unplaced: number) =>
@@ -2501,7 +2501,7 @@ export const en = {
       nothing: "blank",
       newTrap: "New trap sample, ready to be created when you apply the file.",
       newTrapHeld: (number: string) =>
-        `New trap sample, not created yet: it looks like ${number === "" ? "a sample Beeline already has" : `sample ${number}`}. To change that sample, put its sampleId in this row. To make a new sample anyway, tick create anyway on the page before applying.`,
+        `New trap sample, not created yet: it looks like ${number === "" ? "a sample Beeline already has" : `sample ${number}`}. To compare it with that sample instead, put its sampleId in this row (changes to existing samples are not applied yet). To make a new sample anyway, tick create anyway on the page before applying.`,
       /** What applying did to a new row. */
       waiting: "Waiting to be applied.",
       created: (number: string) => `Created ${number}.`,

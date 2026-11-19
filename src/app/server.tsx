@@ -2551,7 +2551,7 @@ export function createApp({
       const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), today: uploadToday?.(), createAnyway });
       // What applying did to each row, once the file was applied: the notes and the counts say it.
       const outcomes = row.applied_at === null ? [] : await readOutcomes(db, row.entity_id);
-      return { kind: "samples" as const, plan, outcomes, noted: samplesNotes(m, kept.upload, plan, outcomes) };
+      return { kind: "samples" as const, plan, outcomes, noted: samplesNotes(m, kept.upload, plan, outcomes, !c.get("admin")) };
     }
     if (kept.staffFile) {
       const plan = await comparePlan(db, kept.upload, c.get("admin") ? {} : { view: { reader: readerOf(c) } });

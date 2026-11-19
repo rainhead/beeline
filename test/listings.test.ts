@@ -2371,9 +2371,9 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       for (const [, words] of about) expect(words).not.toMatch(/correct|collecting date|coordinates/i);
     });
 
-    it("is the same for a volunteer", async () => {
+    it("has no identifiers tab for a volunteer, whose file has no identifiedBy column (beeline-kgyd.7)", async () => {
       const volunteer = await download("alice");
-      expect(book(volunteer.bytes).SheetNames).toEqual(["specimens", "names", "identifiers", "words", "about"]);
+      expect(book(volunteer.bytes).SheetNames).toEqual(["specimens", "names", "words", "about"]);
     });
   });
 });

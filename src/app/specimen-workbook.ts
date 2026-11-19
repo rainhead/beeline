@@ -2,7 +2,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { monthsBefore, oregonToday } from "../oregon-today.js";
 import type { Messages } from "./messages/en.js";
-import { SPECIMENS_LAYOUT, SPECIMEN_CHOICES, columnRule } from "./upload-plan.js";
+import { SPECIMENS_LAYOUT, SPECIMEN_CHOICES, VOLUNTEER_LAYOUT, columnRule, type Layout } from "./upload-plan.js";
 import type { ColumnChoices, ExtraSheet, XlsxWriterOptions } from "./xlsx.js";
 
 /**
@@ -10,9 +10,27 @@ import type { ColumnChoices, ExtraSheet, XlsxWriterOptions } from "./xlsx.js";
  * rows (beeline-kgyd.2): warnings on the columns with a fixed vocabulary,
  * tabs to look names up in, a tab that says what the file is, and a shade on
  * the columns Beeline does not read. The file is for editing specimens
- * (`SPECIMENS_LAYOUT`, src/app/upload-plan.ts). Nothing in it is relied on: the upload checks every cell again. It is built
- * when the file is asked for and is not part of the CSV.
+ * (`SPECIMENS_LAYOUT`, src/app/upload-plan.ts), and for someone who is not
+ * staff for naming their own (`VOLUNTEER_LAYOUT`, beeline-kgyd.7), whose tabs
+ * and words follow their columns. Nothing in it is relied on: the upload
+ * checks every cell again. It is built when the file is asked for and is not
+ * part of the CSV.
  */
+
+/** Who the file is for: staff, with the identification of record, or anyone else, with their own. */
+export type Audience = "staff" | "volunteer";
+
+export const layoutOf = (audience: Audience): Layout => (audience === "staff" ? SPECIMENS_LAYOUT : VOLUNTEER_LAYOUT);
+
+/**
+ * The words each column with a fixed vocabulary takes. A volunteer's sex is
+ * the draft's, female or male (schema/045), so their list has no gynandromorph.
+ */
+export const choicesOf = (audience: Audience): Record<string, readonly string[]> => {
+  const layout = layoutOf(audience);
+  const all: Record<string, readonly string[]> = audience === "staff" ? SPECIMEN_CHOICES : { ...SPECIMEN_CHOICES, sex: ["female", "male"] };
+  return Object.fromEntries(Object.entries(all).filter(([column]) => layout.read.includes(column)));
+};
 
 /** Years back that an identifier counts as active. */
 export const IDENTIFIER_YEARS = 5;
@@ -78,15 +96,18 @@ export const ABOUT_TAB = "about";
 export const WORDS_TAB = "words";
 
 /** What the file says of each column Beeline reads from it, from the comparison's own rule for it and the words the upload page uses. */
-function aboutRows(m: Messages): Rows {
-  const layout = SPECIMENS_LAYOUT;
+function aboutRows(m: Messages, audience: Audience): Rows {
+  const layout = layoutOf(audience);
   const a = m.workbook.about;
+  const v = a.volunteer;
   const p = m.uploads.page;
+  const vocabularies = choicesOf(audience);
   const takes = (column: string): string => {
-    if (column === "scientificName") return a.scientificName;
+    if (column === "scientificName") return audience === "staff" ? a.scientificName : v.scientificName;
     if (column === "identifiedBy") return a.identifiedBy;
     if (column === "occurrenceRemarks") return a.occurrenceRemarks;
-    const words = (SPECIMEN_CHOICES as Record<string, readonly string[]>)[column];
+    if (column === "caste" && audience === "volunteer") return v.caste;
+    const words = vocabularies[column];
     if (words !== undefined) return a.oneOf(words.join(", "));
     switch (columnRule(column)?.reads) {
       case "number":
@@ -97,6 +118,16 @@ function aboutRows(m: Messages): Rows {
         return a.anyText;
     }
   };
+  if (audience === "volunteer") {
+    return [
+      [a.purposeTopic, v.purpose],
+      [v.draftsTopic, v.drafts],
+      [a.columnsTopic, a.columns],
+      [a.leaveTopic, a.leave],
+      ...layout.read.map((c): Array<string | null> => [c, takes(c)]),
+      [v.lookupTopic, v.lookup],
+    ];
+  }
   return [
     [a.purposeTopic, a.purpose],
     [a.columnsTopic, a.columns],
@@ -138,23 +169,32 @@ export const COLUMN_WIDTHS: Readonly<Record<string, number>> = {
   occurrenceRemarks: 40,
 };
 
-/** The specimens file, beyond its rows. `today` is a day in Oregon, which a test fixes. */
-export async function specimenWorkbook(db: Kysely<Database>, m: Messages, today: string = oregonToday()): Promise<SpecimenWorkbook> {
-  const layout = SPECIMENS_LAYOUT;
+/**
+ * The specimens file, beyond its rows. `today` is a day in Oregon, which a test fixes. A volunteer's file has no
+ * identifiers tab, since it has no identifiedBy column to look a name up for.
+ */
+export async function specimenWorkbook(
+  db: Kysely<Database>,
+  m: Messages,
+  today: string = oregonToday(),
+  audience: Audience = "staff",
+): Promise<SpecimenWorkbook> {
+  const layout = layoutOf(audience);
   const sheets: ExtraSheet[] = [];
   const choices: Record<string, ColumnChoices> = {};
   // The vocabularies of the columns this file reads, each a column of the words tab, and each a warning on its
   // column of the main sheet. On a tab and not written into the check itself, because Gnumeric offers a list
   // written that way as one choice, commas and all.
-  const vocabularies = Object.entries(SPECIMEN_CHOICES).filter(([column]) => layout.read.includes(column));
+  const vocabularies = Object.entries(choicesOf(audience));
   const longest = Math.max(0, ...vocabularies.map(([, words]) => words.length));
   for (const [column] of vocabularies) {
     choices[column] = { sheet: WORDS_TAB, column, title: m.workbook.warning.title, message: m.workbook.warning.message(column) };
   }
-  const [names, identifiers] = await Promise.all([nameRows(db), identifierRows(db, today)]);
+  const withIdentifiers = layout.headings.includes("identifiedBy");
+  const [names, identifiers] = await Promise.all([nameRows(db), withIdentifiers ? identifierRows(db, today) : Promise.resolve([])]);
   sheets.push(
     { name: NAMES_TAB, header: ["scientificName", "taxonRank", "family"], rows: names },
-    { name: IDENTIFIERS_TAB, header: ["identifiedBy"], rows: identifiers },
+    ...(withIdentifiers ? [{ name: IDENTIFIERS_TAB, header: ["identifiedBy"], rows: identifiers }] : []),
     {
       name: WORDS_TAB,
       header: vocabularies.map(([column]) => column),
@@ -165,9 +205,17 @@ export async function specimenWorkbook(db: Kysely<Database>, m: Messages, today:
   // identifiedBy takes no list. A list that only suggests does not exist in every program: Google Sheets marks any
   // name not on it "Invalid: input must fall within specified range", and an identifier Beeline has not met is
   // ordinary (Peter, 2026-11-17, typing his own name). The identifiers tab is for looking a spelling up.
-  sheets.push({ name: ABOUT_TAB, header: [m.workbook.about.headingTopic, m.workbook.about.headingText], rows: aboutRows(m) });
+  sheets.push({ name: ABOUT_TAB, header: [m.workbook.about.headingTopic, m.workbook.about.headingText], rows: aboutRows(m, audience) });
   return {
     header: layout.headings,
-    options: { sheets, choices, shadedColumns: layout.shaded, boldHeadings: layout.read, widths: COLUMN_WIDTHS, wrappedColumns: WRAPPED_COLUMNS },
+    options: {
+      sheets,
+      choices,
+      shadedColumns: layout.shaded,
+      boldHeadings: layout.read,
+      // Only for the columns this file has: a volunteer's has no identifiedBy or occurrenceRemarks.
+      widths: Object.fromEntries(Object.entries(COLUMN_WIDTHS).filter(([c]) => layout.headings.includes(c))),
+      wrappedColumns: WRAPPED_COLUMNS.filter((c) => layout.headings.includes(c)),
+    },
   };
 }

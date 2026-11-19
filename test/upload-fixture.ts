@@ -46,7 +46,7 @@ async function storeOf(unprinted: boolean) {
   const facts = templateFacts.get(unprinted)!;
   return { instance, conn, ...facts, ids: { ...facts.ids } };
 }
-const templateFacts = new Map<boolean, { staffer: number; volunteer: number; ids: FixtureIds }>();
+const templateFacts = new Map<boolean, { staffer: number; volunteer: number; delegate: number; ids: FixtureIds }>();
 
 type FixtureIds = { a1: number; a2: number; a3: number; b1: number; sampleA: number; sampleB: number; c1?: number; sampleC?: number };
 
@@ -62,7 +62,10 @@ async function buildStore(unprinted: boolean) {
   };
   const staffer = await person("Sam Staff");
   const volunteer = await person("Vera Volunteer");
+  // Vera's partner, who cannot sign in as Vera and acts for her (delegation).
+  const delegate = await person("Dana Delegate");
   await conn.run(`INSERT INTO person_admin (person_id) VALUES (${staffer})`);
+  await conn.run(`INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES (${delegate}, ${volunteer}, 'staffer')`);
 
   await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Bombus')`);
   await conn.run(
@@ -127,7 +130,7 @@ async function buildStore(unprinted: boolean) {
     ids.c1 = c1;
     ids.sampleC = sampleC;
   }
-  return { instance, conn, facts: { staffer, volunteer, ids } };
+  return { instance, conn, facts: { staffer, volunteer, delegate, ids } };
 }
 
 /**
@@ -139,15 +142,16 @@ async function buildStore(unprinted: boolean) {
  * specimens and `download()` every column of the CSV, which the tests edit.
  */
 export async function uploadFixture(
-  signedInAs: "staffer" | "volunteer" = "staffer",
+  signedInAs: "staffer" | "volunteer" | "delegate" = "staffer",
   /** `unprinted` adds a sample (UP-3) whose one specimen is in a print run that has not printed. */
   options: { unprinted?: boolean; readLimits?: Partial<ReadLimits>; layout?: Layout; archive?: UploadArchive } = {},
 ) {
-  const { instance, conn, staffer, volunteer, ids } = await storeOf(options.unprinted === true);
-  const resolved = signedInAs === "staffer" ? staffer : volunteer;
+  const { instance, conn, staffer, volunteer, delegate, ids } = await storeOf(options.unprinted === true);
+  const people = { staffer, volunteer, delegate };
   const db = createKysely(instance);
   const paths = await scratchPaths();
-  const app = createApp({
+  /** The app over this store, signed in as one of the fixture's people. */
+  const appAs = (who: keyof typeof people) => createApp({
     ...paths,
     db,
     conn,
@@ -159,8 +163,9 @@ export async function uploadFixture(
     uploadLayout: options.layout,
     // Never the real folder: a test that is about the copy in Drive gives a fake.
     uploadArchive: options.archive ?? null,
-    resolveSession: async () => ({ personId: resolved, login: signedInAs, iconUrl: null }),
+    resolveSession: async () => ({ personId: people[who], login: who, iconUrl: null }),
   });
+  const app = appAs(signedInAs);
   /** The Excel file for editing specimens, as the staff member asked for it. */
   const file = async () => new Uint8Array(await (await app.request("/specimens.xlsx?scope=all")).arrayBuffer());
   /**
@@ -177,7 +182,7 @@ export async function uploadFixture(
     });
     return writeXlsx({ sheetName: "specimens", header: SPECIMEN_CSV_HEADER }, page.rows.map((r) => specimenCsvRow(r, page).map(textCell)));
   };
-  return { instance, conn, db, app, paths, staffer, volunteer, ids, download, file };
+  return { instance, conn, db, app, appAs, paths, staffer, volunteer, delegate, ids, download, file };
 }
 
 /**

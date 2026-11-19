@@ -2,6 +2,7 @@ import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
 import { sampleHref, specimenHref } from "../record.js";
 import { driveFileHref } from "../upload-archive.js";
+import type { DraftLine } from "../upload-drafts.js";
 import {
   CHANGE_KINDS,
   HOLD_REASONS,
@@ -18,8 +19,9 @@ import { Absent, Button, Callout, Card, DataTable, EmptyState, Field, Meta, Page
 
 /**
  * Comparing an edited copy of the specimens download (beeline-kgyd): the form
- * and the person's earlier uploads, and one upload's preview. Staff pages. The
- * preview says what differs and what is held; it changes nothing.
+ * and the person's earlier uploads, and one upload's preview. The preview says
+ * what differs and what is held. Staff's changes nothing; a volunteer's offers
+ * to save their identifications as drafts on Identify specimens (beeline-kgyd.7).
  */
 
 export const uploadHref = (id: number) => `/uploads/${id}`;
@@ -45,24 +47,27 @@ export function Uploads({
   m,
   uploads,
   refusal = null,
+  staff = true,
 }: {
   m: Messages;
   uploads: UploadListRow[];
   /** Why the last file was refused, as the catalog's words. */
   refusal?: string | null;
+  /** Staff's page, or a volunteer's, whose file becomes drafts and whose form does not ask for a request. */
+  staff?: boolean;
 }) {
   const u = m.uploads;
   return (
     <>
-      <PageHeader title={u.heading} lede={u.intro} />
+      <PageHeader title={staff ? u.heading : u.headingVolunteer} lede={staff ? u.intro : u.introVolunteer} />
       {refusal !== null && <Callout tone="warning">{refusal}</Callout>}
       <Card>
         <h2>{u.form.heading}</h2>
         <form method="post" action="/uploads" enctype="multipart/form-data" class="form-column">
-          <Field id="file" label={u.form.fileLabel} hint={u.form.fileHint}>
+          <Field id="file" label={u.form.fileLabel} hint={staff ? u.form.fileHint : u.form.fileHintVolunteer}>
             <input id="file" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
           </Field>
-          <TextField id="reference" name="reference" label={u.form.referenceLabel} hint={u.form.referenceHint} />
+          {staff && <TextField id="reference" name="reference" label={u.form.referenceLabel} hint={u.form.referenceHint} />}
           <p class="row">
             <Button>{u.form.button}</Button>
           </p>
@@ -152,12 +157,13 @@ function CellLine({ m, c }: { m: Messages; c: CellChange }) {
   );
 }
 
-function SpecimenLine({ m, c }: { m: Messages; c: SpecimenDifference }) {
+function SpecimenLine({ m, c, replacesDraft = false }: { m: Messages; c: SpecimenDifference; replacesDraft?: boolean }) {
   const p = m.uploads.page;
   return (
     <>
       <SpecimenLink m={m} id={c.specimenId} fieldNumber={c.fieldNumber} /> <Meta>{p.row(c.row)}</Meta>{" "}
       <Cells m={m} cells={c.cells.filter((x) => x.differs)} />
+      {replacesDraft && <> <Meta>({p.replacesDraft})</Meta></>}
     </>
   );
 }
@@ -227,7 +233,47 @@ function Unrecognised({ m, columns }: { m: Messages; columns: UnrecognisedColumn
 
 const total = (s: SeasonSplit) => s.active + s.settled + s.unplaced;
 
-export function UploadPreview({ m, upload, plan }: { m: Messages; upload: UploadDetail; plan: UploadPlan }) {
+/** What the preview of a volunteer's file shows beyond staff's: the drafts it would save, and whether it has. */
+export interface VolunteerPreview {
+  lines: DraftLine[];
+  /** Rows for specimens the person may not name. */
+  notYours: number;
+  /** What saving would write, carried by the form so that saving refuses a plan that changed since. */
+  digest: string;
+  /** The person looking is the uploader, and there is something to save that has not been saved. */
+  canSave: boolean;
+  /** When the drafts were saved, and how many. */
+  applied: { at: Date; count: number } | null;
+  /** Saving was asked for, but the plan had changed since the preview, so this is the new one. */
+  changedSince: boolean;
+}
+
+/** The volunteer's form: save the listed identifications as drafts. */
+function SaveDrafts({ m, uploadId, volunteer }: { m: Messages; uploadId: number; volunteer: VolunteerPreview }) {
+  const p = m.uploads.page;
+  return (
+    <form method="post" action={`${uploadHref(uploadId)}/apply`} class="form-column">
+      <input type="hidden" name="digest" value={volunteer.digest} />
+      <p>{p.saveNote(volunteer.lines.length, volunteer.lines.filter((l) => l.replacesDraft).length)}</p>
+      <p class="row">
+        <Button>{p.save}</Button>
+      </p>
+    </form>
+  );
+}
+
+export function UploadPreview({
+  m,
+  upload,
+  plan,
+  volunteer = null,
+}: {
+  m: Messages;
+  upload: UploadDetail;
+  plan: UploadPlan;
+  /** A volunteer's file; null for staff's, which changes nothing. */
+  volunteer?: VolunteerPreview | null;
+}) {
   const p = m.uploads.page;
   const split: Array<[string, SeasonSplit]> = [
     [p.rowsTotal, plan.counts.rows],
@@ -240,7 +286,8 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
   const kinds = CHANGE_KINDS.filter((k) => k !== "not_applied");
   const anyChange = plan.differences.length > 0 || plan.sampleDifferences.length > 0;
   const heldBy = (reason: string) => plan.held.filter((h) => h.reason === reason);
-  return (
+  const replacing = new Set((volunteer?.lines ?? []).filter((l) => l.replacesDraft).map((l) => l.write.specimenId));
+  const head = (
     <>
       <PageHeader title={p.title(upload.file_name)} lede={p.uploadedCopy} meta={p.uploaded(m.format.dateTime(upload.uploaded_at), upload.uploader)} />
       <p>
@@ -252,7 +299,26 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
           <a href={driveFileHref(upload.drive_file_id)}>{p.keptInDrive}</a>
         </Meta>
       )}
-      <Callout>{p.notChanged}</Callout>
+      {volunteer === null && <Callout>{p.notChanged}</Callout>}
+    </>
+  );
+  // Once saved, the file is compared no more: the drafts it made are what the person's own identification now is,
+  // so every row would read as changed since the file was downloaded.
+  if (volunteer?.applied != null) {
+    return (
+      <>
+        {head}
+        <Callout tone="success">
+          {p.applied(m.format.dateTime(volunteer.applied.at), volunteer.applied.count)} <a href="/determinations">{p.identifyLink}</a>
+        </Callout>
+      </>
+    );
+  }
+  return (
+    <>
+      {head}
+      {volunteer !== null && volunteer.changedSince && <Callout tone="warning">{p.changedSince}</Callout>}
+      {volunteer !== null && <Callout>{p.notSavedYet}</Callout>}
       {plan.unrecognised.length > 0 && <Unrecognised m={m} columns={plan.unrecognised} />}
       {plan.otherSheets.length > 0 && (
         <section>
@@ -280,6 +346,7 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
           </tr>
         ))}
       </DataTable>
+      {volunteer !== null && volunteer.notYours > 0 && <Meta block>{p.notYours(volunteer.notYours)}</Meta>}
 
       <h2>{p.changesHeading}</h2>
       {!anyChange && <EmptyState>{p.nothingDiffers(plan.held.length > 0, plan.notApplied.length > 0)}</EmptyState>}
@@ -295,10 +362,12 @@ export function UploadPreview({ m, upload, plan }: { m: Messages; upload: Upload
             {samples.length > 0 && <Meta block>{p.sampleNote}</Meta>}
             {p.unitNote[kind] !== undefined && <Meta block>{p.unitNote[kind]}</Meta>}
             <Capped m={m} items={samples} line={(c) => <SampleLine m={m} c={c} />} />
-            <Capped m={m} items={own} line={(c) => <SpecimenLine m={m} c={c} />} />
+            <Capped m={m} items={own} line={(c) => <SpecimenLine m={m} c={c} replacesDraft={replacing.has(c.specimenId)} />} />
           </section>
         );
       })}
+
+      {volunteer !== null && volunteer.canSave && <SaveDrafts m={m} uploadId={upload.entity_id} volunteer={volunteer} />}
 
       <h2>{p.heldHeading}</h2>
       {plan.held.length === 0 ? <EmptyState>{p.noHeld}</EmptyState> : <p>{p.heldIntro}</p>}

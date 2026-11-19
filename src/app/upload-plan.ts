@@ -12,8 +12,10 @@ import {
   specimenCsvRow,
   specimenVersion,
   textCell,
+  type Reader,
   type SpecimenRow,
 } from "./listings.js";
+import { ownIdentifications, ownVersion, withOwnIdentification } from "./own-identification.js";
 import { oregonToday } from "../oregon-today.js";
 import { columnName, type CellType, type XlsxCell, type XLSX_REFUSALS } from "./xlsx.js";
 import { readXlsx, type ReadLimits } from "./xlsx-reader.js";
@@ -67,6 +69,8 @@ export const REFUSALS = [
   "no_specimen_id_column",
   "repeated_column",
   "no_rows",
+  // A file with the columns staff's file has and a volunteer's lacks, uploaded by someone who is not staff.
+  "staff_file",
 ] as const;
 export type Refusal = (typeof REFUSALS)[number];
 // The reader's refusals are all refusals here.
@@ -113,8 +117,29 @@ export const HOLD_REASONS = [
   "sample_changed_since",
   "rows_disagree",
   "column_missing",
+  // A volunteer's identification, which becomes a draft (src/app/upload-drafts.ts): what saveDrafts would refuse,
+  // change or drop is held instead, so nothing is saved that the person did not write.
+  "not_yours",
+  "name_not_in_tree",
+  "name_ambiguous",
+  "sex_not_draft",
+  "caste_not_taken",
+  "caste_no_sex",
+  "drone_unsaid",
+  "already_said",
 ] as const;
 export type HoldReason = (typeof HOLD_REASONS)[number];
+/** The reasons only a volunteer's drafts hold for (src/app/upload-drafts.ts), never the comparison itself. */
+export const DRAFT_HOLDS: readonly HoldReason[] = [
+  "not_yours",
+  "name_not_in_tree",
+  "name_ambiguous",
+  "sex_not_draft",
+  "caste_not_taken",
+  "caste_no_sex",
+  "drone_unsaid",
+  "already_said",
+];
 const ROW_HOLDS: readonly HoldReason[] = ["no_id", "repeated", "no_specimen", "number_disagrees"];
 
 /** What kind of change a cell is, which decides what a later slice may do with it. */
@@ -207,29 +232,60 @@ export const BOOKKEEPING_COLUMNS = ["specimenId", "specimenVersion"] as const;
 export interface Layout {
   recognise: readonly string[];
   read: readonly string[];
+  /**
+   * Columns that say the file is another layout's, which is refused whole
+   * (`staff_file`): a volunteer's upload of staff's file, whose cells are the
+   * identification of record and an expert's name among them.
+   */
+  refuses: readonly string[];
   /** Every heading, in order. */
   headings: readonly string[];
   /** The headings shaded grey: those that only recognise the bee, and the bookkeeping ones that must be left alone. */
   shaded: readonly string[];
 }
 
-const layout = (recognise: readonly string[], read: readonly string[]): Layout => ({
+const layout = (recognise: readonly string[], read: readonly string[], refuses: readonly string[] = []): Layout => ({
   recognise,
   read,
+  refuses,
   headings: [...recognise, ...read, ...BOOKKEEPING_COLUMNS],
   shaded: [...recognise, ...BOOKKEEPING_COLUMNS],
 });
 
-export const SPECIMENS_LAYOUT: Layout = layout(
-  ["fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa"],
-  ["scientificName", "identificationQualifier", "sex", "caste", "identifiedBy", "dateIdentified", "disposition", "occurrenceRemarks"],
+const RECOGNISE = ["fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa"];
+
+export const SPECIMENS_LAYOUT: Layout = layout(RECOGNISE, [
+  "scientificName",
+  "identificationQualifier",
+  "sex",
+  "caste",
+  "identifiedBy",
+  "dateIdentified",
+  "disposition",
+  "occurrenceRemarks",
+]);
+
+/**
+ * The file of someone who is not staff (Peter, 2026-11-18): the same columns to
+ * recognise the bee, then only what they may change, their own name, sex and
+ * caste, which become drafts as on Identify specimens. No qualifier, date
+ * identified, disposition or remark, none of which a volunteer may change, and
+ * no identifiedBy: every row is the person's own identification and a draft is
+ * credited to whoever is signed in, so the column would say nothing. A file
+ * with staff's columns is refused, since its names are the identification of
+ * record and would come back as the volunteer's own.
+ */
+export const VOLUNTEER_LAYOUT: Layout = layout(
+  RECOGNISE,
+  ["scientificName", "sex", "caste"],
+  SPECIMENS_LAYOUT.read.filter((c) => !["scientificName", "sex", "caste"].includes(c)),
 );
 
 // A layout cannot say a column is read that the comparison has no unit for, or that the download does not have.
-{
+for (const [name, l] of [["specimens", SPECIMENS_LAYOUT], ["volunteer", VOLUNTEER_LAYOUT]] as const) {
   const known = new Set<string>(SPECIMEN_CSV_HEADER);
-  for (const c of SPECIMENS_LAYOUT.headings) if (!known.has(c)) throw new Error(`the specimens layout has a heading that is not a column of the download: ${c}`);
-  for (const c of SPECIMENS_LAYOUT.read) if (RULES.get(c) === undefined || RULES.get(c)!.kind === "not_applied") throw new Error(`the specimens layout reads ${c}, which the comparison does not take`);
+  for (const c of l.headings) if (!known.has(c)) throw new Error(`the ${name} layout has a heading that is not a column of the download: ${c}`);
+  for (const c of l.read) if (RULES.get(c) === undefined || RULES.get(c)!.kind === "not_applied") throw new Error(`the ${name} layout reads ${c}, which the comparison does not take`);
 }
 
 /** What the comparison can read, for the samples upload that will use it and for tests: every column that belongs to a unit. */
@@ -395,7 +451,26 @@ export interface UploadPlan {
   held: HeldItem[];
   /** Differences in columns Beeline does not read from this file: the columns that only help recognise the bee, and those it never reads. */
   notApplied: CellChange[];
+  /** The specimens the file's rows were matched to, in the file's order: every row not held whole. */
+  matched: number[];
 }
+
+/**
+ * Who the comparison reads as. Staff's file is compared with what staff are
+ * shown: every location, and the identification of record. A volunteer's file
+ * is compared with what their own download wrote (Peter, 2026-11-18): the
+ * locations they may not see blank, as their listing blanks them, and their
+ * own identification in place of the record's (src/app/own-identification.ts).
+ * So the preview never shows them a value their file did not, and a cell they
+ * left alone is never a difference.
+ */
+export interface Viewpoint {
+  reader: Reader;
+  /** The person whose own identification the file carries: the determiner, for a volunteer's file. Absent for staff's. */
+  ownOf?: number;
+}
+
+export const STAFF_VIEW: Viewpoint = { reader: STAFF_READER };
 
 export interface ParsedUpload {
   /** Which columns are read from the file: the specimens layout, unless a test or a later upload says otherwise. */
@@ -439,6 +514,8 @@ export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits>
       }
     }
   }
+  const foreign = layout.refuses.find((c) => columns.has(c));
+  if (foreign !== undefined) return { ok: false, refusal: "staff_file", detail: foreign };
   if (!columns.has("specimenId")) {
     return { ok: false, refusal: "no_specimen_id_column", ...(unrecognised.find((u) => u.probably === "specimenId") ? { detail: "specimenId" } : {}) };
   }
@@ -712,27 +789,32 @@ interface Now {
 
 const CHUNK = 500;
 
-async function readNow(db: Kysely<Database>, ids: number[]): Promise<Map<number, Now>> {
+async function readNow(db: Kysely<Database>, ids: number[], view: Viewpoint): Promise<Map<number, Now>> {
   const now = new Map<number, Now>();
   const hostNames = hostNamesOnce(db);
   const query = { ...EMPTY_QUERY, scope: ALL };
   for (let i = 0; i < ids.length; i += CHUNK) {
     const chunk = ids.slice(i, i + CHUNK);
-    const page = await listSpecimens(db, query, 0, STAFF_READER, {
+    const page = await listSpecimens(db, query, 0, view.reader, {
       ids: chunk,
       limit: chunk.length,
       offset: 0,
       withTotal: false,
       hostNames: await hostNames(),
     });
-    for (const row of page.rows) {
+    const own = view.ownOf === undefined ? null : await ownIdentifications(db, view.ownOf, chunk);
+    for (const listed of page.rows) {
+      // What the person's own download writes for this specimen: for a volunteer, their own identification.
+      const row = own === null ? listed : withOwnIdentification(listed, own.get(listed.specimen_id));
+      const version = own === null ? specimenVersion(row) : ownVersion(row);
       const written = specimenCsvRow(row, page);
       const cells = new Map<string, string>();
       SPECIMEN_CSV_HEADER.forEach((name, j) => cells.set(name, (textCell(written[j]) ?? "").trim()));
+      cells.set("specimenVersion", version);
       now.set(row.specimen_id, {
         row,
         cells,
-        specimenVersion: specimenVersion(row),
+        specimenVersion: version,
         sampleVersion: sampleVersion(row),
         sample: {
           id: row.sample_id,
@@ -785,7 +867,11 @@ interface MatchedRow {
 }
 
 /** The plan for a file's bytes: refused, or what differs and what is held. Writes nothing. */
-export async function planUpload(db: Kysely<Database>, bytes: Uint8Array, options: { today?: string; limits?: Partial<ReadLimits>; layout?: Layout } = {}): Promise<PlanResult> {
+export async function planUpload(
+  db: Kysely<Database>,
+  bytes: Uint8Array,
+  options: { today?: string; limits?: Partial<ReadLimits>; layout?: Layout; view?: Viewpoint } = {},
+): Promise<PlanResult> {
   const parsed = await parseUpload(bytes, options.limits, options.layout);
   if (!parsed.ok) return parsed;
   const plan = await comparePlan(db, parsed.upload, options);
@@ -795,7 +881,7 @@ export async function planUpload(db: Kysely<Database>, bytes: Uint8Array, option
 const heldCells = (cells: UnitCells, columns: string[]): HeldCell[] =>
   columns.map((c) => ({ column: c, was: cells.get(c)!.nowText, fileSays: cells.get(c)!.fileText }));
 
-export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, options: { today?: string } = {}): Promise<UploadPlan> {
+export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, options: { today?: string; view?: Viewpoint } = {}): Promise<UploadPlan> {
   const today = options.today ?? oregonToday();
   const { columns, rows, layout } = upload;
   const readHere = new Set(layout.read);
@@ -815,13 +901,13 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
   });
   const timesNamed = new Map<number, number>();
   for (const id of idOf) if (id !== null) timesNamed.set(id, (timesNamed.get(id) ?? 0) + 1);
-  const now = await readNow(db, [...timesNamed.keys()]);
+  const now = await readNow(db, [...timesNamed.keys()], options.view ?? STAFF_VIEW);
   const facts = await readSampleFacts(db, [...new Set([...now.values()].map((n) => n.row.sample_id))]);
 
   const counts: PlanCounts = { rows: emptySplit(), unchanged: emptySplit(), withDifferences: emptySplit(), held: emptySplit() };
   const season = (sampleId: number | null): keyof SeasonSplit =>
     sampleId === null ? "unplaced" : facts.settled.has(sampleId) ? "settled" : "active";
-  const plan: UploadPlan = { counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, differences: [], sampleDifferences: [], held: [], notApplied: [] };
+  const plan: UploadPlan = { counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, differences: [], sampleDifferences: [], held: [], notApplied: [], matched: [] };
 
   const hold = (
     item: Pick<HeldItem, "reason" | "row" | "specimenId" | "fieldNumber" | "detail"> &
@@ -865,6 +951,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
     const specimen = known!;
     const specimenId = id!;
     const sample = specimen.row.sample_id;
+    plan.matched.push(specimenId);
 
     // Every compared column the file has, for this row; Beeline's own for the rest.
     const results = new Map<string, Evaluated>();

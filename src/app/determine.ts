@@ -239,7 +239,14 @@ export const batchRows = (db: Kysely<Database>, personId: number, determinerId: 
     order: sql`b.position`,
   });
 
-const rowsById = (db: Kysely<Database>, personId: number, determinerId: number, ids: readonly number[]) =>
+/**
+ * The page's rows for these specimens, as the page would show them to this
+ * person: only those within their reach, so a specimen missing from the
+ * answer is one this page would not let them name. An upload of their file
+ * reads its rows through this (src/app/upload-drafts.ts), so it names exactly
+ * the specimens the page does.
+ */
+export const entryRowsFor = (db: Kysely<Database>, personId: number, determinerId: number, ids: readonly number[]) =>
   ids.length === 0
     ? Promise.resolve([])
     : loadRows(db, personId, determinerId, {
@@ -421,12 +428,21 @@ export function saveDrafts(
   writes: readonly DraftWrite[],
   now: Date = new Date(),
 ): Promise<EntryRow[]> {
-  // One at a time. A save reads the draft, lays its parts over it and writes
-  // the whole draft back, so two at once for one specimen (a name from one
-  // tab and a sex from another) could each read the draft before the other
-  // wrote, and the later would put back the part the earlier had changed.
-  // The app is the only process that writes the store (ADR 0005).
-  const mine = savingDrafts.then(() => saveDraftsInTurn(db, personId, determinerId, writes, now));
+  return inDraftTurn(() => saveDraftsInTurn(db, personId, determinerId, writes, now));
+}
+
+/**
+ * Run `work` in the drafts' turn: after every save already waiting, and
+ * before any that comes later. A save reads the draft, lays its parts over it
+ * and writes the whole draft back, so two at once for one specimen (a name
+ * from one tab and a sex from another) could each read the draft before the
+ * other wrote, and the later would put back the part the earlier had changed.
+ * An upload works its drafts out and writes them in one turn, so nothing the
+ * page saves can land between the two (src/app/upload-drafts.ts). The app is
+ * the only process that writes the store (ADR 0005).
+ */
+export function inDraftTurn<T>(work: () => Promise<T>): Promise<T> {
+  const mine = savingDrafts.then(work);
   savingDrafts = mine.then(
     () => undefined,
     () => undefined,
@@ -436,7 +452,12 @@ export function saveDrafts(
 
 let savingDrafts: Promise<void> = Promise.resolve();
 
-async function saveDraftsInTurn(
+/**
+ * saveDrafts' own work, for a caller already in the drafts' turn
+ * (`inDraftTurn`), which may pass a transaction as `db`. Anywhere else, call
+ * saveDrafts.
+ */
+export async function saveDraftsInTurn(
   db: Kysely<Database>,
   personId: number,
   determinerId: number,
@@ -450,7 +471,7 @@ async function saveDraftsInTurn(
   }
   // Each write laid over what the store has for its specimen. Several for
   // one specimen apply in the order given.
-  const before = new Map((await rowsById(db, personId, determinerId, ids)).map((r) => [r.id, r]));
+  const before = new Map((await entryRowsFor(db, personId, determinerId, ids)).map((r) => [r.id, r]));
   const merged = new Map<number, EntryValue & { specimenId: number; named: boolean }>();
   for (const w of writes) {
     const row = before.get(w.specimenId);
@@ -538,7 +559,7 @@ async function saveDraftsInTurn(
   if (removals.length > 0) {
     await sql`DELETE FROM determination_draft WHERE determiner_id = ${determinerId} AND specimen_id IN (${sql.join(removals)})`.execute(db);
   }
-  return rowsById(db, personId, determinerId, ids);
+  return entryRowsFor(db, personId, determinerId, ids);
 }
 
 /** What adding numbers to a batch did, entry by entry. */

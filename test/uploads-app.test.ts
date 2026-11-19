@@ -59,16 +59,11 @@ const kept = async (f: UploadFixture) => {
 };
 
 describe("uploads: who may use them", () => {
-  it("answers a volunteer no, on every route, though the Excel file is theirs to download", async () => {
+  it("lets a volunteer upload their own file, and offers them the link (beeline-kgyd.7; test/volunteer-uploads.test.ts)", async () => {
     const f = await wideFixture("volunteer");
-    expect((await f.app.request("/uploads")).status).toBe(403);
-    expect((await upload(f, await f.download())).status).toBe(403);
-    expect((await f.app.request("/uploads/1")).status).toBe(403);
-    expect(await uploadCount(f)).toBe(0);
-    expect(await kept(f)).toEqual([]);
-    // Not offered the link to upload, and offered the file to edit.
+    expect((await f.app.request("/uploads")).status).toBe(200);
     const page = await (await f.app.request("/specimens?scope=all")).text();
-    expect(page).not.toContain(`href="/uploads"`);
+    expect(page).toContain(`href="/uploads"`);
     expect(page).toContain("/specimens.xlsx?");
     expect((await f.app.request("/specimens.xlsx?scope=all")).status).toBe(200);
   });
@@ -415,9 +410,11 @@ describe("the preview", () => {
   it("shows another person's upload, with its plan, to an admin", async () => {
     const f = await wideFixture();
     const bytes = edited(await f.download(), [{ id: f.ids.a2, set: { disposition: "missing", occurrenceRemarks: "Lost" } }]);
+    // Another member of staff's: a volunteer's file is not staff's, and is compared as theirs (test/volunteer-uploads.test.ts).
+    await f.conn.run(`INSERT INTO person_admin (person_id) VALUES (${f.delegate})`);
     await f.conn.run(
       `INSERT INTO upload (uploaded_by, uploaded_at, file_name, sha256, byte_size, row_count)
-       VALUES (${f.volunteer}, now(), 'theirs.xlsx', '${createHash("sha256").update(bytes).digest("hex")}', ${bytes.byteLength}, 4)`,
+       VALUES (${f.delegate}, now(), 'theirs.xlsx', '${createHash("sha256").update(bytes).digest("hex")}', ${bytes.byteLength}, 4)`,
     );
     const id = (await rows(f.conn, `SELECT entity_id FROM upload`))[0]![0];
     await mkdir(join(f.paths.uploadsDir, String(id)), { recursive: true });
@@ -425,7 +422,7 @@ describe("the preview", () => {
     const res = await f.app.request(`/uploads/${id}`);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain("Vera Volunteer");
+    expect(body).toContain("Dana Delegate");
     expect(body).toContain(en.uploads.page.kind.disposition);
     expect(body).toContain("<q>missing</q>");
     // Not in the staff member's own list.

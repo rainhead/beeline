@@ -930,7 +930,9 @@ export const en = {
       download: "Download as CSV",
       edit: "Download the Excel file for editing specimens",
       editNote:
-        "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. The file holds what these filters select, so filter first, for example to one collection year. Every cell is kept as text, so Excel leaves it as it is. Only program staff can upload the file after you edit it, and an upload only lists what differs from what Beeline holds. To name your bees yourself today, use Identify specimens.",
+        "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. The file holds what these filters select, so filter first, for example to one collection year. Every cell is kept as text, so Excel leaves it as it is. A staff upload only lists what differs from what Beeline holds.",
+      editNoteVolunteer:
+        "To name your own bees in a spreadsheet: the columns that help you recognise each bee, then your own identification of each, to fill in. The file holds what these filters select, so filter first, for example to your specimens of one collection year. Every cell is kept as text, so Excel leaves it as it is. Upload it back with the link beside this button: Beeline shows you what you changed, and saves it as drafts on Identify specimens when you choose.",
 
       note:
         "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +
@@ -2225,7 +2227,7 @@ export const en = {
       headingText: "What to know",
       purposeTopic: "What this file is for",
       purpose:
-        "This file is for editing specimens: giving them their names, and recording what became of them. Fill in the white columns. Only program staff can upload the file today, on the Edited downloads page, so if you are not staff, name your bees on the Identify specimens page instead. When staff upload it, Beeline compares the file with what it says now and lists every difference. It does not change any record from a file yet. The grey columns are there to help you recognise each bee.",
+        "This file is for editing specimens: giving them their names, and recording what became of them. Fill in the white columns. When you upload it on the Edited downloads page, Beeline compares the file with what it says now and lists every difference. It does not change any record from a staff upload yet. The grey columns are there to help you recognise each bee.",
       columnsTopic: "White and grey columns",
       columns:
         "Beeline reads the white columns when the file is uploaded, and their headings are in bold. The grey columns are for reference: Beeline ignores what is in them, and tells you if you changed one, apart from fieldNumber and the two named below. Leave fieldNumber as it is: Beeline checks it against the specimen the row is for, and sets the whole row aside if the two disagree. Nothing is locked, so you can still sort and filter on any column.",
@@ -2247,15 +2249,36 @@ export const en = {
         "The remark that says what became of the specimen. Beeline keeps a disposition with its remark, so a disposition needs one.",
       identifiedBy:
         "The person who identified the specimen. A name that is not on the identifiers tab is fine: Beeline will ask about new names when it can apply changes.",
+      /** The same tab in the file of someone who is not staff, which holds their own identifications (beeline-kgyd.7). */
+      volunteer: {
+        purpose:
+          "This file is for naming your own bees. The white columns, scientificName, sex and caste, hold your own identification of each bee: the draft you have on Identify specimens, or else the last identification you made, or else nothing. They never hold anyone else's. Fill them in or correct them. The grey columns are there to help you recognise each bee.",
+        draftsTopic: "What happens when you upload it",
+        drafts:
+          "Upload the file on the Edited downloads page, which you reach from Specimens. Beeline shows you every identification you changed, and saves nothing until you choose Save these as drafts. They then become drafts on Identify specimens, just as if you had typed them there: you can change them there until 1am, when Beeline records them as your identifications. Only the specimens Identify specimens lets you name are saved.",
+        scientificName:
+          "A scientific name from the names tab. A name that is not there is not saved: give it on Identify specimens instead, where you can also choose a name from Ecdysis.",
+        caste:
+          "gyne, worker or drone, only for a bee whose kind has castes, such as a bumble bee, and with the sex: a gyne or worker is female, and a drone is male. Leave it blank for any other bee.",
+        lookupTopic: "The names tab",
+        lookup:
+          "The names tab holds the scientific names in Beeline's taxonomy, for looking up. Beeline does not read it when the file is uploaded, so changing it changes nothing. The scientificName column offers the names as you type; your spreadsheet may mark a name that is not on the tab.",
+      },
     },
   },
 
-  /** Comparing an edited copy of the specimens download (beeline-kgyd). Staff only; nothing here changes a record. */
+  /**
+   * Comparing an edited copy of the specimens download (beeline-kgyd). Staff's upload changes no record yet; a
+   * volunteer's saves their own identifications as drafts on Identify specimens (beeline-kgyd.7).
+   */
   uploads: {
     title: "Edited downloads",
     heading: "Compare an edited download",
     intro:
-      "Upload the Excel file for editing specimens that you downloaded from Specimens and edited. Beeline keeps the file and lists every identification and disposition that differs from what it says now. Beeline does not apply changes from a file yet, so an upload changes no record.",
+      "Upload the Excel file for editing specimens that you downloaded from Specimens and edited. Beeline keeps the file and lists every identification and disposition that differs from what it says now. Beeline does not apply changes from a file from staff yet, so an upload changes no record.",
+    headingVolunteer: "Upload your identifications",
+    introVolunteer:
+      "Upload the Excel file you downloaded from Specimens and edited. Beeline keeps the file and shows you every identification you changed in it. Nothing is saved until you choose to save them. Then they become drafts on Identify specimens, just as if you had typed them there: you can change a draft there until 1am, when Beeline records it as your identification.",
     linkFromSpecimens: "Upload an edited Excel file",
     linkFromExports: "Compare an edited copy of the specimens download",
     form: {
@@ -2263,6 +2286,8 @@ export const en = {
       fileLabel: "Excel file",
       fileHint:
         "The Excel file for editing specimens from Specimens, up to 20 MB and 20,000 rows. Leave its specimenId and specimenVersion columns as they are: Beeline finds each row by them. Keep the cells you edit formatted as text, and type a date as YYYY-MM-DD.",
+      fileHintVolunteer:
+        "The Excel file from Specimens, up to 20 MB and 20,000 rows. Leave its specimenId and specimenVersion columns as they are: Beeline finds each row by them. Keep the cells you edit formatted as text.",
       referenceLabel: "Request behind the file (optional)",
       referenceHint:
         "Where the request came from, so a change can be traced to who asked for it: an email's message id or a link to an issue, such as https://github.com/example/example/issues/1. Never an address or a name.",
@@ -2294,6 +2319,8 @@ export const en = {
         "This file is protected, with a password or a sensitivity label, or it is an older .xls file, so Beeline cannot read it. Save an unprotected copy as an Excel workbook (.xlsx) and upload that.",
       no_rows: "That file has a row of column names and nothing after it.",
       not_kept: "Beeline could not keep a copy of the file just now, so it did not take it. Nothing was saved. Try again in a few minutes.",
+      staff_file:
+        "This is the file program staff download. It holds the identification Beeline keeps for each bee, an expert's among them, not your own, so Beeline did not read it. Download the Excel file from Specimens again and edit that: it holds your own identifications.",
     } as Record<string, string>,
     /** The description of the copy kept in the Drive folder of received files, which anyone browsing the folder reads. */
     keptDescription: (id: number, login: string) => `Uploaded to Beeline by ${login} as upload ${id}, on the Edited downloads page.`,
@@ -2310,6 +2337,21 @@ export const en = {
       uploaded: (when: string, who: string) => `Uploaded ${when} by ${who}`,
       reference: (reference: string) => `Request behind the file: ${reference}`,
       keptInDrive: "Open the copy kept in Drive",
+      notSavedYet:
+        "Nothing has been saved yet. Below is every identification in your file that differs from your own in Beeline. Choose Save these as drafts, under the list, to put them on Identify specimens, where you can change them until 1am, when they become your identifications. What is held is not saved.",
+      replacesDraft: "replaces the draft you made on Identify specimens",
+      save: "Save these as drafts",
+      saveNote: (count: number, replacing: number) =>
+        `This saves ${n(count)} ${count === 1 ? "identification" : "identifications"} as drafts on Identify specimens${
+          replacing === 0 ? "" : `, replacing ${n(replacing)} ${replacing === 1 ? "draft" : "drafts"} you made there`
+        }. Nothing held below is saved.`,
+      applied: (when: string, count: number) =>
+        `Saved ${n(count)} ${count === 1 ? "identification" : "identifications"} from this file as drafts on ${when}. They are on Identify specimens, where you can change them until 1am, when Beeline records them as your identifications.`,
+      identifyLink: "Open Identify specimens",
+      changedSince:
+        "Something changed since you looked at this preview, so nothing was saved. This is the preview as things stand now. Check it, and save again if it is what you want.",
+      notYours: (count: number) =>
+        `${n(count)} ${count === 1 ? "row of the file is" : "rows of the file are"} for specimens you cannot name on Identify specimens. Nothing in them is saved; any that differ are listed under Held.`,
       notChanged:
         "Nothing has been changed. This page only says what differs between the file and what Beeline says now. Beeline does not apply changes from a file yet. When it can, it will check each change against its own rules, for instance that a name is in the taxonomy and a determiner is someone it knows, and it will refuse some changes that are listed here as differences. None of those checks is made on this page.",
       otherSheetsHeading: "Tabs that were not read",
@@ -2399,6 +2441,14 @@ export const en = {
         sample_changed_since: "Changes held because the sample's details in the file are not what Beeline says now",
         rows_disagree: "Rows of the same sample that say different things about it",
         column_missing: "Changes held because the file is missing a column Beeline needs to read them",
+        not_yours: "Rows for specimens you cannot name",
+        name_not_in_tree: "Names that are not on Beeline's list of names",
+        name_ambiguous: "Names Beeline holds at more than one rank",
+        sex_not_draft: "Sexes other than female or male",
+        caste_not_taken: "Castes given for a bee whose kind has no castes",
+        caste_no_sex: "Castes given with no sex",
+        drone_unsaid: "Males of a bee with castes, with no caste",
+        already_said: "Identifications Beeline already has",
       } as Record<string, string>,
       /** What to do about it, under the heading. */
       heldTodo: {
@@ -2431,6 +2481,16 @@ export const en = {
           "Either the sample's record has changed in Beeline since the file was downloaded, or the file was downloaded by someone who is not shown locations. Download the file again, signed in as staff, and make the edit in the new file.",
         rows_disagree: "Make the rows of that sample say the same.",
         column_missing: "Download again and make the edit in the new file, leaving every column in.",
+        not_yours:
+          "You can name only the specimens Identify specimens shows you: those from samples you collected. Beeline saves nothing for the others.",
+        name_not_in_tree:
+          "Use a name from the names tab of the file. To give a name Beeline does not list yet, such as one from Ecdysis, name the bee on Identify specimens.",
+        name_ambiguous: "Beeline cannot tell which one you mean. Name this bee on Identify specimens, where you choose it from the list.",
+        sex_not_draft: "Identify specimens takes female or male. Use one of those, or leave it blank.",
+        caste_not_taken: "Only bees with castes, such as bumble bees, take gyne, worker or drone. Clear the caste.",
+        caste_no_sex: "Give the sex as well: a gyne or a worker is female, and a drone is male.",
+        drone_unsaid: "A male of a bee with castes is a drone. Type drone in the caste column.",
+        already_said: "A volunteer's identification already says the same, so there is nothing to save.",
       } as Record<string, string>,
       heldDetail: {
         no_id: "The specimenId cell says",

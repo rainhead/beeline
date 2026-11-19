@@ -9,6 +9,7 @@ import { DETERMINATION_CASTES, DETERMINATION_QUALIFIERS, DETERMINATION_SEXES } f
 import { DISPOSITIONS } from "../src/load-dispositions.js";
 import {
   HOLD_REASONS,
+  DRAFT_HOLDS,
   MAX_FILE_BYTES,
   MAX_ROWS,
   UNIT_COLUMNS,
@@ -47,7 +48,7 @@ const seen = new Set<string>();
  * comparison's rules for them wait for the samples upload and are tested here, by giving the comparison a parsed
  * upload that names them as read.
  */
-const allRead: Layout = { recognise: [], read: UNIT_COLUMNS, headings: [], shaded: [] };
+const allRead: Layout = { recognise: [], read: UNIT_COLUMNS, headings: [], shaded: [], refuses: [] };
 
 /**
  * The groups run their tests at the same time: each test only reads the file's one store or has a store of its own,
@@ -508,7 +509,7 @@ describe("a unit is listed only when it is complete", () => {
       const parsed = await parseUpload(edited(await f.download(), [{ id: f.ids.a1, set: { scientificName: "Bombus", sex: "queen" } }]));
       if (!parsed.ok) throw new Error(parsed.refusal);
       // A file read for the name alone: the sex it carries is not Beeline's to take from it.
-      const nameOnly: Layout = { recognise: [], read: ["scientificName"], headings: [], shaded: [] };
+      const nameOnly: Layout = { recognise: [], read: ["scientificName"], headings: [], shaded: [], refuses: [] };
       const p = await comparePlan(f.db, { ...parsed.upload, layout: nameOnly }, { today: DEFAULT_TODAY });
       expect(p.held).toEqual([]);
       expect(p.differences.map((d) => d.cells.filter((c) => c.differs).map((c) => [c.column, c.fileSays]))).toEqual([[["scientificName", "Bombus"]]]);
@@ -1278,7 +1279,8 @@ describeInOrder("the reasons", () => {
   it("every reason a plan can hold for was produced by a test in this file", () => {
     // A partial run (one test by name) has not produced them all.
     if (seen.size < 10) return;
-    expect([...HOLD_REASONS].filter((r) => !seen.has(r))).toEqual([]);
+    // The drafts' own reasons are produced by test/volunteer-uploads.test.ts, which plans as a volunteer.
+    expect([...HOLD_REASONS].filter((r) => !seen.has(r) && !DRAFT_HOLDS.includes(r))).toEqual([]);
   });
 });
 

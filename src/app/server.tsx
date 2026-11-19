@@ -74,7 +74,7 @@ import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
-import { addressRows, runCollectors, runHasRegistration } from "./print-run-addresses.js";
+import { addressRows, needsLookup, runCollectors, runHasRegistration } from "./print-run-addresses.js";
 import { IdealLogicError, type Registrant } from "../ideal-logic.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
@@ -2512,9 +2512,13 @@ export function createApp({
     // With nobody to look up, Ideal Logic is not asked: each request counts
     // against its limit for the day.
     let registrants: Registrant[] = [];
-    if (await runHasRegistration(db, id)) {
+    let fetched = false;
+    // Null when the fetch worked, else the page to answer with.
+    const fetchRegistrants = async (): Promise<Response | null> => {
       try {
         registrants = await ideal.fetchRegistrants();
+        fetched = true;
+        return null;
       } catch (err) {
         // The error's text is fixed and safe to show; anything else is a fault.
         if (!(err instanceof IdealLogicError)) throw err;
@@ -2526,6 +2530,10 @@ export function createApp({
           message: t.failed(err.message, ideal.remaining()),
         });
       }
+    };
+    if (await runHasRegistration(db, id)) {
+      const failed = await fetchRegistrants();
+      if (failed !== null) return failed;
     }
     // The fetch can take a minute. Read the run again afterwards, so that a
     // run canceled meanwhile is refused, and read its collectors and their
@@ -2534,6 +2542,13 @@ export function createApp({
     if (after === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
     if (after.state === "canceled") return canceled();
     const inRun = await runCollectors(db, id);
+    // Staff may have switched a collector from keeping the labels in the lab
+    // back to mailing them while the first check was made and now. If nobody
+    // was looked up then and somebody needs it now, look them up now.
+    if (needsLookup(inRun) && !fetched) {
+      const failed = await fetchRegistrants();
+      if (failed !== null) return failed;
+    }
     const rows = addressRows(inRun, registrants);
     // Who and how many, never a name or an address.
     console.log(
@@ -2558,9 +2573,7 @@ export function createApp({
               ? t.notes.incompleteAddress(note.missing.map((part) => t.notes.missing[part]).join(", "))
               : note.code === "unaccountedLabels"
                 ? t.notes.unaccountedLabels(note.labels)
-                : note.code === "keepInLab"
-                  ? t.notes.keepInLab(note.note)
-                  : t.notes[note.code],
+                : t.notes[note.code],
           )
           .join(" "),
       ]),
@@ -3165,8 +3178,7 @@ export function createApp({
   /**
    * Whether a person's labels are mailed or kept in the lab (beeline-w8ab.4),
    * for the person's page and the API alike. It takes its turn with every
-   * other decision about a person. The note's own refusals are the module's;
-   * the answer never repeats the note, which may be what was typed by mistake.
+   * other decision about a person.
    */
   const setMailing: PeopleDeps["setMailing"] = (input) =>
     oneDecisionAtATime(async () => {
@@ -3179,14 +3191,10 @@ export function createApp({
       const decided = await decideMailing(db, {
         personId: id,
         instruction: input.instruction,
-        note: input.note,
         decidedBy: input.author,
         reference: input.reference,
       });
-      if (!decided.ok) {
-        if (decided.refusal === "unknown_person") return { ok: false, refusal: "not_found" };
-        return { ok: false, refusal: "invalid", problem: en.people.labelsNoteProblem[decided.why] };
-      }
+      if (!decided.ok) return { ok: false, refusal: "not_found" };
       return { ok: true, outcome: decided.outcome, person_id: id, was: decided.was, instruction: input.instruction };
     });
 
@@ -3294,7 +3302,6 @@ export function createApp({
     const decided = await setMailing({
       handle: c.req.param("id") ?? "",
       instruction: text(form, "instruction"),
-      note: text(form, "note"),
       author: c.get("session").login,
       reference: null,
     });

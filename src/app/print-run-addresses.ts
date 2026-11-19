@@ -32,8 +32,8 @@ export interface RunCollector {
   idealLogicId: string | null;
   /** True where a label of theirs was printed with a collector line that is not what their sample would print today. */
   collectorLineDiffers: boolean;
-  /** Set where this person's labels are kept in the lab and not mailed (person_mailing_instruction), with the staff note, if any. */
-  keptInLab: { note: string | null } | null;
+  /** Set where this person's labels are kept in the lab and not mailed (person_mailing_instruction). */
+  keptInLab: boolean;
 }
 
 /** The collectors of a run, and how many labels the run holds in all. */
@@ -48,10 +48,9 @@ export type MissingPart = "city" | "postalCode" | "stateProvince" | "country";
 
 /** What a row says about itself, beside the names and the address. */
 export type AddressNote =
-  | { code: "noRegistration" | "noAddress" | "notInAnswer" | "collectorLineDiffers" }
+  | { code: "noRegistration" | "noAddress" | "notInAnswer" | "collectorLineDiffers" | "keepInLab" }
   | { code: "incompleteAddress"; missing: MissingPart[] }
-  | { code: "unaccountedLabels"; labels: number }
-  | { code: "keepInLab"; note: string | null };
+  | { code: "unaccountedLabels"; labels: number };
 
 export interface AddressRow {
   names: string[];
@@ -86,6 +85,11 @@ export async function runHasRegistration(db: Kysely<Database>, printRunId: numbe
   return found.rows.length > 0;
 }
 
+/** Whether any collector of the run is mailed and linked to a registration, so Ideal Logic must be asked. */
+export function needsLookup({ collectors }: RunCollectors): boolean {
+  return collectors.some((c) => !c.keptInLab && c.idealLogicId !== null);
+}
+
 /**
  * The distinct primary collectors of a run's labels, each with their
  * registration link. Every read happens in one transaction, so the labels, the
@@ -108,11 +112,10 @@ export async function runCollectors(db: Kysely<Database>, printRunId: number): P
       collector_text: string;
       ideal_logic_id: string | null;
       kept_in_lab: boolean;
-      kept_note: string | null;
       primaries: number | bigint;
     }>`
       SELECT sp.sample_id, pc.person_id, p.display_name, p.family_name, p.given_name, pl.collector_text,
-             reg.ideal_logic_id, mi.person_id IS NOT NULL AS kept_in_lab, mi.note AS kept_note,
+             reg.ideal_logic_id, mi.person_id IS NOT NULL AS kept_in_lab,
              (SELECT count(*) FROM sample_primary_collector q WHERE q.sample_id = sp.sample_id) AS primaries
       FROM printed_label pl
       JOIN specimen sp ON sp.entity_id = pl.specimen_id
@@ -160,7 +163,7 @@ export async function runCollectors(db: Kysely<Database>, printRunId: number): P
           printedAs: [],
           idealLogicId: r.ideal_logic_id,
           collectorLineDiffers: false,
-          keptInLab: r.kept_in_lab ? { note: r.kept_note } : null,
+          keptInLab: r.kept_in_lab,
         };
         byPerson.set(id, c);
       }
@@ -222,15 +225,15 @@ export function addressRows({ collectors, totalLabels }: RunCollectors, registra
   // not looked up.
   const keptInLabRows: AddressRow[] = [];
   for (const c of [...collectors].sort(byName)) {
-    if (c.keptInLab !== null) {
+    if (c.keptInLab) {
       keptInLabRows.push({
         names: [c.displayName],
         ...NO_ADDRESS,
         labels: c.labels,
         printedAs: [...c.printedAs],
         notes: c.collectorLineDiffers
-          ? [{ code: "keepInLab", note: c.keptInLab.note }, { code: "collectorLineDiffers" }]
-          : [{ code: "keepInLab", note: c.keptInLab.note }],
+          ? [{ code: "keepInLab" }, { code: "collectorLineDiffers" }]
+          : [{ code: "keepInLab" }],
         hasAddress: false,
       });
       continue;

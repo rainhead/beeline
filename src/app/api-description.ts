@@ -307,7 +307,6 @@ const ENDPOINTS: Endpoint[] = [
     needs: "staff key",
     body: {
       instruction: "mail or keep_in_lab",
-      note: "an optional note of up to 200 characters, such as ENT 499, picked up in class. One with an @ sign or a run of five or more digits is refused, so that an address is never stored",
       reference:
         "reference: an optional note of 1 to 500 characters pointing at the request behind the change, kept in the record of the key's use and on the decision itself. Never an address or a name",
     },

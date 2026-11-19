@@ -119,8 +119,6 @@ export interface PersonMailingEventTable {
   entity_id: Generated<number>;
   person_id: number;
   instruction: MailingInstruction;
-  /** Free text from staff; src/mailing-instructions.ts refuses one that could hold an address. */
-  note: string | null;
   decided_by: string;
   decided_at: Generated<Date>;
   reference: string | null;
@@ -130,7 +128,6 @@ export interface PersonMailingEventTable {
 export interface PersonMailingInstructionView {
   person_id: number;
   instruction: MailingInstruction;
-  note: string | null;
   decided_by: string;
   decided_at: Date;
 }

@@ -2827,7 +2827,7 @@ export const en = {
           noAddress: "No address: the registration in Ideal Logic has no street address.",
           notInAnswer:
             "No address: the registration this collector is linked to was not in Ideal Logic's answer, or Beeline could not read it.",
-          keepInLab: (note: string | null) => (note === null ? "Keep in the lab." : `Keep in the lab. ${note}`),
+          keepInLab: "Keep in the lab.",
           collectorLineDiffers:
             "The collector line on this run's labels differs from what the sample would print today, so the labels may belong to someone else.",
           missing: {
@@ -3026,8 +3026,8 @@ export const en = {
       "Where this person belongs — not where their samples fell. Master Melittology itself is an answer, not a blank: volunteers outside every member atlas work under OBA staff's auspices.",
     saveMembership: "Save membership",
     /**
-     * Where the person's printed labels go (beeline-w8ab.4). The note is free
-     * text and is refused if it could be an address, so the hint says so.
+     * Where the person's printed labels go (beeline-w8ab.4). There is no
+     * note: free text could hold an address.
      */
     labelsHeading: "Labels",
     labelsHint:
@@ -3035,23 +3035,13 @@ export const en = {
     labelsChoice: "Their labels are",
     labelsMail: "Mail them",
     labelsKeep: "Keep them in the lab",
-    labelsNote: "Note",
-    labelsNoteHint:
-      "Optional, up to 200 characters, such as \"ENT 499, picked up in class\". Never write an address or an email address here: a note with an @ sign or a run of five digits is refused.",
     saveLabels: "Save labels",
     labelsNowMail: "Mailed. Nothing is recorded to say otherwise.",
     labelsNowKeep: (by: string, on: string) => `Kept in the lab. Decided by ${by} on ${on}.`,
-    labelsNowKeepNote: (note: string) => `Note: ${note}`,
     labelsSavedMail: "Saved. Their labels will be mailed.",
     labelsSavedKeep: "Saved. Their labels will be kept in the lab.",
     labelsUnchanged: "Nothing changed: that is already so.",
     labelsBadChoice: "Choose either mailing them or keeping them in the lab.",
-    labelsNoteProblem: {
-      too_long: "That note is longer than 200 characters.",
-      has_at_sign: "That note has an @ sign in it, which an email address has. Notes never hold an address, so nothing was saved.",
-      has_long_number:
-        "That note has a run of five or more digits in it, which a postal code or a street number has. Notes never hold an address, so nothing was saved.",
-    },
     /** No row: nobody has answered. Distinct from having answered "no atlas". */
     membershipUnrecorded: "Not recorded",
     membershipProgram: "Master Melittology (no atlas)",

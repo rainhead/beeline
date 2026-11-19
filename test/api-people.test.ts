@@ -263,14 +263,14 @@ describe("POST /api/v1/people/:id/registration", () => {
  */
 describe("POST /api/v1/people/:id/mailing", () => {
   const instructions = (w: Awaited<ReturnType<typeof world>>) =>
-    rows(w.conn, `SELECT person_id, instruction, note, decided_by FROM person_mailing_instruction ORDER BY person_id`);
+    rows(w.conn, `SELECT person_id, instruction, decided_by FROM person_mailing_instruction ORDER BY person_id`);
 
   it("keeps a person's labels in the lab, credited to the key's person, with the reference kept", async () => {
     const w = await world();
-    const res = await w.sendMailing(w.keys.staff, w.people.ada, { instruction: "keep_in_lab", note: "ENT 499, picked up in class", reference: "issue 4" });
+    const res = await w.sendMailing(w.keys.staff, w.people.ada, { instruction: "keep_in_lab", reference: "issue 4" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ person_id: w.people.ada, outcome: "saved", was: "mail", instruction: "keep_in_lab" });
-    expect(await instructions(w)).toEqual([[w.people.ada, "keep_in_lab", "ENT 499, picked up in class", "samstaff"]]);
+    expect(await instructions(w)).toEqual([[w.people.ada, "keep_in_lab", "samstaff"]]);
     expect(await rows(w.conn, `SELECT reference FROM person_mailing_event`)).toEqual([["issue 4"]]);
     expect(await rows(w.conn, `SELECT route, subject, outcome, reference, status FROM api_key_use`)).toEqual([
       ["/api/v1/people/:id/mailing", String(w.people.ada), "saved", "issue 4", 200],
@@ -291,17 +291,13 @@ describe("POST /api/v1/people/:id/mailing", () => {
     expect(await rows(w.conn, `SELECT count(*) FROM person_mailing_event`)).toEqual([[2n]]);
   });
 
-  it("refuses a note with an @ sign or a run of five digits, or a long one, before storing it, and does not repeat it", async () => {
+  it("refuses a body that still sends a note, naming the field, and a choice that is neither", async () => {
     const w = await world();
-    for (const note of ["ada@example.org", "Corvallis OR 97330", "x".repeat(201)]) {
-      const res = await w.sendMailing(w.keys.staff, w.people.ada, { instruction: "keep_in_lab", note });
-      expect(res.status).toBe(422);
-      const text = await res.text();
-      expect(text).not.toContain("example.org");
-      expect(text).not.toContain("97330");
-    }
+    const res = await w.sendMailing(w.keys.staff, w.people.ada, { instruction: "keep_in_lab", note: "ENT 499" });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { message: string }).message).toContain('"note" is not a field of this request');
     expect((await w.sendMailing(w.keys.staff, w.people.ada, { instruction: "burn" })).status).toBe(422);
-    expect((await w.sendMailing(w.keys.staff, w.people.ada, { note: "no instruction" })).status).toBe(400);
+    expect((await w.sendMailing(w.keys.staff, w.people.ada, { reference: "no instruction" })).status).toBe(400);
     expect(await rows(w.conn, `SELECT count(*) FROM person_mailing_event`)).toEqual([[0n]]);
   });
 

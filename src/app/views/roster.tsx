@@ -92,7 +92,6 @@ type Judged = {
 /** What person_mailing_instruction says of a person whose labels are not mailed. */
 export interface MailingNow {
   instruction: "mail" | "keep_in_lab";
-  note: string | null;
   decided_by: string;
   decided_at: Date;
 }
@@ -605,12 +604,6 @@ function LabelsCard({
         ) : (
           <>
             {p.labelsNowKeep(mailing.decided_by, m.format.date(mailing.decided_at))}
-            {mailing.note !== null && (
-              <>
-                {" "}
-                {p.labelsNowKeepNote(mailing.note)}
-              </>
-            )}
           </>
         )}
       </p>
@@ -625,7 +618,6 @@ function LabelsCard({
             ["keep_in_lab", p.labelsKeep] as const,
           ]}
         />
-        <TextField id="mailing_note" name="note" label={p.labelsNote} value={mailing?.note ?? ""} hint={p.labelsNoteHint} />
         <p class="row">
           <Button>{p.saveLabels}</Button>
         </p>

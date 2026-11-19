@@ -33,13 +33,12 @@ export type SetMailingResult =
 export interface PeopleDeps {
   /**
    * Record whether the person's printed labels are mailed or kept in the lab
-   * (src/mailing-instructions.ts). The note is free text: it is refused if it
-   * could hold an address, and never repeated back.
+   * (src/mailing-instructions.ts). There is no note: free text could
+   * hold an address.
    */
   setMailing(input: {
     handle: string;
     instruction: string;
-    note: string;
     author: string;
     reference: string | null;
   }): Promise<SetMailingResult>;
@@ -116,7 +115,7 @@ export function registerPeopleRoutes(api: Hono<ApiEnv>, people: PeopleDeps | und
   });
 
   // Whether a person's labels are mailed or kept in the lab (beeline-w8ab.4).
-  // An instruction and a note; never an address or an email address.
+  // An instruction only; never an address or an email address.
   api.post("/people/:id/mailing", smallBody, async (c) => {
     if (!c.get("staff")) {
       c.set("outcome", "forbidden");
@@ -127,12 +126,10 @@ export function registerPeopleRoutes(api: Hono<ApiEnv>, people: PeopleDeps | und
       return apiError(c, 503, "unavailable", "This Beeline cannot record decisions about people.");
     }
     let instruction: string;
-    let note: string;
     let reference: string | undefined;
     try {
-      const body = check(parseObject(await c.req.text()), { instruction: "string", note: "string", reference: "string" }, ["instruction"]);
+      const body = check(parseObject(await c.req.text()), { instruction: "string", reference: "string" }, ["instruction"]);
       instruction = (body.instruction as string).trim();
-      note = typeof body.note === "string" ? body.note.trim() : "";
       reference = referenceOf(body);
       c.set("reference", reference);
     } catch (err) {
@@ -142,7 +139,7 @@ export function registerPeopleRoutes(api: Hono<ApiEnv>, people: PeopleDeps | und
     }
     let result: SetMailingResult;
     try {
-      result = await people.setMailing({ handle: c.req.param("id"), instruction, note, author: c.get("key").login, reference: reference ?? null });
+      result = await people.setMailing({ handle: c.req.param("id"), instruction, author: c.get("key").login, reference: reference ?? null });
     } catch (err) {
       if (isWriteConflict(err)) {
         c.set("outcome", "busy");

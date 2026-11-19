@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { matchCollectors, matchName, readPeople, type MatchedCollector } from "../collector-match.js";
 import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
-import { PROGRAM_SERIES, checkTrapSample, findLookalikes, highestSampleNumber, seriesNumberProblem, type Lookalike, type TrapSampleForm } from "../trap-sample.js";
+import { AUTO_NUMBER_PLACEHOLDER, PROGRAM_SERIES, checkTrapSample, findLookalikes, nextSampleNumber, seriesNumberHeldProblem, seriesNumberHolder, seriesNumberProblem, type Lookalike, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import {
@@ -140,12 +140,16 @@ export interface NewRowCreate {
   /** The look-alike was ticked "create anyway", so the row is not held. */
   anyway: boolean;
   /**
-   * For a number in the program's series, the bound the preview judged it by (seriesNumberProblem): the highest number
-   * in Beeline then and how many of the file's rows were in the series. The job judges it by the same, so a row the
-   * preview took is never refused for a count that differs. Null for a number outside the series.
+   * The number is in the program's series (`OBAS-`), or blank and so to be given the next in it: such a row waits for
+   * a person to confirm the series' numbers (Peter, 2026-11-19), and is held unless `obasChecked`.
    */
-  series: { highest: number; own: number } | null;
+  obas: boolean;
+  /** The one box "I've checked these OBAS numbers" was ticked. */
+  obasChecked: boolean;
 }
+
+/** Whether a row with nothing wrong waits for a tick: it looks like an existing sample and was not ticked, or its number is in the series and the numbers were not confirmed. */
+export const isHeld = (create: NewRowCreate): boolean => (create.lookalike !== null && !create.anyway) || (create.obas && !create.obasChecked);
 
 export interface SampleRowResult {
   /** The row in the file, the header being row 1. */
@@ -194,6 +198,8 @@ export interface SamplesPlan {
   otherSheets: string[];
   rows: SampleRowResult[];
   unknownCollectors: UnknownCollector[];
+  /** New rows with nothing wrong and no number, which are given the next numbers in the series when they are made, and the first of them as it stands now. */
+  numbering: { blank: number; from: string | null };
 }
 
 const emptySplit = (): SeasonSplit => ({ active: 0, settled: 0, unplaced: 0 });
@@ -204,7 +210,7 @@ export function countRows(rows: readonly SampleRowResult[]): SamplesCounts {
   for (const r of rows) {
     counts.rows[r.season]++;
     if (r.problems.length > 0) counts.cantUse[r.season]++;
-    else if (r.kind === "new") counts[r.create?.lookalike != null && !r.create.anyway ? "newHeld" : "newReady"][r.season]++;
+    else if (r.kind === "new") counts[r.create !== null && isHeld(r.create) ? "newHeld" : "newReady"][r.season]++;
     else if (r.differences.length > 0) counts.differ[r.season]++;
     else counts.same[r.season]++;
   }
@@ -311,6 +317,8 @@ export interface SamplesPlanOptions {
   reader?: Reader;
   /** The rows of the file whose look-alike was ticked "create anyway". */
   createAnyway?: ReadonlySet<number>;
+  /** The box "I've checked these OBAS numbers" was ticked. */
+  obasChecked?: boolean;
 }
 
 /**
@@ -409,6 +417,16 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         flagged.add("fieldNumber");
         result.problems.push({ reason: numberCell.problem, unit: null, column: "fieldNumber", detail: numberCell.fileText, cells: heldCells(new Map([["fieldNumber", numberCell]]), ["fieldNumber"]) });
       }
+      // The program's own numbers have a shape, and a series number that any other sample has, of any kind, cannot be used again.
+      if (numberCell.problem === null && fileNumber !== "") {
+        const shape = seriesNumberProblem(fileNumber);
+        const holder = shape === null ? await seriesNumberHolder(conn, fileNumber) : null;
+        const wrong = shape ?? (holder === null ? null : seriesNumberHeldProblem(fileNumber, holder));
+        if (wrong !== null) {
+          flagged.add("fieldNumber");
+          result.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: wrong, cells: [] });
+        }
+      }
       const when = full.get("eventDate")!.value;
       if (when.kind === "days") result.season = when.start < activeSince ? "settled" : "active";
       const list = full.get("recordedBy")!.value;
@@ -416,7 +434,8 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
       await noteNames(names, row);
       const country = full.get("countryCode")!;
       const form: TrapSampleForm = {
-        sample_number: fileNumber,
+        // A blank number is given the next in the series when the sample is made; the form is checked with a stand-in.
+        sample_number: fileNumber === "" ? AUTO_NUMBER_PLACEHOLDER : fileNumber,
         collectors: names,
         date_start: when.kind === "days" ? when.start : full.get("eventDate")!.fileText,
         date_end: when.kind === "days" ? when.end : "",
@@ -452,7 +471,13 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         // Someone who is not staff may not see where every sample is: they are told the row is held, and not which sample.
         const lookalike = found !== undefined && options.reader !== undefined && !options.reader.staff ? { sampleId: 0, sampleNumber: "" } : (found ?? null);
         // A tick counts only for a row that looks like something, so a stale or made-up one cannot switch off a later check.
-        result.create = { form: { ...form, collectors: sample.collector_ids.map(String) }, lookalike, anyway: lookalike !== null && (options.createAnyway?.has(row) ?? false), series: null };
+        result.create = {
+          form: { ...form, sample_number: fileNumber, collectors: sample.collector_ids.map(String) },
+          lookalike,
+          anyway: lookalike !== null && (options.createAnyway?.has(row) ?? false),
+          obas: fileNumber === "" || fileNumber.startsWith(PROGRAM_SERIES),
+          obasChecked: options.obasChecked ?? false,
+        };
       }
       if (fileNumber !== "") (newNumbers.get(fileNumber) ?? newNumbers.set(fileNumber, []).get(fileNumber)!).push(index);
       continue;
@@ -522,28 +547,12 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
     }
   }
 
-  // The program's own numbers are guarded: a number far above the series would move the next one offered for good. The
-  // bound is the highest number in Beeline plus the file's rows in the series that have nothing else wrong, plus the
-  // margin (seriesNumberProblem): it depends on no other row's outcome or tick. The bound is kept with each row, and the
-  // job judges the row by it again.
-  const candidates = results.filter((r) => r.kind === "new" && r.create !== null);
-  const own = candidates.filter((r) => r.create!.form.sample_number.startsWith(PROGRAM_SERIES));
-  if (own.length > 0) {
-    const highest = await highestSampleNumber(conn);
-    for (const r of candidates) {
-      const wrong = seriesNumberProblem(r.create!.form.sample_number, highest, own.length);
-      if (wrong === null) {
-        if (r.create!.form.sample_number.startsWith(PROGRAM_SERIES)) r.create!.series = { highest, own: own.length };
-        continue;
-      }
-      r.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: wrong, cells: [] });
-      r.create = null;
-    }
-  }
+  const blank = results.filter((r) => r.create !== null && r.create.form.sample_number === "").length;
+  const numbering = { blank, from: blank > 0 ? await nextSampleNumber(conn) : null };
 
   const counts = countRows(results);
   const unknownCollectors = [...unknown]
     .map(([name, { rows: at, problem }]) => ({ name, rows: at.size, problem }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { kind: "samples", counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, rows: results, unknownCollectors };
+  return { kind: "samples", counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, rows: results, unknownCollectors, numbering };
 }

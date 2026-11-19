@@ -101,7 +101,8 @@ export async function mayEnterTrapSamples(conn: DuckDBConnection, personId: numb
  * Who may edit an entered sample: staff, one of its collectors, or whoever
  * entered it, as the correction form lets a collector edit only their own
  * samples (CodeRabbit). Entering is open to every trapper; editing someone
- * else's sample is not.
+ * else's sample is not. Once the sample's season settles (`settled_sample`) the form closes to them and stays staff's
+ * (Peter, 2026-11-19): a settled season is no longer asked about, and its entered samples change by staff's hand.
  */
 export async function mayEditTrapSample(conn: DuckDBConnection, sampleId: number, personId: number | null, admin: boolean): Promise<boolean> {
   if (admin) return true;
@@ -110,6 +111,7 @@ export async function mayEditTrapSample(conn: DuckDBConnection, sampleId: number
     conn,
     `SELECT count(*)::INTEGER AS n FROM sample_entry e
      WHERE e.sample_id = $1
+       AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = e.sample_id)
        AND (e.entered_by = $2 OR EXISTS (SELECT 1 FROM sample_collector c WHERE c.sample_id = e.sample_id AND c.person_id = $2))`,
     [sampleId, personId],
   );
@@ -137,49 +139,55 @@ export async function nextSampleNumber(conn: DuckDBConnection, prefix = "OBAS-")
   return `${prefix}${String((await highestSampleNumber(conn, prefix)) + 1).padStart(5, "0")}`;
 }
 
-/**
- * The highest number after the prefix on any sample, 0 if none has the prefix: what the next number offered counts from.
- * `exceptMadeByUpload` leaves out the samples that upload has made, which is the highest the upload's own rows were
- * judged against, whatever of them is made by now.
- */
-export async function highestSampleNumber(conn: DuckDBConnection, prefix = "OBAS-", exceptMadeByUpload: number | null = null): Promise<number> {
+/** The highest number after the prefix on any sample, 0 if none has the prefix: what the next number offered counts from. */
+export async function highestSampleNumber(conn: DuckDBConnection, prefix = "OBAS-"): Promise<number> {
   const found = await rows<{ n: number | null }>(
     conn,
     `SELECT max(TRY_CAST(substr(sample_number, length($1) + 1) AS INTEGER))::INTEGER AS n
-     FROM sample WHERE starts_with(sample_number, $1)
-       AND ($2::INTEGER IS NULL OR entity_id NOT IN (SELECT o.sample_id FROM upload_sample_outcome o WHERE o.upload_id = $2 AND o.outcome = 'created' AND o.sample_id IS NOT NULL))`,
-    [prefix, exceptMadeByUpload],
+     FROM sample WHERE starts_with(sample_number, $1)`,
+    [prefix],
   );
   return found[0]?.n ?? 0;
 }
+
+/** What a form carries as its number when the real one is given under the print runs' lock, so the form's own checks run. */
+export const AUTO_NUMBER_PLACEHOLDER = "(next number)";
 
 /** The series the program numbers its own trap samples in, whose next number the form offers. */
 export const PROGRAM_SERIES = "OBAS-";
 
 /**
- * How far above the highest number in the store a new OBAS- number may be. One mistyped number moves the next
- * number the trap form offers for good, since nothing deletes a sample the ordinary way (Peter, 2026-11-19), so a
- * file may start a little ahead of the series but not leap.
+ * The sentence saying why a number in the program's series cannot be used, or null if it can: it must be `OBAS-` and
+ * five digits. A number outside the series is not judged: a collector's own numbers are theirs. How far a number may
+ * be from the others is not checked: the series' numbers wait for a person to confirm them (Peter, 2026-11-19), since
+ * the highest in the store may be a block set aside, as OBAS-20214 is.
  */
-export const SERIES_MARGIN = 50;
-
-/**
- * The sentence saying why a number in the program's series cannot be used, or null if it can. A number outside the
- * series is not judged: a collector's own numbers are theirs. The bound is simple and depends on no other row's
- * outcome: five digits, and at most the highest number in Beeline, plus the number of new `OBAS-` rows in the file
- * (`ownRows`, so a year's batch of consecutive numbers is taken whole), plus SERIES_MARGIN.
- */
-export function seriesNumberProblem(sampleNumber: string, highest: number, ownRows = 0): string | null {
+export function seriesNumberProblem(sampleNumber: string): string | null {
   if (!sampleNumber.startsWith(PROGRAM_SERIES)) return null;
-  const digits = sampleNumber.slice(PROGRAM_SERIES.length);
-  if (!/^\d{5}$/.test(digits)) {
+  if (!/^\d{5}$/.test(sampleNumber.slice(PROGRAM_SERIES.length))) {
     return `A number starting ${PROGRAM_SERIES} is the program's own and is written ${PROGRAM_SERIES} and five digits, such as ${PROGRAM_SERIES}00657.`;
-  }
-  if (Number(digits) > highest + ownRows + SERIES_MARGIN) {
-    return `${sampleNumber} is more than ${SERIES_MARGIN} past what this file's new numbers would reach from ${PROGRAM_SERIES}${String(highest).padStart(5, "0")}, the highest in Beeline, and one mistyped number would move the next one offered for good. Check it, or enter the sample on its own form.`;
   }
   return null;
 }
+
+/** A number written as a series: letters, a hyphen and what follows, such as OBAS-00657 or WBAS-00012. */
+export const isSeriesNumber = (sampleNumber: string): boolean => /^[A-Za-z]+-/.test(sampleNumber);
+
+/**
+ * The sample, of any kind, that has this number, if the number is a series number. A series number is the program's
+ * and unique, though the old Beeline holds some trap bottles as net samples, and a net sample's own plain numbers
+ * ("3") are the collector's for the day and shared, so only a series number is judged. The trap form's own check counts
+ * trap samples only; the upload path asks this as well.
+ */
+export async function seriesNumberHolder(conn: DuckDBConnection, sampleNumber: string): Promise<{ sampleId: number; kind: string } | null> {
+  if (!isSeriesNumber(sampleNumber)) return null;
+  const found = await rows<{ entity_id: number; kind: string }>(conn, `SELECT entity_id, kind FROM sample WHERE sample_number = $1 ORDER BY entity_id LIMIT 1`, [sampleNumber]);
+  return found[0] === undefined ? null : { sampleId: found[0].entity_id, kind: found[0].kind };
+}
+
+/** What a series number that another sample already has is told, with how to compare the row with that sample. */
+export const seriesNumberHeldProblem = (sampleNumber: string, holder: { sampleId: number; kind: string }) =>
+  `${sampleNumber} is already a ${holder.kind} sample in Beeline, sampleId ${holder.sampleId}. To compare this row with that sample, put its sampleId in the row (changes to existing samples are not applied yet); otherwise give the new sample another number.`;
 
 /** How near a new sample's point must be to an existing sample's, in metres, for the two to look like one sample. */
 export const LOOKALIKE_METRES = 100;
@@ -379,28 +387,34 @@ async function writeParts(conn: DuckDBConnection, id: number, s: TrapSample, wit
 
 /**
  * Write a new trap sample; its id. Behind the print runs' lock, on the print connection. `within` is run, with the
- * new id, in the same transaction as the sample, so that whatever it writes stands or falls with the sample: the
- * apply-uploads job records the row's outcome there, so a crash cannot leave a sample that no upload row names.
+ * new id and its number, in the same transaction as the sample, so that whatever it writes stands or falls with the
+ * sample: the apply-uploads job records the row's outcome there, so a crash cannot leave a sample that no upload row
+ * names. With `autoNumber` the sample's number is the next in the program's series, taken inside the lock so that
+ * consecutive rows get consecutive numbers; with `anyKind` a series number that any other sample has, of any kind,
+ * counts as taken (the upload path; the trap form counts trap samples only).
  */
 export function createTrapSample(
   conn: DuckDBConnection,
   s: TrapSample,
   enteredBy: number | null,
-  within?: (id: number) => Promise<void>,
+  within?: (id: number, sampleNumber: string) => Promise<void>,
+  options: { autoNumber?: boolean; anyKind?: boolean } = {},
 ): Promise<number | "taken"> {
   return withPrintRunLock(async () => {
-    if (await numberTaken(conn, s.sample_number, null)) return "taken";
+    const number = options.autoNumber === true ? await nextSampleNumber(conn) : s.sample_number;
+    if (await numberTaken(conn, number, null)) return "taken";
+    if (options.anyKind === true && (await seriesNumberHolder(conn, number)) !== null) return "taken";
     return inTransaction(conn, async () => {
       const created = await rows<{ entity_id: number }>(
         conn,
         `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol, sampling_effort)
          VALUES ('trap', $1, $2::DATE, $3::DATE, $4, $5, $6, $7, $8, $9, $10) RETURNING entity_id`,
-        [s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort],
+        [number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort],
       );
       const id = created[0]!.entity_id;
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);
       await writeParts(conn, id, s);
-      await within?.(id);
+      await within?.(id, number);
       return id;
     });
   });

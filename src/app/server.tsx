@@ -77,11 +77,11 @@ import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import { addressRows, needsLookup, runCollectors, runHasRegistration, type RunCollectors } from "./print-run-addresses.js";
 import { IdealLogicError, type Registrant } from "../ideal-logic.js";
-import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
+import { UploadPreview, UploadProblem, UploadUndo, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
 import { samplesFileRow, samplesWorkbook } from "./sample-workbook.js";
 import { planSamples } from "./samples-upload-plan.js";
-import { APPLY_JOB, claimUpload, digestOf, readOutcomes, rowsToApply } from "./samples-upload-apply.js";
+import { APPLY_JOB, claimUpload, clearStopped, digestOf, readOutcomes, rowsToApply } from "./samples-upload-apply.js";
 import {
   MAX_FILE_BYTES,
   MAX_ROWS as UPLOAD_MAX_ROWS,
@@ -2480,6 +2480,7 @@ export function createApp({
         "p.display_name as uploader",
         "ua.applied_at",
         "ua.draft_count",
+        "ua.stopped_row",
       ])
       .where("u.entity_id", "=", id)
       .executeTakeFirst();
@@ -2543,12 +2544,14 @@ export function createApp({
     kept: { upload: ParsedUpload; staffFile: boolean; bytes: Uint8Array },
     /** The rows of a samples file whose look-alike was ticked, when applying works the plan out. */
     createAnyway?: ReadonlySet<number>,
+    /** The box "I've checked these OBAS numbers", when applying works the plan out. */
+    obasChecked?: boolean,
   ) => {
     const m = c.get("m");
     if (kept.upload.layout.kind === "samples") {
       // Compared as the viewer sees locations: staff see every one, and someone no longer staff only their own.
       if (conn === undefined) throw new Error("comparing a samples file needs the store connection");
-      const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), today: uploadToday?.(), createAnyway });
+      const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), today: uploadToday?.(), createAnyway, obasChecked });
       // What applying did to each row, once the file was applied: the notes and the counts say it.
       const outcomes = row.applied_at === null ? [] : await readOutcomes(db, row.entity_id);
       return { kind: "samples" as const, plan, outcomes, noted: samplesNotes(m, kept.upload, plan, outcomes, !c.get("admin")) };
@@ -2571,7 +2574,7 @@ export function createApp({
     samplesNotice: "changed" | "busy" | "nothing_ticked" | null = null,
   ) => {
     const m = c.get("m");
-    const { sha256: _kept, uploaded_by: _by, applied_at, draft_count, ...shown } = row;
+    const { sha256: _kept, uploaded_by: _by, applied_at, draft_count, stopped_row, ...shown } = row;
     const upload: UploadDetail = shown;
     const volunteer =
       outcome.kind !== "volunteer"
@@ -2593,10 +2596,20 @@ export function createApp({
               c.get("admin") &&
               row.uploaded_by === c.get("session").personId &&
               applied_at === null &&
-              (outcome.noted.summary.counts.newReady.active + outcome.noted.summary.counts.newReady.settled + outcome.noted.summary.counts.newReady.unplaced > 0 ||
-                outcome.noted.summary.held.length > 0),
+              (() => {
+                const k = outcome.noted.summary.counts;
+                return k.newReady.active + k.newReady.settled + k.newReady.unplaced + k.newHeld.active + k.newHeld.settled + k.newHeld.unplaced > 0;
+              })(),
             applied: applied_at === null ? null : { at: applied_at, by: row.uploader },
             notice: samplesNotice,
+            stoppedRow: stopped_row,
+            canRetry: c.get("admin") && stopped_row !== null,
+            // Not while the job is still working on it: rows pending and the upload not stopped.
+            canUndo:
+              c.get("admin") &&
+              outcome.noted.summary.outcomes !== null &&
+              outcome.noted.summary.outcomes.created > outcome.noted.summary.outcomes.deleted &&
+              !(outcome.noted.summary.outcomes.pending > 0 && stopped_row === null),
           };
     // While rows wait for the job, the page asks again by itself, so the progress it shows moves.
     if (outcome.kind === "samples" && outcome.noted.summary.outcomes !== null && outcome.noted.summary.outcomes.pending > 0) c.header("Refresh", "5");
@@ -2734,6 +2747,7 @@ export function createApp({
         .map((v) => Number(v))
         .filter((v) => Number.isInteger(v)),
     );
+    const obasChecked = body.get("obas") === "1";
     const kept = await readKept(c, row, layoutFor(true));
     if (kept.problem !== undefined) return kept.problem;
     if (kept.upload.layout.kind !== "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
@@ -2745,7 +2759,7 @@ export function createApp({
       return c.html(await (await previewPage(c, row, kept, await uploadOutcome(c, row, kept), false, notice)).text(), 409);
     };
     if (syncJobRunning()) return showing("busy");
-    const outcome = await uploadOutcome(c, row, kept, anyway);
+    const outcome = await uploadOutcome(c, row, kept, anyway, obasChecked);
     if (outcome.kind !== "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
     if (digestOf(outcome.plan) !== asked) return showing("changed");
     // The page is as it was shown, and every new row that could be made waits for a tick that was not given.
@@ -2754,6 +2768,65 @@ export function createApp({
     // Started now, and if something else is running, by the scheduler's tick as soon as it is done.
     if (claimed !== null) await jobsDep.start(APPLY_JOB);
     return c.redirect(uploadHref(row.entity_id), 303);
+  });
+
+  // After the job stopped on an upload because something went wrong (it has been reported), staff choose Try again: the
+  // mark is cleared and the job started, and it carries on from the row it stopped at.
+  app.post("/uploads/:id{[0-9]+}/apply-samples/retry", async (c) => {
+    const refused = uploadsGate(c);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    const row = await visibleUpload(c, Number(c.req.param("id")));
+    if (row === null) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    await clearStopped(db, row.entity_id);
+    await jobsDep.start(APPLY_JOB);
+    return c.redirect(uploadHref(row.entity_id), 303);
+  });
+
+  // Deleting the samples an upload made, for staff (Peter, 2026-11-19): a page that says what goes, then a form. Every
+  // sample the upload created that the single delete still allows is deleted as it does, each in its own turn of the
+  // sample's queue and each recorded in sample_deletion; the rest are listed with why. Not while the job is working on
+  // the upload. The upload's own record of what it made stays.
+  const undoGate = async (c: Context<AppEnv>, writing: boolean) => {
+    const refused = uploadsGate(c);
+    if (refused !== null) return { response: refused };
+    const m = c.get("m");
+    if (writing && c.get("acting").impersonating) return { response: c.text(m.errors.readOnlyImpersonating, 403) };
+    if (!c.get("admin")) return { response: errorResponse(c, "notFound", { message: m.uploads.page.notFound }) };
+    if (conn === undefined || printWriter === undefined) return { response: c.text("This instance cannot delete samples.", 503) };
+    const row = await visibleUpload(c, Number(c.req.param("id")));
+    if (row === null || row.applied_at === null) return { response: errorResponse(c, "notFound", { message: m.uploads.page.notFound }) };
+    const outcomes = await readOutcomes(db, row.entity_id);
+    const working = row.stopped_row === null && outcomes.some((o) => o.outcome === "pending");
+    return { row, outcomes, working };
+  };
+  app.get("/uploads/:id{[0-9]+}/delete-samples", async (c) => {
+    const gate = await undoGate(c, false);
+    if (gate.response !== undefined) return gate.response;
+    const m = c.get("m");
+    return c.html(await page(c, m.uploads.page.undo.title, <UploadUndo m={m} uploadId={gate.row.entity_id} fileName={gate.row.file_name} result={null} working={gate.working} />));
+  });
+  app.post("/uploads/:id{[0-9]+}/delete-samples", async (c) => {
+    const gate = await undoGate(c, true);
+    if (gate.response !== undefined) return gate.response;
+    const m = c.get("m");
+    if (gate.working) return c.html(await page(c, m.uploads.page.undo.title, <UploadUndo m={m} uploadId={gate.row.entity_id} fileName={gate.row.file_name} result={null} working />), 409);
+    let deleted = 0;
+    const couldNot: Array<{ number: string; why: string }> = [];
+    for (const o of gate.outcomes) {
+      if (o.outcome !== "created" || o.sample_id === null || o.deleted) continue;
+      const id = o.sample_id;
+      const result = await onSample(id, () => deleteTrapSample(printWriter!, id, c.get("session").personId, `Undo of upload ${gate.row.entity_id}`));
+      if ("deleted" in result) {
+        deleted++;
+        console.log(`trap sample ${result.deleted} (id ${id}) deleted with the samples of upload ${gate.row.entity_id} by ${c.get("session").login}`);
+      } else if (result.refused !== "not_found") {
+        couldNot.push({ number: o.sample_number ?? String(id), why: m.trapSample.delete.refused[result.refused] ?? result.refused });
+      }
+    }
+    return c.html(await page(c, m.uploads.page.undo.title, <UploadUndo m={m} uploadId={gate.row.entity_id} fileName={gate.row.file_name} result={{ deleted, couldNot }} working={false} />));
   });
 
   // One program-year's Darwin Core archive, as the dwc-archives job wrote

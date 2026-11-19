@@ -1275,6 +1275,8 @@ export interface UploadAppliedTable {
   applied_by: number;
   applied_at: Timestamped;
   draft_count: number;
+  stopped_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  stopped_row: number | null;
 }
 
 /** A trap sample staff deleted (schema/048, beeline-kgyd.4.10). */
@@ -1297,7 +1299,6 @@ export interface UploadSampleOutcomeTable {
   sample_number: string | null;
   payload: string | null;
   detail: string | null;
-  attempts: ColumnType<number, number | undefined, number>;
   recorded_at: ColumnType<Date, Date | string, Date | string>;
 }
 

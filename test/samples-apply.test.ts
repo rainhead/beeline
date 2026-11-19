@@ -3,14 +3,14 @@ import { describe as describeInOrder, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
 import { APPLY_JOB, applyPending, applyWaiting } from "../src/app/samples-upload-apply.js";
 import { buildJobs } from "../src/app/jobs/registry.js";
-import { startScheduler, runJob, ON_DEMAND_RETRY_MS, type Job } from "../src/app/jobs/framework.js";
+import { startScheduler, runJob, type Job } from "../src/app/jobs/framework.js";
 import { onSample } from "../src/app/sample-queue.js";
 import { planSamples } from "../src/app/samples-upload-plan.js";
 import { SAMPLES_LAYOUT, parseUpload } from "../src/app/upload-plan.js";
-import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, highestSampleNumber, seriesNumberProblem, SERIES_MARGIN } from "../src/trap-sample.js";
+import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, mayEditTrapSample, seriesNumberProblem } from "../src/trap-sample.js";
 import { parseSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { duckdbReader } from "../src/person-change.js";
-import { CURRENT_SEASON, rows } from "./helpers.js";
+import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
 import { edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 import type { TestCell } from "./workbook.js";
 
@@ -50,9 +50,11 @@ const upload = async (f: UploadFixture, file: Uint8Array, app = f.app) => {
 };
 const pageAt = async (f: UploadFixture, location: string, app = f.app) => (await app.request(location)).text();
 const digestIn = (html: string) => /name="digest" value="([0-9a-f]+)"/.exec(html)?.[1];
-const apply = (f: UploadFixture, location: string, fields: { digest?: string; anyway?: number[] }, app = f.app) => {
+const apply = (f: UploadFixture, location: string, fields: { digest?: string; anyway?: number[]; obas?: boolean }, app = f.app) => {
   const body = new FormData();
   if (fields.digest !== undefined) body.set("digest", fields.digest);
+  // The series' numbers wait for the one box; most tests are not about it, so it is ticked unless a test says not.
+  if (fields.obas !== false) body.set("obas", "1");
   for (const r of fields.anyway ?? []) body.append("anyway", String(r));
   return app.request(`${location}/apply-samples`, { method: "POST", headers: { origin: ORIGIN }, body });
 };
@@ -163,7 +165,7 @@ describe("the job", () => {
     const { location, digest } = await offered(f, [newRow(1), newRow(2, { recordedBy: `${f.volunteer} | ${f.staffer}` })]);
     await apply(f, location, { digest });
     const result = await applyPending(deps(f));
-    expect(result).toEqual({ created: 2, refused: 0, skipped: 0 });
+    expect(result).toEqual({ created: 2, refused: 0, skipped: 0, stopped: 0 });
     const made = await rows(f.conn, `SELECT o.row_number, o.outcome, o.sample_number, s.sample_number, s.kind, e.entered_by
       FROM upload_sample_outcome o JOIN sample s ON s.entity_id = o.sample_id JOIN sample_entry e ON e.sample_id = s.entity_id ORDER BY 1`);
     expect(made.map((r) => r.slice(1))).toEqual([
@@ -178,7 +180,7 @@ describe("the job", () => {
     expect(new Set(log.map((c) => c.author))).toEqual(new Set(["sam_s"]));
     // The page says what was done, and the file with notes names each sample.
     const html = await pageAt(f, location);
-    expect(html).toContain(esc(en.uploads.page.samplesCreated(2)));
+    expect(html).toContain(esc(en.uploads.page.samplesCreated(2, 0)));
     const notes = matrixOf(new Uint8Array(await (await f.app.request(`${location}/notes`)).arrayBuffer()));
     const head = notes[0]!;
     const note = (number: string) => notes.find((r) => r[head.indexOf("fieldNumber")] === number)![head.length - 1];
@@ -209,7 +211,7 @@ describe("the job", () => {
     expect(await history()).toEqual(new Set(["OBAS-00011", "OBAS-00012"]));
     expect(await applyWaiting(f.db)).toBe(true);
     // The next start picks up where it stopped, without making the first two again.
-    expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 0, skipped: 0 });
+    expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 0, skipped: 0, stopped: 0 });
     expect((await outcomes(f)).map((r) => r[1])).toEqual(["created", "created", "created", "created"]);
     expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number LIKE 'OBAS-%'`)).toEqual([[4n]]);
     expect(await applyWaiting(f.db)).toBe(false);
@@ -242,7 +244,7 @@ describe("the job", () => {
     await apply(f, location, { digest });
     await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
       VALUES ('trap', 'OBAS-00011', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'vane trap')`);
-    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 1, skipped: 0 });
+    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 1, skipped: 0, stopped: 0 });
     expect(await outcomes(f)).toEqual([
       [expect.any(Number), "refused", "OBAS-00011", "Trap sample OBAS-00011 is already in Beeline."],
       [expect.any(Number), "created", "OBAS-00012", null],
@@ -284,10 +286,10 @@ describe("a new row that looks like an existing sample", () => {
     const f = await uploadFixture();
     const { location, html, digest } = await offered(f, [looks(), newRow(2)]);
     expect(html).toContain(`href="/samples/${f.ids.sampleA}"`);
-    expect(html).toContain(esc(en.uploads.page.samplesHeld(1, " (1 in the active seasons)")));
+    expect(html).toContain(esc(en.uploads.page.samplesHeld(2, " (2 in the active seasons)")));
     expect(html).toContain(`name="anyway" value="${await heldRow(f)}"`);
     await apply(f, location, { digest });
-    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 0, skipped: 0 });
+    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 0, skipped: 0, stopped: 0 });
     const out = await outcomes(f);
     expect(out.map((r) => [r[1], r[2]])).toEqual([["skipped", "OBAS-00011"], ["created", "OBAS-00012"]]);
     expect(String(out[0]![3])).toContain("UP-1");
@@ -305,7 +307,7 @@ describe("a new row that looks like an existing sample", () => {
     // Only the held row: nothing to apply until it is ticked.
     expect((await apply(f, location, { digest })).status).toBe(409);
     expect((await apply(f, location, { digest, anyway: [row] })).status).toBe(303);
-    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 0, skipped: 0 });
+    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 0, skipped: 0, stopped: 0 });
     expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011'`)).toEqual([[1n]]);
   });
 
@@ -333,7 +335,7 @@ describe("a new row that looks like an existing sample", () => {
     const [[id]] = (await rows(f.conn, `SELECT max(entity_id) FROM sample WHERE sample_number = 'X-1'`)) as [[number]];
     await f.conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${id}, ${f.volunteer}, 1)`);
     await f.conn.run(`INSERT INTO sample_location (sample_id, latitude, longitude, source) VALUES (${id}, 44.5, -123.2, 'staff_entry')`);
-    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 1 });
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 1, stopped: 0 });
   });
 });
 
@@ -343,30 +345,72 @@ async function heldRow(f: UploadFixture): Promise<number> {
   return Number(n) + 2;
 }
 
-describe("the guard on new numbers", () => {
-  it("accepts the program's own series up to the margin above the highest, and says why it cannot use a number past it", async () => {
-    expect(seriesNumberProblem("OBAS-00060", 10)).toBeNull();
-    expect(seriesNumberProblem(`OBAS-${String(10 + SERIES_MARGIN).padStart(5, "0")}`, 10)).toBeNull();
-    expect(seriesNumberProblem(`OBAS-${String(11 + SERIES_MARGIN).padStart(5, "0")}`, 10)).toContain("one mistyped number would move the next one offered for good");
-    expect(seriesNumberProblem("OBAS-123", 10)).toContain("five digits");
-    expect(seriesNumberProblem("OBAS-000123", 10)).toContain("five digits");
-    // The file's own rows in the series widen the bound by their number, whatever became of them.
-    expect(seriesNumberProblem("OBAS-00180", 10, 120)).toBeNull();
-    expect(seriesNumberProblem("OBAS-00181", 10, 120)).toContain("one mistyped number");
-    expect(seriesNumberProblem("OBAS-12345", 10, 120)).toContain("one mistyped number");
-    expect(seriesNumberProblem("OBAS-1234x", 10)).toContain("five digits");
-    // Another series is the collector's own.
-    expect(seriesNumberProblem("UP-99999", 10)).toBeNull();
-    expect(seriesNumberProblem("7", 10)).toBeNull();
+describe("the series' numbers", () => {
+  it("must be OBAS- and five digits, and nothing else is judged", () => {
+    expect(seriesNumberProblem("OBAS-00060")).toBeNull();
+    expect(seriesNumberProblem("OBAS-99999")).toBeNull();
+    expect(seriesNumberProblem("OBAS-123")).toContain("five digits");
+    expect(seriesNumberProblem("OBAS-000123")).toContain("five digits");
+    expect(seriesNumberProblem("OBAS-1234x")).toContain("five digits");
+    expect(seriesNumberProblem("UP-99999")).toBeNull();
+    expect(seriesNumberProblem("7")).toBeNull();
   });
 
-  it("holds a row past the margin out of the plan's ready rows, in the preview", async () => {
+  it("wait for the one box: unticked they are skipped with a note, ticked they are made; a number outside the series is not held", async () => {
     const f = await uploadFixture();
-    const { html, digest } = await offered(f, [newRow(1, { fieldNumber: "OBAS-90001" }), newRow(2, { fieldNumber: "OBAS-0001" }), newRow(3, { fieldNumber: "A-123" })]);
-    // Only the number outside the program's series is ready.
-    expect(digest).toBeDefined();
-    expect(html).toContain(esc(en.uploads.page.samplesNew(1, en.uploads.page.split(1, 0, 0))));
-    expect(html).toContain(esc(en.uploads.page.samplesCantUse(2, en.uploads.page.split(2, 0, 0))));
+    const { location, html, digest } = await offered(f, [newRow(1), newRow(2, { fieldNumber: "YPT3" })]);
+    expect(html).toContain(esc(en.uploads.page.obasLine(1, "OBAS-00011", "OBAS-00011", 0, null)));
+    expect(html).toContain(`name="obas"`);
+    expect(html).toContain(esc(en.uploads.page.obasBox));
+    await apply(f, location, { digest, obas: false });
+    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 0, skipped: 0, stopped: 0 });
+    expect((await outcomes(f)).map((r) => [r[1], r[2]])).toEqual([["skipped", "OBAS-00011"], ["created", "YPT3"]]);
+    expect(String((await outcomes(f))[0]![3])).toContain("I've checked these OBAS numbers");
+    // Only held rows, nothing ticked: its own sentence.
+    const g = await uploadFixture();
+    const only = await offered(g, [newRow(1)]);
+    const none = await apply(g, only.location, { digest: only.digest, obas: false });
+    expect(none.status).toBe(409);
+    expect(await none.text()).toContain(esc(en.uploads.page.samplesNothingTicked));
+  });
+
+  it("gives a row with no number the next in the series, under the lock, so consecutive rows get consecutive numbers", async () => {
+    const f = await uploadFixture();
+    await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
+      VALUES ('trap', 'OBAS-00040', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'vane trap')`);
+    const { location, html, digest } = await offered(f, [newRow(1, { fieldNumber: "", decimalLatitude: "44.1" }), newRow(2, { fieldNumber: "", decimalLatitude: "44.2" })]);
+    expect(html).toContain(esc(en.uploads.page.obasLine(2, null, null, 2, "OBAS-00041")));
+    await apply(f, location, { digest });
+    expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 0, skipped: 0, stopped: 0 });
+    expect((await outcomes(f)).map((r) => r[2])).toEqual(["OBAS-00041", "OBAS-00042"]);
+    expect(await rows(f.conn, `SELECT sample_number FROM sample WHERE sample_number IN ('OBAS-00041', 'OBAS-00042') ORDER BY 1`)).toEqual([["OBAS-00041"], ["OBAS-00042"]]);
+    const notes = matrixOf(new Uint8Array(await (await f.app.request(`${location}/notes`)).arrayBuffer()));
+    expect(notes.at(-1)!.at(-1)).toBe(en.uploads.notes.created("OBAS-00042"));
+  });
+
+  it("cannot be used when any other sample, of any kind, has the number, and the note names that sample", async () => {
+    const f = await uploadFixture();
+    // The old Beeline holds some trap bottles as net samples.
+    const held = await insertCleanSample(f.conn, { kind: "'net'", sample_number: "'OBAS-00033'", collector_id: String(f.staffer) });
+    const { html } = await offered(f, [newRow(1, { fieldNumber: "OBAS-00033" })]);
+    expect(html).toContain(esc(en.uploads.page.samplesCantUse(1, en.uploads.page.split(1, 0, 0))));
+    const notes = matrixOf(new Uint8Array(await (await f.app.request(`${(await upload(f, edited(await download(f), [], { idColumn: "sampleId", addRows: [newRow(1, { fieldNumber: "OBAS-00033" })] })))}/notes`)).arrayBuffer()));
+    expect(notes.at(-1)!.at(-1)).toContain(`sampleId ${held}`);
+    // And the job asks again under the lock.
+    const g = await uploadFixture();
+    const queued = await offered(g, [newRow(1, { fieldNumber: "OBAS-00034" })]);
+    await apply(g, queued.location, { digest: queued.digest });
+    const other = await insertCleanSample(g.conn, { kind: "'net'", sample_number: "'OBAS-00034'", collector_id: String(g.staffer) });
+    expect(await applyPending(deps(g))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
+    expect(String((await outcomes(g))[0]![3])).toContain(`sampleId ${other}`);
+  });
+
+  it("warns, before applying, how many samples to be made are in an active season with specimens", async () => {
+    const f = await uploadFixture();
+    const { html } = await offered(f, [newRow(1, { specimenCount: "3" }), newRow(2, { specimenCount: "0", decimalLatitude: "44.3" }), newRow(3, { specimenCount: "", decimalLatitude: "44.4" })]);
+    expect(html).toContain(esc(en.uploads.page.labelsReady(1)));
+    const g = await uploadFixture();
+    expect((await offered(g, [newRow(1, { specimenCount: "0" })])).html).not.toContain("ready to print");
   });
 });
 
@@ -465,86 +509,101 @@ describe("deleting a trap sample", () => {
 });
 
 describe("a run that is cut short", () => {
-  /** A connection that fails the nth statement it is asked to read with, as a query interrupted at shutdown does. */
-  const interruptedAt = (f: UploadFixture, nth: number | RegExp) => {
+  /** A connection that fails the first statement it is asked to read matching `when`, as a query interrupted at shutdown does, or with a fault nobody foresaw. */
+  const failingAt = (f: UploadFixture, when: number | RegExp, error: () => Error, before?: () => void) => {
     let reads = 0;
+    let done = false;
     return new Proxy(f.conn, {
       get(target, key) {
         const value = Reflect.get(target, key) as unknown;
         if (key !== "runAndReadAll" || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
         return async (...args: unknown[]) => {
-          if (typeof nth === "number" ? ++reads === nth : nth.test(String(args[0]))) throw new Error("INTERRUPT Error: Interrupted!");
+          if (!done && (typeof when === "number" ? ++reads === when : when.test(String(args[0])))) {
+            done = true;
+            before?.();
+            throw error();
+          }
           return (value as (...a: unknown[]) => unknown).apply(target, args);
         };
       },
     });
   };
+  /** A shutdown: the signal is set, and the query is interrupted. */
+  const interruptedAt = (f: UploadFixture, when: number | RegExp) => {
+    const stop = new AbortController();
+    return { stop, conn: failingAt(f, when, () => new Error("INTERRUPT Error: Interrupted!"), () => stop.abort()) };
+  };
 
-  it("leaves the row it was working on pending, and the next run makes it", async () => {
+  it("leaves the row it was working on pending and unmarked, and the next run makes it", async () => {
     const f = await uploadFixture();
     const { location, digest } = await offered(f, [newRow(1), newRow(2)]);
     await apply(f, location, { digest });
     // The first read of the row (the trap form's check) is interrupted, and then a later one.
-    await expect(applyPending(deps(f, { conn: interruptedAt(f, 1) }))).rejects.toThrow(/Interrupted/);
-    await expect(applyPending(deps(f, { conn: interruptedAt(f, /FROM sample_collector c\s+JOIN sample s/) }))).rejects.toThrow(/Interrupted/);
+    const first = interruptedAt(f, 1);
+    await expect(applyPending(deps(f, { conn: first.conn, signal: first.stop.signal }))).rejects.toThrow(/Interrupted/);
+    const second = interruptedAt(f, /FROM sample_collector c\s+JOIN sample s/);
+    await expect(applyPending(deps(f, { conn: second.conn, signal: second.stop.signal }))).rejects.toThrow(/Interrupted/);
     expect((await outcomes(f)).map((r) => r[1])).toEqual(["pending", "pending"]);
-    expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 0, skipped: 0 });
-    expect((await outcomes(f)).map((r) => r[1])).toEqual(["created", "created"]);
+    expect(await rows(f.conn, `SELECT stopped_at, stopped_row FROM upload_applied`)).toEqual([[null, null]]);
+    expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 0, skipped: 0, stopped: 0 });
   });
 
-  it("leaves the row pending after an unexpected error, but records a problem the code recognises as refused", async () => {
+  it("is not a shutdown just because an error says interrupt: the upload is stopped", async () => {
     const f = await uploadFixture();
     const { location, digest } = await offered(f, [newRow(1), newRow(2)]);
     await apply(f, location, { digest });
-    // A payload that is not the shape the job writes from is refused at once, with a diagnostic, and the rows behind go on.
+    // No signal is set, so this is a fault.
+    await expect(applyPending(deps(f, { conn: failingAt(f, 1, () => new Error("INTERRUPT Error: not a shutdown")) }))).rejects.toThrow("not a shutdown");
+    expect((await rows(f.conn, `SELECT stopped_row FROM upload_applied`))[0]![0]).toBe(4);
+  });
+
+  it("refuses a payload that is not what the job writes from, and a number the guard recognises, and goes on", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1), newRow(2)]);
+    await apply(f, location, { digest });
     await f.conn.run(`UPDATE upload_sample_outcome SET payload = '{"form": 5}' WHERE sample_number = 'OBAS-00011'`);
-    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 1, skipped: 0 });
-    expect((await outcomes(f)).map((r) => r[1])).toEqual(["refused", "created"]);
+    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 1, skipped: 0, stopped: 0 });
     expect(String((await outcomes(f))[0]![3])).toContain("cannot be read (no form)");
     await f.conn.run(`UPDATE upload_sample_outcome SET outcome = 'pending', payload = 'not json' WHERE sample_number = 'OBAS-00011'`);
-    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0 });
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
     expect(String((await outcomes(f))[0]![3])).toContain("not JSON");
-    // A number far past the series is a problem the guard recognises, said again at the row's turn.
     const g = await uploadFixture();
     const queued = await offered(g, [newRow(1)]);
     await apply(g, queued.location, { digest: queued.digest });
-    await g.conn.run(`UPDATE upload_sample_outcome SET payload = replace(payload, 'OBAS-00011', 'OBAS-09999')`);
-    expect(await applyPending(deps(g))).toEqual({ created: 0, refused: 1, skipped: 0 });
-    expect(String((await outcomes(g))[0]![3])).toContain("one mistyped number");
+    await g.conn.run(`UPDATE upload_sample_outcome SET payload = replace(payload, 'OBAS-00011', 'OBAS-123')`);
+    expect(await applyPending(deps(g))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
+    expect(String((await outcomes(g))[0]![3])).toContain("five digits");
   });
 
-  it("refuses a row on its third failure and goes on to the rows behind it, counting no attempt for a stop", async () => {
+  it("stops on an unexpected error: the row stays pending, the upload is marked and left alone, other uploads go on, and the run fails; Try again resumes it", async () => {
     const f = await uploadFixture();
-    const { location, digest } = await offered(f, [newRow(1), newRow(2)]);
-    await apply(f, location, { digest });
-    const failing = () => {
-      let first = true;
-      return new Proxy(f.conn, {
-        get(target, key) {
-          const value = Reflect.get(target, key) as unknown;
-          if (key !== "runAndReadAll" || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
-          return async (...args: unknown[]) => {
-            if (first) {
-              first = false;
-              throw new Error("boom");
-            }
-            return (value as (...a: unknown[]) => unknown).apply(target, args);
-          };
-        },
-      });
-    };
-    const attempts = async () => (await rows(f.conn, `SELECT attempts, outcome FROM upload_sample_outcome ORDER BY row_number`)) as Array<[number, string]>;
-    await expect(applyPending(deps(f, { conn: failing() }))).rejects.toThrow("boom");
-    expect(await attempts()).toEqual([[1, "pending"], [0, "pending"]]);
-    // A stop is no attempt.
-    const stopped = new AbortController();
-    stopped.abort();
-    await expect(applyPending(deps(f, { conn: failing(), signal: stopped.signal }))).rejects.toThrow("boom");
-    expect(await attempts()).toEqual([[1, "pending"], [0, "pending"]]);
-    await expect(applyPending(deps(f, { conn: failing() }))).rejects.toThrow("boom");
-    expect(await applyPending(deps(f, { conn: failing() }))).toEqual({ created: 1, refused: 1, skipped: 0 });
-    expect(await attempts()).toEqual([[3, "refused"], [0, "created"]]);
-    expect(String((await outcomes(f))[0]![3])).toContain("It could not be created: boom");
+    const one = await offered(f, [newRow(1), newRow(2)]);
+    await apply(f, one.location, { digest: one.digest });
+    const two = await offered(f, [newRow(3, { decimalLatitude: "44.9" })]);
+    await apply(f, two.location, { digest: two.digest });
+    // A write conflict, say, on the first row of the first upload.
+    await expect(applyPending(deps(f, { conn: failingAt(f, 1, () => new Error("Conflict on tuple with 'secret value'")) }))).rejects.toThrow("secret value");
+    // The first upload stopped at its row 2 (nothing is stepped over); the second upload's row was made.
+    expect(await rows(f.conn, `SELECT outcome, sample_number FROM upload_sample_outcome ORDER BY upload_id, row_number`)).toEqual([["pending", "OBAS-00011"], ["pending", "OBAS-00012"], ["created", "OBAS-00013"]]);
+    const marks = (await rows(f.conn, `SELECT stopped_row, stopped_at IS NOT NULL FROM upload_applied ORDER BY upload_id`)) as Array<[number | null, boolean]>;
+    expect(marks[0]).toEqual([marks[0]![0], true]);
+    expect(marks[1]).toEqual([null, false]);
+    // No error text is kept anywhere a person reads.
+    expect(JSON.stringify(await rows(f.conn, `SELECT * FROM upload_sample_outcome`), (_k, v) => (typeof v === "bigint" ? String(v) : v))).not.toContain("secret");
+    // The scheduler does not restart a stopped upload, and the page says so, with a button for staff.
+    expect(await applyWaiting(f.db)).toBe(false);
+    const html = await pageAt(f, one.location);
+    expect(html).toContain(esc(en.uploads.page.samplesStopped(marks[0]![0]!)));
+    expect(html).toContain(`${one.location}/apply-samples/retry`);
+    // Try again clears the mark and starts the job, which carries on.
+    const started: string[] = [];
+    const retry = await f.app.request(`${one.location}/apply-samples/retry`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() });
+    expect(retry.status).toBe(303);
+    expect(await applyWaiting(f.db)).toBe(true);
+    expect(started).toEqual([]);
+    expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 0, skipped: 0, stopped: 0 });
+    // Not for a volunteer.
+    expect((await f.appAs("volunteer").request(`${one.location}/apply-samples/retry`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() })).status).toBe(404);
   });
 
   it("starts no creation once the signal is set", async () => {
@@ -555,10 +614,11 @@ describe("a run that is cut short", () => {
     stopped.abort();
     await expect(applyPending(deps(f, { signal: stopped.signal }))).rejects.toThrow(/interrupted by shutdown/);
     expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011'`)).toEqual([[0n]]);
-    expect(await rows(f.conn, `SELECT attempts, outcome FROM upload_sample_outcome`)).toEqual([[0, "pending"]]);
+    expect(await rows(f.conn, `SELECT outcome FROM upload_sample_outcome`)).toEqual([["pending"]]);
+    expect(await rows(f.conn, `SELECT stopped_row FROM upload_applied`)).toEqual([[null]]);
   });
 
-  it("does not report a run that was stopped, backs off a run that failed, and resumes one that was interrupted", async () => {
+  it("does not report a run that was stopped to Sentry's observer, and a run left by a shutdown is started at the next tick", async () => {
     const f = await uploadFixture();
     const heard: unknown[] = [];
     const stopper = new AbortController();
@@ -574,26 +634,6 @@ describe("a run that is cut short", () => {
     };
     await runJob({ db: f.db, conn: f.conn, observe: () => (_o, err) => void heard.push(err) }, job, stopper.signal);
     expect(heard).toEqual([undefined]);
-    // A job that fails is not started again by the tick for the retry interval.
-    let runs = 0;
-    const failing: Job = {
-      name: "failing",
-      schedule: { kind: "onDemand" },
-      window: "interactive",
-      waiting: async () => true,
-      async run() {
-        runs++;
-        throw new Error("boom");
-      },
-    };
-    const scheduler = startScheduler({ db: f.db, conn: f.conn, jobs: [failing], tickMs: 20 });
-    // Until the first failed run is recorded; only then can a second be refused for the pause.
-    for (let i = 0; i < 100 && Number((await rows(f.conn, `SELECT count(*) FROM job_run WHERE job_name = 'failing' AND outcome = 'failed'`))[0]![0]) === 0; i++) await new Promise((r) => setTimeout(r, 20));
-    await new Promise((r) => setTimeout(r, 300));
-    await scheduler.stop({ graceMs: 1000 });
-    expect(runs).toBe(1);
-    expect(ON_DEMAND_RETRY_MS).toBe(5 * 60_000);
-    // One whose last run was cut short by a shutdown is started at the next tick.
     await f.conn.run(`INSERT INTO job_run (job_name, started_at, completed_at, outcome, detail) VALUES ('resumed', now(), now(), 'failed', 'interrupted by shutdown before step a')`);
     let resumed = 0;
     const second: Job = { name: "resumed", schedule: { kind: "onDemand" }, window: "interactive", waiting: async () => resumed === 0, async run() { resumed++; } };
@@ -733,29 +773,6 @@ describe("what staff are told, and who sees what", () => {
     expect(JSON.parse(payload).anyway).toBe(false);
   });
 
-  it("stretches the series only by rows that will be made", async () => {
-    const f = await uploadFixture();
-    // 00040 is held (it looks like UP-1) and 00030 cannot be used, so neither carries 00090 along.
-    const { html } = await offered(f, [
-      looks({ fieldNumber: "OBAS-00040" }),
-      newRow(2, { fieldNumber: "OBAS-00030", decimalLatitude: "95" }),
-      newRow(3, { fieldNumber: "OBAS-00090" }),
-    ]);
-    expect(html).toContain(esc(en.uploads.page.samplesCantUse(2, en.uploads.page.split(2, 0, 0))));
-    expect(html).toContain(esc(en.uploads.page.samplesHeld(1, " (1 in the active seasons)")));
-  });
-
-  it("judges a row in the job by the bound the preview judged it by, so a row at the edge beside a refused one is made", async () => {
-    const f = await uploadFixture();
-    const highest = await highestSampleNumber(f.conn);
-    // Two rows in the series: the bound is the highest plus two plus the margin, so the first is just inside it.
-    const edge = `OBAS-${String(highest + 2 + SERIES_MARGIN).padStart(5, "0")}`;
-    const { location, digest } = await offered(f, [newRow(1, { fieldNumber: edge }), newRow(2, { fieldNumber: "OBAS-90001" })]);
-    expect((await apply(f, location, { digest })).status).toBe(303);
-    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 0, skipped: 0 });
-    expect((await outcomes(f)).map((r) => [r[1], r[2]])).toEqual([["created", edge]]);
-  });
-
   it("holds a row for a reader who may not see the sample it looks like, without naming it", async () => {
     const f = await uploadFixture();
     const bytes = edited(await download(f), [], { idColumn: "sampleId", addRows: [looks()] });
@@ -790,8 +807,66 @@ describe("a look-alike that appears while the row is being made", () => {
         };
       },
     });
-    expect(await applyPending(deps(f, { conn: entering }))).toEqual({ created: 0, refused: 0, skipped: 1 });
+    expect(await applyPending(deps(f, { conn: entering }))).toEqual({ created: 0, refused: 0, skipped: 1, stopped: 0 });
     expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011'`)).toEqual([[0n]]);
     expect(String((await outcomes(f))[0]![3])).toContain("OBAS-00099");
+  });
+});
+
+describe("undoing an upload", () => {
+  it("deletes every sample the upload made that can be deleted, lists the rest with why, and says so in the page and the notes", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1), newRow(2, { decimalLatitude: "44.2" }), newRow(3, { decimalLatitude: "44.3" })]);
+    await apply(f, location, { digest });
+    // Not while the job is still working on it.
+    expect(await (await f.app.request(`${location}/delete-samples`)).text()).toContain(esc(en.uploads.page.undo.working));
+    expect((await f.app.request(`${location}/delete-samples`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() })).status).toBe(409);
+    await applyPending(deps(f));
+    expect(await (await f.app.request(location)).text()).toContain(`${location}/delete-samples`);
+    // One of the three gets a specimen on a printed label.
+    const [[printed]] = (await rows(f.conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00012'`)) as [[number]];
+    const [[sp]] = (await rows(f.conn, `INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1) RETURNING entity_id`)) as [[number]];
+    expect(sp).toBeGreaterThan(0);
+    const confirm = await (await f.app.request(`${location}/delete-samples`)).text();
+    expect(confirm).toContain(esc(en.uploads.page.undo.explain));
+    const done = await f.app.request(`${location}/delete-samples`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() });
+    expect(done.status).toBe(200);
+    const text = await done.text();
+    expect(text).toContain(esc(en.uploads.page.undo.done(2, 1)));
+    expect(text).toContain(esc(en.uploads.page.undo.row("OBAS-00012", en.trapSample.delete.refused.printed!)));
+    expect(await rows(f.conn, `SELECT sample_number FROM sample WHERE sample_number LIKE 'OBAS-%' ORDER BY 1`)).toEqual([["OBAS-00012"]]);
+    expect(await rows(f.conn, `SELECT sample_number FROM sample_deletion ORDER BY 1`)).toEqual([["OBAS-00011"], ["OBAS-00013"]]);
+    // The upload's own record stands, and the page and the notes say what became of them.
+    expect(await rows(f.conn, `SELECT count(*) FROM upload_sample_outcome WHERE outcome = 'created'`)).toEqual([[3n]]);
+    const page = await (await f.app.request(location)).text();
+    expect(page).toContain(esc(en.uploads.page.samplesCreated(3, 2)));
+    const notes = matrixOf(new Uint8Array(await (await f.app.request(`${location}/notes`)).arrayBuffer()));
+    const head = notes[0]!;
+    const note = (number: string) => notes.find((r) => r[head.indexOf("fieldNumber")] === number)![head.length - 1];
+    expect(note("OBAS-00011")).toBe(en.uploads.notes.createdDeleted("OBAS-00011"));
+    expect(note("OBAS-00012")).toBe(en.uploads.notes.created("OBAS-00012"));
+    // Staff only.
+    const volunteer = f.appAs("volunteer");
+    expect((await volunteer.request(`${location}/delete-samples`)).status).toBe(404);
+  });
+});
+
+describe("an entered sample whose season has settled", () => {
+  it("closes its form to its collectors and its enterer, and stays staff's", async () => {
+    const f = await uploadFixture();
+    const entered = async (season: number, number: string) => {
+      const id = await insertCleanSample(f.conn, { kind: "'trap'", sample_number: `'${number}'`, collector_id: String(f.volunteer), date_start: `DATE '${season}-06-02'`, date_end: `DATE '${season}-06-02'` });
+      await f.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${id}, ${f.volunteer})`);
+      return id;
+    };
+    const current = await entered(CURRENT_SEASON, "OBAS-00051");
+    const settled = await entered(SETTLED_SEASON, "OBAS-00052");
+    expect(await mayEditTrapSample(f.conn, current, f.volunteer, false)).toBe(true);
+    expect(await mayEditTrapSample(f.conn, settled, f.volunteer, false)).toBe(false);
+    expect(await mayEditTrapSample(f.conn, settled, f.staffer, true)).toBe(true);
+    const volunteer = f.appAs("volunteer");
+    expect((await volunteer.request(`/samples/${current}/trap`)).status).toBe(200);
+    expect((await volunteer.request(`/samples/${settled}/trap`)).status).toBe(404);
+    expect((await f.app.request(`/samples/${settled}/trap`)).status).toBe(200);
   });
 });

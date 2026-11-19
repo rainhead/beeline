@@ -626,26 +626,6 @@ export type StartedRun =
   /** One job runs at a time, and one is running (or the scheduler is deciding what to run, or stopping). */
   | { status: "busy"; running: string | null };
 
-/**
- * How long an on-demand job that failed is left alone by the scheduler's tick, so that a step that keeps failing is
- * tried every five minutes and reported then, not every minute. A run that ended because the process was stopping, or
- * was orphaned by it, is no failure of the job's own and is not waited out: the job resumes at the next tick.
- */
-export const ON_DEMAND_RETRY_MS = 5 * 60_000;
-
-async function failedLately(db: Kysely<Database>, name: string, at: Date): Promise<boolean> {
-  const last = await db
-    .selectFrom("job_run")
-    .select(["completed_at", "started_at", "outcome", "detail"])
-    .where("job_name", "=", name)
-    .orderBy("started_at", "desc")
-    .limit(1)
-    .executeTakeFirst();
-  if (last === undefined || last.outcome !== "failed") return false;
-  if (/^(interrupted by shutdown|orphaned)/.test(last.detail ?? "")) return false;
-  return at.getTime() - new Date(last.completed_at ?? last.started_at).getTime() < ON_DEMAND_RETRY_MS;
-}
-
 export function startScheduler(deps: SchedulerDeps): Scheduler {
   const now = deps.now ?? (() => new Date());
   let busy: string | null = null;
@@ -733,7 +713,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
         if (stopping) break;
         let start = isDue(job.schedule, job.window, now(), last.get(job.name) ?? NEVER);
         if (!start && job.schedule.kind === "onDemand" && job.waiting !== undefined) {
-          start = (await job.waiting(deps.db)) && !(await failedLately(deps.db, job.name, now()));
+          start = await job.waiting(deps.db);
           // The predicate took time, and a stop may have begun in it: nothing is started once it has (beeline-kgyd.4.10).
           if (stopping) break;
         }

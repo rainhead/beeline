@@ -105,6 +105,12 @@ export interface SamplesPreview {
   applied: { at: Date; by: string } | null;
   /** Applying was asked for, and why nothing was applied. */
   notice: "changed" | "busy" | "nothing_ticked" | null;
+  /** The job stopped at this row of the file because something went wrong; the rest wait. */
+  stoppedRow: number | null;
+  /** Staff may choose Try again for a stopped upload. */
+  canRetry: boolean;
+  /** Staff may delete the samples this upload made (the job is not working on it, and it made some that still exist). */
+  canUndo: boolean;
 }
 
 /** Columns the file has that Beeline did not read, and tabs it did not read: a line each, only where there are any. */
@@ -174,7 +180,7 @@ export function UploadPreview({
     const o = samplesSummary.outcomes;
     if (o !== null) {
       if (o.pending > 0) lines.push(p.samplesApplying(o.total - o.pending, o.total));
-      if (o.created > 0) lines.push(p.samplesCreated(o.created));
+      if (o.created > 0) lines.push(p.samplesCreated(o.created, o.deleted));
       if (o.notCreated > 0) lines.push(p.samplesNotCreated(o.notCreated));
     }
     if (total(c.newReady) > 0) lines.push(p.samplesNew(total(c.newReady), split(c.newReady)));
@@ -211,6 +217,16 @@ export function UploadPreview({
       {samplesSummary !== null && samples?.notice === "changed" && <Callout tone="warning">{p.samplesChangedSince}</Callout>}
       {samplesSummary !== null && samples?.notice === "nothing_ticked" && <Callout tone="warning">{p.samplesNothingTicked}</Callout>}
       {samplesSummary !== null && samples?.notice === "busy" && <Callout tone="warning">{p.samplesBusy}</Callout>}
+      {samplesSummary !== null && samples?.stoppedRow != null && (
+        <Callout tone="warning">
+          {p.samplesStopped(samples.stoppedRow)}
+          {samples.canRetry && (
+            <form method="post" action={`${uploadHref(upload.entity_id)}/apply-samples/retry`}>
+              <Button>{p.samplesTryAgain}</Button>
+            </form>
+          )}
+        </Callout>
+      )}
       {samplesSummary !== null && samples?.applied == null && <Callout>{p.samplesNothingChanged}</Callout>}
       {samplesSummary !== null && samples?.applied != null && (
         <Callout tone="success">
@@ -220,6 +236,7 @@ export function UploadPreview({
       {lines.map((line) => (
         <p>{line}</p>
       ))}
+      {samplesSummary !== null && samples?.canApply === true && samplesSummary.labelsReady > 0 && <Callout tone="warning">{p.labelsReady(samplesSummary.labelsReady)}</Callout>}
       {samplesSummary !== null && samplesSummary.unknownCollectors.length > 0 && (
         <p>{p.samplesUnknownCollectors(m.format.list(samplesSummary.unknownCollectors.map((c) => p.samplesUnknownCollector(c.name, c.rows))))}</p>
       )}
@@ -247,11 +264,27 @@ export function UploadPreview({
               </DataTable>
             </>
           )}
+          {samplesSummary.obas !== null && (
+            <p>
+              {p.obasLine(samplesSummary.obas.rows, samplesSummary.obas.lowest, samplesSummary.obas.highest, samplesSummary.obas.blank, samplesSummary.obas.from)}
+              <br />
+              <label>
+                <input type="checkbox" name="obas" value="1" /> {p.obasBox}
+              </label>
+            </p>
+          )}
           <p class="row">
             <Button>{p.samplesApply}</Button>
           </p>
           <Meta block>{p.samplesApplyNote}</Meta>
         </form>
+      )}
+      {samples !== null && samples.canUndo && (
+        <p class="row">
+          <LinkButton href={`${uploadHref(upload.entity_id)}/delete-samples`} variant="tonal">
+            {p.undoButton}
+          </LinkButton>
+        </p>
       )}
       <div class="row">
         {volunteer !== null && volunteer.canSave && (
@@ -268,6 +301,57 @@ export function UploadPreview({
       </div>
       {(staffSummary !== null || samplesSummary !== null) && notes && <Meta block>{p.staffNotes}</Meta>}
       {notes && notesCopy && <Meta block>{p.notesCopy}</Meta>}
+    </>
+  );
+}
+
+/** Deleting the samples an upload made: a page that says what goes and a form, or what was done afterwards. */
+export function UploadUndo({
+  m,
+  uploadId,
+  fileName,
+  result,
+  working,
+}: {
+  m: Messages;
+  uploadId: number;
+  fileName: string;
+  /** After the delete: how many went, and the ones that could not, with why. */
+  result: { deleted: number; couldNot: Array<{ number: string; why: string }> } | null;
+  working: boolean;
+}) {
+  const u = m.uploads.page.undo;
+  return (
+    <>
+      <PageHeader title={u.heading(fileName)} />
+      {working && <Callout tone="warning">{u.working}</Callout>}
+      {result !== null ? (
+        <>
+          <p>{u.done(result.deleted, result.couldNot.length)}</p>
+          {result.couldNot.length > 0 && (
+            <ul>
+              {result.couldNot.map((r) => (
+                <li>{u.row(r.number, r.why)}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : (
+        !working && (
+          <>
+            <p>{u.explain}</p>
+            <form method="post" action={`${uploadHref(uploadId)}/delete-samples`} class="form-column">
+              <p class="row">
+                <Button>{u.confirm}</Button>
+                <a href={uploadHref(uploadId)}>{u.cancel}</a>
+              </p>
+            </form>
+          </>
+        )
+      )}
+      <p>
+        <a href={uploadHref(uploadId)}>{m.uploads.page.title(fileName)}</a>
+      </p>
     </>
   );
 }

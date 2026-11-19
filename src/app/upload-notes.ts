@@ -2,8 +2,8 @@ import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import type { Messages } from "./messages/en.js";
 import { samplesWorkbook } from "./sample-workbook.js";
-import { lookalikeSentence, type OutcomeRow } from "./samples-upload-apply.js";
-import { countRows, type SampleRowResult, type SamplesCounts, type SamplesPlan, type UnknownCollector } from "./samples-upload-plan.js";
+import { type OutcomeRow } from "./samples-upload-apply.js";
+import { countRows, isHeld, type SampleRowResult, type SamplesCounts, type SamplesPlan, type UnknownCollector } from "./samples-upload-plan.js";
 import { specimenWorkbook, type Audience } from "./specimen-workbook.js";
 import type { DraftPlan } from "./upload-drafts.js";
 import { NOTE_COLUMN, type HeldItem, type ParsedUpload, type UploadPlan } from "./upload-plan.js";
@@ -60,8 +60,21 @@ export interface OutcomeSummary {
   /** Rows still waiting for the job. */
   pending: number;
   created: number;
+  /** Of the samples made, those since deleted. */
+  deleted: number;
   /** Rows refused or left alone: not created. */
   notCreated: number;
+}
+
+/** The rows whose number is in the OBAS series, or blank, which wait for the one box "I've checked these OBAS numbers". */
+export interface ObasSummary {
+  rows: number;
+  /** The lowest and highest numbers the file gives, if it gives any. */
+  lowest: string | null;
+  highest: string | null;
+  /** Rows with no number, which are given the next numbers in the series, from this one as it stands. */
+  blank: number;
+  from: string | null;
 }
 
 export interface SamplesSummary {
@@ -75,6 +88,10 @@ export interface SamplesSummary {
   held: HeldRow[];
   /** What applying did, once it was applied. */
   outcomes: OutcomeSummary | null;
+  /** Rows to be made, with nothing wrong, whose number is in the OBAS series or blank. Null once the file is applied. */
+  obas: ObasSummary | null;
+  /** New rows to be made that are in an active season and have specimens, whose labels can be printed as soon as they are made. */
+  labelsReady: number;
 }
 
 export interface Noted<S> {
@@ -187,7 +204,7 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
   for (const { row } of upload.rows) {
     const o = done.get(row);
     if (o !== undefined) {
-      notes.set(row, o.outcome === "pending" ? n.waiting : o.outcome === "created" ? n.created(o.sample_number ?? "") : n.notCreated(redact && o.outcome === "skipped" ? lookalikeSentence("") : (o.detail ?? "")));
+      notes.set(row, o.outcome === "pending" ? n.waiting : o.outcome === "created" ? (o.deleted ? n.createdDeleted(o.sample_number ?? "") : n.created(o.sample_number ?? "")) : n.notCreated(redact && o.outcome === "skipped" ? (o.detail ?? "").replace(/It looks like sample [^:]+:/, "It looks like a sample Beeline already has:") : (o.detail ?? "")));
       continue;
     }
     const r = byRow.get(row);
@@ -197,9 +214,14 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
       parts.push(
         r.problems.length > 0
           ? n.newTrapCantUse(reasons(r))
-          : r.create?.lookalike != null && !r.create.anyway
-            ? n.newTrapHeld(redact ? "" : r.create.lookalike.sampleNumber)
-            : n.newTrap,
+          : r.create === null || !isHeld(r.create)
+            ? n.newTrap
+            : [
+                r.create.lookalike !== null && !r.create.anyway ? n.newTrapHeld(redact ? "" : r.create.lookalike.sampleNumber) : null,
+                r.create.obas && !r.create.obasChecked ? n.newTrapObasHeld : null,
+              ]
+                .filter((x) => x !== null)
+                .join(" "),
       );
     } else {
       if (r.problems.length > 0) parts.push(n.cantUse(reasons(r)));
@@ -224,11 +246,21 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
           total: done.size,
           pending: [...done.values()].filter((o) => o.outcome === "pending").length,
           created: [...done.values()].filter((o) => o.outcome === "created").length,
+          deleted: [...done.values()].filter((o) => o.deleted).length,
           notCreated: [...done.values()].filter((o) => o.outcome === "refused" || o.outcome === "skipped").length,
         };
+  // The series' numbers waiting for confirmation, over the rows that are still to be made.
+  const toMake = open.filter((r) => r.problems.length === 0 && r.create !== null);
+  const seriesRows = toMake.filter((r) => r.create!.obas);
+  const given = seriesRows.map((r) => r.create!.form.sample_number).filter((x) => x !== "").sort();
+  const obas: ObasSummary | null =
+    done.size > 0 || seriesRows.length === 0
+      ? null
+      : { rows: seriesRows.length, lowest: given[0] ?? null, highest: given.at(-1) ?? null, blank: seriesRows.length - given.length, from: plan.numbering.from };
+  const labelsReady = done.size > 0 ? 0 : toMake.filter((r) => r.season === "active" && Number(r.create!.form.specimen_count) > 0).length;
   return {
     notes,
-    summary: { kind: "samples", rows: upload.rows.length, counts: done.size === 0 ? plan.counts : countRows(open), unknownCollectors: plan.unknownCollectors, held, outcomes: outcomeSummary },
+    summary: { kind: "samples", rows: upload.rows.length, counts: done.size === 0 ? plan.counts : countRows(open), unknownCollectors: plan.unknownCollectors, held, outcomes: outcomeSummary, obas, labelsReady },
   };
 }
 

@@ -41,12 +41,17 @@ CREATE TABLE upload_applied (
   upload_id   INTEGER PRIMARY KEY REFERENCES upload(entity_id),
   applied_by  INTEGER NOT NULL REFERENCES person(entity_id),
   applied_at  TIMESTAMPTZ NOT NULL,
-  draft_count INTEGER NOT NULL CHECK (draft_count >= 0)
+  draft_count INTEGER NOT NULL CHECK (draft_count >= 0),
+  stopped_at  TIMESTAMPTZ,
+  stopped_row INTEGER
 );
 COMMENT ON TABLE upload_applied IS 'An upload whose changes were taken up. For a volunteer''s file: its identifications written as drafts on Identify specimens, which the overnight job commits (src/commit-determinations.ts). For staff''s samples file: its rows queued to be applied, one upload_sample_outcome row each, which the apply-uploads job works through. At most one row per upload, written in the same transaction as the drafts or the queued rows. No row means nothing from the file was taken up.';
 COMMENT ON COLUMN upload_applied.applied_by IS 'The person signed in who applied it: the person the drafts are credited to, or the staff member whose samples the job creates.';
 COMMENT ON COLUMN upload_applied.applied_at IS 'When it was applied: when the drafts were saved, or when the rows were queued.';
 COMMENT ON COLUMN upload_applied.draft_count IS 'How many drafts were written for a volunteer''s file, one for each identification the preview listed; for staff''s samples file, how many rows were queued to be made (pending), not counting the rows left alone, which also have an upload_sample_outcome row.';
+
+COMMENT ON COLUMN upload_applied.stopped_at IS 'When the apply-uploads job stopped working on this upload because a row failed in a way nobody foresaw; NULL while it works or after staff chose Try again. The scheduler does not restart a stopped upload. The error itself is in the log and in Sentry, never here, since a database error can quote values.';
+COMMENT ON COLUMN upload_applied.stopped_row IS 'The row of the file the job stopped at, which is still pending.';
 
 -- What applying a samples file did to each row (beeline-kgyd.4.10). Written
 -- as 'pending' in the transaction that claims the upload, and updated to what
@@ -64,7 +69,6 @@ CREATE TABLE upload_sample_outcome (
   sample_number TEXT,
   payload       TEXT,
   detail        TEXT,
-  attempts      INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   recorded_at   TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (upload_id, row_number, unit)
 );
@@ -76,5 +80,4 @@ COMMENT ON COLUMN upload_sample_outcome.sample_id IS 'The sample made or changed
 COMMENT ON COLUMN upload_sample_outcome.sample_number IS 'The sample''s number as the file gave it, so the record still says which sample it was after the sample is gone.';
 COMMENT ON COLUMN upload_sample_outcome.payload IS 'What the job is to write, as JSON, worked out and checked when the upload was applied, including the person ids its collectors came to. The job writes exactly this, so it does not depend on the file or on matching names again.';
 COMMENT ON COLUMN upload_sample_outcome.detail IS 'For a refused or skipped row, the sentence saying why.';
-COMMENT ON COLUMN upload_sample_outcome.attempts IS 'How many times the job failed on this row for a reason nobody foresaw, which left it pending. A third failure refuses the row, with the error as its detail, so one stuck row does not block the rows behind it. A run that ended because the process was stopping is not an attempt.';
 COMMENT ON COLUMN upload_sample_outcome.recorded_at IS 'When the row was queued, and then when its outcome was recorded.';

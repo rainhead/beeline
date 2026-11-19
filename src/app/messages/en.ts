@@ -2445,7 +2445,7 @@ export const en = {
       /** The samples file's page (beeline-kgyd.4.9): counts, each with how many are in the active seasons and how many in settled ones. */
       samplesNew: (count: number, split: string) => `${n(count)} new trap ${count === 1 ? "sample" : "samples"} can be created${split}.`,
       samplesHeld: (count: number, split: string) =>
-        `${n(count)} new ${count === 1 ? "row looks" : "rows look"} like ${count === 1 ? "a sample" : "samples"} Beeline already has${split}, so ${count === 1 ? "it is" : "they are"} left out unless you tick create anyway.`,
+        `${n(count)} new ${count === 1 ? "row waits" : "rows wait"} for a tick below${split}, and ${count === 1 ? "is" : "are"} left out unless ticked.`,
       heldHeading: "New rows that look like an existing sample",
       heldColumns: { row: "Row", number: "Number in the file", like: "Looks like", anyway: "Create anyway" },
       heldAnyway: (row: number) => `Create row ${n(row)} anyway`,
@@ -2463,12 +2463,36 @@ export const en = {
       samplesApplyNote: "Beeline makes the new trap samples one at a time, in the order of the file. You can leave this page: it carries on, and the page shows how far it has got.",
       samplesApplying: (done: number, total: number) => `Applying: ${n(done)} of ${n(total)} ${total === 1 ? "row" : "rows"} done.`,
       samplesApplied: (when: string, by: string) => `Applied on ${when} by ${by}.`,
-      samplesCreated: (count: number) => `Created ${n(count)} new trap ${count === 1 ? "sample" : "samples"}.`,
+      samplesCreated: (count: number, deleted: number) =>
+        `Created ${n(count)} new trap ${count === 1 ? "sample" : "samples"}${deleted > 0 ? `, ${n(deleted)} since deleted` : ""}.`,
+      samplesStopped: (row: number) => `Applying stopped at row ${n(row)} because something went wrong. It has been reported. The rows from there on are waiting.`,
+      samplesTryAgain: "Try again",
+      /** The one box for the program's numbers, and the line above it. */
+      obasLine: (rows: number, lowest: string | null, highest: string | null, blank: number, from: string | null) =>
+        `${n(rows)} new ${rows === 1 ? "row has" : "rows have"} a number in the OBAS series${lowest === null ? "" : `, from ${lowest} to ${highest}`}${blank > 0 ? `; ${n(blank)} ${blank === 1 ? "has" : "have"} no number and would be given the next ones, from ${from}` : ""}. They are made only if you tick the box.`,
+      obasBox: "I've checked these OBAS numbers",
+      labelsReady: (count: number) =>
+        `${n(count)} of the samples to be made are in an active season and have specimens, so their labels are ready to print as soon as they are made. A print run gives their bees permanent numbers and ends the chance to delete them.`,
+      /** Deleting the samples an upload made. */
+      undoButton: "Delete the samples this upload made",
+      undo: {
+        title: "Delete the samples this upload made",
+        heading: (file: string) => `Delete the samples made from ${file}?`,
+        explain:
+          "Every sample this upload made that has not been printed, is in no print run and has no specimens is deleted, with its collectors and its place, as the Delete button on a sample does. The ones that cannot be deleted are listed afterwards with why. Each deletion is recorded, and the upload's own record of what it made stays. It cannot be undone: to get a sample back, enter it again.",
+        confirm: "Delete them",
+        cancel: "Keep them",
+        done: (deleted: number, couldNot: number) =>
+          `Deleted ${n(deleted)} ${deleted === 1 ? "sample" : "samples"}${couldNot > 0 ? `. ${n(couldNot)} could not be deleted:` : "."}`,
+        none: "No sample of this upload can be deleted.",
+        working: "The job is still working on this upload, so its samples cannot be deleted yet.",
+        row: (number: string, why: string) => `${number}: ${why}`,
+      },
       samplesNotCreated: (count: number) => `${n(count)} ${count === 1 ? "row was" : "rows were"} not created: see the notes in the file.`,
       samplesExistingNotApplied: "Changes to existing samples aren't applied yet; they are listed as differences only.",
       samplesChangedSince: "The comparison with this file changed after this page was shown, so nothing was applied. This is how it stands now: check it and apply again.",
       samplesNothingTicked:
-        "Nothing was applied: every new row looks like a sample Beeline already has, and none was ticked. Tick create anyway on the rows you want made, or put the sampleId of the existing sample in the file to compare the row with that sample (changes to existing samples are not applied yet).",
+        "Nothing was applied: every new row waits for a tick, and none was ticked. Tick create anyway on the look-alike rows you want made, or the OBAS box, or put the sampleId of the existing sample in the file to compare the row with that sample (changes to existing samples are not applied yet).",
       samplesBusy: "Beeline is reading from iNaturalist and rewriting samples right now, so nothing was applied. Try again in a few minutes.",
       /** After a count: how many of the rows are in seasons Beeline still asks about and how many in settled ones. */
       split: (active: number, settled: number, unplaced: number) =>
@@ -2505,6 +2529,8 @@ export const en = {
       /** What applying did to a new row. */
       waiting: "Waiting to be applied.",
       created: (number: string) => `Created ${number}.`,
+      createdDeleted: (number: string) => `Created ${number}, since deleted.`,
+      newTrapObasHeld: "New trap sample, not created yet: its number is in the OBAS series, or blank, and a person has to confirm those numbers. Tick \"I've checked these OBAS numbers\" on the page before applying.",
       notCreated: (why: string) => `Not created: ${why}`,
       newTrapCantUse: (why: string) => `New trap sample, can't use: ${why}`,
       /**

@@ -37,18 +37,36 @@ const unusedInat: InatClient = {
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const t = en.record.sample.methodEdit;
 
-/** A Kysely whose first transaction loses a write conflict, as a store write racing another does. */
-function losingOnce(db: Kysely<Database>): Kysely<Database> {
+const conflict = () => new Error("TransactionContext Error: Conflict on update!");
+
+/** A query builder whose execute loses a write conflict, however it was built up. */
+function losingBuilder<T extends object>(builder: T): T {
+  return new Proxy(builder, {
+    get(target, prop) {
+      if (prop === "execute") return async () => Promise.reject(conflict());
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        const next = (value as (...a: unknown[]) => unknown).apply(target, args);
+        return next !== null && typeof next === "object" ? losingBuilder(next) : next;
+      };
+    },
+  });
+}
+
+/**
+ * A Kysely whose first use of `what` loses a write conflict, as a store write
+ * racing another does: a transaction for a sample with old records, an
+ * `updateTable` for one entered in Beeline.
+ */
+function losingOnce(db: Kysely<Database>, what: "transaction" | "updateTable"): Kysely<Database> {
   let fired = false;
   return new Proxy(db, {
     get(target, prop) {
-      if (prop === "transaction" && !fired) {
+      if (prop === what && !fired) {
         fired = true;
-        return () => ({
-          execute: async () => {
-            throw new Error("TransactionContext Error: Conflict on update!");
-          },
-        });
+        if (what === "transaction") return () => ({ execute: async () => Promise.reject(conflict()) });
+        return (...args: unknown[]) => losingBuilder((target.updateTable as (...a: unknown[]) => object)(...args));
       }
       const value = Reflect.get(target, prop, target);
       return typeof value === "function" ? value.bind(target) : value;
@@ -56,7 +74,7 @@ function losingOnce(db: Kysely<Database>): Kysely<Database> {
   }) as Kysely<Database>;
 }
 
-async function methodApp(signedInAs: "staff" | "collector", opts: { observation?: boolean; losesOnce?: boolean } = {}) {
+async function methodApp(signedInAs: "staff" | "collector", opts: { observation?: boolean; losesOnce?: "transaction" | "updateTable" } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "beeline-method-"));
   const paths = {
     correctionsPath: join(dir, "corrections.csv"),
@@ -83,7 +101,7 @@ async function methodApp(signedInAs: "staff" | "collector", opts: { observation?
   // The store as it stood, so the edit is recorded as a change rather than
   // taken for the first snapshot.
   await recordSampleChanges(duckdbReader(conn), { log: paths.sampleChangesPath, state: paths.sampleStatePath }, { source: "observation_promotion" });
-  const db = opts.losesOnce ? losingOnce(createKysely(instance)) : createKysely(instance);
+  const db = opts.losesOnce ? losingOnce(createKysely(instance), opts.losesOnce) : createKysely(instance);
   const app = createApp({
     ...(await scratchPaths()),
     db,
@@ -219,7 +237,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
   });
 
   it("says a change that lost a write conflict is not applied yet, and saving it again applies it once", async () => {
-    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", { losesOnce: true });
+    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", { losesOnce: "transaction" });
     const before = await sampleRow(conn, sampleId);
     const [[records]] = (await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[bigint]];
     const body = { protocol: "pan traps", date_end: later(2) };
@@ -394,6 +412,27 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
       expect(blank.status).toBe(400);
       expect(await blank.text()).toBe(t.problems.method_required);
       expect(await rows(conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${entered}`)).toEqual([["pan trap", "6 pan traps"]]);
+    });
+
+    it("says a change to an entered sample that lost a write conflict is not applied, and saving again applies it", async () => {
+      const { app, conn, correctionsPath } = await methodApp("staff", { losesOnce: "updateTable" });
+      const entered = await insertCleanSample(conn, {
+        kind: "'trap'",
+        sample_number: "'OBAS-09998'",
+        date_start: `DATE '${currentSeasonDate(6, 1)}'`,
+        date_end: `DATE '${currentSeasonDate(6, 8)}'`,
+        protocol: "'blue vane trap'",
+      });
+      await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+      await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${entered}, 1, 'TEST0002')`);
+      const body = { protocol: "pan trap", date_start: currentSeasonDate(6, 1), date_end: currentSeasonDate(6, 8) };
+      const lost = await post(app, `/samples/${entered}/method`, body);
+      expect(lost.status).toBe(409);
+      expect(await lost.text()).toBe(en.sampleEdit.notApplied);
+      expect((await sampleRow(conn, entered))![1]).toBe("blue vane trap");
+      expect((await post(app, `/samples/${entered}/method`, body)).status).toBe(302);
+      expect((await sampleRow(conn, entered))![1]).toBe("pan trap");
+      expect(await correctionsIn(correctionsPath)).toEqual([]);
     });
   });
 

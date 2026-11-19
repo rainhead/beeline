@@ -74,8 +74,8 @@ export type MethodResult =
   /**
    * The store write lost a write conflict. For a sample with old records the
    * events are already in the corrections file, which nothing reads again on
-   * production (ADR 0006); a sample entered in Beeline writes no events, so
-   * nothing was kept. Either way the change is applied only by saving it
+   * production (ADR 0006); a sample entered in Beeline is written directly,
+   * with no events, so nothing was kept. Either way the change is applied only by saving it
    * again, which does not record it twice (beeline-kgyd.4.8).
    */
   | { outcome: "not_applied" };
@@ -193,7 +193,13 @@ export async function setSampleMethod(
       const count = trapCountOf(current?.sampling_effort ?? null);
       if (count !== null) effort = { sampling_effort: trapEffort(count, protocol) };
     }
-    await db.updateTable("sample").set({ ...update, ...effort }).where("entity_id", "=", sampleId).execute();
+    try {
+      await db.updateTable("sample").set({ ...update, ...effort }).where("entity_id", "=", sampleId).execute();
+    } catch (err) {
+      // Nothing was kept anywhere, so saving again is all that is needed.
+      if (isWriteConflict(err)) return { outcome: "not_applied" };
+      throw err;
+    }
     return { outcome: "saved" };
   }
 

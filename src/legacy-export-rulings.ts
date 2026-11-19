@@ -71,6 +71,7 @@ export const VALUE_KINDS = [
   "coarser_determination", // the newest expert identification names less than the old record's (a species before, a genus now)
   "one_day_range", // an end the legacy record wrote on its start day: 2018-7-26/2018-7-26
   "standin_replaced", // a stand-in point for an obscured observation, replaced by its true point (beeline-b34)
+  "staff_point", // a point staff set on the sample, with the place, accuracy and elevation that went with it (beeline-kgyd.4.2)
   "login_renamed", // the same iNaturalist user id under another login
   "sample_disagreement", // the legacy rows Beeline merged into one sample name different places, and the sample keeps one
 ] as const;

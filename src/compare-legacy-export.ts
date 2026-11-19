@@ -436,6 +436,9 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *   one_day_range        an end the legacy record wrote on its start day, blank here
  *   standin_replaced     the legacy point was a stand-in for an obscured observation's
  *                        true point, which Beeline holds instead (beeline-b34)
+ *   staff_point          staff set the sample's own point (sample_location_override), and
+ *                        its place, accuracy and elevation went with it: the export writes
+ *                        the sample's, not each old record's (beeline-kgyd.4.2)
  *   login_renamed        both sides carry the same iNaturalist user id
  *   sample_disagreement  promotion found the legacy rows of this specimen's sample
  *                        disagreeing about this field, and the sample keeps one value
@@ -789,6 +792,18 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
        OR (d."column" = 'verbatimElevation'
            AND EXISTS (SELECT 1 FROM specimen sp JOIN cmp_standin_row r ON r.sample_id = sp.sample_id
                        WHERE sp.field_number = d.field_number))`);
+  // A point staff set on the sample, which the export writes in place of
+  // each old record's own: the point, its accuracy and source, the elevation
+  // read at the old one, and the country, state and county that followed the
+  // new one. Only a difference left unexplained, so a stand-in or a staff
+  // correction of the record keeps the reason it already has.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'staff_point'
+    WHERE d.kind IN ('changed', 'filled', 'blanked')
+      AND d."column" IN ('decimalLatitude', 'decimalLongitude', 'coordinateUncertaintyInMeters', 'coordinateSource',
+                         'verbatimElevation', 'country', 'stateProvince', 'county')
+      AND EXISTS (SELECT 1 FROM specimen sp JOIN sample_location_override o ON o.sample_id = sp.sample_id
+                  WHERE sp.field_number = d.field_number)`);
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'login_renamed'
     WHERE d."column" = 'userLogin' AND d.kind = 'changed'

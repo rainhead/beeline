@@ -382,6 +382,13 @@ export const LINES: readonly ChangeLine[] = [
     match: [{ kinds: ["standin_replaced"] }],
   },
   {
+    id: "staff_point",
+    category: "places",
+    title: "A point set by staff",
+    did: "Staff set this sample's point in new Beeline, where the old record's was wrong or missing. The point, its accuracy and the elevation are the new ones, and the county, state and country follow the point.",
+    match: [{ kinds: ["staff_point"] }],
+  },
+  {
     id: "sample_disagreement",
     category: "places",
     title: "One value for a sample whose records disagreed",

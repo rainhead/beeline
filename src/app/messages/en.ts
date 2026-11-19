@@ -1257,7 +1257,8 @@ export const en = {
         open: "Change the coordinates",
         hint: "Coordinates set here are treated as the true location and replace the observation's, even when iNaturalist updates. The elevation is recalculated overnight.",
         printed: "This sample's labels are already printed. Changing the coordinates here does not change the printed labels.",
-        noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation.",
+        hintNoObservation: "Coordinates set here are treated as the true location and replace the sample's, which has no iNaturalist observation. The county and state follow them, and the elevation is recalculated overnight. To correct a wrong point, set the right one.",
+        noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation, one from old Beeline's records, or one entered in Beeline.",
         latitude: "Latitude",
         longitude: "Longitude",
         uncertainty: "Accuracy, in meters (optional)",
@@ -1268,6 +1269,8 @@ export const en = {
           "Beeline could not set the county and state from these coordinates just now, so they may not match. Check them before reprinting this sample's labels.",
         /** Refused while the overnight sync runs, which would undo or race the change. */
         busy: "Beeline is syncing with iNaturalist right now. Try again once it has finished.",
+        /** Refused while a print run that has not printed holds the sample's labels. */
+        inPrintRun: "This sample's labels are in a print run that has not printed yet, so its point cannot change now. Wait for the run to print, or cancel it.",
       },
       /**
        * Staff taking iNaturalist's location for a sample Beeline printed,

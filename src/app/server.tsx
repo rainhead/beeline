@@ -2826,9 +2826,11 @@ export function createApp({
     if (gate.working) return c.html(await page(c, m.uploads.page.undo.title, <UploadUndo m={m} uploadId={gate.row.entity_id} fileName={gate.row.file_name} result={null} working />), 409);
     // Nothing more is made from an upload that is being undone: its rows still waiting are settled first, in the same step.
     await settleUndone(db, gate.row.entity_id);
+    // Read again after settling: a "Try again" pressed meanwhile may have made a sample the first read did not see.
+    const settled = await readOutcomes(db, gate.row.entity_id);
     let deleted = 0;
     const couldNot: Array<{ number: string; why: string }> = [];
-    for (const o of gate.outcomes) {
+    for (const o of settled) {
       if (o.outcome !== "created" || o.sample_id === null || o.deleted) continue;
       const id = o.sample_id;
       const result = await onSample(id, () => deleteTrapSample(printWriter!, id, c.get("session").personId, `Undo of upload ${gate.row.entity_id}`));

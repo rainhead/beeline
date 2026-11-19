@@ -2469,6 +2469,7 @@ export const en = {
         `Created ${n(count)} new trap ${count === 1 ? "sample" : "samples"}${deleted > 0 ? `, ${n(deleted)} since deleted` : ""}.`,
       samplesStopped: (row: number) => `Applying stopped at row ${n(row)} because something went wrong. It has been reported. The rows from there on are waiting.`,
       samplesTryAgain: "Try again",
+      samplesOthersInNotes: "What the file says of its other rows, such as changes to existing samples or rows that can't be used, is in the file with notes.",
       /** The one box for the program's numbers, and the line above it. */
       obasLine: (rows: number, lowest: string | null, highest: string | null, blank: number, from: string | null, to: string | null) =>
         `${n(rows)} new ${rows === 1 ? "row has" : "rows have"} a number in the OBAS series${lowest === null ? "" : `, from ${lowest} to ${highest}`}${blank > 0 ? `; ${n(blank)} ${blank === 1 ? "has" : "have"} no number and ${blank === 1 ? "is" : "are"} given ${from === to ? from : `${from} to ${to}`}` : ""}. They are made only if you tick the box.`,

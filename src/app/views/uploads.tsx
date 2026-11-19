@@ -182,6 +182,8 @@ export function UploadPreview({
       if (o.pending > 0) lines.push(p.samplesApplying(o.total - o.pending, o.total));
       if (o.created > 0) lines.push(p.samplesCreated(o.created, o.deleted));
       if (o.notCreated > 0) lines.push(p.samplesNotCreated(o.notCreated));
+      // Once applied, the page counts only what applying did; what the file says of its other rows is in its notes.
+      lines.push(p.samplesOthersInNotes);
     }
     if (total(c.newReady) > 0) lines.push(p.samplesNew(total(c.newReady), split(c.newReady)));
     if (total(c.newHeld) > 0) lines.push(p.samplesHeld(total(c.newHeld), split(c.newHeld)));

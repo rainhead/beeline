@@ -722,7 +722,8 @@ export type SpecimenCountResult =
  * numbered is refused. On a printed sample with an iNaturalist observation the
  * `count_mismatch` flag stands afterwards, which is expected. A sample whose
  * count still follows its observation is refused, because the next promotion
- * would put the observation's count back (ingest/mint-samples.sql). Staff
+ * would put the observation's count back (ingest/mint-samples.sql): any
+ * sample with an observation, until its labels are on paper. Staff
  * only, and refused while impersonating.
  *
  * It is written straight to the sample and recorded in its history, with no
@@ -748,13 +749,15 @@ export function setSpecimenCount(deps: CorrectionDeps, actor: Actor, sampleId: n
     return withPrintRunLock(async (): Promise<SpecimenCountResult> => {
       const found = await sql<{ specimen_count: number | null; follows: boolean; highest: number | null }>`
         SELECT s.specimen_count,
-               (EXISTS (SELECT 1 FROM observation_sample_candidate c WHERE c.inat_id = s.inat_observation_id)
+               (s.inat_observation_id IS NOT NULL
                 AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)) AS follows,
                (SELECT max(i.specimen_number) FROM individuated_specimen i WHERE i.sample_id = s.entity_id) AS highest
         FROM sample s WHERE s.entity_id = ${sampleId}`.execute(deps.db);
       const now = found.rows[0];
       if (now === undefined) return refused("not_found");
       // The next promotion would put the observation's count back, so a count set here would be undone overnight.
+      // Any observation, not only one whose count promotion follows today: one with a count of zero or junk
+      // is followed again as soon as the volunteer fixes it, and that would undo this write without a word.
       if (now.follows) return invalid(form.problemFor("follows"));
       const highest = now.highest === null ? 0 : Number(now.highest);
       if (count < highest) return invalid(form.problemFor("numbered", highest));

@@ -601,4 +601,15 @@ describe("setSpecimenCount", () => {
     expect(await set(s, id, "4")).toMatchObject({ ok: true, outcome: "saved", specimen_count: 4 });
     expect(await countOf(s, id)).toBe(4);
   });
+
+  it("refuses it too when the observation's count is not one promotion follows today", async () => {
+    const s = await setup();
+    // Not a candidate now, but it will be once the volunteer writes a number, and the count would follow again.
+    await s.conn.run(
+      `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw)
+       VALUES (445567, DATE '${SETTLED_SEASON}-07-14', 1, 'alice', 'T-10', 'three')`,
+    );
+    const id = await trapSample(s, { sample_number: "'T-10'", inat_observation_id: "445567" });
+    expect(await set(s, id, "3")).toEqual({ ok: false, refusal: "invalid", problem: "problem: follows" });
+  });
 });

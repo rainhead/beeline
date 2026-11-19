@@ -101,6 +101,8 @@ import {
 } from "../print-run.js";
 import { PersonPage, Roster } from "./views/roster.js";
 import { ObserverPage, UnclaimedPage } from "./views/unclaimed.js";
+import { RegistrationsPage } from "./views/registrations.js";
+import { listRegistrations, registrationOf } from "./registrations.js";
 import { AddPersonPage } from "./views/add-person.js";
 import { accountStanding, inatProfiles, parseInatAccount, turnedAway, type InatProfile, type InatProfiles } from "./add-person.js";
 import { bindablePeople, listUnclaimed, mintNow, observerDetail, type ObserverDetail } from "./unclaimed.js";
@@ -2752,6 +2754,7 @@ export function createApp({
           programs={await programOptions(db)}
           history={await history(person.person_id)}
           keys={person.inat_user_id === null ? [] : await listKeys(db, person.inat_user_id, "all")}
+          registration={await registrationOf(db, person.person_id)}
           now={new Date()}
           notice={notice}
           problem={problem}
@@ -3306,6 +3309,104 @@ export function createApp({
       ),
     );
   };
+
+  // ── Registrations in Ideal Logic (beeline-w8ab.2) ───────────────────────
+  // Which registration is each collector's: the collectors with no decision,
+  // the registrants that might be theirs, and the registrants nobody is
+  // linked to. Admin-gated, and refused outright while impersonating, as
+  // every staff write is. Nothing on these pages is an address or an email
+  // address; Beeline holds neither.
+  const showRegistrations = async (c: Context<AppEnv>, opts: { notice?: string; problem?: string } = {}) => {
+    const m = c.get("m");
+    return c.html(
+      await page(
+        c,
+        m.registrations.title,
+        <RegistrationsPage m={m} listing={await listRegistrations(db)} notice={opts.notice} problem={opts.problem} />,
+      ),
+      opts.problem === undefined ? 200 : 422,
+    );
+  };
+
+  app.get("/registrations", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    // A confirmation arrives in the address, since a decision redirects here
+    // rather than answering with the page (so a reload does not repeat it).
+    const url = new URL(c.req.url);
+    const who = /^\d{1,15}$/.test(url.searchParams.get("for") ?? "") ? Number(url.searchParams.get("for")) : null;
+    const saved = url.searchParams.get("saved");
+    let notice: string | undefined;
+    if (who !== null && saved !== null) {
+      const person = await db.selectFrom("person").select("display_name").where("entity_id", "=", who).executeTakeFirst();
+      const s = m.registrations.saved;
+      if (person !== undefined) {
+        if (saved === "none") notice = s.none(person.display_name);
+        else if (saved === "unlinked") notice = s.unlinked(person.display_name);
+        else if (saved === "unchanged") notice = s.unchanged(person.display_name);
+        else if (saved === "linked") {
+          const now = await registrationOf(db, who);
+          notice = s.linked(person.display_name, now.registrant ?? "");
+        }
+      }
+    }
+    return showRegistrations(c, { notice });
+  });
+
+  /**
+   * One decision about one person's registration, from the screen. It takes
+   * its turn with every other decision about a person, and records the
+   * evidence `staff`. `kind` is what the button said: link the id typed or
+   * chosen, record that there is none, or unlink (which records the same
+   * as none, and is said differently on the person's own page).
+   */
+  const decideFromScreen = (kind: "link" | "none" | "unlink") => async (c: Context<AppEnv>) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const r = m.registrations;
+    const raw = c.req.param("id") ?? "";
+    if (!/^\d{1,15}$/.test(raw)) return errorResponse(c, "notFound", { message: m.people.notFound });
+    const personId = Number(raw);
+    const form = await c.req.formData();
+    const fromPerson = form.get("return") === "person";
+    const typed = String(form.get("ideal_logic_id") ?? "").trim();
+    const refuse = (why: string) =>
+      fromPerson ? showPerson(c, undefined, why) : showRegistrations(c, { problem: why });
+    if (kind === "link" && typed === "") return refuse(r.refused.blankId);
+    const decided = await oneDecisionAtATime(() =>
+      decideRegistration(db, {
+        personId,
+        idealLogicId: kind === "link" ? typed : null,
+        evidence: "staff",
+        decidedBy: c.get("session").login,
+      }),
+    );
+    if (!decided.ok) {
+      if (decided.refusal === "unknown_person") return errorResponse(c, "notFound", { message: m.people.notFound });
+      return refuse(decided.refusal === "unknown_registration" ? r.refused.unknownRegistration : r.refused.unknownPerson);
+    }
+    const name = (await db.selectFrom("person").select("display_name").where("entity_id", "=", personId).executeTakeFirst())
+      ?.display_name ?? "";
+    const outcome = decided.outcome === "unchanged" ? "unchanged" : kind === "link" ? "linked" : kind === "none" ? "none" : "unlinked";
+    if (fromPerson) {
+      const said = r.saved;
+      return showPerson(
+        c,
+        outcome === "linked"
+          ? said.linked(name, decided.registrant ?? "")
+          : outcome === "none"
+            ? said.none(name)
+            : outcome === "unlinked"
+              ? said.unlinked(name)
+              : said.unchanged(name),
+      );
+    }
+    return c.redirect(`/registrations?saved=${outcome}&for=${personId}#collectors`);
+  };
+  app.post("/registrations/:id/link", decideFromScreen("link"));
+  app.post("/registrations/:id/none", decideFromScreen("none"));
+  app.post("/registrations/:id/unlink", decideFromScreen("unlink"));
 
   app.get("/unclaimed", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);

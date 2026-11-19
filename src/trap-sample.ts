@@ -1,5 +1,5 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { matchCollectors } from "./collector-match.js";
+import { matchCollectors, type MatchedCollector } from "./collector-match.js";
 import { withPrintRunLock } from "./print-run.js";
 
 /**
@@ -187,7 +187,14 @@ export async function checkTrapSample(
   form: TrapSampleForm,
   sampleId: number | null = null,
   /** Whoever is at the form is staff: a problem with a name then points at the staff pages that settle it. */
-  { staff = false }: { staff?: boolean } = {},
+  {
+    staff = false,
+    people,
+  }: {
+    staff?: boolean;
+    /** Everyone Beeline knows (readPeople, src/collector-match.ts), read once by a caller that checks many forms. */
+    people?: readonly MatchedCollector[];
+  } = {},
 ): Promise<{ sample: TrapSample } | { problems: FieldProblems }> {
   const problems: FieldProblems = {};
   const sampleNumber = form.sample_number.trim();
@@ -197,7 +204,7 @@ export async function checkTrapSample(
   }
 
   // Named as every list of collectors is named (src/collector-match.ts).
-  const matched = await matchCollectors(conn, form.collectors, { staff });
+  const matched = await matchCollectors(conn, form.collectors, { staff, people });
   const collectorIds = "problem" in matched ? [] : matched.collectors.map((c) => c.person_id);
   if ("problem" in matched) problems.collectors = matched.problem;
 

@@ -546,6 +546,8 @@ export interface SampleRow {
   state_province: string | null;
   country: string | null;
   protocol: string | null;
+  /** The effort as the old records wrote it ('6 vane traps'); null for most net samples. The samples file's trapCount is read from it. */
+  sampling_effort: string | null;
   specimen_count: number;
   inat_observation_id: bigint | null;
   /** iNaturalist no longer has the observation (`observationGone`): nothing to link to. */
@@ -728,10 +730,10 @@ export interface ListingPageOptions {
    */
   year?: number;
   /**
-   * Only these specimens, by their entity ids. Not a listing filter either:
+   * Only these specimens (or, for `listSamples`, these samples), by their entity ids. Not a listing filter either:
    * loading an edited copy of the download asks what the download would say
-   * now about the specimens a file names (src/app/upload-plan.ts, beeline-kgyd).
-   * An empty list selects nothing.
+   * now about the specimens or samples a file names (src/app/upload-plan.ts,
+   * src/app/samples-upload-plan.ts, beeline-kgyd). An empty list selects nothing.
    */
   ids?: readonly number[];
 }
@@ -1319,6 +1321,7 @@ async function filteredSamples(
   reader: Reader,
   exact: ExactLookup = {},
   rollup = true,
+  ids?: readonly number[],
 ) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   const place = placeColumns(reader);
@@ -1355,6 +1358,7 @@ async function filteredSamples(
       ),
     );
 
+  if (ids !== undefined) base = base.where("s.entity_id", "in", ids.length === 0 ? [-1] : [...ids]);
   if (query.scope === MINE) {
     base = base.where(({ exists, selectFrom }) =>
       exists(
@@ -1496,7 +1500,7 @@ export async function listSamples(
 ): Promise<Page<SampleRow>> {
   const hidden = withheld(reader);
   const place = placeColumns(reader);
-  const base = await filteredSamples(db, query, personId, reader, opts.exact);
+  const base = await filteredSamples(db, query, personId, reader, opts.exact, true, opts.ids);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1513,6 +1517,7 @@ export async function listSamples(
         "s.state_province",
         "s.country",
         "s.protocol",
+        "s.sampling_effort",
         "s.specimen_count",
         "s.inat_observation_id",
         observationGone.as("observation_gone"),
@@ -2133,6 +2138,8 @@ const eventDate = (start: Date | string, end: Date | string) => {
 /** dwc:countryCode is ISO 3166-1 alpha-2; the store keeps alpha-3. */
 const ALPHA2: Record<string, string> = { USA: "US", CAN: "CA", MEX: "MX", NZL: "NZ" };
 const countryCode = (country: string | null) => (country === null ? null : (ALPHA2[country] ?? country));
+/** The store's alpha-3 for an alpha-2 code the download writes, the inverse of the table above; undefined for a code the download never writes. */
+export const alpha3Of = (alpha2: string): string | undefined => Object.entries(ALPHA2).find(([, two]) => two === alpha2)?.[0];
 
 /**
  * dwc:associatedTaxa: the floral host, in the term's own quoted form

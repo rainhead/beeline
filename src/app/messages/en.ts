@@ -3400,6 +3400,8 @@ export const en = {
     noneFor: (person: string) => `Record that ${person} has no registration`,
     byId: "Link by Ideal Logic id",
     byIdHint: "For a registration none of the suggestions found. An id looks like QNN6-MX8, and it must be one Beeline has already seen.",
+    /** On the person's page, which shows no suggestions; the Registrations page does. */
+    byIdHintPerson: "An id looks like QNN6-MX8, and it must be one Beeline has already seen. The Registrations page suggests registrations that might be this person's.",
     byIdLabel: (person: string) => `Ideal Logic id for ${person}`,
     registrantsHeading: (count: number) => `Registered, not in Beeline (${n(count)})`,
     registrantsHint:

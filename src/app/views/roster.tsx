@@ -622,7 +622,7 @@ function RegistrationCard({
                 id="registration-id"
                 name="ideal_logic_id"
                 label={m.registrations.byIdLabel(person.display_name)}
-                hint={m.registrations.byIdHint}
+                hint={m.registrations.byIdHintPerson}
               />
               <p class="row">
                 <Button variant="outlined">{m.registrations.link}</Button>

@@ -85,3 +85,34 @@ export function TrapSampleFormPage({
     </>
   );
 }
+
+/**
+ * Staff deleting a trap sample entered in Beeline (beeline-kgyd.4.10): a page that says what goes, and a form that
+ * does it. Where the sample cannot be deleted, the page says why and offers nothing.
+ */
+export function TrapSampleDelete({ m, sampleId, sampleNumber, refusal }: { m: Messages; sampleId: number; sampleNumber: string; refusal: string | null }) {
+  const t = m.trapSample.delete;
+  return (
+    <>
+      <PageHeader title={t.heading(sampleNumber)} />
+      {refusal !== null ? (
+        <>
+          <Callout tone="warning">{refusal}</Callout>
+          <p>
+            <a href={`/samples/${sampleId}`}>{t.cancel}</a>
+          </p>
+        </>
+      ) : (
+        <>
+          <p>{t.explain}</p>
+          <form method="post" action={`/samples/${sampleId}/delete`} class="form-column">
+            <p class="row">
+              <Button>{t.confirm}</Button>
+              <a href={`/samples/${sampleId}`}>{t.cancel}</a>
+            </p>
+          </form>
+        </>
+      )}
+    </>
+  );
+}

@@ -63,7 +63,7 @@ FROM settled_sample st
 LEFT JOIN sample_print_release r ON r.sample_id = st.sample_id
 WHERE r.sample_id IS NULL;
 COMMENT ON VIEW settled_unreleased_sample IS 'Samples from a settled season that staff have not released for printing, or whose release they withdrew: they never print, are never pending, are held to the loose 250 m coordinate limit and do not follow their point for place. A released settled sample is none of these: it prints like an active one, once its place is worked out where it follows its point (sample_awaiting_place, schema/150).';
-COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable. They print only once staff have released them (sample_print_release_event); settled_unreleased_sample is the ones that never print (Peter, 2026-10-14, 2026-11-19).';
+COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable, though a trap sample entered in Beeline is then edited on its form only by whoever entered it and by staff (Peter, 2026-11-19). They print only once staff have released them (sample_print_release_event); settled_unreleased_sample is the ones that never print (Peter, 2026-10-14, 2026-11-19).';
 
 CREATE VIEW sample_follows_point AS
 SELECT s.entity_id AS sample_id

@@ -924,14 +924,29 @@ function PrintRelease({ m, sample }: { m: Messages; sample: SampleDetail }) {
 
 /** The fix-it action: upstream where there is an observation, here where
  * there is not — and only for someone who actually collected it. */
-function SampleActions({ m, sample, trapEditHref }: { m: Messages; sample: SampleDetail; trapEditHref?: string }) {
+function SampleActions({ m, sample, trapEditHref, deleteHref }: { m: Messages; sample: SampleDetail; trapEditHref?: string; deleteHref?: string }) {
   const s = m.record.sample;
   // A sample entered in Beeline is edited from the form it was entered with
   // (beeline-3vs.2); the correction form below needs an old Beeline record.
+  // A deletion cut short leaves no entry mark, so no edit form, and is finished from the delete page alone.
+  if (trapEditHref === undefined && deleteHref !== undefined) {
+    return (
+      <p class="row">
+        <LinkButton href={deleteHref} variant="tonal">
+          {m.trapSample.delete.button}
+        </LinkButton>
+      </p>
+    );
+  }
   if (trapEditHref !== undefined) {
     return (
       <p class="row">
         <LinkButton href={trapEditHref}>{m.trapSample.edit}</LinkButton>
+        {deleteHref !== undefined && (
+          <LinkButton href={deleteHref} variant="tonal">
+            {m.trapSample.delete.button}
+          </LinkButton>
+        )}
       </p>
     );
   }
@@ -1064,6 +1079,7 @@ export function SamplePage({
   admin = false,
   ownsLocality = false,
   trapEditHref,
+  deleteHref,
   entered = false,
   enteredPastItsForm = false,
   placePending = false,
@@ -1081,6 +1097,8 @@ export function SamplePage({
   ownsLocality?: boolean;
   /** Where this reader edits the sample, when it was entered in Beeline and they may (beeline-3vs.2). */
   trapEditHref?: string;
+  /** Where staff delete the sample, when it was entered in Beeline and nothing has been done with it (beeline-kgyd.4.10). */
+  deleteHref?: string;
   /** Entered in Beeline, and its labels printed or frozen, so its own form no longer opens (beeline-0wbq). */
   enteredPastItsForm?: boolean;
   /** Whether the sample was entered in Beeline rather than imported (beeline-3vs.2). */
@@ -1116,7 +1134,7 @@ export function SamplePage({
           trapCountEdit={admin}
           personLinks={admin}
         />
-        <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
+        <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} deleteHref={deleteHref} />
         {admin && <PrintRelease m={m} sample={sample} />}
       </Card>
       <Card>

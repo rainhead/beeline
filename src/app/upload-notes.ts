@@ -2,7 +2,8 @@ import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import type { Messages } from "./messages/en.js";
 import { samplesWorkbook } from "./sample-workbook.js";
-import type { SampleRowResult, SamplesCounts, SamplesPlan, UnknownCollector } from "./samples-upload-plan.js";
+import { type OutcomeRow } from "./samples-upload-apply.js";
+import { countRows, isHeld, type SampleRowResult, type SamplesCounts, type SamplesPlan, type UnknownCollector } from "./samples-upload-plan.js";
 import { specimenWorkbook, type Audience } from "./specimen-workbook.js";
 import type { DraftPlan } from "./upload-drafts.js";
 import { NOTE_COLUMN, type HeldItem, type ParsedUpload, type UploadPlan } from "./upload-plan.js";
@@ -42,12 +43,58 @@ export interface StaffSummary {
   grey: number;
 }
 
+/** A new row that looks like an existing sample, which waits for its tick. */
+export interface HeldRow {
+  row: number;
+  /** The number the file gives the new row. */
+  sampleNumber: string;
+  /** The existing sample it looks like. */
+  likeId: number;
+  likeNumber: string;
+  /** The look-alike is an earlier row of this same file, not a sample in Beeline. */
+  likeRow: number | null;
+}
+
+/** What applying did, counted over the rows it queued. */
+export interface OutcomeSummary {
+  /** Rows queued, whatever became of them. */
+  total: number;
+  /** Rows still waiting for the job. */
+  pending: number;
+  created: number;
+  /** Of the samples made, those since deleted. */
+  deleted: number;
+  /** Rows refused or left alone: not created. */
+  notCreated: number;
+}
+
+/** The rows whose number is in the OBAS series, or blank, which wait for the one box "I've checked these OBAS numbers". */
+export interface ObasSummary {
+  rows: number;
+  /** The lowest and highest numbers the file gives, if it gives any. */
+  lowest: string | null;
+  highest: string | null;
+  /** Rows with no number, which are given the next numbers in the series, from this one as it stands. */
+  blank: number;
+  from: string | null;
+  to: string | null;
+}
+
 export interface SamplesSummary {
   kind: "samples";
   rows: number;
+  /** Over the rows that have no outcome of their own: once a file is applied, its rows are counted in `outcomes`. */
   counts: SamplesCounts;
   /** Names in the file that match nobody, or several people, each once. */
   unknownCollectors: UnknownCollector[];
+  /** New rows that wait to be ticked, before the file is applied. */
+  held: HeldRow[];
+  /** What applying did, once it was applied. */
+  outcomes: OutcomeSummary | null;
+  /** Rows to be made, with nothing wrong, whose number is in the OBAS series or blank. Null once the file is applied. */
+  obas: ObasSummary | null;
+  /** New rows to be made that are in an active season and have specimens, whose labels can be printed as soon as they are made. */
+  labelsReady: number;
 }
 
 export interface Noted<S> {
@@ -135,9 +182,9 @@ export function staffNotes(m: Messages, upload: ParsedUpload, plan: UploadPlan):
 /**
  * The samples file, which changes nothing yet: what differs, cell by cell, which rows would become new trap samples,
  * and what Beeline could not use, each as a note on its row. A row that has both a difference and something it cannot
- * use says both.
+ * use says both. `redact` is for a reader who is not staff, who is not told which sample a held row looks like.
  */
-export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPlan): Noted<SamplesSummary> {
+export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPlan, outcomes: readonly OutcomeRow[] = [], redact = false): Noted<SamplesSummary> {
   const n = m.uploads.notes;
   const byRow = new Map<number, SampleRowResult>(plan.rows.map((r) => [r.row, r]));
   const reasons = (r: SampleRowResult): string => {
@@ -154,19 +201,99 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
     return [...said].join(" ");
   };
   const notes = new Map<number, string>();
+  // What applying did to a row says what became of it, and replaces what the comparison would say of the row now: a
+  // sample made from a new row makes the row read as a number Beeline already has.
+  const done = new Map(outcomes.map((o) => [o.row_number, o]));
   for (const { row } of upload.rows) {
+    const o = done.get(row);
+    if (o !== undefined) {
+      notes.set(row, o.outcome === "pending" ? n.waiting : o.outcome === "created" ? (o.deleted ? n.createdDeleted(o.sample_number ?? "") : n.created(o.sample_number ?? "")) : n.notCreated(redact && o.outcome === "skipped" ? (o.detail ?? "").replace(/It looks like sample [^:]+:/, "It looks like a sample Beeline already has:") : (o.detail ?? "")));
+      continue;
+    }
     const r = byRow.get(row);
     if (r === undefined) continue;
     const parts: string[] = [];
-    if (r.kind === "new") parts.push(r.problems.length === 0 ? n.newTrap : n.newTrapCantUse(reasons(r)));
-    else {
+    if (r.kind === "new") {
+      parts.push(
+        r.problems.length > 0
+          ? n.newTrapCantUse(reasons(r))
+          : r.create === null || !isHeld(r.create)
+            ? n.newTrap
+            : [
+                r.create.lookalike !== null && !r.create.anyway
+                  ? r.create.lookalike.fileRow !== undefined
+                    ? n.newTrapHeldInFile(r.create.lookalike.fileRow, r.create.lookalike.sampleNumber)
+                    : n.newTrapHeld(redact ? "" : r.create.lookalike.sampleNumber)
+                  : null,
+                r.create.obas && !r.create.obasChecked ? n.newTrapObasHeld : null,
+              ]
+                .filter((x) => x !== null)
+                .join(" "),
+      );
+    } else {
       if (r.problems.length > 0) parts.push(n.cantUse(reasons(r)));
       const changed = r.differences.map((d) => cellsText(m, d.cells.filter((c) => c.differs)));
       if (changed.length > 0) parts.push(n.differs(changed.join("; ")));
     }
     notes.set(row, parts.join(" "));
   }
-  return { notes, summary: { kind: "samples", rows: upload.rows.length, counts: plan.counts, unknownCollectors: plan.unknownCollectors } };
+  const open = plan.rows.filter((r) => !done.has(r.row));
+  const held: HeldRow[] =
+    outcomes.length > 0
+      ? []
+      : open.flatMap((r) =>
+          r.problems.length === 0 && r.create?.lookalike != null && !r.create.anyway
+            ? [{ row: r.row, sampleNumber: r.create.form.sample_number, likeId: r.create.lookalike.sampleId, likeNumber: r.create.lookalike.sampleNumber, likeRow: r.create.lookalike.fileRow ?? null }]
+            : [],
+        );
+  const outcomeSummary: OutcomeSummary | null =
+    done.size === 0
+      ? null
+      : {
+          total: done.size,
+          pending: [...done.values()].filter((o) => o.outcome === "pending").length,
+          created: [...done.values()].filter((o) => o.outcome === "created").length,
+          deleted: [...done.values()].filter((o) => o.deleted).length,
+          notCreated: [...done.values()].filter((o) => o.outcome === "refused" || o.outcome === "skipped").length,
+        };
+  // The series' numbers waiting for confirmation, over the rows that are still to be made.
+  const toMake = open.filter((r) => r.problems.length === 0 && r.create !== null);
+  const seriesRows = toMake.filter((r) => r.create!.obas);
+  const given = seriesRows.filter((r) => !r.create!.assigned).map((r) => r.create!.form.sample_number).sort();
+  const obas: ObasSummary | null =
+    done.size > 0 || seriesRows.length === 0
+      ? null
+      : { rows: seriesRows.length, lowest: given[0] ?? null, highest: given.at(-1) ?? null, blank: plan.numbering.blank, from: plan.numbering.from, to: plan.numbering.to };
+  const labelsReady = done.size > 0 ? 0 : toMake.filter((r) => r.season === "active" && Number(r.create!.form.specimen_count) > 0).length;
+  return {
+    notes,
+    summary: { kind: "samples", rows: upload.rows.length, counts: done.size === 0 ? plan.counts : countRows(open), unknownCollectors: plan.unknownCollectors, held, outcomes: outcomeSummary, obas, labelsReady },
+  };
+}
+
+/**
+ * The samples file's page once it is applied: what was done to each row, read from the outcome rows without working the
+ * comparison out again. The notes for each row come from the full plan, only for the file with notes.
+ */
+export function samplesClaimedSummary(upload: ParsedUpload, outcomes: readonly OutcomeRow[]): SamplesSummary {
+  const split = () => ({ active: 0, settled: 0, unplaced: 0 });
+  const mine = outcomes;
+  return {
+    kind: "samples",
+    rows: upload.rows.length,
+    counts: { rows: split(), newReady: split(), newHeld: split(), cantUse: split(), differ: split(), same: split() },
+    unknownCollectors: [],
+    held: [],
+    outcomes: {
+      total: mine.length,
+      pending: mine.filter((o) => o.outcome === "pending").length,
+      created: mine.filter((o) => o.outcome === "created").length,
+      deleted: mine.filter((o) => o.deleted).length,
+      notCreated: mine.filter((o) => o.outcome === "refused" || o.outcome === "skipped").length,
+    },
+    obas: null,
+    labelsReady: 0,
+  };
 }
 
 /** How wide the note column is drawn, in characters. */

@@ -7,13 +7,13 @@ import { migrate, MIGRATIONS_DIR, schemaDrift } from "../src/migrate.js";
 import { createMemoryDb, insertCleanSample, rows, SETTLED_SEASON } from "./helpers.js";
 
 /**
- * migrations/0110 brings a deployed store to the schema's release for
+ * migrations/0111 brings a deployed store to the schema's release for
  * printing (beeline-3vs.7): the event table and the record of what the county
  * stamp has looked at, the views over them, and the views that read those.
  * Checked by making the store as it was and migrating it.
  */
 
-const FILE = "0110-settled-samples-print-once-released.sql";
+const FILE = "0111-settled-samples-print-once-released.sql";
 const VIEWS = [
   "settled_sample",
   "settled_unreleased_sample",
@@ -29,7 +29,7 @@ const VIEWS = [
 const TABLES = ["sample_print_release_event", "sample_place_stamped"];
 
 async function onlyThisMigration(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "migration-0110-"));
+  const dir = await mkdtemp(join(tmpdir(), "migration-0111-"));
   await copyFile(join(MIGRATIONS_DIR, FILE), join(dir, "9999-under-test.sql"));
   return dir;
 }
@@ -67,7 +67,7 @@ async function asBefore(conn: DuckDBConnection): Promise<void> {
   for (const table of ["sample_place_stamped", "sample_print_release_event"]) await conn.run(`DROP TABLE ${table}`);
 }
 
-describe("migration 0110: a settled sample prints once staff have released it", () => {
+describe("migration 0111: a settled sample prints once staff have released it", () => {
   it("leaves a deployed store as the schema makes it, comments included, and a released sample then prints", async () => {
     const { conn } = await createMemoryDb();
     const built = { views: await definitions(conn), columns: await columns(conn), tables: await tableComments(conn) };

@@ -598,6 +598,8 @@ export interface SampleRow {
    */
   entered: boolean;
   entered_by_me: boolean;
+  /** An entered sample whose season has settled: its form closes to its collectors other than whoever entered it (Peter, 2026-11-19). */
+  entered_settled: boolean;
 }
 
 export interface SpecimenRow {
@@ -1561,6 +1563,7 @@ export async function listSamples(
         sql<boolean>`EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id AND e.entered_by = ${personId})`.as(
           "entered_by_me",
         ),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_entry e JOIN settled_sample ss ON ss.sample_id = e.sample_id WHERE e.sample_id = s.entity_id)`.as("entered_settled"),
       ])
       .orderBy(sampleOrder(query, place))
       .orderBy("s.entity_id")

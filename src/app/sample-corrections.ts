@@ -226,15 +226,16 @@ async function recordChange(
  * sample it has no record of to the nightly (beeline-7r0g).
  */
 export async function recordTrapChange(
-  deps: CorrectionDeps,
+  deps: Pick<CorrectionDeps, "db" | "samplePaths">,
   login: string,
   sampleId: number,
-  { source = "app", created = false }: { source?: SampleChangeSource; created?: boolean } = {},
+  { source = "app", created = false, reason }: { source?: SampleChangeSource; created?: boolean; reason?: string } = {},
 ): Promise<void> {
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
       source,
       author: login,
+      reason,
       where: `s.entity_id = ${sampleId}`,
       created,
     });

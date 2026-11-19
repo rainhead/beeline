@@ -99,7 +99,7 @@ describe("entering and editing", () => {
     const make = async (number: string, dates: Record<string, string>, by?: { personId: number }) => {
       const checked = await checkTrapSample(conn, form({ sample_number: number, ...dates }));
       if (!("sample" in checked)) throw new Error("unexpected problems");
-      return (await createTrapSample(conn, checked.sample, staff, by)) as number;
+      return (await createTrapSample(conn, checked.sample, staff, undefined, { staff: by })) as number;
     };
     const byStaff = await make("OBAS-20301", settled, { personId: staff });
     const byTrapper = await make("OBAS-20302", settled);
@@ -141,7 +141,7 @@ describe("entering and editing", () => {
     const settled = { date_start: `${SETTLED_SEASON}-06-01`, date_end: `${SETTLED_SEASON}-06-20` };
     const first = await checkTrapSample(conn, form({ sample_number: "OBAS-20321", specimen_count: "4", ...settled }));
     if (!("sample" in first)) throw new Error("unexpected problems");
-    const id = (await createTrapSample(conn, first.sample, staff, { personId: staff })) as number;
+    const id = (await createTrapSample(conn, first.sample, staff, undefined, { staff: { personId: staff } })) as number;
     const pending = async () => rows(conn, `SELECT sample_id FROM pending_print_sample WHERE sample_id = ${id}`);
     // The nightly looked at it at its present point after the release: it is pending.
     await conn.run(`INSERT INTO sample_place_stamped (sample_id, latitude, longitude, stamped_at)

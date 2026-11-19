@@ -5,7 +5,7 @@ This repo tracks its work in beads (`bd`). This file replaces the default text o
 ## Rules
 
 - Track work in beads, not TodoWrite, TaskCreate or markdown TODO lists. File an issue before writing code, and claim it when you start.
-- **Sync beads without asking.** Run `bd sync` after filing, changing or closing issues, and before you finish. It pulls, stops on any conflict it can't settle, and pushes to `refs/dolt/data` on the GitHub remote. It never touches a git branch, so it needs none of the permission that `git push` does. The SessionStart hook runs it too, so a session starts with the other machine's changes.
+- **Sync beads without asking.** Run `bd sync` after filing, changing or closing issues, and before you finish. It pulls, stops on any conflict it can't settle, and pushes to `refs/dolt/data` on the GitHub remote. It never touches a git branch, so it needs none of the permission that `git push` does. If it fails, stop and report the exact command and its error rather than working around it. The SessionStart hook runs it too, so a session starts with the other machine's changes.
 - **Beads data is public.** The repo is public, and anyone can fetch `refs/dolt/data`, so everything in beads can be read by anyone: issues, notes, comments and memories. Don't use `bd remember`; keep persistent knowledge in Claude's file memory, which syncs between machines privately.
 - Never run `bd edit`: it opens an editor and blocks.
 

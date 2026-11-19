@@ -1269,12 +1269,37 @@ export interface UploadTable {
   drive_file_id: string | null;
 }
 
-/** An upload whose changes were saved: a volunteer's identifications written as drafts (schema/047, beeline-kgyd.7). */
+/** An upload whose changes were taken up: a volunteer's identifications written as drafts, or the rows of a samples file queued (schema/047, beeline-kgyd.7, beeline-kgyd.4.10). */
 export interface UploadAppliedTable {
   upload_id: number;
   applied_by: number;
   applied_at: Timestamped;
   draft_count: number;
+  stopped_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  stopped_row: number | null;
+}
+
+/** A trap sample staff deleted (schema/048, beeline-kgyd.4.10). */
+export interface SampleDeletionTable {
+  entity_id: Generated<number>;
+  sample_id: number;
+  sample_number: string;
+  deleted_by: number;
+  deleted_at: ColumnType<Date, Date | string, Date | string>;
+  reason: string | null;
+}
+
+/** What applying a samples file did to each row it queued (schema/047, beeline-kgyd.4.10). */
+export interface UploadSampleOutcomeTable {
+  upload_id: number;
+  row_number: number;
+  unit: string;
+  outcome: "pending" | "created" | "applied" | "unchanged" | "refused" | "skipped";
+  sample_id: number | null;
+  sample_number: string | null;
+  payload: string | null;
+  detail: string | null;
+  recorded_at: ColumnType<Date, Date | string, Date | string>;
 }
 
 /** An old-Beeline record promotion set aside as a second print, tied to its specimen (beeline-iuva). */
@@ -1970,6 +1995,8 @@ export interface Database {
   legacy_duplicate_record: LegacyDuplicateRecordTable;
   upload: UploadTable;
   upload_applied: UploadAppliedTable;
+  upload_sample_outcome: UploadSampleOutcomeTable;
+  sample_deletion: SampleDeletionTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;
   determination_batch: DeterminationBatchTable;

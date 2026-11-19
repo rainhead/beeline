@@ -110,7 +110,7 @@ function parseLocalityChoices(lines: string | null): LocalitySuggestion[] {
 export function placeEditable(row: SampleRow, admin: boolean): boolean {
   if (row.location_withheld) return false;
   // An entered sample's own form lets its collectors and its enterer write any locality.
-  if (row.entered) return !row.printed && (admin || row.mine || row.entered_by_me);
+  if (row.entered) return !row.printed && (admin || row.entered_by_me || (row.mine && !row.entered_settled));
   if (admin) return true;
   if (row.printed) return false;
   return row.mine && !row.locality_set_by_other && (row.locality_choices !== null || row.inat_observation_id !== null);
@@ -978,7 +978,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                   {/* A sample entered in Beeline has its own form, for staff, its
                       collectors and its enterer (beeline-3vs.5), whatever an
                       observation linked to it later says. */}
-                  {row.entered && !row.printed && (admin || row.mine || row.entered_by_me) && (
+                  {row.entered && !row.printed && (admin || row.entered_by_me || (row.mine && !row.entered_settled)) && (
                     <a href={`/samples/${row.sample_id}/trap`}>{copy.edit}</a>
                   )}
                 </td>

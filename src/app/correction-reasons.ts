@@ -24,3 +24,11 @@ export const trapCountProblemFor =
   (m: Messages) =>
   (problem: "count" | "net" | "method"): string =>
     m.record.sample.trapCount.problems[problem];
+
+/** The sentence for each way a specimen count is refused, in the catalogue's words; `numbered` takes the highest place already numbered. */
+export const specimenCountProblemFor =
+  (m: Messages) =>
+  (problem: "count" | "net" | "follows" | "numbered", number?: number): string => {
+    const sentences = m.record.sample.specimenCount.problems;
+    return problem === "numbered" ? sentences.numbered(number ?? 0) : sentences[problem];
+  };

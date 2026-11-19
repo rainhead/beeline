@@ -1253,6 +1253,15 @@ export const en = {
           method: "This sample has no method, and the count is kept with the kind of trap. Set the method first, then the count.",
         },
       },
+      /** Staff correcting how many specimens a trap sample holds, through the API (beeline-kgyd.4.4). */
+      specimenCount: {
+        problems: {
+          count: "The specimen count must be a whole number, 0 or more, of at most six digits.",
+          net: "This is a net sample. Only a trap sample's specimen count can be corrected here.",
+          follows: "This sample's specimen count follows its iNaturalist observation until labels are printed, so a count set here would be replaced at the next update. Change the count on the observation instead.",
+          numbered: (highest: number) => `This sample's specimens up to number ${highest} already have field numbers, so the count cannot be less than ${highest}.`,
+        },
+      },
       staffCoordinates: {
         setBy: (name: string) => `Coordinates set in Beeline by ${name}.`,
         setByStaff: "Coordinates set in Beeline by staff.",

@@ -54,11 +54,11 @@ export interface Actor {
    * The door the request came through. It is recorded as the `source` of the
    * history entries the correction makes. Absent means a page.
    */
-  via?: "page" | "api" | "upload";
+  via?: "page" | "api";
 }
 
-/** The `source` a correction's history entries carry: `app` for a page, `api` for the API, `upload` for an applied file. */
-export const sourceOf = (actor: Actor): SampleChangeSource => (actor.via === "api" ? "api" : actor.via === "upload" ? "upload" : "app");
+/** The `source` a correction's history entries carry: `app` for a page, `api` for the API. */
+const sourceOf = (actor: Actor): SampleChangeSource => (actor.via === "api" ? "api" : "app");
 
 /**
  * What a correction did, as the writer reported it: it wrote a value, took one
@@ -229,33 +229,18 @@ export async function recordTrapChange(
   deps: Pick<CorrectionDeps, "db" | "samplePaths">,
   login: string,
   sampleId: number,
-  options: { source?: SampleChangeSource; created?: boolean; reason?: string } = {},
-): Promise<void> {
-  await recordTrapChanges(deps, login, [sampleId], options);
-}
-
-/**
- * `recordTrapChange` for several samples in one pass over the log, credited alike. A narrowed pass patches and
- * rewrites the whole snapshot file however few samples it names (11 MB on production, about 0.65 s), so a caller that
- * makes many samples at once records them together rather than paying that for each (beeline-kgyd.4.10).
- */
-export async function recordTrapChanges(
-  deps: Pick<CorrectionDeps, "db" | "samplePaths">,
-  login: string,
-  sampleIds: readonly number[],
   { source = "app", created = false, reason }: { source?: SampleChangeSource; created?: boolean; reason?: string } = {},
 ): Promise<void> {
-  if (sampleIds.length === 0) return;
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
       source,
       author: login,
       reason,
-      where: sampleIds.length === 1 ? `s.entity_id = ${sampleIds[0]}` : `s.entity_id IN (${sampleIds.map(Number).join(", ")})`,
+      where: `s.entity_id = ${sampleId}`,
       created,
     });
   } catch (err) {
-    console.warn(`could not record the change to trap sample(s) ${sampleIds.join(", ")}: ${(err as Error).message}`);
+    console.warn(`could not record the change to trap sample ${sampleId}: ${(err as Error).message}`);
   }
 }
 

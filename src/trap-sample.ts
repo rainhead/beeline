@@ -156,16 +156,23 @@ export const AUTO_NUMBER_PLACEHOLDER = "(next number)";
 /** The series the program numbers its own trap samples in, whose next number the form offers. */
 export const PROGRAM_SERIES = "OBAS-";
 
+/** A number with its spaces and separators taken out and upper-cased, so that spellings of one number meet. */
+export const foldNumber = (sampleNumber: string): string => sampleNumber.toUpperCase().replace(/[\s\-_./]+/g, "");
+
+/** Whether a number is a spelling of the program's own series: OBAS and digits, however written (`obas-00700`, `OBAS 00700`, `OBAS00700`). */
+export const isProgramSeries = (sampleNumber: string): boolean => /^OBAS\d+$/.test(foldNumber(sampleNumber));
+
 /**
- * The sentence saying why a number in the program's series cannot be used, or null if it can: it must be `OBAS-` and
- * five digits. A number outside the series is not judged: a collector's own numbers are theirs. How far a number may
- * be from the others is not checked: the series' numbers wait for a person to confirm them (Peter, 2026-11-19), since
- * the highest in the store may be a block set aside, as OBAS-20214 is.
+ * The sentence saying why a number in the program's series cannot be used, or null if it can: it must be written
+ * exactly `OBAS-` and five digits, so a spelling that folds to the same number (`obas-00700`, `OBAS00700`) is not used
+ * either. A number outside the series is not judged: a collector's own numbers are theirs. How far a number may be from
+ * the others is not checked: the series' numbers wait for a person to confirm them (Peter, 2026-11-19), since the
+ * highest in the store may be a block set aside, as OBAS-20214 is.
  */
 export function seriesNumberProblem(sampleNumber: string): string | null {
-  if (!sampleNumber.startsWith(PROGRAM_SERIES)) return null;
-  if (!/^\d{5}$/.test(sampleNumber.slice(PROGRAM_SERIES.length))) {
-    return `A number starting ${PROGRAM_SERIES} is the program's own and is written ${PROGRAM_SERIES} and five digits, such as ${PROGRAM_SERIES}00657.`;
+  if (!isProgramSeries(sampleNumber) && !sampleNumber.startsWith(PROGRAM_SERIES)) return null;
+  if (!/^OBAS-\d{5}$/.test(sampleNumber)) {
+    return `A number like OBAS is the program's own and is written exactly ${PROGRAM_SERIES} and five digits, such as ${PROGRAM_SERIES}00657, not "${sampleNumber}".`;
   }
   return null;
 }
@@ -176,12 +183,22 @@ export const isSeriesNumber = (sampleNumber: string): boolean => /^[A-Za-z]+-/.t
 /**
  * The sample, of any kind, that has this number, if the number is a series number. A series number is the program's
  * and unique, though the old Beeline holds some trap bottles as net samples, and a net sample's own plain numbers
- * ("3") are the collector's for the day and shared, so only a series number is judged. The trap form's own check counts
+ * ("3") are the collector's for the day and shared, so only a series number is judged. The program's own series is
+ * compared on the folded form, so a sample written `OBAS 00700` holds `OBAS-00700`. The trap form's own check counts
  * trap samples only; the upload path asks this as well.
  */
 export async function seriesNumberHolder(conn: DuckDBConnection, sampleNumber: string): Promise<{ sampleId: number; kind: string } | null> {
-  if (!isSeriesNumber(sampleNumber)) return null;
-  const found = await rows<{ entity_id: number; kind: string }>(conn, `SELECT entity_id, kind FROM sample WHERE sample_number = $1 ORDER BY entity_id LIMIT 1`, [sampleNumber]);
+  const found = isProgramSeries(sampleNumber)
+    ? await rows<{ entity_id: number; kind: string }>(
+        conn,
+        `SELECT entity_id, kind FROM sample
+         WHERE starts_with(upper(sample_number), 'OBAS') AND regexp_replace(upper(sample_number), '[\\s\\-_./]+', '', 'g') = $1
+         ORDER BY entity_id LIMIT 1`,
+        [foldNumber(sampleNumber)],
+      )
+    : isSeriesNumber(sampleNumber)
+      ? await rows<{ entity_id: number; kind: string }>(conn, `SELECT entity_id, kind FROM sample WHERE sample_number = $1 ORDER BY entity_id LIMIT 1`, [sampleNumber])
+      : [];
   return found[0] === undefined ? null : { sampleId: found[0].entity_id, kind: found[0].kind };
 }
 
@@ -196,6 +213,25 @@ export const LOOKALIKE_METRES = 100;
 export interface Lookalike {
   sampleId: number;
   sampleNumber: string;
+  /** For a look-alike in the same file, its row there (and `sampleId` is 0). */
+  fileRow?: number;
+}
+
+/** The facts of a sample that its look-alikes are judged by. */
+export interface LookalikeFacts {
+  firstCollectorId: number;
+  dateStart: string;
+  dateEnd: string;
+  latitude: number;
+  longitude: number;
+}
+
+/** The same rule as findLookalikes, for two rows of one file that are not in the store yet. */
+export function lookAlike(a: LookalikeFacts, b: LookalikeFacts): boolean {
+  if (a.firstCollectorId !== b.firstCollectorId || a.dateStart > b.dateEnd || b.dateStart > a.dateEnd) return false;
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const h = Math.sin(rad(b.latitude - a.latitude) / 2) ** 2 + Math.cos(rad(a.latitude)) * Math.cos(rad(b.latitude)) * Math.sin(rad(b.longitude - a.longitude) / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h)) <= LOOKALIKE_METRES;
 }
 
 /**
@@ -205,7 +241,7 @@ export interface Lookalike {
  */
 export async function findLookalikes(
   conn: DuckDBConnection,
-  sample: { firstCollectorId: number; dateStart: string; dateEnd: string; latitude: number; longitude: number },
+  sample: LookalikeFacts,
   /** Samples not to count: the one being made, and those a samples file's apply has made already (its own rows are not look-alikes of one another). */
   excluding: { sampleId?: number; uploadId?: number } = {},
 ): Promise<Lookalike[]> {
@@ -389,8 +425,7 @@ async function writeParts(conn: DuckDBConnection, id: number, s: TrapSample, wit
  * Write a new trap sample; its id. Behind the print runs' lock, on the print connection. `within` is run, with the
  * new id and its number, in the same transaction as the sample, so that whatever it writes stands or falls with the
  * sample: the apply-uploads job records the row's outcome there, so a crash cannot leave a sample that no upload row
- * names. With `autoNumber` the sample's number is the next in the program's series, taken inside the lock so that
- * consecutive rows get consecutive numbers; with `anyKind` a series number that any other sample has, of any kind,
+ * names. With `anyKind` a series number that any other sample has, of any kind,
  * counts as taken (the upload path; the trap form counts trap samples only).
  */
 export function createTrapSample(
@@ -398,10 +433,10 @@ export function createTrapSample(
   s: TrapSample,
   enteredBy: number | null,
   within?: (id: number, sampleNumber: string) => Promise<void>,
-  options: { autoNumber?: boolean; anyKind?: boolean } = {},
+  options: { anyKind?: boolean } = {},
 ): Promise<number | "taken"> {
   return withPrintRunLock(async () => {
-    const number = options.autoNumber === true ? await nextSampleNumber(conn) : s.sample_number;
+    const number = s.sample_number;
     if (await numberTaken(conn, number, null)) return "taken";
     if (options.anyKind === true && (await seriesNumberHolder(conn, number)) !== null) return "taken";
     return inTransaction(conn, async () => {
@@ -421,20 +456,33 @@ export function createTrapSample(
 }
 
 /** Why a trap sample cannot be deleted. */
-export type DeleteRefusal = "not_found" | "not_entered" | "printed" | "in_print_run" | "has_specimens";
+export type DeleteRefusal = "not_found" | "not_entered" | "printed" | "in_print_run" | "has_specimens" | "has_other_records";
 
 /**
- * The tables that name a sample by a foreign key, other than the specimens, which are why a sample is not deleted.
- * Asked of the store itself, so a table added later is deleted from without anyone remembering to say so.
+ * The tables whose rows a delete removes with the sample: the satellites a trap sample entered in Beeline can have, each
+ * keyed by `sample_id`. In the order they are deleted. A table that names a sample and is in neither this list nor
+ * NEVER_DELETED is a decision nobody has made, and a test fails until somebody makes it.
  */
-async function satelliteTables(conn: DuckDBConnection): Promise<string[]> {
-  const found = await rows<{ table_name: string; columns: string[] | { items: string[] } }>(
-    conn,
-    `SELECT table_name, constraint_column_names AS columns FROM duckdb_constraints()
-     WHERE constraint_type = 'FOREIGN KEY' AND referenced_table = 'sample' AND table_name <> 'specimen'`,
-  );
-  return found.map((r) => `${r.table_name}:${(Array.isArray(r.columns) ? r.columns : r.columns.items).join(",")}`).sort();
-}
+export const DELETED_WITH_SAMPLE = [
+  "sample_area",
+  "sample_area_derivation",
+  "sample_atlas",
+  "sample_collector",
+  "sample_entry",
+  "sample_hold",
+  "sample_locality_candidate",
+  "sample_locality_override",
+  "sample_location",
+  "sample_location_override",
+  "sample_qc_waiver",
+] as const;
+
+/**
+ * The tables that name a sample and are never deleted from: a sample with a row in one is not deleted, and says so
+ * (`has_other_records`). Specimens are the first, with their own refusal; the other two are records of promotion, which
+ * a sample entered in Beeline does not have.
+ */
+export const NEVER_DELETED = ["specimen", "sample_legacy_observation", "sample_promotion_finding"] as const;
 
 /**
  * Delete a trap sample entered in Beeline that has never been printed, is in no print run and has no specimens, with
@@ -456,7 +504,11 @@ export function deleteTrapSample(
   return withPrintRunLock(async () => {
     const found = await deletable(conn, id);
     if ("refused" in found) return found;
-    const tables = await satelliteTables(conn);
+    // Another table that names the sample is not ours to delete from: the sample stays, and the page says why.
+    for (const table of NEVER_DELETED.filter((t) => t !== "specimen")) {
+      const kept = await rows<{ n: number }>(conn, `SELECT count(*)::INTEGER AS n FROM "${table}" WHERE sample_id = $1`, [id]);
+      if ((kept[0]?.n ?? 0) > 0) return { refused: "has_other_records" as const };
+    }
     await inTransaction(conn, async () => {
       // A fresh deletion always writes a record of its own; finishing a cut-short one finds its record there already.
       if (!found.cutShort) {
@@ -465,10 +517,7 @@ export function deleteTrapSample(
           [id, found.number, deletedBy, reason] as never,
         );
       }
-      for (const t of tables) {
-        const [table, columns] = t.split(":");
-        for (const column of columns!.split(",")) await conn.run(`DELETE FROM "${table}" WHERE "${column}" = $1`, [id] as never);
-      }
+      for (const table of DELETED_WITH_SAMPLE) await conn.run(`DELETE FROM "${table}" WHERE sample_id = $1`, [id] as never);
     });
     await conn.run(`DELETE FROM sample WHERE entity_id = $1`, [id] as never);
     return { deleted: found.number };

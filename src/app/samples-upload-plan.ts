@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { matchCollectors, matchName, readPeople, type MatchedCollector } from "../collector-match.js";
 import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
-import { AUTO_NUMBER_PLACEHOLDER, PROGRAM_SERIES, checkTrapSample, findLookalikes, nextSampleNumber, seriesNumberHeldProblem, seriesNumberHolder, seriesNumberProblem, type Lookalike, type TrapSampleForm } from "../trap-sample.js";
+import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, findLookalikes, foldNumber, highestSampleNumber, isProgramSeries, lookAlike, seriesNumberHeldProblem, seriesNumberHolder, seriesNumberProblem, type Lookalike, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import {
@@ -144,6 +144,8 @@ export interface NewRowCreate {
    * a person to confirm the series' numbers (Peter, 2026-11-19), and is held unless `obasChecked`.
    */
   obas: boolean;
+  /** The number was blank in the file and has been given, so the job makes the sample with exactly this number. */
+  assigned: boolean;
   /** The one box "I've checked these OBAS numbers" was ticked. */
   obasChecked: boolean;
 }
@@ -198,8 +200,8 @@ export interface SamplesPlan {
   otherSheets: string[];
   rows: SampleRowResult[];
   unknownCollectors: UnknownCollector[];
-  /** New rows with nothing wrong and no number, which are given the next numbers in the series when they are made, and the first of them as it stands now. */
-  numbering: { blank: number; from: string | null };
+  /** New rows with nothing wrong and no number, which are given the next numbers in the series, from the first to the last of them. */
+  numbering: { blank: number; from: string | null; to: string | null };
 }
 
 const emptySplit = (): SeasonSplit => ({ active: 0, settled: 0, unplaced: 0 });
@@ -381,6 +383,8 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   };
 
   const newNumbers = new Map<string, number[]>();
+  /** The rows of the file so far that could be made, which a later row may look like. */
+  const earlier: Array<{ row: number; number: string; facts: LookalikeFacts }> = [];
 
   for (const [index, { row, cells }] of rows.entries()) {
     const { given, id } = idOf[index]!;
@@ -417,7 +421,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         flagged.add("fieldNumber");
         result.problems.push({ reason: numberCell.problem, unit: null, column: "fieldNumber", detail: numberCell.fileText, cells: heldCells(new Map([["fieldNumber", numberCell]]), ["fieldNumber"]) });
       }
-      // The program's own numbers have a shape, and a series number that any other sample has, of any kind, cannot be used again.
+      // The program's own numbers have a shape (written exactly, in any spelling that folds to it), and a series number that any other sample has, of any kind, cannot be used again.
       if (numberCell.problem === null && fileNumber !== "") {
         const shape = seriesNumberProblem(fileNumber);
         const holder = shape === null ? await seriesNumberHolder(conn, fileNumber) : null;
@@ -461,25 +465,29 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         // after every row is read, since it needs to know which rows will be made.
         const sample = checked.sample;
         const [first] = sample.collector_ids;
-        const [found] = await findLookalikes(conn, {
-          firstCollectorId: first!,
-          dateStart: sample.date_start,
-          dateEnd: sample.date_end,
-          latitude: sample.latitude,
-          longitude: sample.longitude,
-        });
+        const facts: LookalikeFacts = { firstCollectorId: first!, dateStart: sample.date_start, dateEnd: sample.date_end, latitude: sample.latitude, longitude: sample.longitude };
+        const [found] = await findLookalikes(conn, facts);
         // Someone who is not staff may not see where every sample is: they are told the row is held, and not which sample.
-        const lookalike = found !== undefined && options.reader !== undefined && !options.reader.staff ? { sampleId: 0, sampleNumber: "" } : (found ?? null);
+        let lookalike: Lookalike | null = found !== undefined && options.reader !== undefined && !options.reader.staff ? { sampleId: 0, sampleNumber: "" } : (found ?? null);
+        // Or an earlier row of this same file: two rows that share the first collector, overlapping days and a point are held alike.
+        if (found === undefined) {
+          const twin = earlier.find((e) => lookAlike(e.facts, facts));
+          if (twin !== undefined) lookalike = { sampleId: 0, sampleNumber: twin.number, fileRow: twin.row };
+        }
+        earlier.push({ row, number: fileNumber, facts });
         // A tick counts only for a row that looks like something, so a stale or made-up one cannot switch off a later check.
         result.create = {
           form: { ...form, sample_number: fileNumber, collectors: sample.collector_ids.map(String) },
           lookalike,
           anyway: lookalike !== null && (options.createAnyway?.has(row) ?? false),
-          obas: fileNumber === "" || fileNumber.startsWith(PROGRAM_SERIES),
+          obas: fileNumber === "" || isProgramSeries(fileNumber),
+          assigned: false,
           obasChecked: options.obasChecked ?? false,
         };
       }
-      if (fileNumber !== "") (newNumbers.get(fileNumber) ?? newNumbers.set(fileNumber, []).get(fileNumber)!).push(index);
+      // Spellings of the program's own number are one number.
+      const key = isProgramSeries(fileNumber) ? foldNumber(fileNumber) : fileNumber;
+      if (fileNumber !== "") (newNumbers.get(key) ?? newNumbers.set(key, []).get(key)!).push(index);
       continue;
     }
 
@@ -547,8 +555,35 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
     }
   }
 
-  const blank = results.filter((r) => r.create !== null && r.create.form.sample_number === "").length;
-  const numbering = { blank, from: blank > 0 ? await nextSampleNumber(conn) : null };
+  // A row with no number is given the next in the series now, so that the digest and the queued payload carry exactly the
+  // numbers the page shows: the next numbers after the highest, leaving out the file's own and any a sample has.
+  const blanks = results.filter((r) => r.create !== null && r.create.form.sample_number === "");
+  const numbering: SamplesPlan["numbering"] = { blank: 0, from: null, to: null };
+  if (blanks.length > 0) {
+    const explicit = new Set(results.filter((r) => r.kind === "new" && r.sampleNumber !== null && r.sampleNumber !== "" && isProgramSeries(r.sampleNumber)).map((r) => foldNumber(r.sampleNumber!)));
+    let next = (await highestSampleNumber(conn)) + 1;
+    for (const r of blanks) {
+      let given: string | null = null;
+      while (next <= 99_999) {
+        const candidate = `OBAS-${String(next).padStart(5, "0")}`;
+        next++;
+        if (!explicit.has(foldNumber(candidate)) && (await seriesNumberHolder(conn, candidate)) === null) {
+          given = candidate;
+          break;
+        }
+      }
+      if (given === null) {
+        r.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: "There is no number left in the series past OBAS-99999 to give this row.", cells: [] });
+        r.create = null;
+        continue;
+      }
+      r.create!.form.sample_number = given;
+      r.create!.assigned = true;
+      numbering.blank++;
+      numbering.from ??= given;
+      numbering.to = given;
+    }
+  }
 
   const counts = countRows(results);
   const unknownCollectors = [...unknown]

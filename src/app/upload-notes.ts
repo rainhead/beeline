@@ -51,6 +51,8 @@ export interface HeldRow {
   /** The existing sample it looks like. */
   likeId: number;
   likeNumber: string;
+  /** The look-alike is an earlier row of this same file, not a sample in Beeline. */
+  likeRow: number | null;
 }
 
 /** What applying did, counted over the rows it queued. */
@@ -75,6 +77,7 @@ export interface ObasSummary {
   /** Rows with no number, which are given the next numbers in the series, from this one as it stands. */
   blank: number;
   from: string | null;
+  to: string | null;
 }
 
 export interface SamplesSummary {
@@ -200,7 +203,7 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
   const notes = new Map<number, string>();
   // What applying did to a row says what became of it, and replaces what the comparison would say of the row now: a
   // sample made from a new row makes the row read as a number Beeline already has.
-  const done = new Map(outcomes.filter((o) => o.unit === "row").map((o) => [o.row_number, o]));
+  const done = new Map(outcomes.map((o) => [o.row_number, o]));
   for (const { row } of upload.rows) {
     const o = done.get(row);
     if (o !== undefined) {
@@ -217,7 +220,11 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
           : r.create === null || !isHeld(r.create)
             ? n.newTrap
             : [
-                r.create.lookalike !== null && !r.create.anyway ? n.newTrapHeld(redact ? "" : r.create.lookalike.sampleNumber) : null,
+                r.create.lookalike !== null && !r.create.anyway
+                  ? r.create.lookalike.fileRow !== undefined
+                    ? n.newTrapHeldInFile(r.create.lookalike.fileRow, r.create.lookalike.sampleNumber)
+                    : n.newTrapHeld(redact ? "" : r.create.lookalike.sampleNumber)
+                  : null,
                 r.create.obas && !r.create.obasChecked ? n.newTrapObasHeld : null,
               ]
                 .filter((x) => x !== null)
@@ -236,7 +243,7 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
       ? []
       : open.flatMap((r) =>
           r.problems.length === 0 && r.create?.lookalike != null && !r.create.anyway
-            ? [{ row: r.row, sampleNumber: r.create.form.sample_number, likeId: r.create.lookalike.sampleId, likeNumber: r.create.lookalike.sampleNumber }]
+            ? [{ row: r.row, sampleNumber: r.create.form.sample_number, likeId: r.create.lookalike.sampleId, likeNumber: r.create.lookalike.sampleNumber, likeRow: r.create.lookalike.fileRow ?? null }]
             : [],
         );
   const outcomeSummary: OutcomeSummary | null =
@@ -252,15 +259,40 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
   // The series' numbers waiting for confirmation, over the rows that are still to be made.
   const toMake = open.filter((r) => r.problems.length === 0 && r.create !== null);
   const seriesRows = toMake.filter((r) => r.create!.obas);
-  const given = seriesRows.map((r) => r.create!.form.sample_number).filter((x) => x !== "").sort();
+  const given = seriesRows.filter((r) => !r.create!.assigned).map((r) => r.create!.form.sample_number).sort();
   const obas: ObasSummary | null =
     done.size > 0 || seriesRows.length === 0
       ? null
-      : { rows: seriesRows.length, lowest: given[0] ?? null, highest: given.at(-1) ?? null, blank: seriesRows.length - given.length, from: plan.numbering.from };
+      : { rows: seriesRows.length, lowest: given[0] ?? null, highest: given.at(-1) ?? null, blank: plan.numbering.blank, from: plan.numbering.from, to: plan.numbering.to };
   const labelsReady = done.size > 0 ? 0 : toMake.filter((r) => r.season === "active" && Number(r.create!.form.specimen_count) > 0).length;
   return {
     notes,
     summary: { kind: "samples", rows: upload.rows.length, counts: done.size === 0 ? plan.counts : countRows(open), unknownCollectors: plan.unknownCollectors, held, outcomes: outcomeSummary, obas, labelsReady },
+  };
+}
+
+/**
+ * The samples file's page once it is applied: what was done to each row, read from the outcome rows without working the
+ * comparison out again. The notes for each row come from the full plan, only for the file with notes.
+ */
+export function samplesClaimedSummary(upload: ParsedUpload, outcomes: readonly OutcomeRow[]): SamplesSummary {
+  const split = () => ({ active: 0, settled: 0, unplaced: 0 });
+  const mine = outcomes;
+  return {
+    kind: "samples",
+    rows: upload.rows.length,
+    counts: { rows: split(), newReady: split(), newHeld: split(), cantUse: split(), differ: split(), same: split() },
+    unknownCollectors: [],
+    held: [],
+    outcomes: {
+      total: mine.length,
+      pending: mine.filter((o) => o.outcome === "pending").length,
+      created: mine.filter((o) => o.outcome === "created").length,
+      deleted: mine.filter((o) => o.deleted).length,
+      notCreated: mine.filter((o) => o.outcome === "refused" || o.outcome === "skipped").length,
+    },
+    obas: null,
+    labelsReady: 0,
   };
 }
 

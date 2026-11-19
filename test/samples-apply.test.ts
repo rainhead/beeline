@@ -1,13 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { describe as describeInOrder, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
-import { APPLY_JOB, applyPending, applyWaiting } from "../src/app/samples-upload-apply.js";
+import { APPLY_JOB, applyPending, applyWaiting, clearStopped } from "../src/app/samples-upload-apply.js";
 import { buildJobs } from "../src/app/jobs/registry.js";
 import { startScheduler, runJob, type Job } from "../src/app/jobs/framework.js";
 import { onSample } from "../src/app/sample-queue.js";
 import { planSamples } from "../src/app/samples-upload-plan.js";
 import { SAMPLES_LAYOUT, parseUpload } from "../src/app/upload-plan.js";
-import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, mayEditTrapSample, seriesNumberProblem } from "../src/trap-sample.js";
+import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, mayEditTrapSample, seriesNumberProblem, DELETED_WITH_SAMPLE, NEVER_DELETED } from "../src/trap-sample.js";
 import { parseSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { duckdbReader } from "../src/person-change.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
@@ -38,7 +38,8 @@ const ready = {
   county: "Benton",
   locality: "Fir Butte",
 };
-const newRow = (n: number, over: Record<string, TestCell> = {}) => ({ ...ready, fieldNumber: `OBAS-${String(10 + n).padStart(5, "0")}`, ...over });
+// Each is a kilometre from the last, so that rows of one file are not held as look-alikes of one another.
+const newRow = (n: number, over: Record<string, TestCell> = {}) => ({ ...ready, fieldNumber: `OBAS-${String(10 + n).padStart(5, "0")}`, decimalLatitude: String(44.5 + n * 0.01), ...over });
 
 const download = async (f: UploadFixture) => new Uint8Array(await (await f.app.request("/samples.xlsx?scope=all")).arrayBuffer());
 const upload = async (f: UploadFixture, file: Uint8Array, app = f.app) => {
@@ -143,17 +144,12 @@ describe("applying", () => {
     expect(await rows(f.conn, `SELECT count(*) FROM upload_sample_outcome`)).toEqual([[2n]]);
   });
 
-  it("is refused while the nightly runs, and while viewing as somebody else", async () => {
-    const f = await uploadFixture("staffer", { jobs: { list: [], start: async () => true, running: () => "nightly-pipeline" } });
+  it("is accepted while the nightly runs: the job waits for it, and checks each row when its turn comes", async () => {
+    const f = await uploadFixture("staffer", { jobs: { list: [], start: async () => false, running: () => "nightly-pipeline" } });
     const { location, digest } = await offered(f, [newRow(1)]);
-    const busy = await apply(f, location, { digest });
-    expect(busy.status).toBe(409);
-    expect(await busy.text()).toContain(esc(en.uploads.page.samplesBusy));
-    expect(await rows(f.conn, `SELECT count(*) FROM upload_applied`)).toEqual([[0n]]);
-    // Not the apply-uploads job itself: it is not a sweep.
-    const own = await uploadFixture("staffer", { jobs: { list: [], start: async () => true, running: () => APPLY_JOB } });
-    const second = await offered(own, [newRow(1)]);
-    expect((await apply(own, second.location, { digest: second.digest })).status).toBe(303);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    expect(await rows(f.conn, `SELECT count(*) FROM upload_applied`)).toEqual([[1n]]);
+    expect(await applyWaiting(f.db)).toBe(true);
   });
 });
 
@@ -334,7 +330,7 @@ describe("a new row that looks like an existing sample", () => {
       VALUES ('net', 'X-1', DATE '${day(9)}', DATE '${day(11)}', 'USA', 'OR', 'net')`);
     const [[id]] = (await rows(f.conn, `SELECT max(entity_id) FROM sample WHERE sample_number = 'X-1'`)) as [[number]];
     await f.conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${id}, ${f.volunteer}, 1)`);
-    await f.conn.run(`INSERT INTO sample_location (sample_id, latitude, longitude, source) VALUES (${id}, 44.5, -123.2, 'staff_entry')`);
+    await f.conn.run(`INSERT INTO sample_location (sample_id, latitude, longitude, source) VALUES (${id}, 44.51, -123.2, 'staff_entry')`);
     expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 1, stopped: 0 });
   });
 });
@@ -359,7 +355,7 @@ describe("the series' numbers", () => {
   it("wait for the one box: unticked they are skipped with a note, ticked they are made; a number outside the series is not held", async () => {
     const f = await uploadFixture();
     const { location, html, digest } = await offered(f, [newRow(1), newRow(2, { fieldNumber: "YPT3" })]);
-    expect(html).toContain(esc(en.uploads.page.obasLine(1, "OBAS-00011", "OBAS-00011", 0, null)));
+    expect(html).toContain(esc(en.uploads.page.obasLine(1, "OBAS-00011", "OBAS-00011", 0, null, null)));
     expect(html).toContain(`name="obas"`);
     expect(html).toContain(esc(en.uploads.page.obasBox));
     await apply(f, location, { digest, obas: false });
@@ -379,7 +375,7 @@ describe("the series' numbers", () => {
     await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
       VALUES ('trap', 'OBAS-00040', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'vane trap')`);
     const { location, html, digest } = await offered(f, [newRow(1, { fieldNumber: "", decimalLatitude: "44.1" }), newRow(2, { fieldNumber: "", decimalLatitude: "44.2" })]);
-    expect(html).toContain(esc(en.uploads.page.obasLine(2, null, null, 2, "OBAS-00041")));
+    expect(html).toContain(esc(en.uploads.page.obasLine(2, null, null, 2, "OBAS-00041", "OBAS-00042")));
     await apply(f, location, { digest });
     expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 0, skipped: 0, stopped: 0 });
     expect((await outcomes(f)).map((r) => r[2])).toEqual(["OBAS-00041", "OBAS-00042"]);
@@ -542,7 +538,8 @@ describe("a run that is cut short", () => {
     const first = interruptedAt(f, 1);
     await expect(applyPending(deps(f, { conn: first.conn, signal: first.stop.signal }))).rejects.toThrow(/Interrupted/);
     const second = interruptedAt(f, /FROM sample_collector c\s+JOIN sample s/);
-    await expect(applyPending(deps(f, { conn: second.conn, signal: second.stop.signal }))).rejects.toThrow(/Interrupted/);
+    // The look-alike is read under the print runs' lock, on the print connection.
+    await expect(applyPending(deps(f, { printWriter: second.conn, signal: second.stop.signal }))).rejects.toThrow(/Interrupted/);
     expect((await outcomes(f)).map((r) => r[1])).toEqual(["pending", "pending"]);
     expect(await rows(f.conn, `SELECT stopped_at, stopped_row FROM upload_applied`)).toEqual([[null, null]]);
     expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 0, skipped: 0, stopped: 0 });
@@ -719,8 +716,8 @@ describe("an interrupted delete and its record", () => {
   });
 });
 
-describe("history written in batches", () => {
-  it("holds each new sample's turn until its entry is written, so an edit in the gap is recorded after it", async () => {
+describe("history written as each sample is made", () => {
+  it("is entered before the next row, so an edit made after the row is recorded after it", async () => {
     const f = await uploadFixture();
     await baseline(f);
     const { location, digest } = await offered(f, [newRow(1)]);
@@ -784,89 +781,183 @@ describe("what staff are told, and who sees what", () => {
   });
 });
 
-describe("a look-alike that appears while the row is being made", () => {
-  it("is caught in the creating transaction, which is rolled back, and the row is left alone", async () => {
+describe("spellings of the program's series", () => {
+  it("cannot be used unless written exactly, and a sample that has one holds the number in every spelling", async () => {
+    const f = await uploadFixture();
+    for (const spelling of ["obas-00700", "OBAS 00700", "OBAS00700", "Obas_00700"]) {
+      expect(seriesNumberProblem(spelling), spelling).toContain("written exactly OBAS- and five digits");
+    }
+    expect(seriesNumberProblem("OBAS-00700")).toBeNull();
+    const { html } = await offered(f, [newRow(1, { fieldNumber: "obas-00700" }), newRow(2, { fieldNumber: "OBAS 00701" }), newRow(3, { fieldNumber: "OBAS00702" })]);
+    expect(html).toContain(esc(en.uploads.page.samplesCantUse(3, en.uploads.page.split(3, 0, 0))));
+    // Two spellings of one number in one file are one number.
+    const g = await uploadFixture();
+    const twice = await offered(g, [newRow(1, { fieldNumber: "OBAS-00700" }), newRow(2, { fieldNumber: "OBAS-00700" })]);
+    expect(twice.html).toContain(esc(en.uploads.page.samplesCantUse(2, en.uploads.page.split(2, 0, 0))));
+    // A sample written another way holds the number.
+    const h = await uploadFixture();
+    const holder = await insertCleanSample(h.conn, { kind: "'net'", sample_number: "'OBAS 00033'", collector_id: String(h.staffer) });
+    const held = await offered(h, [newRow(1, { fieldNumber: "OBAS-00033" })]);
+    expect(held.html).toContain(esc(en.uploads.page.samplesCantUse(1, en.uploads.page.split(1, 0, 0))));
+    expect(holder).toBeGreaterThan(0);
+  });
+});
+
+describe("rows with no number", () => {
+  it("are given exactly the numbers the page shows: the next after the highest, leaving out the file's own and any taken", async () => {
+    const f = await uploadFixture();
+    await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
+      VALUES ('trap', 'OBAS-00040', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'vane trap')`);
+    const { location, html, digest } = await offered(f, [
+      newRow(1, { fieldNumber: "", decimalLatitude: "44.1" }),
+      newRow(2, { fieldNumber: "OBAS-00042", decimalLatitude: "44.2" }),
+      newRow(3, { fieldNumber: "", decimalLatitude: "44.3" }),
+    ]);
+    // 00041 and then 00043: the file has 00042 itself.
+    expect(html).toContain(esc(en.uploads.page.obasLine(3, "OBAS-00042", "OBAS-00042", 2, "OBAS-00041", "OBAS-00043")));
+    await apply(f, location, { digest });
+    expect((await rows(f.conn, `SELECT row_number, sample_number FROM upload_sample_outcome ORDER BY 1`)).map((r) => r[1])).toEqual(["OBAS-00041", "OBAS-00042", "OBAS-00043"]);
+    // Taken meanwhile: the row is refused, not renumbered, and the others are made.
+    await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
+      VALUES ('net', 'OBAS-00041', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'net')`);
+    expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 1, skipped: 0, stopped: 0 });
+    expect((await outcomes(f)).map((r) => [r[1], r[2]])).toEqual([["refused", "OBAS-00041"], ["created", "OBAS-00042"], ["created", "OBAS-00043"]]);
+  });
+
+  it("are part of the digest, so a number that changed between the preview and Apply refuses", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1, { fieldNumber: "" })]);
+    await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
+      VALUES ('trap', 'OBAS-00011', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'vane trap')`);
+    expect((await apply(f, location, { digest })).status).toBe(409);
+  });
+
+  it("cannot be used past OBAS-99999", async () => {
+    const f = await uploadFixture();
+    await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
+      VALUES ('trap', 'OBAS-99999', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'vane trap')`);
+    const { html } = await offered(f, [newRow(1, { fieldNumber: "" })]);
+    expect(html).toContain(esc(en.uploads.page.samplesCantUse(1, en.uploads.page.split(1, 0, 0))));
+  });
+});
+
+describe("the page of an upload that was applied", () => {
+  it("is read from the outcome rows, and does not refresh once the upload is stopped", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1), newRow(2)]);
+    await apply(f, location, { digest });
+    const waiting = await f.app.request(location);
+    expect(waiting.headers.get("refresh")).toBe("5");
+    await expect(applyPending(deps(f, { conn: new Proxy(f.conn, { get: (t, k) => (k === "runAndReadAll" ? async () => { throw new Error("boom"); } : (typeof Reflect.get(t, k) === "function" ? (Reflect.get(t, k) as (...a: unknown[]) => unknown).bind(t) : Reflect.get(t, k))) }) }))).rejects.toThrow("boom");
+    const stopped = await f.app.request(location);
+    expect(stopped.headers.get("refresh")).toBeNull();
+    expect(await stopped.text()).toContain(esc(en.uploads.page.samplesApplying(0, 2)));
+  });
+});
+
+describe("rows of one file against each other", () => {
+  const same = (n: number, over: Record<string, TestCell> = {}) => newRow(n, { fieldNumber: `YPT${n}`, decimalLatitude: "44.1", decimalLongitude: "-123.3", ...over });
+
+  it("holds a row that looks like an earlier row, naming that row, unless it is ticked", async () => {
+    const f = await uploadFixture();
+    const { location, html, digest } = await offered(f, [same(1), same(2)]);
+    expect(html).toContain(esc(en.uploads.page.samplesHeld(1, en.uploads.page.split(1, 0, 0))));
+    const first = Number((await rows(f.conn, `SELECT count(*) FROM sample`))[0]![0]) + 2;
+    expect(html).toContain(esc(en.uploads.page.heldRowOfFile(first, "YPT1")));
+    const notes = matrixOf(new Uint8Array(await (await f.app.request(`${location}/notes`)).arrayBuffer()));
+    expect(notes.at(-1)!.at(-1)).toContain(`row ${first} (YPT1) of this file`);
+    // Ticked, both are made.
+    await apply(f, location, { digest, anyway: [first + 1] });
+    expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 0, skipped: 0, stopped: 0 });
+  });
+
+  it("does not hold rows with another collector, other days or another place", async () => {
+    const f = await uploadFixture();
+    const { html } = await offered(f, [same(1), same(2, { recordedBy: "Sam Staff" }), same(3, { eventDate: day(20) }), same(4, { decimalLatitude: "44.2" })]);
+    expect(html).not.toContain("for a tick below");
+  });
+});
+
+describe("undoing and trying again", () => {
+  it("settles an upload's waiting rows as left alone, so nothing more is made; Try again needs a stopped upload", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1), newRow(2)]);
+    await apply(f, location, { digest });
+    await applyPending(deps(f, { afterRow: undefined }));
+    // A third row still waiting, with the upload stopped.
+    await f.conn.run(`UPDATE upload_sample_outcome SET outcome = 'pending', sample_id = NULL WHERE sample_number = 'OBAS-00012'`);
+    await f.conn.run(`UPDATE upload_applied SET stopped_at = now(), stopped_row = 5`);
+    const done = await f.app.request(`${location}/delete-samples`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() });
+    expect(done.status).toBe(200);
+    expect((await outcomes(f)).map((r) => r[1])).toEqual(["created", "skipped"]);
+    expect(String((await outcomes(f))[1]![3])).toContain("upload was undone");
+    expect(await applyWaiting(f.db)).toBe(false);
+    // Not stopped: Try again does nothing.
+    await f.conn.run(`UPDATE upload_applied SET stopped_at = NULL, stopped_row = NULL`);
+    const started: string[] = [];
+    const g = await uploadFixture("staffer", { jobs: { list: [], start: async (n) => (started.push(n), true) } });
+    const queued = await offered(g, [newRow(1)]);
+    await apply(g, queued.location, { digest: queued.digest });
+    started.length = 0;
+    await g.app.request(`${queued.location}/apply-samples/retry`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() });
+    expect(started).toEqual([]);
+  });
+});
+
+describe("deleting from an explicit list", () => {
+  it("covers every table that names a sample, or says in NEVER_DELETED that it refuses", async () => {
+    const f = await uploadFixture();
+    const found = (await rows(f.conn, `SELECT table_name, constraint_column_names FROM duckdb_constraints() WHERE constraint_type = 'FOREIGN KEY' AND referenced_table = 'sample'`)) as Array<[string, unknown]>;
+    const known = new Set<string>([...DELETED_WITH_SAMPLE, ...NEVER_DELETED]);
+    const unknown = found.map(([t]) => t).filter((t) => !known.has(t));
+    // A new table that names a sample must be decided: deleted with it, or never deleted (and the delete refuses).
+    expect(unknown).toEqual([]);
+    for (const [, columns] of found) expect(JSON.stringify(columns)).toContain("sample_id");
+    for (const t of known) expect(found.map(([n]) => n), t).toContain(t);
+  });
+
+  it("refuses a sample that a table outside the list records, with a sentence", async () => {
     const f = await uploadFixture();
     const { location, digest } = await offered(f, [newRow(1)]);
     await apply(f, location, { digest });
-    // After the cheap look-alike read finds nothing, somebody saves a sample at the same place on the same days.
-    const entering = new Proxy(f.conn, {
-      get(target, key) {
-        const value = Reflect.get(target, key) as unknown;
-        if (key !== "runAndReadAll" || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
-        return async (...args: unknown[]) => {
-          const result = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
-          if (/FROM sample_collector c\s+JOIN sample s/.test(String(args[0]))) {
-            await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
-              VALUES ('trap', 'OBAS-00099', DATE '${day(9)}', DATE '${day(11)}', 'USA', 'OR', 'vane trap')`);
-            const [[id]] = (await rows(f.conn, `SELECT max(entity_id) FROM sample`)) as [[number]];
-            await f.conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${id}, ${f.volunteer}, 1)`);
-            await f.conn.run(`INSERT INTO sample_location (sample_id, latitude, longitude, source) VALUES (${id}, 44.5, -123.2, 'staff_entry')`);
-          }
-          return result;
-        };
-      },
-    });
-    expect(await applyPending(deps(f, { conn: entering }))).toEqual({ created: 0, refused: 0, skipped: 1, stopped: 0 });
-    expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011'`)).toEqual([[0n]]);
-    expect(String((await outcomes(f))[0]![3])).toContain("OBAS-00099");
-  });
-});
-
-describe("undoing an upload", () => {
-  it("deletes every sample the upload made that can be deleted, lists the rest with why, and says so in the page and the notes", async () => {
-    const f = await uploadFixture();
-    const { location, digest } = await offered(f, [newRow(1), newRow(2, { decimalLatitude: "44.2" }), newRow(3, { decimalLatitude: "44.3" })]);
-    await apply(f, location, { digest });
-    // Not while the job is still working on it.
-    expect(await (await f.app.request(`${location}/delete-samples`)).text()).toContain(esc(en.uploads.page.undo.working));
-    expect((await f.app.request(`${location}/delete-samples`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() })).status).toBe(409);
     await applyPending(deps(f));
-    expect(await (await f.app.request(location)).text()).toContain(`${location}/delete-samples`);
-    // One of the three gets a specimen on a printed label.
-    const [[printed]] = (await rows(f.conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00012'`)) as [[number]];
-    const [[sp]] = (await rows(f.conn, `INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1) RETURNING entity_id`)) as [[number]];
-    expect(sp).toBeGreaterThan(0);
-    const confirm = await (await f.app.request(`${location}/delete-samples`)).text();
-    expect(confirm).toContain(esc(en.uploads.page.undo.explain));
-    const done = await f.app.request(`${location}/delete-samples`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() });
-    expect(done.status).toBe(200);
-    const text = await done.text();
-    expect(text).toContain(esc(en.uploads.page.undo.done(2, 1)));
-    expect(text).toContain(esc(en.uploads.page.undo.row("OBAS-00012", en.trapSample.delete.refused.printed!)));
-    expect(await rows(f.conn, `SELECT sample_number FROM sample WHERE sample_number LIKE 'OBAS-%' ORDER BY 1`)).toEqual([["OBAS-00012"]]);
-    expect(await rows(f.conn, `SELECT sample_number FROM sample_deletion ORDER BY 1`)).toEqual([["OBAS-00011"], ["OBAS-00013"]]);
-    // The upload's own record stands, and the page and the notes say what became of them.
-    expect(await rows(f.conn, `SELECT count(*) FROM upload_sample_outcome WHERE outcome = 'created'`)).toEqual([[3n]]);
-    const page = await (await f.app.request(location)).text();
-    expect(page).toContain(esc(en.uploads.page.samplesCreated(3, 2)));
-    const notes = matrixOf(new Uint8Array(await (await f.app.request(`${location}/notes`)).arrayBuffer()));
-    const head = notes[0]!;
-    const note = (number: string) => notes.find((r) => r[head.indexOf("fieldNumber")] === number)![head.length - 1];
-    expect(note("OBAS-00011")).toBe(en.uploads.notes.createdDeleted("OBAS-00011"));
-    expect(note("OBAS-00012")).toBe(en.uploads.notes.created("OBAS-00012"));
-    // Staff only.
-    const volunteer = f.appAs("volunteer");
-    expect((await volunteer.request(`${location}/delete-samples`)).status).toBe(404);
+    const [[id]] = (await rows(f.conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00011'`)) as [[number]];
+    await f.conn.run(`INSERT INTO sample_legacy_observation (sample_id, inat_observation_id) VALUES (${id}, 1)`);
+    expect(await deleteTrapSample(f.conn, id, f.staffer)).toEqual({ refused: "has_other_records" });
+    expect(en.trapSample.delete.refused.has_other_records).toBeTruthy();
+  });
+
+  it("offers the Delete button for a deletion cut short, which has no entry mark", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1)]);
+    await apply(f, location, { digest });
+    await applyPending(deps(f));
+    const [[id]] = (await rows(f.conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00011'`)) as [[number]];
+    await f.conn.run(`INSERT INTO sample_deletion (sample_id, sample_number, deleted_by, deleted_at) VALUES (${id}, 'OBAS-00011', ${f.staffer}, now())`);
+    for (const t of DELETED_WITH_SAMPLE) await f.conn.run(`DELETE FROM ${t} WHERE sample_id = ${id}`);
+    expect(await (await f.app.request(`/samples/${id}`)).text()).toContain(`href="/samples/${id}/delete"`);
   });
 });
 
-describe("an entered sample whose season has settled", () => {
-  it("closes its form to its collectors and its enterer, and stays staff's", async () => {
+describe("guards on the marks", () => {
+  it("clearStopped says whether it changed a row", async () => {
     const f = await uploadFixture();
-    const entered = async (season: number, number: string) => {
-      const id = await insertCleanSample(f.conn, { kind: "'trap'", sample_number: `'${number}'`, collector_id: String(f.volunteer), date_start: `DATE '${season}-06-02'`, date_end: `DATE '${season}-06-02'` });
-      await f.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${id}, ${f.volunteer})`);
-      return id;
-    };
-    const current = await entered(CURRENT_SEASON, "OBAS-00051");
-    const settled = await entered(SETTLED_SEASON, "OBAS-00052");
-    expect(await mayEditTrapSample(f.conn, current, f.volunteer, false)).toBe(true);
-    expect(await mayEditTrapSample(f.conn, settled, f.volunteer, false)).toBe(false);
-    expect(await mayEditTrapSample(f.conn, settled, f.staffer, true)).toBe(true);
-    const volunteer = f.appAs("volunteer");
-    expect((await volunteer.request(`/samples/${current}/trap`)).status).toBe(200);
-    expect((await volunteer.request(`/samples/${settled}/trap`)).status).toBe(404);
-    expect((await f.app.request(`/samples/${settled}/trap`)).status).toBe(200);
+    const { location, digest } = await offered(f, [newRow(1)]);
+    await apply(f, location, { digest });
+    const [[uploadId]] = (await rows(f.conn, `SELECT upload_id FROM upload_applied`)) as [[number]];
+    expect(await clearStopped(f.db, uploadId)).toBe(false);
+    await f.conn.run(`UPDATE upload_applied SET stopped_at = now(), stopped_row = 4`);
+    expect(await clearStopped(f.db, uploadId)).toBe(true);
+    expect(await clearStopped(f.db, uploadId)).toBe(false);
+  });
+
+  it("reports to the observer any error that is not the run's own interruption, even with the signal set", async () => {
+    const f = await uploadFixture();
+    const heard: unknown[] = [];
+    const stop = new AbortController();
+    stop.abort();
+    const job: Job = { name: "x", schedule: { kind: "onDemand" }, window: "interactive", async run() { throw new Error("a real fault"); } };
+    await runJob({ db: f.db, conn: f.conn, observe: () => (_o, err) => void heard.push(err) }, job, stop.signal);
+    expect(heard.map((e) => (e as Error).message)).toEqual(["a real fault"]);
   });
 });

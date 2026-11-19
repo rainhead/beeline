@@ -81,7 +81,7 @@ import { UploadPreview, UploadProblem, UploadUndo, Uploads, uploadHref, type Upl
 import { specimenWorkbook } from "./specimen-workbook.js";
 import { samplesFileRow, samplesWorkbook } from "./sample-workbook.js";
 import { planSamples } from "./samples-upload-plan.js";
-import { APPLY_JOB, claimUpload, clearStopped, digestOf, readOutcomes, rowsToApply } from "./samples-upload-apply.js";
+import { APPLY_JOB, claimUpload, clearStopped, digestOf, readOutcomes, rowsToApply, settleUndone } from "./samples-upload-apply.js";
 import {
   MAX_FILE_BYTES,
   MAX_ROWS as UPLOAD_MAX_ROWS,
@@ -95,7 +95,7 @@ import {
   type ParsedUpload,
 } from "./upload-plan.js";
 import { draftPlan, draftState, fileSpecimenIds, type DraftWho } from "./upload-drafts.js";
-import { notesFile, samplesNotes, staffNotes, volunteerNotes } from "./upload-notes.js";
+import { notesFile, samplesClaimedSummary, samplesNotes, staffNotes, volunteerNotes } from "./upload-notes.js";
 import { canAnnotate } from "./xlsx-annotate.js";
 import { ownIdentifications, ownVersion, withOwnIdentification } from "./own-identification.js";
 import type { ReadLimits } from "./xlsx-reader.js";
@@ -1394,8 +1394,11 @@ export function createApp({
       entered?.editable && !c.get("acting").impersonating && (await mayEditTrapSample(conn!, sample.sample_id, c.get("acting").personId, c.get("admin")))
         ? `/samples/${sample.sample_id}/trap`
         : undefined;
+    // Also for a deletion cut short, which has no entry mark any more and is finished by deleting again.
     const deleteHref =
-      entered !== null && c.get("admin") && "number" in (await deletable(conn!, sample.sample_id)) ? `/samples/${sample.sample_id}/delete` : undefined;
+      conn !== undefined && sample.kind === "trap" && c.get("admin") && !c.get("acting").impersonating && "number" in (await deletable(conn, sample.sample_id))
+        ? `/samples/${sample.sample_id}/delete`
+        : undefined;
     return c.html(
       await page(
         c,
@@ -1589,6 +1592,7 @@ export function createApp({
   // never printed, in no print run, no specimens. A page that says what goes, then a form that does it, in the
   // sample's turn of its queue and behind the print runs' lock. The change log cannot say a sample is gone (a sample
   // that falls silent is recorded as nothing, ADR 0007), so the deletion is recorded in `sample_deletion` (schema/048) and said in the server's log.
+  // Also the gate of the delete of the samples an upload made: staff, not while viewing as somebody else, on an instance that can write samples.
   const deleteGate = (c: Context<AppEnv>, writing: boolean): Response | Promise<Response> | null => {
     const m = c.get("m");
     if (writing && c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
@@ -2542,16 +2546,26 @@ export function createApp({
     c: Context<AppEnv>,
     row: VisibleUpload,
     kept: { upload: ParsedUpload; staffFile: boolean; bytes: Uint8Array },
-    /** The rows of a samples file whose look-alike was ticked, when applying works the plan out. */
-    createAnyway?: ReadonlySet<number>,
-    /** The box "I've checked these OBAS numbers", when applying works the plan out. */
-    obasChecked?: boolean,
+    options: {
+      /** The rows of a samples file whose look-alike was ticked, when applying works the plan out. */
+      createAnyway?: ReadonlySet<number>;
+      /** The box "I've checked these OBAS numbers", when applying works the plan out. */
+      obasChecked?: boolean;
+      /** The whole plan of a samples file that was applied, for the file with notes. The page does not need it. */
+      full?: boolean;
+    } = {},
   ) => {
     const m = c.get("m");
     if (kept.upload.layout.kind === "samples") {
       // Compared as the viewer sees locations: staff see every one, and someone no longer staff only their own.
       if (conn === undefined) throw new Error("comparing a samples file needs the store connection");
-      const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), today: uploadToday?.(), createAnyway, obasChecked });
+      // Once the file is applied, the page is what was done to each row, read from the outcome rows: the comparison is not
+      // worked out again for it, only for the file with notes.
+      if (row.applied_at !== null && options.full !== true) {
+        const outcomes = await readOutcomes(db, row.entity_id);
+        return { kind: "samples" as const, plan: null, outcomes, noted: { notes: new Map<number, string>(), summary: samplesClaimedSummary(kept.upload, outcomes) } };
+      }
+      const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), today: uploadToday?.(), createAnyway: options.createAnyway, obasChecked: options.obasChecked });
       // What applying did to each row, once the file was applied: the notes and the counts say it.
       const outcomes = row.applied_at === null ? [] : await readOutcomes(db, row.entity_id);
       return { kind: "samples" as const, plan, outcomes, noted: samplesNotes(m, kept.upload, plan, outcomes, !c.get("admin")) };
@@ -2571,7 +2585,7 @@ export function createApp({
     kept: { upload: ParsedUpload; bytes: Uint8Array },
     outcome: UploadOutcome,
     changedSince = false,
-    samplesNotice: "changed" | "busy" | "nothing_ticked" | null = null,
+    samplesNotice: "changed" | "nothing_ticked" | null = null,
   ) => {
     const m = c.get("m");
     const { sha256: _kept, uploaded_by: _by, applied_at, draft_count, stopped_row, ...shown } = row;
@@ -2591,7 +2605,7 @@ export function createApp({
       outcome.kind !== "samples"
         ? null
         : {
-            digest: digestOf(outcome.plan),
+            digest: outcome.plan === null ? "" : digestOf(outcome.plan),
             canApply:
               c.get("admin") &&
               row.uploaded_by === c.get("session").personId &&
@@ -2612,7 +2626,8 @@ export function createApp({
               !(outcome.noted.summary.outcomes.pending > 0 && stopped_row === null),
           };
     // While rows wait for the job, the page asks again by itself, so the progress it shows moves.
-    if (outcome.kind === "samples" && outcome.noted.summary.outcomes !== null && outcome.noted.summary.outcomes.pending > 0) c.header("Refresh", "5");
+    // Not once the job has stopped on the upload: nothing will move until staff press Try again.
+    if (outcome.kind === "samples" && outcome.noted.summary.outcomes !== null && outcome.noted.summary.outcomes.pending > 0 && stopped_row === null) c.header("Refresh", "5");
     return c.html(
       await page(
         c,
@@ -2620,8 +2635,8 @@ export function createApp({
         <UploadPreview
           m={m}
           upload={upload}
-          unrecognised={outcome.plan.unrecognised}
-          otherSheets={outcome.plan.otherSheets}
+          unrecognised={(outcome.plan ?? kept.upload).unrecognised}
+          otherSheets={(outcome.plan ?? kept.upload).otherSheets}
           volunteer={volunteer}
           staffSummary={outcome.kind === "staff" ? outcome.noted.summary : null}
           samplesSummary={outcome.kind === "samples" ? outcome.noted.summary : null}
@@ -2659,7 +2674,7 @@ export function createApp({
     const opened = await openUpload(c);
     if (opened.response !== undefined) return opened.response;
     const { row, kept } = opened;
-    const outcome = await uploadOutcome(c, row, kept);
+    const outcome = await uploadOutcome(c, row, kept, { full: true });
     const reread = async (patched: Uint8Array) => {
       const again = await parseUpload(patched, uploadReadLimits, kept.upload.layout);
       return again.ok ? again.upload : null;
@@ -2751,16 +2766,15 @@ export function createApp({
     const kept = await readKept(c, row, layoutFor(true));
     if (kept.problem !== undefined) return kept.problem;
     if (kept.upload.layout.kind !== "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
-    const showing = async (notice: "changed" | "busy" | "nothing_ticked") => {
+    const showing = async (notice: "changed" | "nothing_ticked") => {
       // A second submission whose page was worked out after the first claimed the file: told what was done, not that nothing was.
       if ((await db.selectFrom("upload_applied").select("upload_id").where("upload_id", "=", row.entity_id).executeTakeFirst()) !== undefined) {
         return c.redirect(uploadHref(row.entity_id), 303);
       }
       return c.html(await (await previewPage(c, row, kept, await uploadOutcome(c, row, kept), false, notice)).text(), 409);
     };
-    if (syncJobRunning()) return showing("busy");
-    const outcome = await uploadOutcome(c, row, kept, anyway, obasChecked);
-    if (outcome.kind !== "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    const outcome = await uploadOutcome(c, row, kept, { createAnyway: anyway, obasChecked });
+    if (outcome.kind !== "samples" || outcome.plan === null) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
     if (digestOf(outcome.plan) !== asked) return showing("changed");
     // The page is as it was shown, and every new row that could be made waits for a tick that was not given.
     if (rowsToApply(outcome.plan).length === 0) return showing("nothing_ticked");
@@ -2780,8 +2794,8 @@ export function createApp({
     if (!c.get("admin")) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
     const row = await visibleUpload(c, Number(c.req.param("id")));
     if (row === null) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
-    await clearStopped(db, row.entity_id);
-    await jobsDep.start(APPLY_JOB);
+    // Only an upload that is stopped can be tried again; any staff member may, not only the one who applied it.
+    if (await clearStopped(db, row.entity_id)) await jobsDep.start(APPLY_JOB);
     return c.redirect(uploadHref(row.entity_id), 303);
   });
 
@@ -2790,12 +2804,9 @@ export function createApp({
   // sample's queue and each recorded in sample_deletion; the rest are listed with why. Not while the job is working on
   // the upload. The upload's own record of what it made stays.
   const undoGate = async (c: Context<AppEnv>, writing: boolean) => {
-    const refused = uploadsGate(c);
-    if (refused !== null) return { response: refused };
     const m = c.get("m");
-    if (writing && c.get("acting").impersonating) return { response: c.text(m.errors.readOnlyImpersonating, 403) };
-    if (!c.get("admin")) return { response: errorResponse(c, "notFound", { message: m.uploads.page.notFound }) };
-    if (conn === undefined || printWriter === undefined) return { response: c.text("This instance cannot delete samples.", 503) };
+    const refused = uploadsGate(c) ?? (await deleteGate(c, writing));
+    if (refused !== null) return { response: refused };
     const row = await visibleUpload(c, Number(c.req.param("id")));
     if (row === null || row.applied_at === null) return { response: errorResponse(c, "notFound", { message: m.uploads.page.notFound }) };
     const outcomes = await readOutcomes(db, row.entity_id);
@@ -2813,6 +2824,8 @@ export function createApp({
     if (gate.response !== undefined) return gate.response;
     const m = c.get("m");
     if (gate.working) return c.html(await page(c, m.uploads.page.undo.title, <UploadUndo m={m} uploadId={gate.row.entity_id} fileName={gate.row.file_name} result={null} working />), 409);
+    // Nothing more is made from an upload that is being undone: its rows still waiting are settled first, in the same step.
+    await settleUndone(db, gate.row.entity_id);
     let deleted = 0;
     const couldNot: Array<{ number: string; why: string }> = [];
     for (const o of gate.outcomes) {

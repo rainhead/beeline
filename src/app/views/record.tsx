@@ -868,6 +868,16 @@ function SampleActions({ m, sample, trapEditHref, deleteHref }: { m: Messages; s
   const s = m.record.sample;
   // A sample entered in Beeline is edited from the form it was entered with
   // (beeline-3vs.2); the correction form below needs an old Beeline record.
+  // A deletion cut short leaves no entry mark, so no edit form, and is finished from the delete page alone.
+  if (trapEditHref === undefined && deleteHref !== undefined) {
+    return (
+      <p class="row">
+        <LinkButton href={deleteHref} variant="tonal">
+          {m.trapSample.delete.button}
+        </LinkButton>
+      </p>
+    );
+  }
   if (trapEditHref !== undefined) {
     return (
       <p class="row">

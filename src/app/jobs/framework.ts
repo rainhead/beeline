@@ -569,7 +569,8 @@ export async function runJob(
     // A run that ended because the process is stopping is no fault to report: it resumes when the process is back.
     const stopped = signal.aborted || err instanceof JobInterrupted;
     console.error(`[job ${job.name}] ${stopped ? "stopped" : "failed"} after ${took()}: ${(err as Error).stack ?? String(err)}`);
-    ended("failed", stopped ? undefined : err);
+    // Only the run's own interruption is withheld from the observer; any other error is reported, whatever the signal says.
+    ended("failed", err instanceof JobInterrupted ? undefined : err);
     await finish("failed", stopped && !(err instanceof JobInterrupted) ? `interrupted by shutdown: ${(err as Error).message}` : (err as Error).message);
   }
 }

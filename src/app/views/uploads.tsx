@@ -104,7 +104,7 @@ export interface SamplesPreview {
   /** When it was applied and by whom, once it was. */
   applied: { at: Date; by: string } | null;
   /** Applying was asked for, and why nothing was applied. */
-  notice: "changed" | "busy" | "nothing_ticked" | null;
+  notice: "changed" | "nothing_ticked" | null;
   /** The job stopped at this row of the file because something went wrong; the rest wait. */
   stoppedRow: number | null;
   /** Staff may choose Try again for a stopped upload. */
@@ -216,7 +216,6 @@ export function UploadPreview({
       {staffSummary !== null && <Callout>{p.staffNothingChanged}</Callout>}
       {samplesSummary !== null && samples?.notice === "changed" && <Callout tone="warning">{p.samplesChangedSince}</Callout>}
       {samplesSummary !== null && samples?.notice === "nothing_ticked" && <Callout tone="warning">{p.samplesNothingTicked}</Callout>}
-      {samplesSummary !== null && samples?.notice === "busy" && <Callout tone="warning">{p.samplesBusy}</Callout>}
       {samplesSummary !== null && samples?.stoppedRow != null && (
         <Callout tone="warning">
           {p.samplesStopped(samples.stoppedRow)}
@@ -254,7 +253,7 @@ export function UploadPreview({
                     <td>{m.format.number(h.row)}</td>
                     <td>{h.sampleNumber}</td>
                     <td>
-                      <a href={`/samples/${h.likeId}`}>{h.likeNumber}</a>
+                      {h.likeRow !== null ? p.heldRowOfFile(h.likeRow, h.likeNumber) : <a href={`/samples/${h.likeId}`}>{h.likeNumber}</a>}
                     </td>
                     <td>
                       <input type="checkbox" name="anyway" value={String(h.row)} aria-label={p.heldAnyway(h.row)} />
@@ -266,7 +265,7 @@ export function UploadPreview({
           )}
           {samplesSummary.obas !== null && (
             <p>
-              {p.obasLine(samplesSummary.obas.rows, samplesSummary.obas.lowest, samplesSummary.obas.highest, samplesSummary.obas.blank, samplesSummary.obas.from)}
+              {p.obasLine(samplesSummary.obas.rows, samplesSummary.obas.lowest, samplesSummary.obas.highest, samplesSummary.obas.blank, samplesSummary.obas.from, samplesSummary.obas.to)}
               <br />
               <label>
                 <input type="checkbox" name="obas" value="1" /> {p.obasBox}

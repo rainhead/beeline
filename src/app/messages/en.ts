@@ -1018,6 +1018,7 @@ export const en = {
         printed: "This sample has labels on paper, so it cannot be deleted.",
         in_print_run: "This sample's labels are in a print run that has not been canceled or mailed, so it cannot be deleted. Cancel the run first.",
         has_specimens: "This sample has specimens, so it cannot be deleted.",
+        has_other_records: "Something else in Beeline records this sample (a promotion record), which Beeline will not delete, so it cannot be deleted.",
       } as Record<string, string>,
     },
   },
@@ -2448,9 +2449,10 @@ export const en = {
         `${n(count)} new ${count === 1 ? "row waits" : "rows wait"} for a tick below${split}, and ${count === 1 ? "is" : "are"} left out unless ticked.`,
       heldHeading: "New rows that look like an existing sample",
       heldColumns: { row: "Row", number: "Number in the file", like: "Looks like", anyway: "Create anyway" },
+      heldRowOfFile: (row: number, number: string) => `Row ${n(row)} of this file${number === "" ? "" : ` (${number})`}`,
       heldAnyway: (row: number) => `Create row ${n(row)} anyway`,
       heldRule:
-        "Looks like means the same first collector, collecting days that overlap, and a point within 100 metres. If the row is meant for that sample, put its sampleId in the file to compare it with that sample (changes to existing samples are not applied yet).",
+        "Looks like means the same first collector, collecting days that overlap, and a point within 100 metres, whether of a sample Beeline has or of an earlier row of this file. If the row is meant for that sample, put its sampleId in the file to compare it with that sample (changes to existing samples are not applied yet).",
       samplesCantUse: (count: number, split: string) => `${n(count)} ${count === 1 ? "row" : "rows"} can't be used: see the notes in your file${split}.`,
       samplesDiffer: (count: number, split: string) => `${n(count)} existing ${count === 1 ? "sample differs" : "samples differ"} from what Beeline has${split}.`,
       samplesSame: (count: number, split: string) => `${n(count)} ${count === 1 ? "is" : "are"} the same as Beeline has${split}.`,
@@ -2468,8 +2470,8 @@ export const en = {
       samplesStopped: (row: number) => `Applying stopped at row ${n(row)} because something went wrong. It has been reported. The rows from there on are waiting.`,
       samplesTryAgain: "Try again",
       /** The one box for the program's numbers, and the line above it. */
-      obasLine: (rows: number, lowest: string | null, highest: string | null, blank: number, from: string | null) =>
-        `${n(rows)} new ${rows === 1 ? "row has" : "rows have"} a number in the OBAS series${lowest === null ? "" : `, from ${lowest} to ${highest}`}${blank > 0 ? `; ${n(blank)} ${blank === 1 ? "has" : "have"} no number and would be given the next ones, from ${from}` : ""}. They are made only if you tick the box.`,
+      obasLine: (rows: number, lowest: string | null, highest: string | null, blank: number, from: string | null, to: string | null) =>
+        `${n(rows)} new ${rows === 1 ? "row has" : "rows have"} a number in the OBAS series${lowest === null ? "" : `, from ${lowest} to ${highest}`}${blank > 0 ? `; ${n(blank)} ${blank === 1 ? "has" : "have"} no number and ${blank === 1 ? "is" : "are"} given ${from === to ? from : `${from} to ${to}`}` : ""}. They are made only if you tick the box.`,
       obasBox: "I've checked these OBAS numbers",
       labelsReady: (count: number) =>
         `${n(count)} of the samples to be made are in an active season and have specimens, so their labels are ready to print as soon as they are made. A print run gives their bees permanent numbers and ends the chance to delete them.`,
@@ -2493,7 +2495,6 @@ export const en = {
       samplesChangedSince: "The comparison with this file changed after this page was shown, so nothing was applied. This is how it stands now: check it and apply again.",
       samplesNothingTicked:
         "Nothing was applied: every new row waits for a tick, and none was ticked. Tick create anyway on the look-alike rows you want made, or the OBAS box, or put the sampleId of the existing sample in the file to compare the row with that sample (changes to existing samples are not applied yet).",
-      samplesBusy: "Beeline is reading from iNaturalist and rewriting samples right now, so nothing was applied. Try again in a few minutes.",
       /** After a count: how many of the rows are in seasons Beeline still asks about and how many in settled ones. */
       split: (active: number, settled: number, unplaced: number) =>
         ` (${[
@@ -2530,6 +2531,8 @@ export const en = {
       waiting: "Waiting to be applied.",
       created: (number: string) => `Created ${number}.`,
       createdDeleted: (number: string) => `Created ${number}, since deleted.`,
+      newTrapHeldInFile: (row: number, number: string) =>
+        `New trap sample, not created yet: it looks like row ${row}${number === "" ? "" : ` (${number})`} of this file, with the same first collector, overlapping days and a point within 100 metres. If it is a different trap, tick create anyway on the page before applying.`,
       newTrapObasHeld: "New trap sample, not created yet: its number is in the OBAS series, or blank, and a person has to confirm those numbers. Tick \"I've checked these OBAS numbers\" on the page before applying.",
       notCreated: (why: string) => `Not created: ${why}`,
       newTrapCantUse: (why: string) => `New trap sample, can't use: ${why}`,

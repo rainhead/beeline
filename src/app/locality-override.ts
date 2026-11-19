@@ -90,11 +90,21 @@ export type StaffLocalityResult =
   | { outcome: "in_print_run" }
   /** The store write lost a write conflict, and nothing was recorded anywhere (an entered sample has no file row). */
   | { outcome: "conflict" }
+  /**
+   * A sample with no observation, built from the old records: the correction
+   * is in the corrections file but the store write lost a write conflict.
+   * Nothing reads that file again on its own, so it is not applied until the
+   * request is sent again.
+   */
+  | { outcome: "not_applied" }
   | { outcome: "invalid"; problem: string }
   /** No staging rows back this non-iNat sample — nothing durable to anchor on. */
   | { outcome: "no_staging" }
   /** The overlay row was written but named no sample, or two. */
   | { outcome: "unresolved"; reason: string };
+
+/** What a staff point write answers: a point is written to the sample overlay, never to the corrections file, so it has no `not_applied`. */
+export type StaffPointResult = Exclude<StaffLocalityResult, { outcome: "not_applied" }>;
 
 export async function setStaffLocality(
   deps: StaffLocalityDeps,
@@ -110,12 +120,20 @@ export async function setStaffLocality(
     if (problem !== null) return { outcome: "invalid", problem };
     const editable = await loadSampleForStaff(deps.db, sample.entity_id);
     if (editable === undefined) return { outcome: "unchanged" };
-    const result = await applySampleEdit(deps.db, deps.correctionsPath, editable, {
-      values: { locality: value },
-      bases: {},
-      note: reason,
-      author: input.author,
-    });
+    let result;
+    try {
+      result = await applySampleEdit(deps.db, deps.correctionsPath, editable, {
+        values: { locality: value },
+        bases: {},
+        note: reason,
+        author: input.author,
+      });
+    } catch (err) {
+      // Only a sample with old records gets as far as writing the file (a sample entered in Beeline has no staging, so is refused above),
+      // and the file now holds the correction while the store does not.
+      if (isWriteConflict(err)) return { outcome: "not_applied" };
+      throw err;
+    }
     if (result.outcome === "no_staging") return { outcome: "no_staging" };
     return result.outcome === "saved" ? { outcome: "saved" } : { outcome: "unchanged" };
   }
@@ -249,7 +267,7 @@ export async function setStaffCoordinates(
   deps: StaffLocalityDeps,
   sample: StaffLocalityTarget,
   input: StaffCoordinatesInput,
-): Promise<StaffLocalityResult> {
+): Promise<StaffPointResult> {
   const anchor = await pointAnchor(deps, sample);
   if (anchor === null) return { outcome: "unchanged" };
   if (input.remove && sample.inat_observation_id === null) {
@@ -328,7 +346,7 @@ export async function takeObservationLocation(
   deps: StaffLocalityDeps & { conn: DuckDBConnection },
   sample: StaffLocalityTarget,
   input: { reason: string; author: string },
-): Promise<StaffLocalityResult> {
+): Promise<StaffPointResult> {
   const found = (await (
     await deps.conn.run(
       `SELECT observation_latitude, observation_longitude, observation_uncertainty_m

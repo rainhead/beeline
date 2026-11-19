@@ -134,6 +134,47 @@ describe("acting for somebody under a delegation", () => {
     const logged = (await readSampleChanges(base.sampleChangesPath)).filter((c) => c.source === "app");
     expect(logged.map((c) => [c.field, c.author])).toContainEqual(["locality", "pandg"]);
   });
+
+  it("tells a collector whose edit lost a write conflict that it is saved against the old records and not shown yet", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "beeline-corrections-routes-"));
+    const correctionsPath = join(dir, "corrections.csv");
+    const { instance, conn } = await promotedStore("corrected", { appCorrections: correctionsPath });
+    const [[sampleId]] = (await rows(conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00657'`)) as [[number]];
+    const [[beaId]] = (await rows(conn, `SELECT entity_id FROM person WHERE display_name = 'Bea Trapper'`)) as [[number]];
+    const bea = Number(beaId);
+    const [[beaLogin]] = (await rows(conn, `SELECT login FROM inat_account WHERE person_id = ${bea}`)) as [[string]];
+    const kysely = createKysely(instance);
+    // The first transaction loses a write conflict, as another writer's change to the store can make it.
+    let fired = false;
+    const db = new Proxy(kysely, {
+      get(target, prop) {
+        if (prop === "transaction" && !fired) {
+          fired = true;
+          return () => ({
+            execute: async () => {
+              throw new Error("TransactionContext Error: Conflict on update!");
+            },
+          });
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const base = await scratchPaths();
+    const app = createApp({
+      ...base,
+      db,
+      config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: bea, login: beaLogin, iconUrl: null }),
+      correctionsPath,
+    });
+    const { path, init } = form(`/samples/${sampleId}/edit`, { locality: "Walla Walla" });
+    const lost = await app.request(path, init);
+    expect(lost.status).toBe(409);
+    expect(await lost.text()).toBe(en.sampleEdit.notApplied);
+    expect(await readFile(correctionsPath, "utf8")).toContain("Walla Walla");
+  });
 });
 
 describe("impersonation through the pages", () => {

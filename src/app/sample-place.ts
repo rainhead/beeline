@@ -102,11 +102,17 @@ async function problemWith(db: Kysely<Database>, next: Record<PlaceField, string
   const state = next.state_province ?? "";
   if (!/^[A-Z]{3}$/.test(country)) return "The country is the three-letter code Beeline keeps, such as USA or CAN.";
   if (!/^[A-Z]{2,3}$/.test(state)) return "The state or province is its two-letter code, such as OR, WA or BC.";
-  const region = (
-    await sql<{ country: string }>`SELECT country FROM atlas_region WHERE state_province = ${state}`.execute(db)
-  ).rows[0];
-  if (region !== undefined && region.country !== country) return `${state} is in ${region.country}, not ${country}.`;
-  if (region === undefined && LISTED_COUNTRIES.has(country)) return `${state} is not a state or province of ${country}.`;
+  // A state's code is unique within its country, not across countries: WA is
+  // Washington in the USA and Western Australia in AUS (CodeRabbit). So the
+  // code is checked only where atlas_region lists the country's states, which
+  // it does in full for the USA and Canada.
+  if (LISTED_COUNTRIES.has(country)) {
+    const regions = (await sql<{ country: string }>`SELECT country FROM atlas_region WHERE state_province = ${state}`.execute(db)).rows;
+    if (!regions.some((r) => r.country === country)) {
+      const elsewhere = regions.find((r) => LISTED_COUNTRIES.has(r.country));
+      return elsewhere === undefined ? `${state} is not a state or province of ${country}.` : `${state} is in ${elsewhere.country}, not ${country}.`;
+    }
+  }
   const county = next.county;
   if (county === null) {
     if (observed) {
@@ -162,14 +168,19 @@ async function atlasOf(db: Kysely<Database>, sampleId: number): Promise<string |
 }
 
 /**
- * The atlas follows a changed state where geography assigned it: the
- * nightly's stamp in src/derive-area.ts, for one sample. An atlas a person
- * assigned, a "none" included, stays.
+ * The atlas follows a changed state or country where geography assigned it:
+ * the nightly's stamp in src/derive-area.ts, for one sample. An atlas a person
+ * assigned, a "none" included, stays. The region must be the sample's country
+ * as well as its state, where sample_atlas_unfilled (schema/108) matches by
+ * state alone: Western Australia is WA too, and is in no atlas.
  */
 async function reassignAtlas(trx: Kysely<Database>, sampleId: number): Promise<void> {
   await sql`DELETE FROM sample_atlas WHERE sample_id = ${sampleId} AND assigned_by IS NULL`.execute(trx);
   await sql`INSERT INTO sample_atlas (sample_id, atlas_id)
-            SELECT sample_id, should_be FROM sample_atlas_unfilled WHERE sample_id = ${sampleId}`.execute(trx);
+            SELECT s.entity_id, r.atlas_id FROM sample s
+            JOIN atlas_region r ON r.state_province = s.state_province AND r.country = s.country
+            WHERE s.entity_id = ${sampleId} AND r.atlas_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM sample_atlas sa WHERE sa.sample_id = s.entity_id)`.execute(trx);
 }
 
 export function setStaffPlace(db: Kysely<Database>, correctionsPath: string, sampleId: number, input: PlaceInput): Promise<PlaceResult> {
@@ -190,7 +201,7 @@ export function setStaffPlace(db: Kysely<Database>, correctionsPath: string, sam
     if (await followsItsPoint(db, sampleId)) return { outcome: "follows_point" };
 
     const atlasBefore = await atlasOf(db, sampleId);
-    const stateChanged = changed.includes("state_province");
+    const regionChanged = changed.includes("state_province") || changed.includes("country");
     const oldRecords = await fromOldRecords(db, sampleId);
     try {
       if (oldRecords) {
@@ -200,7 +211,7 @@ export function setStaffPlace(db: Kysely<Database>, correctionsPath: string, sam
           correctionsPath,
           sample,
           { values, bases: {}, note: input.note, author: input.author },
-          { inTransaction: async (trx) => (stateChanged ? reassignAtlas(trx, sampleId) : undefined) },
+          { inTransaction: async (trx) => (regionChanged ? reassignAtlas(trx, sampleId) : undefined) },
         );
         // fromOldRecords found the records the plan reads, so neither can happen; said rather than assumed.
         if (written.outcome !== "saved") return { outcome: "unchanged" };
@@ -211,7 +222,7 @@ export function setStaffPlace(db: Kysely<Database>, correctionsPath: string, sam
             .set(Object.fromEntries(changed.map((f) => [f, next[f]])))
             .where("entity_id", "=", sampleId)
             .execute();
-          if (stateChanged) await reassignAtlas(trx, sampleId);
+          if (regionChanged) await reassignAtlas(trx, sampleId);
         });
       }
     } catch (err) {

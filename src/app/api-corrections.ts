@@ -154,7 +154,8 @@ type AnyFailure = Extract<
 
 /** A refused correction as the API answers it. The switch ends in `unreachable`, so a new refusal fails the typecheck. */
 function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
-  c.set("outcome", failure.refusal);
+  // A change recorded and not applied is recorded under the name its answer gives, as the thrown conflict's is.
+  c.set("outcome", failure.refusal === "not_applied" ? "recorded_not_applied" : failure.refusal);
   switch (failure.refusal) {
     case "invalid":
       return apiError(c, 422, "invalid", failure.problem);

@@ -104,6 +104,25 @@ describe("staff correcting a sample's country, state and county", { timeout: 120
     expect((await placeOf(s.conn, s.net))?.[3]).toBe("OBA");
   });
 
+  it("takes a state code another country also uses, and gives the sample no atlas by it", async () => {
+    const s = await setup();
+    // OBAS-00657 is in WA, Washington, and files under the Washington atlas; Western Australia is WA too.
+    expect((await placeOf(s.conn, s.trap))?.slice(1)).toEqual(["WA", null, "WaBA"]);
+    const result = await setSamplePlace(s.deps, s.staff, s.trap, { values: { country: "AUS" }, note: "" });
+    expect(result).toEqual({
+      ok: true,
+      outcome: "saved",
+      changes: [
+        { field: "country", from: "USA", to: "AUS" },
+        { field: "atlas", from: "WaBA", to: null },
+      ],
+    });
+    expect(await rows(s.conn, `SELECT count(*) FROM sample_atlas WHERE sample_id = ${s.trap}`)).toEqual([[0n]]);
+    // And back: the USA's WA is the Washington atlas's again.
+    await setSamplePlace(s.deps, s.staff, s.trap, { values: { country: "USA" }, note: "" });
+    expect((await placeOf(s.conn, s.trap))?.[3]).toBe("WaBA");
+  });
+
   it("writes a Canadian sample's country into the old records as the old Beeline wrote it", async () => {
     const s = await setup();
     const result = await setSamplePlace(s.deps, s.staff, s.trap, { values: { country: "can", state_province: "BC", county: "Capital" }, note: "" });

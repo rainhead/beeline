@@ -720,6 +720,8 @@ export function setSamplePlace(deps: CorrectionDeps, actor: Actor, sampleId: num
     if (!actor.staff) return refused("not_admin");
     const found = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select("entity_id").executeTakeFirst();
     if (found === undefined) return refused("not_found");
+    // Asked again in the queue turn: a job may have started while this waited for it (CodeRabbit).
+    if (deps.syncJobRunning()) return refused("busy");
     return { ready: null };
   };
   return correct(sampleId, input, gates, async (_, form): Promise<SamplePlaceResult> => {

@@ -1,5 +1,5 @@
 import { sql, type Kysely } from "kysely";
-import { followsPointSql } from "../derive-area.js";
+import { AREA_RULE_VERSION, followsPointSql } from "../derive-area.js";
 import type { Database } from "../model.js";
 import { withPrintRunLock } from "../print-run.js";
 import { isWriteConflict } from "../write-conflict.js";
@@ -125,7 +125,11 @@ async function problemWith(db: Kysely<Database>, next: Record<PlaceField, string
 /**
  * Whether the nightly writes this sample's place from its point: it follows
  * the point, and has one, and the areas step has not found that point to be
- * in no county or in two (a point not yet tested may be in one).
+ * in no county or in two. A point not yet tested may be in one, and so may
+ * one tested under an older rule or against an older gazetteer, which the
+ * next nightly tests again (CodeRabbit): only a derivation under the current
+ * rule and the newest build any derivation used counts. The store does not
+ * hold which gazetteer is current, so the newest build in use stands for it.
  */
 async function followsItsPoint(db: Kysely<Database>, sampleId: number): Promise<boolean> {
   const found = await sql<{ follows: boolean }>`
@@ -137,6 +141,8 @@ async function followsItsPoint(db: Kysely<Database>, sampleId: number): Promise<
                                WHERE d.sample_id = s.entity_id
                                  AND abs(d.latitude - l.latitude) <= 5e-5
                                  AND abs(d.longitude - l.longitude) <= 5e-5
+                                 AND d.rule_version = ${AREA_RULE_VERSION}
+                                 AND d.gazetteer_build = (SELECT arg_max(gazetteer_build, derived_at) FROM sample_area_derivation)
                                  AND d.country IS NULL)) AS follows
     FROM sample s WHERE s.entity_id = ${sampleId}`.execute(db);
   return Boolean(found.rows[0]?.follows);

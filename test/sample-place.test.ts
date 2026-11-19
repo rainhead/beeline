@@ -6,6 +6,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
 import { createKysely } from "../src/db.js";
 import { compareLegacyExport, writeDifferences } from "../src/compare-legacy-export.js";
+import { AREA_RULE_VERSION } from "../src/derive-area.js";
 import { parseCsv } from "../src/corrections.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
@@ -228,9 +229,22 @@ describe("staff correcting a sample's country, state and county", { timeout: 120
       // Tested, and in no county: the nightly writes nothing, so staff may.
       await s.conn.run(
         `INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, rule_version, country, state_province, derived_at)
-         SELECT sample_id, latitude, longitude, 'test', 2, NULL, NULL, now() FROM sample_location WHERE sample_id = ${following}`,
+         SELECT sample_id, latitude, longitude, 'test', ${AREA_RULE_VERSION}, NULL, NULL, now() FROM sample_location WHERE sample_id = ${following}`,
       );
       expect(await invalid(s, following, { county: "Linn" })).toBe("saved");
+      // A newer gazetteer is in use elsewhere, so the next nightly tests this point again and may find a county.
+      await insertCleanSample(s.conn, { sample_number: "'F-2'", inat_observation_id: "515152" });
+      await s.conn.run(
+        `INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, rule_version, country, state_province, derived_at)
+         SELECT sample_id, latitude, longitude, 'newer', ${AREA_RULE_VERSION}, 'USA', 'OR', now() + INTERVAL 1 DAY FROM sample_location
+         WHERE sample_id = (SELECT entity_id FROM sample WHERE sample_number = 'F-2')`,
+      );
+      expect(await invalid(s, following, { county: "Benton" })).toBe("follows_point");
+      await s.conn.run(`DELETE FROM sample_area_derivation WHERE gazetteer_build = 'newer'`);
+      // So may one tested under an older rule.
+      await s.conn.run(`UPDATE sample_area_derivation SET rule_version = ${AREA_RULE_VERSION - 1} WHERE sample_id = ${following}`);
+      expect(await invalid(s, following, { county: "Benton" })).toBe("follows_point");
+      await s.conn.run(`UPDATE sample_area_derivation SET rule_version = ${AREA_RULE_VERSION} WHERE sample_id = ${following}`);
       // Tested at a point it has since left: it may be in a county now.
       await s.conn.run(`UPDATE sample_location SET latitude = latitude + 0.1 WHERE sample_id = ${following}`);
       expect(await invalid(s, following, { county: "Benton" })).toBe("follows_point");
@@ -261,6 +275,8 @@ describe("staff correcting a sample's country, state and county", { timeout: 120
       expect(await setSamplePlace(s.deps, { ...s.staff, staff: false }, s.trap, values)).toEqual({ ok: false, refusal: "not_admin" });
       expect(await setSamplePlace(s.deps, { ...s.staff, staff: false, impersonating: true }, s.trap, values)).toEqual({ ok: false, refusal: "impersonating" });
       expect(await setSamplePlace(s.deps, s.staff, 999_999, values)).toEqual({ ok: false, refusal: "not_found" });
+      // While the nightly or the weekly sweep runs, which rewrite samples wholesale.
+      expect(await setSamplePlace({ ...s.deps, syncJobRunning: () => true }, s.staff, s.trap, values)).toEqual({ ok: false, refusal: "busy" });
       expect(await correctionsIn(s.paths.correctionsPath)).toEqual([]);
     });
   });

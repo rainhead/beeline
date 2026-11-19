@@ -742,8 +742,11 @@ SELECT s.sample_id, s.kind,
        CASE WHEN x.name IS NULL THEN s.host_rank END,
        -- Country to ISO 3166-1 alpha-3, matching the 'USA' that most records
        -- already carry. Canada arrived spelled both ways, splitting British
-       -- Columbia's records as well as the Yukon's.
-       CASE nullif(s.country, '') WHEN 'CA' THEN 'CAN' WHEN 'NZ' THEN 'NZL'
+       -- Columbia's records as well as the Yukon's. MX is in no old record;
+       -- it is here because a staff correction writes Mexico's as the
+       -- export does (legacyCountry, src/app/sample-edit.ts), and a rebuild
+       -- must read it back.
+       CASE nullif(s.country, '') WHEN 'CA' THEN 'CAN' WHEN 'NZ' THEN 'NZL' WHEN 'MX' THEN 'MEX'
                                   ELSE nullif(s.country, '') END,
        nullif(s.state_province, ''),
        nullif(s.county, ''), nullif(s.locality, ''), nullif(s.protocol, '')

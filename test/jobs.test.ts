@@ -324,7 +324,7 @@ describe("night steps kept in the store (beeline-e1xg)", () => {
 });
 
 describe("scheduler", () => {
-  it("runs due jobs on tick and records history", async () => {
+  it("runs a job once when it is due, and records that it succeeded", async () => {
     const deps = await jobDeps();
     let ran = 0;
     const scheduler = startScheduler({

@@ -233,15 +233,16 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
     // saveDrafts keeps no draft that says what the newest volunteer identification already says, so with no draft
     // to replace, saving would change nothing, and the file would say the same again next time.
     const prior = entry.prior;
-    if (
-      entry.draft === null &&
-      prior !== null &&
-      prior.animalId === animalId &&
-      ecdysisTid === null &&
-      prior.sex === write.sex &&
-      prior.caste === write.caste
-    ) {
+    const saidAlready = prior !== null && prior.animalId === animalId && ecdysisTid === null && prior.sex === write.sex && prior.caste === write.caste;
+    if (saidAlready && entry.draft === null) {
       hold("already_said", "scientificName");
+      continue;
+    }
+    // With a draft, saveDrafts would remove it rather than keep one that says what another volunteer already says,
+    // and the person's own identification would fall back to an older one of theirs: not what the file asked for
+    // (CodeRabbit). Not saved, and the note says how to do what saving would have done.
+    if (saidAlready) {
+      hold("matches_another", "scientificName");
       continue;
     }
     lines.push({ difference: d, write, name: { animalId, ecdysisTid }, replacesDraft: entry.draft !== null });

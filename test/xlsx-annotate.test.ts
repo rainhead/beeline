@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
-import { annotateWorkbook, canAnnotate, type ColumnToAdd } from "../src/app/xlsx-annotate.js";
+import { MAX_UNPACKED_BYTES, annotateWorkbook, canAnnotate, type ColumnToAdd } from "../src/app/xlsx-annotate.js";
 import { readXlsxHere } from "../src/app/xlsx-reader.js";
 import { buildWorkbook, serialOf } from "./workbook.js";
 
@@ -121,7 +121,12 @@ describe("adding the note column to a person's own workbook", () => {
     const files = unzipSync(buildWorkbook([["specimenId"], ["1"]]));
     const unplaced = strFromU8(files["xl/worksheets/sheet1.xml"]!).replace(/ r="A2"/, "");
     expect(canAnnotate(rezip(files, unplaced), "specimens").ok).toBe(false);
-    expect(canAnnotate(new Uint8Array([1, 2, 3]), "specimens")).toEqual({ ok: false, why: "the file cannot be unzipped" });
+    expect(canAnnotate(new Uint8Array([1, 2, 3]), "specimens")).toEqual({ ok: false, why: "the file cannot be unzipped, or unpacks to too much" });
+    // A zip that says a part unpacks to more than the limit is not unpacked at all.
+    const bomb = buildWorkbook([["specimenId"], ["1"]]);
+    const view = new DataView(bomb.buffer, bomb.byteOffset, bomb.byteLength);
+    for (let at = 0; at + 46 <= bomb.byteLength; at++) if (view.getUint32(at, true) === 0x02014b50) view.setUint32(at + 24, MAX_UNPACKED_BYTES + 1, true);
+    expect(canAnnotate(bomb, "specimens")).toEqual({ ok: false, why: "the file cannot be unzipped, or unpacks to too much" });
     expect(canAnnotate(theirs(), "Sheet1").ok).toBe(false);
   });
 });

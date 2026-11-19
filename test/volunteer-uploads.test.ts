@@ -301,6 +301,24 @@ describe("uploading a volunteer's file", () => {
     expect(await drafts(f)).toEqual([[f.ids.a2, f.volunteer, "Bombus", "male", "drone"]]);
   });
 
+  it("does not save a name that only agrees with another volunteer's while she has something typed on Identify specimens", async () => {
+    const f = await uploadFixture("volunteer");
+    // Her own older identification of a2, another volunteer's newer one, and a sex she typed on Identify specimens.
+    await f.conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_id, verbatim_identification, recorded_at)
+       SELECT ${f.ids.a2}, entity_id, false, 'in_app', ${f.volunteer}, 'Bombus', TIMESTAMP '2020-01-01' FROM animal WHERE scientific_name = 'Bombus'`,
+    );
+    await f.conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name, verbatim_identification, sex)
+       SELECT ${f.ids.a2}, entity_id, false, 'in_app', 'A Volunteer', 'Bombus vosnesenskii', 'female' FROM animal WHERE scientific_name = 'Bombus vosnesenskii'`,
+    );
+    await saveDrafts(f.db, f.volunteer, f.volunteer, [{ specimenId: f.ids.a2, sex: "male", caste: null }]);
+    const { notes, digest } = await preview(f, edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus vosnesenskii", sex: "female", caste: "" } }]));
+    expect(notes.get(String(f.ids.a2))).toBe(n.notSaved(n.reason.matches_another!));
+    expect(digest).toBeNull();
+    expect((await drafts(f)).map((r) => r[0])).toEqual([f.ids.a2]);
+  });
+
   it("replaces what was typed on Identify specimens before the download; holds a row changed there after it", async () => {
     const f = await uploadFixture("volunteer");
     await saveDrafts(f.db, f.volunteer, f.volunteer, [{ specimenId: f.ids.a2, animalId: null, sex: "female", caste: null }]);

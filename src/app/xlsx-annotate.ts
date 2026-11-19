@@ -50,6 +50,30 @@ const columnOf = (ref: string): number | null => {
   return m === null ? null : columnIndex(m[1]!);
 };
 
+/**
+ * The most the parts of a file may unpack to, by what the zip says of them, before any is unpacked. The reader has
+ * read the sheet in a worker with its own limits, but not every part, and this unpacks every part on the request
+ * thread: a small file with one part that unpacks to gigabytes must not (CodeRabbit). Beeline's own download of
+ * 20,000 rows unpacks to a few tens of megabytes.
+ */
+export const MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
+
+/** Every part of the zip, or null for a zip that cannot be read or says it unpacks to more than the limit. */
+function unpack(bytes: Uint8Array): Record<string, Uint8Array> | null {
+  let total = 0;
+  try {
+    return unzipSync(bytes, {
+      filter: (file) => {
+        total += file.originalSize;
+        if (total > MAX_UNPACKED_BYTES) throw new Error("too large unpacked");
+        return true;
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** The path of the named sheet's XML inside the zip, or why it cannot be found. */
 function sheetPath(files: Record<string, Uint8Array>, sheetName: string): string | { why: string } {
   const workbook = files["xl/workbook.xml"];
@@ -95,12 +119,8 @@ function inspect(xml: string): { lastColumn: number } | { why: string } {
 
 /** Whether the person's own file can be handed back with a column added, or why not. */
 export function canAnnotate(bytes: Uint8Array, sheetName: string): { ok: true } | { ok: false; why: string } {
-  let files: Record<string, Uint8Array>;
-  try {
-    files = unzipSync(bytes);
-  } catch {
-    return { ok: false, why: "the file cannot be unzipped" };
-  }
+  const files = unpack(bytes);
+  if (files === null) return { ok: false, why: "the file cannot be unzipped, or unpacks to too much" };
   const path = sheetPath(files, sheetName);
   if (typeof path !== "string") return { ok: false, why: path.why };
   const facts = inspect(strFromU8(files[path]!));
@@ -111,12 +131,8 @@ const inlineCell = (ref: string, text: string) => `<c r="${ref}" t="inlineStr"><
 
 /** The person's own file with one column added or rewritten, or why it was not. */
 export function annotateWorkbook(bytes: Uint8Array, add: ColumnToAdd): Annotated {
-  let files: Record<string, Uint8Array>;
-  try {
-    files = unzipSync(bytes);
-  } catch {
-    return { ok: false, why: "the file cannot be unzipped" };
-  }
+  const files = unpack(bytes);
+  if (files === null) return { ok: false, why: "the file cannot be unzipped, or unpacks to too much" };
   const path = sheetPath(files, add.sheetName);
   if (typeof path !== "string") return { ok: false, why: path.why };
   let xml = strFromU8(files[path]!);

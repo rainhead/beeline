@@ -130,6 +130,7 @@ export const HOLD_REASONS = [
   "caste_no_sex",
   "drone_unsaid",
   "already_said",
+  "matches_another",
 ] as const;
 export type HoldReason = (typeof HOLD_REASONS)[number];
 /** The reasons only a volunteer's drafts hold for (src/app/upload-drafts.ts), never the comparison itself. */
@@ -142,6 +143,7 @@ export const DRAFT_HOLDS: readonly HoldReason[] = [
   "caste_no_sex",
   "drone_unsaid",
   "already_said",
+  "matches_another",
 ];
 const ROW_HOLDS: readonly HoldReason[] = ["no_id", "repeated", "no_specimen", "number_disagrees"];
 

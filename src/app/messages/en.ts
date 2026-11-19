@@ -2428,6 +2428,8 @@ export const en = {
         caste_no_sex: "give the sex too: a gyne or worker is female, and a drone is male.",
         drone_unsaid: "a male bumble bee is a drone. Type drone in caste.",
         already_said: "Beeline already has this identification.",
+        matches_another:
+          "another volunteer's identification of this bee already says this, so Beeline can't save it as yours from a file. To agree with it, clear what you typed for this bee on Identify specimens.",
       } as Record<string, string>,
     },
   },

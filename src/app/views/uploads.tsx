@@ -1,7 +1,7 @@
 import type { Messages } from "../messages/index.js";
 import { driveFileHref } from "../upload-archive.js";
-import type { StaffSummary, VolunteerSummary } from "../upload-notes.js";
-import type { UnrecognisedColumn } from "../upload-plan.js";
+import type { SamplesSummary, StaffSummary, VolunteerSummary } from "../upload-notes.js";
+import type { SeasonSplit, UnrecognisedColumn } from "../upload-plan.js";
 import { Button, Callout, Card, DataTable, EmptyState, Field, LinkButton, Meta, PageHeader, TextField } from "./components/index.js";
 
 /**
@@ -96,14 +96,14 @@ export interface VolunteerPreview {
 }
 
 /** Columns the file has that Beeline did not read, and tabs it did not read: a line each, only where there are any. */
-function NotRead({ m, unrecognised, otherSheets }: { m: Messages; unrecognised: UnrecognisedColumn[]; otherSheets: string[] }) {
+function NotRead({ m, unrecognised, otherSheets, read }: { m: Messages; unrecognised: UnrecognisedColumn[]; otherSheets: string[]; read?: string }) {
   const p = m.uploads.page;
   return (
     <>
       {unrecognised.length > 0 && (
         <p>{p.unrecognised(m.format.list(unrecognised.map((c) => (c.probably === null ? c.header : p.probably(c.header, c.probably)))))}</p>
       )}
-      {otherSheets.length > 0 && <p>{p.otherSheets(m.format.list(otherSheets))}</p>}
+      {otherSheets.length > 0 && <p>{p.otherSheets(m.format.list(otherSheets), read)}</p>}
     </>
   );
 }
@@ -115,6 +115,7 @@ export function UploadPreview({
   otherSheets,
   volunteer = null,
   staffSummary = null,
+  samplesSummary = null,
   staff = true,
   notesCopy = false,
 }: {
@@ -126,13 +127,15 @@ export function UploadPreview({
   volunteer?: VolunteerPreview | null;
   /** Staff's file, which changes nothing. */
   staffSummary?: StaffSummary | null;
+  /** The samples file, which changes nothing. */
+  samplesSummary?: SamplesSummary | null;
   /** Whether the reader is staff, who alone can open the copy kept in the program's shared drive. */
   staff?: boolean;
   /** The file with notes is a copy Beeline makes, since the person's own file cannot have a column added safely. */
   notesCopy?: boolean;
 }) {
   const p = m.uploads.page;
-  const rows = volunteer?.summary.rows ?? staffSummary?.rows ?? upload.row_count;
+  const rows = volunteer?.summary.rows ?? staffSummary?.rows ?? samplesSummary?.rows ?? upload.row_count;
   // Only the counts that are not zero: a line that says nothing is left off.
   const lines: string[] = [];
   if (volunteer !== null) {
@@ -148,7 +151,22 @@ export function UploadPreview({
     if (s.same > 0) lines.push(p.same(s.same));
     if (s.grey > 0) lines.push(p.staffGrey(s.grey));
   }
-  const notes = volunteer !== null ? volunteer.summary.notSaved + volunteer.summary.grey > 0 : staffSummary !== null && staffSummary.same < staffSummary.rows;
+  if (samplesSummary !== null) {
+    const c = samplesSummary.counts;
+    const total = (split: SeasonSplit) => split.active + split.settled + split.unplaced;
+    // Each count says how many of its rows are in the active seasons and how many in settled ones.
+    const split = (of: SeasonSplit) => p.split(of.active, of.settled, of.unplaced);
+    if (total(c.newReady) > 0) lines.push(p.samplesNew(total(c.newReady), split(c.newReady)));
+    if (total(c.cantUse) > 0) lines.push(p.samplesCantUse(total(c.cantUse), split(c.cantUse)));
+    if (total(c.differ) > 0) lines.push(p.samplesDiffer(total(c.differ), split(c.differ)));
+    if (total(c.same) > 0) lines.push(p.samplesSame(total(c.same), split(c.same)));
+  }
+  const notes =
+    volunteer !== null
+      ? volunteer.summary.notSaved + volunteer.summary.grey > 0
+      : staffSummary !== null
+        ? staffSummary.same < staffSummary.rows
+        : samplesSummary !== null && samplesSummary.counts.same.active + samplesSummary.counts.same.settled + samplesSummary.counts.same.unplaced < samplesSummary.rows;
   return (
     <>
       <PageHeader title={p.title(upload.file_name)} lede={p.rows(rows)} meta={p.uploaded(m.format.dateTime(upload.uploaded_at), upload.uploader)} />
@@ -168,10 +186,14 @@ export function UploadPreview({
       )}
       {volunteer !== null && volunteer.changedSince && <Callout tone="warning">{p.changedSince}</Callout>}
       {staffSummary !== null && <Callout>{p.staffNothingChanged}</Callout>}
+      {samplesSummary !== null && <Callout>{p.samplesNothingChanged}</Callout>}
       {lines.map((line) => (
         <p>{line}</p>
       ))}
-      <NotRead m={m} unrecognised={unrecognised} otherSheets={otherSheets} />
+      {samplesSummary !== null && samplesSummary.unknownCollectors.length > 0 && (
+        <p>{p.samplesUnknownCollectors(m.format.list(samplesSummary.unknownCollectors.map((c) => p.samplesUnknownCollector(c.name, c.rows))))}</p>
+      )}
+      <NotRead m={m} unrecognised={unrecognised} otherSheets={otherSheets} read={samplesSummary !== null ? "samples" : undefined} />
       <div class="row">
         {volunteer !== null && volunteer.canSave && (
           <form method="post" action={`${uploadHref(upload.entity_id)}/apply`}>
@@ -185,7 +207,7 @@ export function UploadPreview({
           </LinkButton>
         )}
       </div>
-      {staffSummary !== null && notes && <Meta block>{p.staffNotes}</Meta>}
+      {(staffSummary !== null || samplesSummary !== null) && notes && <Meta block>{p.staffNotes}</Meta>}
       {notes && notesCopy && <Meta block>{p.notesCopy}</Meta>}
     </>
   );

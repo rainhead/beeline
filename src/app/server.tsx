@@ -79,18 +79,22 @@ import { addressRows, needsLookup, runCollectors, runHasRegistration, type RunCo
 import { IdealLogicError, type Registrant } from "../ideal-logic.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
+import { samplesFileRow, samplesWorkbook } from "./sample-workbook.js";
+import { planSamples } from "./samples-upload-plan.js";
 import {
   MAX_FILE_BYTES,
+  MAX_ROWS as UPLOAD_MAX_ROWS,
   SPECIMENS_LAYOUT,
   VOLUNTEER_LAYOUT,
   comparePlan,
+  parseAnyUpload,
   parseUpload,
   type Layout as UploadLayout,
   type Parsed,
   type ParsedUpload,
 } from "./upload-plan.js";
 import { draftPlan, draftState, fileSpecimenIds, type DraftWho } from "./upload-drafts.js";
-import { notesFile, staffNotes, volunteerNotes } from "./upload-notes.js";
+import { notesFile, samplesNotes, staffNotes, volunteerNotes } from "./upload-notes.js";
 import { canAnnotate } from "./xlsx-annotate.js";
 import { ownIdentifications, ownVersion, withOwnIdentification } from "./own-identification.js";
 import type { ReadLimits } from "./xlsx-reader.js";
@@ -1247,6 +1251,29 @@ export function createApp({
     return csv(c, body, "beeline-samples");
   });
 
+  // The Excel file for editing samples, one row for each sample of every kind (beeline-kgyd.4.9), staff's alone for
+  // now. It takes the samples listing's query as the specimens file takes the specimens listing's. The upload reads
+  // at most UPLOAD_MAX_ROWS rows, so the file stops there too, and the note beside the button says so: a file the
+  // upload refuses whole would be worse than one that stops short.
+  app.get("/samples.xlsx", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const { personId, reader, query } = await listingRequest(c);
+    countListingView(listingAttributes("samples", "xlsx", query, viewer(c)));
+    const workbook = await samplesWorkbook(db, c.get("m"));
+    const rows = (limit: number, offset: number) =>
+      listSamples(db, query, personId, reader, {
+        limit: Math.max(0, Math.min(limit, UPLOAD_MAX_ROWS - offset)),
+        offset,
+        withTotal: false,
+        withFlagWords: false,
+        hostNames: "common",
+      });
+    return c.body(xlsxStream("samples", workbook.header, rows, samplesFileRow, csvGenerationTiming("samples"), workbook.options), 200, {
+      "content-type": XLSX_CONTENT_TYPE,
+      "content-disposition": `attachment; filename="${exportFilename("beeline-samples", new Date(), "xlsx")}"`,
+    });
+  });
+
   /** What the last bulk reprint marked, read back off the redirect (beeline-1kb.23). */
   const reprintedOutcome = (c: Context<AppEnv>) => {
     const requested = Number(c.req.query("reprinted"));
@@ -2324,10 +2351,16 @@ export function createApp({
     let driveId: string | null = null;
     try {
       await writeFile(keptAt, bytes);
-      const parsed = await parseUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits, layoutFor(staff));
+      // Either file: which it is comes from the file itself.
+      const parsed = await parseAnyUpload(new Uint8Array(await readFile(keptAt)), uploadReadLimits, layoutFor(staff));
       if (!parsed.ok) {
         await rm(uploadFolder(id), { recursive: true, force: true });
         return uploadForm(c, refusalText(m, parsed), 400);
+      }
+      // The samples file is staff's alone for now.
+      if (parsed.upload.layout.kind === "samples" && !staff) {
+        await rm(uploadFolder(id), { recursive: true, force: true });
+        return uploadForm(c, m.uploads.refused.staff_only_samples!, 400);
       }
       const uploadedAt = new Date();
       if (uploadArchive !== null) {
@@ -2414,11 +2447,11 @@ export function createApp({
     if (createHash("sha256").update(bytes).digest("hex") !== row.sha256) {
       return { problem: c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileAltered} />), 500) };
     }
-    let parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, layout);
+    let parsed = await parseAnyUpload(new Uint8Array(bytes), uploadReadLimits, layout);
     // Staff's file from someone who is no longer staff: read as staff's, compared and never saved (CodeRabbit).
     let staffFile = layout !== VOLUNTEER_LAYOUT;
     if (!parsed.ok && parsed.refusal === "staff_file") {
-      parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, layoutFor(true));
+      parsed = await parseAnyUpload(new Uint8Array(bytes), uploadReadLimits, layoutFor(true));
       staffFile = true;
     }
     if (!parsed.ok) return { problem: c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={refusalText(m, parsed)} />), 500) };
@@ -2452,6 +2485,12 @@ export function createApp({
    */
   const uploadOutcome = async (c: Context<AppEnv>, row: VisibleUpload, kept: { upload: ParsedUpload; staffFile: boolean; bytes: Uint8Array }) => {
     const m = c.get("m");
+    if (kept.upload.layout.kind === "samples") {
+      // Compared as the viewer sees locations: staff see every one, and someone no longer staff only their own.
+      if (conn === undefined) throw new Error("comparing a samples file needs the store connection");
+      const plan = await planSamples(db, conn, kept.upload, c.get("admin") ? {} : { reader: readerOf(c) });
+      return { kind: "samples" as const, plan, noted: samplesNotes(m, kept.upload, plan) };
+    }
     if (kept.staffFile) {
       const plan = await comparePlan(db, kept.upload, c.get("admin") ? {} : { view: { reader: readerOf(c) } });
       return { kind: "staff" as const, plan, noted: staffNotes(m, kept.upload, plan) };
@@ -2472,7 +2511,7 @@ export function createApp({
     const { sha256: _kept, uploaded_by: _by, applied_at, draft_count, ...shown } = row;
     const upload: UploadDetail = shown;
     const volunteer =
-      outcome.kind === "staff"
+      outcome.kind !== "volunteer"
         ? null
         : {
             summary: outcome.noted.summary,
@@ -2492,6 +2531,7 @@ export function createApp({
           otherSheets={outcome.plan.otherSheets}
           volunteer={volunteer}
           staffSummary={outcome.kind === "staff" ? outcome.noted.summary : null}
+          samplesSummary={outcome.kind === "samples" ? outcome.noted.summary : null}
           staff={c.get("admin")}
           notesCopy={!canAnnotate(kept.bytes, kept.upload.sheetName).ok}
         />,
@@ -2530,7 +2570,7 @@ export function createApp({
       const again = await parseUpload(patched, uploadReadLimits, kept.upload.layout);
       return again.ok ? again.upload : null;
     };
-    const { bytes } = await notesFile(db, c.get("m"), kept.bytes, kept.upload, outcome.noted.notes, outcome.kind === "staff" ? "staff" : "volunteer", reread);
+    const { bytes } = await notesFile(db, c.get("m"), kept.bytes, kept.upload, outcome.noted.notes, outcome.kind === "samples" ? "samples" : outcome.kind === "staff" ? "staff" : "volunteer", reread);
     return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
       "content-type": XLSX_CONTENT_TYPE,
       "content-disposition": `attachment; filename="beeline-upload-${row.entity_id}-with-notes.xlsx"`,
@@ -2556,7 +2596,7 @@ export function createApp({
     const asked = String((await c.req.formData()).get("digest") ?? "");
     const kept = await readKept(c, row, VOLUNTEER_LAYOUT);
     if (kept.problem !== undefined) return kept.problem;
-    if (kept.staffFile) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
+    if (kept.staffFile || kept.upload.layout.kind === "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
     const { who } = draftWho(c, row);
     const applied = async () =>
       (await db.selectFrom("upload_applied").select("upload_id").where("upload_id", "=", row.entity_id).executeTakeFirst()) !== undefined;

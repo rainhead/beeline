@@ -2015,7 +2015,7 @@ export function xlsxStream<Row>(
   toRow: (row: Row, page: Page<Row>) => readonly unknown[],
   timing?: CsvTiming,
   /** What the workbook offers beyond the rows: choices, extra sheets, shading (xlsxWriter's options). */
-  options?: Pick<XlsxWriterOptions, "sheets" | "choices" | "shadedColumns" | "boldHeadings">,
+  options?: Pick<XlsxWriterOptions, "sheets" | "choices" | "shadedColumns" | "boldHeadings" | "widths" | "wrappedColumns">,
 ): ReadableStream<Uint8Array> {
   const writer = xlsxWriter({ sheetName, header, ...options });
   return pagedStream(

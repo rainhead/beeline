@@ -469,7 +469,7 @@ function DownloadMenu({ m, path, query, staff }: { m: Messages; path: string; qu
       </>
     );
   }
-  return (
+  const menu = (
     <details class="menu download-menu">
       <summary class="button tonal">
         {d.menu} <ChevronDownIcon />
@@ -480,6 +480,19 @@ function DownloadMenu({ m, path, query, staff }: { m: Messages; path: string; qu
       </div>
     </details>
   );
+  // Staff's Excel file for editing samples (beeline-kgyd.4.9), beside the CSV.
+  if (path === "/samples" && staff) {
+    return (
+      <>
+        {menu}
+        <LinkButton href={listingHref(`${path}.xlsx`, query, { page: 1 })} variant="tonal">
+          {d.editSamples}
+        </LinkButton>
+        <Meta>{d.editSamplesNote}</Meta>
+      </>
+    );
+  }
+  return menu;
 }
 
 function ListingPager({ m, path, query, total }: { m: Messages; path: string; query: ListingQuery; total: number }) {
@@ -1098,6 +1111,7 @@ export function SpecimenListing(
         <ListingActions m={m} path={path} query={query} total={page.total} staff={admin}>
           {admin && <BulkActions m={m} path={path} query={query} />}
           {path === "/specimens" && <a href="/uploads">{m.uploads.linkFromSpecimens}</a>}
+          {path === "/samples" && admin && <a href="/uploads">{m.uploads.linkFromSpecimens}</a>}
         </ListingActions>
       )}
       {page.rows.length === 0 ? (

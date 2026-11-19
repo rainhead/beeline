@@ -1,10 +1,12 @@
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import type { Messages } from "./messages/en.js";
+import { samplesWorkbook } from "./sample-workbook.js";
+import type { SampleRowResult, SamplesCounts, SamplesPlan, UnknownCollector } from "./samples-upload-plan.js";
 import { specimenWorkbook, type Audience } from "./specimen-workbook.js";
 import type { DraftPlan } from "./upload-drafts.js";
 import { NOTE_COLUMN, type HeldItem, type ParsedUpload, type UploadPlan } from "./upload-plan.js";
-import { writeXlsx } from "./xlsx.js";
+import { writeXlsx, type XlsxWriterOptions } from "./xlsx.js";
 import { annotateWorkbook } from "./xlsx-annotate.js";
 
 /**
@@ -38,6 +40,14 @@ export interface StaffSummary {
   same: number;
   /** Rows with a difference only in columns Beeline does not read from this file. */
   grey: number;
+}
+
+export interface SamplesSummary {
+  kind: "samples";
+  rows: number;
+  counts: SamplesCounts;
+  /** Names in the file that match nobody, or several people, each once. */
+  unknownCollectors: UnknownCollector[];
 }
 
 export interface Noted<S> {
@@ -122,6 +132,43 @@ export function staffNotes(m: Messages, upload: ParsedUpload, plan: UploadPlan):
   return { notes, summary };
 }
 
+/**
+ * The samples file, which changes nothing yet: what differs, cell by cell, which rows would become new trap samples,
+ * and what Beeline could not use, each as a note on its row. A row that has both a difference and something it cannot
+ * use says both.
+ */
+export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPlan): Noted<SamplesSummary> {
+  const n = m.uploads.notes;
+  const byRow = new Map<number, SampleRowResult>(plan.rows.map((r) => [r.row, r]));
+  const reasons = (r: SampleRowResult): string => {
+    const said = new Set<string>();
+    for (const p of r.problems) {
+      said.add(
+        p.reason === "column_missing"
+          ? n.columnMissing(p.detail)
+          : p.reason === "collector_unknown" || p.reason === "new_row_problem"
+            ? p.detail
+            : (n.sampleReason[p.reason] ?? n.reason[p.reason] ?? p.reason),
+      );
+    }
+    return [...said].join(" ");
+  };
+  const notes = new Map<number, string>();
+  for (const { row } of upload.rows) {
+    const r = byRow.get(row);
+    if (r === undefined) continue;
+    const parts: string[] = [];
+    if (r.kind === "new") parts.push(r.problems.length === 0 ? n.newTrap : n.newTrapCantUse(reasons(r)));
+    else {
+      if (r.problems.length > 0) parts.push(n.cantUse(reasons(r)));
+      const changed = r.differences.map((d) => cellsText(m, d.cells.filter((c) => c.differs)));
+      if (changed.length > 0) parts.push(n.differs(changed.join("; ")));
+    }
+    notes.set(row, parts.join(" "));
+  }
+  return { notes, summary: { kind: "samples", rows: upload.rows.length, counts: plan.counts, unknownCollectors: plan.unknownCollectors } };
+}
+
 /** How wide the note column is drawn, in characters. */
 export const NOTE_WIDTH = 60;
 
@@ -137,7 +184,7 @@ export async function notesFile(
   original: Uint8Array,
   upload: ParsedUpload,
   notes: ReadonlyMap<number, string>,
-  audience: Audience,
+  audience: Audience | "samples",
   reread: (bytes: Uint8Array) => Promise<ParsedUpload | null>,
 ): Promise<{ bytes: Uint8Array; copy: boolean }> {
   const existing = upload.header.indexOf(NOTE_COLUMN);
@@ -179,17 +226,17 @@ export async function notesCopy(
   m: Messages,
   upload: ParsedUpload,
   notes: ReadonlyMap<number, string>,
-  audience: Audience,
+  audience: Audience | "samples",
 ): Promise<Uint8Array> {
   const keep = upload.header.map((h, at) => ({ h, at })).filter(({ h }) => h !== NOTE_COLUMN);
   const header = [...keep.map(({ h }) => h), NOTE_COLUMN];
   const has = (c: string) => header.includes(c);
-  const book = await specimenWorkbook(db, m, undefined, audience);
-  const o = book.options;
+  const book = audience === "samples" ? await samplesWorkbook(db, m) : await specimenWorkbook(db, m, undefined, audience);
+  const o: Partial<XlsxWriterOptions> = book.options;
   const rows = upload.rows.map(({ row, cells }) => [...keep.map(({ at }) => cells.get(at)?.text ?? null), notes.get(row) ?? ""]);
   return writeXlsx(
     {
-      sheetName: "specimens",
+      sheetName: audience === "samples" ? "samples" : "specimens",
       header,
       sheets: o.sheets,
       choices: Object.fromEntries(Object.entries(o.choices ?? {}).filter(([c]) => has(c))),

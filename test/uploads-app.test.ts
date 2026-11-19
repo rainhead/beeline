@@ -249,8 +249,16 @@ describe("keeping the file in Drive (beeline-kgyd.1)", () => {
 
   it("will not make a Drive archive under Vitest, so no test can write to the real folder", () => {
     expect(() => driveUploadArchive({ client_email: "x@example.com", private_key: "k", token_uri: "https://example.com" }, "folder")).toThrow(/Vitest/);
-    expect(() => serverUploadArchive({ client_email: "x@example.com", private_key: "k", token_uri: "https://example.com" })).toThrow(/Vitest/);
-    expect(serverUploadArchive(null)).toBeNull();
+    const key = { client_email: "x@example.com", private_key: "k", token_uri: "https://example.com" };
+    expect(() => serverUploadArchive(key, "production")).toThrow(/Vitest/);
+    expect(serverUploadArchive(null, "production")).toBeNull();
+  });
+
+  it("keeps nothing in Drive outside production, even with the key: the folder is production's", () => {
+    const key = { client_email: "x@example.com", private_key: "k", token_uri: "https://example.com" };
+    // Not made at all, so not even the Vitest guard is reached.
+    expect(serverUploadArchive(key, "development")).toBeNull();
+    expect(serverUploadArchive(key, "sandbox")).toBeNull();
   });
 });
 

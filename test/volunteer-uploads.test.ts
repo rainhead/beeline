@@ -317,6 +317,39 @@ describe("uploading a volunteer's file", () => {
   });
 });
 
+describe("what keeps its own reason", () => {
+  it("keeps a held row's reason when the specimen is the person's, and holds both ways a caste can contradict the sex", async () => {
+    const f = await uploadFixture("volunteer");
+    await f.conn.run(`INSERT OR REPLACE INTO animal_caste (rank, scientific_name, has_castes) VALUES ('genus', 'Bombus', true)`);
+    const bytes = edited(await ownFile(f), [
+      // Her own specimen, its field number changed: held for that, not as someone else's.
+      { id: f.ids.a1, set: { fieldNumber: "OBA99999", scientificName: "Bombus" } },
+      { id: f.ids.a2, set: { scientificName: "Bombus", sex: "male", caste: "worker" } },
+      { id: f.ids.b1, set: { scientificName: "Bombus", sex: "female", caste: "drone" } },
+    ]);
+    const { html, digest } = await preview(f, bytes);
+    expect(html).toContain(en.uploads.page.held.number_disagrees);
+    expect(html).not.toContain(en.uploads.page.held.not_yours);
+    // Both rows under the one heading: a male worker and a female drone.
+    const section = html.slice(html.indexOf(en.uploads.page.held.caste_sex!)).split("<h3")[0]!;
+    expect(section).toContain(">OBA10002<");
+    expect(section).toContain(">OBA10004<");
+    expect(digest).toBeNull();
+  });
+
+  it("still shows the upload of someone no longer staff, read as staff's file, and saves none of it", async () => {
+    const f = await uploadFixture("staffer");
+    const res = await upload(f, edited(await f.download(), [{ id: f.ids.a2, set: { scientificName: "Bombus" } }]));
+    const href = res.headers.get("location")!;
+    await f.conn.run(`DELETE FROM person_admin WHERE person_id = ${f.staffer}`);
+    const page = await f.app.request(href);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain(en.uploads.page.notChanged);
+    expect((await apply(f, href, "0".repeat(32))).status).toBe(404);
+    expect(await drafts(f)).toEqual([]);
+  });
+});
+
 describe("whose upload it is", () => {
   it("answers a volunteer 404 for someone else's upload, on the page and on saving", async () => {
     const f = await uploadFixture("volunteer");

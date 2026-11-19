@@ -19,7 +19,7 @@ import {
 } from "../src/app/listings.js";
 import { gatherSample } from "../src/app/record.js";
 import { readXlsxHere } from "../src/app/xlsx-reader.js";
-import { SPECIMENS_LAYOUT } from "../src/app/upload-plan.js";
+import { SPECIMENS_LAYOUT, VOLUNTEER_LAYOUT } from "../src/app/upload-plan.js";
 import { createApp } from "../src/app/server.js";
 import { duckdbReader } from "../src/person-change.js";
 import { recordSampleChanges } from "../src/sample-change.js";
@@ -304,14 +304,18 @@ describe("the listings", () => {
             const read = readXlsxHere(new Uint8Array(await res.arrayBuffer()));
             if (!read.ok) throw new Error(read.refusal);
             const [head, ...body] = read.sheet.rows.map((r) => [...r.cells.entries()].sort((a, b) => a[0] - b[0]));
-            expect(head!.map(([, c]) => c.text), `${kind} ${q}`).toEqual([...SPECIMENS_LAYOUT.headings]);
+            // Someone who is not staff gets their own file (beeline-kgyd.7): the same columns to recognise the bee, and
+            // their own identification, not the record's that the API gives, which test/volunteer-uploads.test.ts checks.
+            const layout = person === "sam" ? SPECIMENS_LAYOUT : VOLUNTEER_LAYOUT;
+            expect(head!.map(([, c]) => c.text), `${kind} ${q}`).toEqual([...layout.headings]);
             expect(api.rows.length, `${person} ${kind} ${q}`).toBe(body.length);
             expect(api.total).toBe(body.length);
+            const compared = person === "sam" ? layout.headings : [...layout.recognise, "specimenId"];
             body.forEach((cells, i) => {
               const text = new Map(cells.map(([at, c]) => [at, c.text]));
-              SPECIMENS_LAYOUT.headings.forEach((name, j) =>
-                expect(String(api.rows[i][name] ?? ""), `${person} ${kind} ${q} row ${i} ${name}`).toBe(text.get(j) ?? ""),
-              );
+              layout.headings.forEach((name, j) => {
+                if (compared.includes(name)) expect(String(api.rows[i][name] ?? ""), `${person} ${kind} ${q} row ${i} ${name}`).toBe(text.get(j) ?? "");
+              });
             });
             continue;
           }

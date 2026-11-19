@@ -93,7 +93,10 @@ async function castesOf(db: Kysely<Database>, ids: readonly number[]): Promise<M
 }
 
 export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who: DraftWho): Promise<DraftPlan> {
-  const entries = await reachable(db, who, compared.matched);
+  // The matched specimens, and those of rows held whole (a field number that disagrees, say), whose hold must keep
+  // its own reason when the specimen is the person's (CodeRabbit).
+  const named = new Set([...compared.matched, ...compared.held.flatMap((h) => (h.specimenId === null ? [] : [h.specimenId]))]);
+  const entries = await reachable(db, who, [...named]);
   const yours = (id: number | null) => id !== null && entries.has(id);
   const held: HeldItem[] = compared.held.filter((h) => h.specimenId === null || yours(h.specimenId));
 
@@ -136,7 +139,7 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
   const own = await ownIdentifications(db, who.determinerId, mine.map((d) => d.specimenId));
   const cellOf = (d: SpecimenDifference, column: string) => d.cells.find((c) => c.column === column);
   const newNames = [...new Set(mine.filter((d) => cellOf(d, "scientificName")?.differs === true).map((d) => textOf(cellOf(d, "scientificName")?.value)))].filter((n) => n !== "");
-  const named = await nodesNamed(db, newNames);
+  const nodes = await nodesNamed(db, newNames);
   const castes = await castesOf(db, [...new Set([...own.values()].map((o) => o.animalId).filter((id): id is number => id !== null))]);
 
   const lines: DraftLine[] = [];
@@ -176,18 +179,18 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
       ecdysisTid = mineNow?.ecdysisTid ?? null;
       social = animalId !== null && castes.get(animalId) === true;
     } else {
-      const nodes = named.get(textOf(name.value)) ?? [];
-      if (nodes.length === 0) {
+      const found = nodes.get(textOf(name.value)) ?? [];
+      if (found.length === 0) {
         hold("name_not_in_tree", "scientificName");
         continue;
       }
-      if (nodes.length > 1) {
+      if (found.length > 1) {
         hold("name_ambiguous", "scientificName");
         continue;
       }
-      animalId = nodes[0]!.id;
+      animalId = found[0]!.id;
       ecdysisTid = null;
-      social = nodes[0]!.castes;
+      social = found[0]!.castes;
     }
     const sexWord = textOf(cellOf(d, "sex")!.value);
     const casteWord = textOf(cellOf(d, "caste")!.value);

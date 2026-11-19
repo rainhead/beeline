@@ -2397,9 +2397,15 @@ export function createApp({
     if (createHash("sha256").update(bytes).digest("hex") !== row.sha256) {
       return { problem: c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={m.uploads.page.fileAltered} />), 500) };
     }
-    const parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, layout);
+    let parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, layout);
+    // Staff's file from someone who is no longer staff: read as staff's, compared and never saved (CodeRabbit).
+    let staffFile = layout !== VOLUNTEER_LAYOUT;
+    if (!parsed.ok && parsed.refusal === "staff_file") {
+      parsed = await parseUpload(new Uint8Array(bytes), uploadReadLimits, layoutFor(true));
+      staffFile = true;
+    }
     if (!parsed.ok) return { problem: c.html(await page(c, m.uploads.title, <UploadProblem m={m} message={refusalText(m, parsed)} />), 500) };
-    return { upload: parsed.upload };
+    return { upload: parsed.upload, staffFile };
   };
 
   /**
@@ -2448,10 +2454,11 @@ export function createApp({
     const m = c.get("m");
     const row = await visibleUpload(c, Number(c.req.param("id")));
     if (row === null) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
-    const staffFile = await isStaff(row.uploaded_by);
-    const kept = await readKept(c, row, layoutFor(staffFile));
+    // Read as the uploader's kind of file now. Someone made staff since keeps a file whose versions are a volunteer's,
+    // so it is held as changed since, and none of it is saved; one no longer staff has staff's file, read as staff's.
+    const kept = await readKept(c, row, layoutFor(await isStaff(row.uploaded_by)));
     if (kept.problem !== undefined) return kept.problem;
-    if (staffFile) return previewPage(c, row, null, await comparePlan(db, kept.upload));
+    if (kept.staffFile) return previewPage(c, row, null, await comparePlan(db, kept.upload));
     const drafts = await volunteerDrafts(c, row, kept.upload);
     return previewPage(c, row, drafts, drafts.plan);
   });
@@ -2476,6 +2483,7 @@ export function createApp({
     const asked = String((await c.req.formData()).get("digest") ?? "");
     const kept = await readKept(c, row, VOLUNTEER_LAYOUT);
     if (kept.problem !== undefined) return kept.problem;
+    if (kept.staffFile) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
     const { who } = draftWho(c, row);
     const outcome = await inDraftTurn(async () => {
       // A second submission of the same preview, which waited its turn behind the first: already saved.

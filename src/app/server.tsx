@@ -115,6 +115,7 @@ import {
   rosterCsv,
   personDetail,
   personHandle,
+  specimensCollected,
   personRef,
   RECENT_CHANGES,
   resolvePersonHandle,
@@ -2741,6 +2742,7 @@ export function createApp({
     const m = c.get("m");
     const person = await personFromUrl(c);
     if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
+    const specimens = await specimensCollected(db, person);
     return c.html(
       await page(
         c,
@@ -2748,6 +2750,7 @@ export function createApp({
         <PersonPage
           m={m}
           person={person}
+          specimens={specimens}
           atlases={await atlasOptions(db)}
           programs={await programOptions(db)}
           history={await history(person.person_id)}

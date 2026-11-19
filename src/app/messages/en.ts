@@ -3103,8 +3103,11 @@ export const en = {
     bindAccount: "Save account",
     reason: "Why",
     reasonHint: "Recorded in the overlay beside the change, and read by whoever reviews it later.",
+    /** The count the Specimens listing shows for this person, linked to it where there is a login to filter by. */
+    specimensCollected: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"} collected`,
     samplesCollected: (all: number, primary: number) =>
-      `${n(all)} collected, ${n(primary)} as primary collector`,
+      `from ${n(all)} ${all === 1 ? "sample" : "samples"}, ${n(primary)} as primary collector`,
+    inatProfile: "iNaturalist profile",
     saved: "Saved.",
     savedRebuild: "Saved.",
 

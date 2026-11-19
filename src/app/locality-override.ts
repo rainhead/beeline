@@ -269,9 +269,9 @@ export async function setStaffCoordinates(
   const conn = deps.conn;
   if (conn === undefined) {
     // An instance that only writes the file (a test app); nothing to apply.
-    if (anchor.kind === "ref") {
-      await upsertSampleOverlay(deps.sampleOverlayPath, [{ sample_ref: anchor.ref, field: "coordinates", base_value: "", value, author: input.author, reason }]);
-    }
+    // An entered sample has no file row, so there is nothing to write at all.
+    if (anchor.kind === "entered") return { outcome: "unresolved", reason: "no store connection to write an entered sample's point to" };
+    await upsertSampleOverlay(deps.sampleOverlayPath, [{ sample_ref: anchor.ref, field: "coordinates", base_value: "", value, author: input.author, reason }]);
     return { outcome };
   }
   if (sample.inat_observation_id !== null) {
@@ -281,12 +281,13 @@ export async function setStaffCoordinates(
       return { outcome: "unresolved", reason: `observation ${sample.inat_observation_id} is on another sample` };
     }
   }
-  const base = await currentLocationOf(conn, sample.entity_id);
   const setBy = await personOfLogin(conn, input.author);
   const writer = deps.printWriter ?? conn;
-  const row = { base_value: base, value, reason };
   const written = await withPrintRunLock(async (): Promise<{ frozen: true } | { conflict: true } | { problem: string } | null> => {
     if (await heldByUnprintedRun(writer, sample.entity_id)) return { frozen: true };
+    // The point being replaced, read under the lock: a trap form save that
+    // held it may have committed another point since the page was read.
+    const row = { base_value: await currentLocationOf(writer, sample.entity_id), value, reason };
     // Durability before immediacy: if the file write fails, nothing applied.
     if (anchor.kind === "ref") {
       await upsertSampleOverlay(deps.sampleOverlayPath, [{ sample_ref: anchor.ref, field: "coordinates", author: input.author, ...row }]);

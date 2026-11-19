@@ -343,6 +343,9 @@ describe("the legacy-format export of a sample whose point staff set", () => {
       `SELECT "column", kind FROM read_csv('${differences}', header = true, all_varchar = true)
        WHERE "column" IN ('county', 'decimalLatitude', 'decimalLongitude', 'coordinateUncertaintyInMeters') GROUP BY 1, 2 ORDER BY 1, 2`,
     );
+    // Every specimen of the sample, not one of them.
+    const specimens = await rows(s.conn, `SELECT count(*) FROM specimen WHERE sample_id = ${sample}`);
+    expect(await rows(s.conn, `SELECT count(DISTINCT field_number) FROM read_csv('${differences}', header = true, all_varchar = true) WHERE "column" = 'decimalLatitude' AND kind = 'staff_point'`)).toEqual(specimens);
     // And every one of them is ruled, so a staff point that production already holds is not unexplained.
     const rulings = await readRulings(DEFAULT_RULINGS);
     await compareLegacyExport(s.conn, exportPath, rulings);

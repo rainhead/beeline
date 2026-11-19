@@ -122,6 +122,18 @@ async function exists(conn: DuckDBConnection, sql: string, params: unknown[]): P
   return (await rows<{ e: boolean }>(conn, `SELECT EXISTS (${sql}) AS e`, params))[0]?.e === true;
 }
 
+/** What the checks read of the sample: its number, its dates and the observation it cites. */
+async function sampleRow(conn: DuckDBConnection, sampleId: number): Promise<SampleRow | undefined> {
+  return (
+    await rows<SampleRow>(
+      conn,
+      `SELECT sample_number, strftime(date_start, '%Y-%m-%d') AS date_start, strftime(date_end, '%Y-%m-%d') AS date_end, inat_observation_id
+       FROM sample WHERE entity_id = $1`,
+      [sampleId],
+    )
+  )[0];
+}
+
 /** The sample's collectors as they stand, in order. */
 async function currentList(conn: DuckDBConnection, sampleId: number): Promise<MatchedCollector[]> {
   return (
@@ -198,7 +210,9 @@ function warningsFor(before: readonly MatchedCollector[], after: readonly Matche
     out.push(`${names(added)} now ${added.length === 1 ? "has" : "have"} what its collectors have: they see where it was collected even where iNaturalist hides that, and may correct it.`);
   }
   if (removed.length > 0) {
-    out.push(`${names(removed)} no longer ${removed.length === 1 ? "has" : "have"} that: they see where it was collected only where anyone may, and may no longer correct it.`);
+    out.push(
+      `${names(removed)} ${removed.length === 1 ? "is" : "are"} no longer among its collectors, so that no longer lets them see where it was collected where iNaturalist hides that, or correct it (whoever entered a sample may still edit it on the trap form until it prints).`,
+    );
   }
   if (reprints > 0) out.push(`${reprints} label${reprints === 1 ? "" : "s"} on paper print the old collectors: ask for a reprint once the change is made.`);
   return out;
@@ -211,17 +225,12 @@ export async function setStaffCollectors(deps: CollectorsDeps, sampleId: number,
   const conn = deps.conn ?? deps.printWriter;
   const writer = deps.printWriter ?? deps.conn;
   if (conn === undefined || writer === undefined) return { outcome: "unavailable" };
-  const sample = (
-    await rows<SampleRow>(
-      conn,
-      `SELECT sample_number, strftime(date_start, '%Y-%m-%d') AS date_start, strftime(date_end, '%Y-%m-%d') AS date_end, inat_observation_id
-       FROM sample WHERE entity_id = $1`,
-      [sampleId],
-    )
-  )[0];
+  const sample = await sampleRow(conn, sampleId);
   if (sample === undefined) return { outcome: "not_found" };
   const before = await currentList(conn, sampleId);
   const given = input.collectors.map((n) => n.trim()).filter((n) => n !== "");
+  // Before the shortcut below, which a sample with no collectors at all would otherwise take (CodeRabbit).
+  if (given.length === 0) return { outcome: "invalid", problem: "At least one collector is needed." };
   // The list as it reads now is no change, and needs no name matched.
   if (given.length === before.length && given.every((n, i) => n === before[i]!.display_name)) {
     return { outcome: "unchanged", collectors: lines(before) };
@@ -262,6 +271,11 @@ export async function setStaffCollectors(deps: CollectorsDeps, sampleId: number,
     // form may have saved, since the answer was worked out.
     if (await heldByUnprintedRun(writer, sampleId)) return { outcome: "in_print_run" };
     if (!sameIds(await currentList(writer, sampleId), before)) return { outcome: "changed" };
+    // So were the number, the dates and the link the checks above read: the
+    // trap form or the nightly's free link may have changed them (CodeRabbit).
+    const now = await sampleRow(writer, sampleId);
+    const same = (k: keyof SampleRow) => String(now?.[k] ?? "") === String(sample[k] ?? "");
+    if (now === undefined || !(["sample_number", "date_start", "date_end", "inat_observation_id"] as const).every(same)) return { outcome: "changed" };
     if (firstChanged && (await numberTaken(writer, sampleId, sample, after[0]!.person_id))) return { outcome: "number_taken" };
     // Durability before immediacy: if the file write fails, nothing applied.
     if (events.length > 0) await upsertCorrections(deps.correctionsPath, events);

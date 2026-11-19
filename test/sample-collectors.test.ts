@@ -191,6 +191,29 @@ describe("staff correcting a sample's collectors", { timeout: 120_000 }, () => {
       expect(await answer(s, s.pair, ["Bea Trapper", "Dee Nobody"])).toMatch(/^Beeline has nobody called Dee Nobody/);
       expect(await answer(s, s.pair, ["Bea Trapper", "bea trapper"])).toBe("Bea Trapper is named twice.");
       expect(await correctionsIn(s.paths.correctionsPath)).toEqual([]);
+      // Even on a sample with no collectors at all, whose empty list an empty one would otherwise match.
+      const headless = await insertCleanSample(s.conn, { sample_number: "'H-1'" });
+      await s.conn.run(`DELETE FROM sample_collector WHERE sample_id = ${headless}`);
+      expect(await answer(s, headless, [" "])).toBe("At least one collector is needed.");
+    });
+
+    it("says conflict and writes nothing when the sample's number changed while the save waited", async () => {
+      const s = await setup();
+      const writer = s.deps.printWriter as unknown as { runAndReadAll: (sql: string, ...rest: unknown[]) => Promise<unknown> };
+      const read = writer.runAndReadAll.bind(writer);
+      let fired = false;
+      writer.runAndReadAll = async (sql: string, ...rest: unknown[]) => {
+        // The first statement under the lock: the trap form saved a new number just before it.
+        if (!fired) {
+          fired = true;
+          await s.conn.run(`UPDATE sample SET sample_number = 'OBAS-00659' WHERE entity_id = ${s.pair}`);
+        }
+        return read(sql, ...rest);
+      };
+      expect(await answer(s, s.pair, ["Ada Collector", "Bea Trapper"])).toBe("conflict");
+      writer.runAndReadAll = read;
+      expect(await listOf(s.conn, s.pair)).toEqual(["Bea Trapper", "Ada Collector"]);
+      expect(await correctionsIn(s.paths.correctionsPath)).toEqual([]);
     });
 
     it("refuses a new first collector where an observation is tied to the sample through its first collector", async () => {
@@ -376,6 +399,15 @@ describe("staff correcting a sample's collectors", { timeout: 120_000 }, () => {
       // Bea filed the record under trapline; Cy has no iNaturalist account, so the record has no login now.
       expect(await out.record("bbbb2222")).toEqual(["Cy Newcomer", null, null, null, null, null]);
       expect((await out.kinds("bbbb2222")).filter(([, kind]) => kind !== "staff_correction")).toEqual([]);
+    });
+
+    it("keeps the old record's own login where the first collector stays and has no account", async () => {
+      const s = await setup();
+      await s.conn.run(`DELETE FROM inat_account WHERE person_id = ${s.people.bea}`);
+      await send(s, s.solo, ["Bea Trapper", "Cy Newcomer"]);
+      const out = await exported(s);
+      expect((await out.record("bbbb2222"))?.slice(4)).toEqual(["trapline", "100002"]);
+      expect((await out.kinds("bbbb2222")).filter(([column]) => column === "userLogin" || column === "userId")).toEqual([]);
     });
 
     it("leaves a record nobody corrected as it was", async () => {

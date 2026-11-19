@@ -219,9 +219,15 @@ export function legacyExportSql(
   const END_FIELDS = ["verbatimEventDate", "day2", "month2", "year2", "startDayofYear", "endDayofYear"];
   const ownRow = (flag: string, col: string, model: string) =>
     rowSource ? `CASE WHEN dg.${flag} AND lr._id IS NOT NULL THEN lr."${col}" ELSE ${model} END` : model;
-  // Whether staff corrected this record's collectors: its recordedBy as
-  // corrected differs from the old record's (src/app/sample-collectors.ts).
-  const collectorsCorrected = rowSource ? `(lr._id IS NOT NULL AND lr."recordedBy" IS DISTINCT FROM lo."recordedBy")` : "false";
+  // Whether staff put someone else first on this record: the first name of
+  // its recordedBy as corrected is not the old record's, typography aside
+  // (src/app/sample-collectors.ts). A collector added or removed after the
+  // first leaves the record's own login standing for the same person.
+  const firstOf = (x: string) => `regexp_replace(lower(trim(split_part(${x}, '|', 1))), '[^a-z0-9]', '', 'g')`;
+  const collectorsCorrected = rowSource
+    ? `(lr._id IS NOT NULL AND lr."recordedBy" IS DISTINCT FROM lo."recordedBy"
+        AND ${firstOf('lr."recordedBy"')} IS DISTINCT FROM ${firstOf('lo."recordedBy"')})`
+    : "false";
   const disagreeing = rowSource
     ? `,
 disagreeing AS (
@@ -303,9 +309,9 @@ rows AS (
     -- specimen with no legacy row has none, and the legacy row's own is kept.
     ${t(`lo."occurrenceID"`)} AS "occurrenceID",
     -- The first collector's account, and the old record's own where they
-    -- have none, except on a record whose collectors staff corrected: its own
-    -- login was its old first collector's, so it says nothing of the new one
-    -- (beeline-kgyd.4.5).
+    -- have none, except on a record staff put another first collector on:
+    -- its own login was the old first collector's, so it says nothing of the
+    -- new one (beeline-kgyd.4.5).
     ${t(`CASE WHEN ${collectorsCorrected} THEN CAST(ia.inat_user_id AS VARCHAR)
                ELSE coalesce(CAST(ia.inat_user_id AS VARCHAR), nullif(lo."userId", '')) END`)} AS "userId",
     ${t(`CASE WHEN ${collectorsCorrected} THEN ia.login ELSE coalesce(ia.login, nullif(lo."userLogin", '')) END`)} AS "userLogin",

@@ -54,6 +54,10 @@ describe("naming collectors", () => {
     expect(await names(["inat:4242"])).toEqual(["Amy Grotta"]);
     expect(await names(["999999"])).toBe("Beeline has nobody whose id is 999999.");
     expect(await names(["inat:nobody"])).toBe("Beeline knows nobody by the iNaturalist login nobody.");
+    expect(await names(["inat:999999999999999999999999"])).toBe("Beeline knows nobody by the iNaturalist user id 999999999999999999999999.");
+    // A cached login can answer for two accounts in different case until the next sync: refused, not guessed.
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${ids["Ann Lee"]}, 4343, 'AGrotta')`);
+    expect(await names(["inat:agrotta"])).toBe("2 people answer to the iNaturalist login agrotta; name one by their id.");
   });
 
   it("does not know an old spelling promotion recorded and the overlay resolves: only display names are read", async () => {

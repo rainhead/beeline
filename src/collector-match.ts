@@ -57,13 +57,16 @@ async function matchOne(conn: DuckDBConnection, entry: string, people: MatchedCo
   if (account !== null) {
     const handle = account[1]!.trim();
     const byId = /^\d+$/.test(handle);
+    // TRY_CAST: a number too long for a user id names nobody, as an unknown one does (CodeRabbit).
     const found = await rows<{ person_id: number }>(
       conn,
       byId
-        ? `SELECT person_id FROM inat_account WHERE inat_user_id = $1::BIGINT`
-        : `SELECT person_id FROM inat_account WHERE lower(login) = lower($1)`,
+        ? `SELECT DISTINCT person_id FROM inat_account WHERE inat_user_id = TRY_CAST($1 AS BIGINT)`
+        : `SELECT DISTINCT person_id FROM inat_account WHERE lower(login) = lower($1)`,
       [handle],
     );
+    // Logins are cached, so two accounts can briefly answer to one login in different case: refused, never guessed.
+    if (found.length > 1) return `${found.length} people answer to the iNaturalist login ${handle}; name one by their id`;
     const person = found[0] === undefined ? undefined : people.find((p) => p.person_id === Number(found[0]!.person_id));
     return person ?? `Beeline knows nobody by the iNaturalist ${byId ? "user id" : "login"} ${handle}`;
   }

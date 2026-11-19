@@ -101,8 +101,10 @@ export async function mayEnterTrapSamples(conn: DuckDBConnection, personId: numb
  * Who may edit an entered sample: staff, one of its collectors, or whoever
  * entered it, as the correction form lets a collector edit only their own
  * samples (CodeRabbit). Entering is open to every trapper; editing someone
- * else's sample is not. Once the sample's season settles (`settled_sample`) the form closes to them and stays staff's
- * (Peter, 2026-11-19): a settled season is no longer asked about, and its entered samples change by staff's hand.
+ * else's sample is not. Once the sample's season settles (`settled_sample`) its other collectors lose the form and only
+ * whoever entered it, and staff, keep it (Peter, 2026-11-19): samples staff load on a collector's behalf, the registry's
+ * settled ones, must not give every collector named on them a permanent right to rewrite them, while a trapper's own
+ * late entry stays theirs to fix.
  */
 export async function mayEditTrapSample(conn: DuckDBConnection, sampleId: number, personId: number | null, admin: boolean): Promise<boolean> {
   if (admin) return true;
@@ -111,8 +113,9 @@ export async function mayEditTrapSample(conn: DuckDBConnection, sampleId: number
     conn,
     `SELECT count(*)::INTEGER AS n FROM sample_entry e
      WHERE e.sample_id = $1
-       AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = e.sample_id)
-       AND (e.entered_by = $2 OR EXISTS (SELECT 1 FROM sample_collector c WHERE c.sample_id = e.sample_id AND c.person_id = $2))`,
+       AND (e.entered_by = $2
+            OR (NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = e.sample_id)
+                AND EXISTS (SELECT 1 FROM sample_collector c WHERE c.sample_id = e.sample_id AND c.person_id = $2)))`,
     [sampleId, personId],
   );
   return (found[0]?.n ?? 0) > 0;

@@ -598,7 +598,7 @@ export interface SampleRow {
    */
   entered: boolean;
   entered_by_me: boolean;
-  /** An entered sample whose season has settled: its form closes to its collectors and its enterer, and stays staff's (Peter, 2026-11-19). */
+  /** An entered sample whose season has settled: its form closes to its collectors other than whoever entered it (Peter, 2026-11-19). */
   entered_settled: boolean;
 }
 

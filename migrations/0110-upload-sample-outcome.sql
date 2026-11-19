@@ -51,3 +51,6 @@ COMMENT ON COLUMN sample_deletion.sample_number IS 'The number the sample had, s
 COMMENT ON COLUMN sample_deletion.deleted_by IS 'The person signed in who deleted it.';
 COMMENT ON COLUMN sample_deletion.deleted_at IS 'When its satellite rows were removed, which is when the deletion began.';
 COMMENT ON COLUMN sample_deletion.reason IS 'Why, if the person said; the page does not ask yet.';
+
+-- A settled entered trap sample's form is open to whoever entered it and to staff only (beeline-kgyd.4.10).
+COMMENT ON VIEW settled_sample IS 'Samples from a settled season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable, though a trap sample entered in Beeline is then edited on its form only by whoever entered it and by staff (Peter, 2026-11-19). Nothing pending_print_sample leaves them out (Peter, 2026-10-14).';

@@ -961,3 +961,77 @@ describe("guards on the marks", () => {
     expect(heard.map((e) => (e as Error).message)).toEqual(["a real fault"]);
   });
 });
+
+describe("undoing an upload", () => {
+  it("deletes every sample the upload made that can be deleted, lists the rest with why, and says so in the page and the notes", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1), newRow(2, { decimalLatitude: "44.2" }), newRow(3, { decimalLatitude: "44.3" })]);
+    await apply(f, location, { digest });
+    // Not while the job is still working on it.
+    expect(await (await f.app.request(`${location}/delete-samples`)).text()).toContain(esc(en.uploads.page.undo.working));
+    expect((await f.app.request(`${location}/delete-samples`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() })).status).toBe(409);
+    await applyPending(deps(f));
+    expect(await (await f.app.request(location)).text()).toContain(`${location}/delete-samples`);
+    // One of the three gets a specimen on a printed label.
+    const [[printed]] = (await rows(f.conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00012'`)) as [[number]];
+    const [[sp]] = (await rows(f.conn, `INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1) RETURNING entity_id`)) as [[number]];
+    expect(sp).toBeGreaterThan(0);
+    const confirm = await (await f.app.request(`${location}/delete-samples`)).text();
+    expect(confirm).toContain(esc(en.uploads.page.undo.explain));
+    const done = await f.app.request(`${location}/delete-samples`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() });
+    expect(done.status).toBe(200);
+    const text = await done.text();
+    expect(text).toContain(esc(en.uploads.page.undo.done(2, 1)));
+    expect(text).toContain(esc(en.uploads.page.undo.row("OBAS-00012", en.trapSample.delete.refused.printed!)));
+    expect(await rows(f.conn, `SELECT sample_number FROM sample WHERE sample_number LIKE 'OBAS-%' ORDER BY 1`)).toEqual([["OBAS-00012"]]);
+    expect(await rows(f.conn, `SELECT sample_number FROM sample_deletion ORDER BY 1`)).toEqual([["OBAS-00011"], ["OBAS-00013"]]);
+    // The upload's own record stands, and the page and the notes say what became of them.
+    expect(await rows(f.conn, `SELECT count(*) FROM upload_sample_outcome WHERE outcome = 'created'`)).toEqual([[3n]]);
+    const page = await (await f.app.request(location)).text();
+    expect(page).toContain(esc(en.uploads.page.samplesCreated(3, 2)));
+    const notes = matrixOf(new Uint8Array(await (await f.app.request(`${location}/notes`)).arrayBuffer()));
+    const head = notes[0]!;
+    const note = (number: string) => notes.find((r) => r[head.indexOf("fieldNumber")] === number)![head.length - 1];
+    expect(note("OBAS-00011")).toBe(en.uploads.notes.createdDeleted("OBAS-00011"));
+    expect(note("OBAS-00012")).toBe(en.uploads.notes.created("OBAS-00012"));
+    // Staff only.
+    const volunteer = f.appAs("volunteer");
+    expect((await volunteer.request(`${location}/delete-samples`)).status).toBe(404);
+  });
+});
+
+
+describe("an entered sample whose season has settled", () => {
+  it("stays with whoever entered it and with staff, and its other collectors lose the form", async () => {
+    const f = await uploadFixture();
+    const entered = async (season: number, number: string, by: number) => {
+      const id = await insertCleanSample(f.conn, { kind: "'trap'", sample_number: `'${number}'`, collector_id: String(f.volunteer), date_start: `DATE '${season}-06-02'`, date_end: `DATE '${season}-06-02'` });
+      await f.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${id}, ${by})`);
+      return id;
+    };
+    // The volunteer is a collector of all three; staff entered two of them, the volunteer one.
+    const current = await entered(CURRENT_SEASON, "OBAS-00051", f.staffer);
+    const settled = await entered(SETTLED_SEASON, "OBAS-00052", f.staffer);
+    const settledOwn = await entered(SETTLED_SEASON, "OBAS-00053", f.volunteer);
+    expect(await mayEditTrapSample(f.conn, current, f.volunteer, false)).toBe(true);
+    expect(await mayEditTrapSample(f.conn, settled, f.volunteer, false)).toBe(false);
+    expect(await mayEditTrapSample(f.conn, settledOwn, f.volunteer, false)).toBe(true);
+    expect(await mayEditTrapSample(f.conn, settled, f.staffer, true)).toBe(true);
+    const volunteer = f.appAs("volunteer");
+    expect((await volunteer.request(`/samples/${current}/trap`)).status).toBe(200);
+    expect((await volunteer.request(`/samples/${settled}/trap`)).status).toBe(404);
+    expect((await volunteer.request(`/samples/${settledOwn}/trap`)).status).toBe(200);
+    expect((await f.app.request(`/samples/${settled}/trap`)).status).toBe(200);
+  });
+});
+
+describe("the listing's Place pencil for an entered sample", () => {
+  it("follows the same rule: the enterer and staff once settled, any collector before", async () => {
+    const { placeEditable } = await import("../src/app/views/listings.js");
+    const row = (over: Record<string, unknown>) => ({ location_withheld: false, entered: true, printed: false, mine: false, entered_by_me: false, entered_settled: false, ...over }) as never;
+    expect(placeEditable(row({ mine: true }), false)).toBe(true);
+    expect(placeEditable(row({ mine: true, entered_settled: true }), false)).toBe(false);
+    expect(placeEditable(row({ mine: true, entered_by_me: true, entered_settled: true }), false)).toBe(true);
+    expect(placeEditable(row({ entered_settled: true }), true)).toBe(true);
+  });
+});

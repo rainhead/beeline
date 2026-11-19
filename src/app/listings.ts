@@ -78,6 +78,16 @@ export const ALL = "all";
  * atlas members travelling, which is why `member` is a separate control.
  */
 export const OUTSIDE = "outside";
+/**
+ * The National Wildlife Refuges program (beeline-t0rh). Not an atlas, so no
+ * state assigns a sample to it: a sample is its program's when its true point
+ * lies inside a refuge area (schema/038), the one fact that identifies it
+ * until the program is linked to its refuges (beeline-8zlh). Also an atlas's
+ * sample by state, and both choices find it.
+ */
+export const REFUGES = "NWR";
+/** Master Melittology, the catch-all program: today exactly the samples no atlas covers, as OUTSIDE finds. */
+export const CATCH_ALL = "MM";
 
 /**
  * Whose records, by where their collector belongs — the other axis, and it
@@ -354,10 +364,15 @@ const text = (value: string | null) => (value ?? "").trim().slice(0, 100);
  */
 export function parseListingQuery(
   params: URLSearchParams,
-  opts: { atlasCodes: readonly string[]; preferred?: string | null },
+  opts: { atlasCodes: readonly string[]; programCodes?: readonly string[]; preferred?: string | null },
 ): ListingQuery {
   const requested = params.get("scope") ?? opts.preferred ?? MINE;
-  const permitted = requested === ALL || requested === OUTSIDE || opts.atlasCodes.includes(requested);
+  const permitted =
+    requested === ALL ||
+    requested === OUTSIDE ||
+    requested === CATCH_ALL ||
+    opts.atlasCodes.includes(requested) ||
+    (opts.programCodes ?? []).includes(requested);
   const member = params.get("member") ?? "";
   const memberPermitted =
     member === PROGRAM_MEMBERSHIP || member === MEMBER_UNRECORDED || opts.atlasCodes.includes(member);
@@ -473,6 +488,18 @@ export const isFiltered = (q: ListingQuery) =>
 export interface AtlasOption {
   code: string;
   name: string;
+}
+
+/**
+ * Every program a listing can be scoped to: the atlases, and the programs
+ * that are not one, the National Wildlife Refuges and the BLM surveys. Master
+ * Melittology is left out: its samples are the ones the "At large" choice
+ * finds.
+ */
+export async function scopePrograms(db: Kysely<Database>): Promise<AtlasOption[]> {
+  const { rows } = await sql<AtlasOption>`
+    SELECT p.code, p.name FROM program p WHERE p.code <> ${CATCH_ALL} ORDER BY p.name`.execute(db);
+  return rows;
 }
 
 export async function atlasOptions(db: Kysely<Database>): Promise<AtlasOption[]> {
@@ -1233,6 +1260,16 @@ function insideArea(key: string, reader: Reader) {
     WHERE sac.sample_id = s.entity_id AND sac.source = ${parsed.source} AND sac.source_id = ${parsed.sourceId}))`;
 }
 
+/**
+ * The sample (alias `s`) lies inside a national wildlife refuge, for a reader
+ * who may see where it is: as with `insideArea`, a withheld location is never
+ * found by where it is.
+ */
+function inRefuge(reader: Reader) {
+  return sql<boolean>`(NOT ${withheld(reader)} AND EXISTS (
+    SELECT 1 FROM sample_area_current sac WHERE sac.sample_id = s.entity_id AND sac.kind = 'refuge'))`;
+}
+
 const blockingCount = sql<number>`coalesce(qc.blocking, 0)`;
 const warningCount = sql<number>`coalesce(qc.warning, 0)`;
 
@@ -1327,10 +1364,12 @@ async function filteredSamples(
           .where("mine.person_id", "=", personId),
       ),
     );
-  } else if (query.scope === OUTSIDE) {
+  } else if (query.scope === OUTSIDE || query.scope === CATCH_ALL) {
     // Outside = no atlas, whether geography said so (no sample_atlas row —
     // the LEFT JOIN gives a NULL) or a human did (a row with a NULL atlas).
     base = base.where("sa.atlas_id", "is", null);
+  } else if (query.scope === REFUGES) {
+    base = base.where(inRefuge(reader));
   } else if (query.scope !== ALL) {
     base = base.where("a.code", "=", query.scope);
   }
@@ -1618,10 +1657,12 @@ async function filteredSpecimens(
           .where("mine.person_id", "=", personId),
       ),
     );
-  } else if (query.scope === OUTSIDE) {
+  } else if (query.scope === OUTSIDE || query.scope === CATCH_ALL) {
     // Outside = no atlas, whether geography said so (no sample_atlas row —
     // the LEFT JOIN gives a NULL) or a human did (a row with a NULL atlas).
     base = base.where("sa.atlas_id", "is", null);
+  } else if (query.scope === REFUGES) {
+    base = base.where(inRefuge(reader));
   } else if (query.scope !== ALL) {
     base = base.where("a.code", "=", query.scope);
   }

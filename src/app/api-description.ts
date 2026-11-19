@@ -7,6 +7,7 @@ import {
   LABEL_FILTERS,
   MEMBER_UNRECORDED,
   MINE,
+  CATCH_ALL,
   OUTSIDE,
   QC_RULE_NAMES,
   QC_STATUSES,
@@ -85,7 +86,7 @@ const COLUMN_MEANING: Record<(typeof SAMPLE_CSV_HEADER)[number] | (typeof SPECIM
 };
 
 const FILTER_MEANING: Record<string, string> = {
-  scope: `Whose samples. ${MINE} (the default) is the key holder's own collecting; ${ALL} is every sample; ${OUTSIDE} is samples collected where no atlas covers; an atlas code is the samples collected in that atlas. Everyone may use every scope; what a scope cannot show someone is the withheld locations, row by row.`,
+  scope: `Whose samples. ${MINE} (the default) is the key holder's own collecting; ${ALL} is every sample; ${OUTSIDE} (shown as "At large" on the pages) is samples collected where no atlas covers, and MM names the same ones; an atlas code is the samples collected in that atlas; NWR is the National Wildlife Refuges program's, the samples whose true point lies inside a refuge, which are also their atlas's (a sample whose location is withheld from the reader is not found by it); BLM is the BLM surveys', which have no samples yet. Everyone may use every scope; what a scope cannot show someone is the withheld locations, row by row.`,
   q: "Free text, matched against part of a sample number, a collector's name or iNaturalist login, and (on samples) the field numbers of its specimens or (on specimens) the specimen's field number. It matches part of a value, so for one record use the exact lookups below.",
   from: "Earliest collecting day, as YYYY-MM-DD. A sample that was out across the day matches.",
   to: "Latest collecting day, as YYYY-MM-DD.",
@@ -317,10 +318,10 @@ const ENDPOINTS: Endpoint[] = [
 /** The routes the description lists, as the router names them: "GET /samples/:id". */
 export const describedRoutes = (): string[] => ENDPOINTS.map((e) => `${e.method} ${e.route}`);
 
-/** The description of the API. `atlasCodes` are the scopes besides mine, all and outside. */
-export function describeApi(origin: string, atlasCodes: readonly string[]) {
+/** The description of the API. `atlasCodes` are the atlases; `programCodes` the programs a scope can name besides mine, all and outside. */
+export function describeApi(origin: string, atlasCodes: readonly string[], programCodes: readonly string[] = atlasCodes) {
   const withAtlases = (name: string, values: readonly string[] | undefined) =>
-    name === "scope" || name === "member" ? [...(values ?? []), ...atlasCodes] : values;
+    name === "scope" ? [...(values ?? []), CATCH_ALL, ...programCodes] : name === "member" ? [...(values ?? []), ...atlasCodes] : values;
   const endpoints = ENDPOINTS.map((e) => ({
     ...e,
     path: `/api/v1${e.route === "/" ? "" : e.route}`,

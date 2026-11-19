@@ -614,7 +614,7 @@ export const en = {
       ledeMine: "Every sample you collected.",
       ledeAtlas: (atlas: string) => `Every sample in the ${atlas}.`,
       ledeAll: "Every sample in every atlas.",
-      ledeOutside: "Every sample collected where no member atlas reaches.",
+      ledeOutside: "Every sample at large: collected where no member atlas reaches.",
       count: (total: number) => `${n(total)} ${total === 1 ? "sample" : "samples"}`,
       emptyHeading: "Nothing here yet",
       emptyMine: "None of your collecting has reached Beeline yet. Samples arrive from iNaturalist during scheduled syncs.",
@@ -691,7 +691,7 @@ export const en = {
       identify: "Identify them.",
       ledeAtlas: (atlas: string) => `Every specimen in the ${atlas}.`,
       ledeAll: "Every specimen in every atlas.",
-      ledeOutside: "Every specimen collected where no member atlas reaches.",
+      ledeOutside: "Every specimen at large: collected where no member atlas reaches.",
       count: (total: number) => `${n(total)} ${total === 1 ? "specimen" : "specimens"}`,
       emptyHeading: "Nothing here yet",
       emptyMine:
@@ -766,7 +766,12 @@ export const en = {
        * Collecting outside the atlases is ordinary, not an error, and the label
        * has to sound like it (beeline-lcl).
        */
-      outside: "Outside the atlases",
+      outside: "At large",
+      /** The Atlas column menu's label, and the pill that names its choice: an atlas is one kind of program (beeline-t0rh). */
+      program: "Program",
+      allPrograms: "All programs",
+      /** Shown in the program menu only while the listing is My records, so that applying it unchanged keeps it so. */
+      chooseProgram: "Choose a program",
       /** Above a listing of other people's records, for anyone but staff. */
       withheldNote:
         "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not read the observation, or cannot find it on iNaturalist.",

@@ -2868,11 +2868,13 @@ export const en = {
       button: "Prepare",
       hint:
         "Preparing freezes the set and assigns field numbers, in the order the labels will appear on the sheets. If that was wrong, cancel the run before it prints: the numbers stay used and the samples go back to waiting.",
-      /** Released samples whose county and state the nightly update has not worked out yet: they are not in the counts above. */
+      /** Released samples whose county and state the nightly update has not worked out yet: they are not in the counts of what is waiting. */
       awaitingPlace: (samples: number) =>
-        `${n(samples)} released ${samples === 1 ? "sample is" : "samples are"} not counted above. ${
-          samples === 1 ? "It prints" : "They print"
-        } once the nightly update has worked out ${samples === 1 ? "its" : "their"} county and state.`,
+        `${n(samples)} released ${samples === 1 ? "sample waits" : "samples wait"} for the nightly update to work out ${
+          samples === 1 ? "its" : "their"
+        } county and state from ${samples === 1 ? "its" : "their"} coordinates, and ${
+          samples === 1 ? "is" : "are"
+        } not counted as waiting for labels until then.`,
       /** The POST found nothing pending, so no run was made. */
       nothingToPrepare: "Nothing was waiting to print in that scope, so no run was prepared.",
     },

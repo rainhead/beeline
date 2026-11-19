@@ -1443,7 +1443,7 @@ export function createApp({
     const refused = await trapGate(c, true);
     if (refused !== null) return refused;
     const form = trapFormFrom(await c.req.parseBody({ all: true }));
-    const checked = await checkTrapSample(conn!, form);
+    const checked = await checkTrapSample(conn!, form, null, { staff: c.get("admin") });
     if ("problems" in checked) {
       return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, checked.problems, "/trap-samples/new"), 400);
     }
@@ -1483,7 +1483,7 @@ export function createApp({
       return errorResponse(c, "notFound");
     }
     const form = trapFormFrom(await c.req.parseBody({ all: true }));
-    const checked = await checkTrapSample(conn!, form, id);
+    const checked = await checkTrapSample(conn!, form, id, { staff: c.get("admin") });
     if ("problems" in checked) {
       return c.html(await trapPage(c, m.trapSample.editTitle, form, checked.problems, `/samples/${id}/trap`, id), 400);
     }

@@ -21,6 +21,7 @@ import { withPromotionLock } from "./promotion-lock.js";
 import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { loadSample, type LocalitySuggestion } from "./record.js";
 import { applySampleEdit, loadEditableSample, planSampleEdit, type EditableFieldName, type EditableSample } from "./sample-edit.js";
+import { setStaffCollectors, type CollectorLine } from "./sample-collectors.js";
 import { setStaffPlace, type PlaceChange, type PlaceField } from "./sample-place.js";
 import { onSample } from "./sample-queue.js";
 
@@ -744,6 +745,90 @@ export function setSamplePlace(deps: CorrectionDeps, actor: Actor, sampleId: num
       case "saved":
         await recordChange(deps, sampleId, actor, note || undefined, "place change");
         return { ok: true, outcome: "saved", changes: result.changes };
+      default:
+        return unreachable(result);
+    }
+  });
+}
+
+export interface CollectorsCorrectionInput {
+  /** Names or references in order, the first being the primary collector (src/collector-match.ts). */
+  collectors: readonly string[];
+  note: string;
+  /** Answer as a save would, and write nothing. */
+  dryRun?: boolean;
+}
+
+export type CollectorsCorrectionResult =
+  | {
+      ok: true;
+      /** `would_save` for a dry run that would have saved, as the collector's edit says. */
+      outcome: "saved" | "unchanged" | "would_save";
+      dry_run: boolean;
+      collectors: CollectorLine[];
+      first_changed: boolean;
+      /** Labels on paper that print the old list; 0 when nothing changed. */
+      reprint_needed: number;
+      warnings: string[];
+    }
+  | Common
+  | StaffOnly
+  | Refused<"in_print_run" | "number_taken" | "observation_tied" | "conflict" | "busy" | "not_applied" | "unavailable">
+  | Invalid;
+
+/**
+ * Staff correct who collected a sample (beeline-kgyd.4.5): add, remove and
+ * reorder its collectors, the first included. Staff only, refused while
+ * impersonating. The rules, what the first collector carries and where the
+ * change is kept are in src/app/sample-collectors.ts. Nothing is reprinted
+ * here: the answer says how many labels on paper print the old list.
+ */
+export function setCollectors(
+  deps: CorrectionDeps,
+  actor: Actor,
+  sampleId: number,
+  input: Input<CollectorsCorrectionInput>,
+): Promise<CollectorsCorrectionResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const found = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select("entity_id").executeTakeFirst();
+    if (found === undefined) return refused("not_found");
+    // Asked again in the queue turn: a job may have started while this waited for it.
+    if (deps.syncJobRunning()) return refused("busy");
+    return { ready: null };
+  };
+  return correct(sampleId, input, gates, async (_, form): Promise<CollectorsCorrectionResult> => {
+    const note = form.note.trim();
+    const dryRun = form.dryRun === true;
+    const result = await setStaffCollectors(
+      { conn: deps.conn, printWriter: deps.printWriter, correctionsPath: deps.correctionsPath },
+      sampleId,
+      { collectors: form.collectors, note, author: actor.login, dryRun },
+    );
+    switch (result.outcome) {
+      case "not_found":
+      case "unavailable":
+      case "in_print_run":
+      case "number_taken":
+      case "observation_tied":
+      case "not_applied":
+        return refused(result.outcome);
+      case "changed":
+        return refused("conflict");
+      // Nothing was recorded anywhere, so nothing was done: say so, as the trap count does.
+      case "write_conflict":
+        return refused("busy");
+      case "invalid":
+        return { ok: false, refusal: "invalid", problem: result.problem };
+      case "unchanged":
+        return { ok: true, outcome: "unchanged", dry_run: dryRun, collectors: result.collectors, first_changed: false, reprint_needed: 0, warnings: [] };
+      case "planned":
+      case "saved": {
+        if (result.outcome === "saved") await recordChange(deps, sampleId, actor, note || undefined, "collector change");
+        const { outcome, ...rest } = result;
+        return { ok: true, outcome: outcome === "planned" ? "would_save" : "saved", dry_run: dryRun, ...rest };
+      }
       default:
         return unreachable(result);
     }

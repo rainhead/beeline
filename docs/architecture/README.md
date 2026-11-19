@@ -29,7 +29,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [Programs](programs.md) — `src/app/programs.ts`, `src/app/views/programs.tsx`
 - [ORCID](orcid.md) — `schema/103`
 - [Addressing a person, and admin](addressing-a-person-and-admin.md)
-- [Editing and corrections](editing-and-corrections.md) — `src/corrections.ts`, `ingest/legacy-corrections.csv`
+- [Editing and corrections](editing-and-corrections.md) — `src/corrections.ts`, `ingest/legacy-corrections.csv`, `src/app/sample-corrections.ts`, `src/app/sample-collectors.ts`, `src/collector-match.ts`
 - [Entering trap samples](entering-trap-samples.md) — `src/trap-sample.ts`, `src/app/views/trap-sample.tsx`
 - [The legacy-format export](the-legacy-format-export.md) — `src/legacy-export.ts`, `src/compare-legacy-export.ts`, `src/legacy-changes.ts`, `src/legacy-copy.ts`, `src/legacy-volunteer-import.ts`, `src/repair-legacy-skipped.ts`, `ingest/collector-aliases.csv`
 - [Errors and logs](errors-and-logs.md) — `src/app/error-reporting.ts`, `src/app/usage.ts`

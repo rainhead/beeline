@@ -224,12 +224,32 @@ export async function recordOldVolunteerDeterminations(
 
     // Each record's specimen and taxon. The copy's key is its prefix and the
     // specimen's entity id, written without leading zeros (legacyCopyId).
+    //
+    // Whose determination it is: the person promotion read the old record's
+    // own names as (legacy_person_map), who is the person it credited, and
+    // never the sample's first collector as it stands, since staff may have
+    // changed that since (beeline-kgyd.4.5) and the record was entered by
+    // the old one. Staff never correct a record's names, only its
+    // recordedBy, so this stays put. On production's store of 18 November
+    // 2026 it is the sample's first collector for all 72,918 records with a
+    // volunteer determination. The record's own login was the other
+    // candidate, but on that store 2,426 of those records (285 of them this
+    // season) are filed under someone else's login, and their credit would
+    // have moved. A copy of a specimen printed here is credited to its first
+    // collector, as before.
     const prefixLength = LEGACY_COPY_ID_PREFIX.length;
+    await conn.run(`
+      CREATE OR REPLACE TEMP TABLE old_vol_owner AS
+      SELECT r._id, pm.person_id
+      FROM temp.old_vol_record r
+      JOIN legacy_parsed lp ON lp._id = r._id
+      JOIN legacy_person_map pm ON pm.fn IS NOT DISTINCT FROM lp.fn AND pm.ln IS NOT DISTINCT FROM lp.ln`);
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE old_vol_claim AS
       SELECT r._id, r.field_number, t.rank, t.name, t.written, t.sex, t.caste,
              coalesce(m.specimen_id, cp.entity_id)  AS specimen_id,
-             coalesce(m.collector_id, pc.person_id) AS determiner_id,
+             CASE WHEN m.specimen_id IS NOT NULL THEN coalesce(ow.person_id, m.collector_id)
+                  ELSE pc.person_id END              AS determiner_id,
              cp.entity_id IS NOT NULL               AS is_copy,
              an.entity_id                           AS animal_id
       FROM temp.old_vol_record r
@@ -246,6 +266,7 @@ export async function recordOldVolunteerDeterminations(
         ON regexp_full_match(r._id, '${LEGACY_COPY_ID_PREFIX}[1-9][0-9]*')
        AND cp.entity_id = try_cast(substr(r._id, ${prefixLength + 1}) AS INTEGER)
       LEFT JOIN sample_primary_collector pc ON pc.sample_id = cp.sample_id
+      LEFT JOIN temp.old_vol_owner ow ON ow._id = r._id
       LEFT JOIN animal an ON an.rank = t.rank AND an.scientific_name = t.name`);
 
     // What Beeline last heard from the old system about each specimen.

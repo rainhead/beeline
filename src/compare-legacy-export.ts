@@ -124,8 +124,12 @@ const COLLECTOR_COLUMNS = ["recordedBy", "firstName", "lastName", "firstNameInit
 const CORRECTABLE_COLUMNS = [
   "firstName", "lastName", "sampleId", "specimenId", "day", "month", "year", "day2", "month2", "year2",
   "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "verbatimElevation",
-  "country", "stateProvince", "county", "locality", "samplingProtocol", "fieldNumber",
+  "country", "stateProvince", "county", "locality", "samplingProtocol", "fieldNumber", "recordedBy",
 ];
+/** Written from the collectors, so a corrected recordedBy changes them too (src/legacy-export.ts). */
+const COLLECTOR_DERIVED_COLUMNS = ["firstName", "lastName", "firstNameInitial"];
+/** Written from the first collector alone, so only a new first collector changes them. */
+const FIRST_COLLECTOR_COLUMNS = ["userLogin", "userId"];
 /** Written from the date, so a corrected date changes them too. */
 const DATE_DERIVED_COLUMNS = ["verbatimEventDate", "startDayofYear", "endDayofYear"];
 const DATE_FIELDS = ["day", "month", "year", "day2", "month2", "year2"];
@@ -522,6 +526,30 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
           SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
           WHERE o."fieldNumber" = d.field_number
             AND (${CORRECTABLE_COLUMNS.map((c) => `(d."column" = ${sqlString(c)} AND c."${c}" = d.exported AND c."${c}" IS DISTINCT FROM o."${c}")`).join("\n              OR ")}))`);
+    // And the columns written from the collectors where staff corrected a
+    // record's collectors and the export wrote them as corrected: the name
+    // columns and the initials; and the first collector's login and id where
+    // staff put someone else first, decided by person as the export decides
+    // it (the sample's first collector is not whom promotion read the record's
+    // names as), so a login renamed under an unchanged first collector stays
+    // login_renamed.
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'staff_correction'
+      WHERE (d."column" IN (${list(COLLECTOR_DERIVED_COLUMNS)})
+             OR (d."column" IN (${list(FIRST_COLLECTOR_COLUMNS)})
+                 AND EXISTS (SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
+                             JOIN legacy_specimen_number n ON n._id = o._id
+                             JOIN sample_primary_collector pc ON pc.sample_id = n.sample_id
+                             LEFT JOIN legacy_person_map pm ON pm.fn IS NOT DISTINCT FROM nullif(trim(c."firstName"), '')
+                                                           AND pm.ln IS NOT DISTINCT FROM nullif(trim(c."lastName"), '')
+                             WHERE o."fieldNumber" = d.field_number
+                               AND pm.person_id IS DISTINCT FROM pc.person_id)))
+        AND EXISTS (
+          SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
+          JOIN cmp_pairs p ON p."e_fieldNumber" = o."fieldNumber"
+          WHERE o."fieldNumber" = d.field_number
+            AND c."recordedBy" IS DISTINCT FROM o."recordedBy"
+            AND c."recordedBy" = p."e_recordedBy")`);
     // And the columns written from a date a correction changed, where the
     // date the export wrote is the corrected one: then they follow from it,
     // and any other value of theirs is something else (CodeRabbit on #352).

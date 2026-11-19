@@ -263,6 +263,15 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     method: "POST",
+    route: "/samples/:id/collectors",
+    summary:
+      "Correct who collected a sample, in order, the first being the primary collector, whose numbering the sample's number is: add, remove and reorder them, printed or not. Each entry is a display name (matched exactly, then without regard to case, spaces, punctuation or accents), a person's id, or inat: and their iNaturalist login or user id; nobody new is created. Refused while a print run that has not printed holds the sample (409 in_print_run); a new first collector is refused where an iNaturalist observation is tied to the sample through its first collector (409 observation_tied) or where they already have a sample with this number that day (409 number_taken). `reprint_needed` counts the labels on paper that print the old list: ask for the reprint separately.",
+    needs: "staff key",
+    body: { collectors: "list of strings, the first collector first", note: "string", dry_run: "boolean", reference: REFERENCE },
+    answers: "{ sample_id, outcome, dry_run, collectors: [{ position, person_id, name }], first_changed, reprint_needed, warnings }",
+  },
+  {
+    method: "POST",
     route: "/samples/:id/trap-count",
     summary: "Set how many traps a trap sample had, or take the count away with an empty one.",
     needs: "staff key",

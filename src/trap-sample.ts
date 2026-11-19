@@ -1,4 +1,5 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
+import { matchCollectors } from "./collector-match.js";
 import { withPrintRunLock } from "./print-run.js";
 
 /**
@@ -60,17 +61,10 @@ export interface TrapSample {
 
 export type FieldProblems = Partial<Record<keyof TrapSampleForm, string>>;
 
-interface Person {
-  entity_id: number;
-  display_name: string;
-}
-
 async function rows<T>(conn: DuckDBConnection, sql: string, params: unknown[] = []): Promise<T[]> {
   const reader = await conn.runAndReadAll(sql, params as never);
   return reader.getRowObjectsJS() as T[];
 }
-
-const fold = (s: string) => s.normalize("NFKD").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
 
 /**
  * Who may enter trap samples: staff, and anyone who is a collector on a trap
@@ -150,20 +144,6 @@ export async function nextSampleNumber(conn: DuckDBConnection, prefix = "OBAS-")
 }
 
 /**
- * A person by name, as a form names them: the whole name folded to letters
- * and digits, as promotion identifies people. Two people with one name are
- * refused rather than guessed between.
- */
-async function personByName(conn: DuckDBConnection, name: string): Promise<Person | string> {
-  const target = fold(name);
-  const people = await rows<Person>(conn, `SELECT entity_id, display_name FROM person`);
-  const matches = people.filter((p) => fold(p.display_name) === target);
-  if (matches.length === 1) return matches[0]!;
-  if (matches.length === 0) return `Beeline has nobody called ${name}`;
-  return `${matches.length} people are called ${name}; choose one on their page and ask staff to tell them apart`;
-}
-
-/**
  * Whether another trap sample has this number. Unique among trap samples
  * only (Peter, 2026-11-04): an OBAS- number is the program's, while a net
  * sample's number is its collector's for the day, so thousands of net
@@ -206,6 +186,8 @@ export async function checkTrapSample(
   conn: DuckDBConnection,
   form: TrapSampleForm,
   sampleId: number | null = null,
+  /** Whoever is at the form is staff: a problem with a name then points at the staff pages that settle it. */
+  { staff = false }: { staff?: boolean } = {},
 ): Promise<{ sample: TrapSample } | { problems: FieldProblems }> {
   const problems: FieldProblems = {};
   const sampleNumber = form.sample_number.trim();
@@ -214,21 +196,10 @@ export async function checkTrapSample(
     if (await numberTaken(conn, sampleNumber, sampleId)) problems.sample_number = numberTakenProblem(sampleNumber);
   }
 
-  const names = form.collectors.map((n) => n.trim()).filter((n) => n !== "");
-  const collectorIds: number[] = [];
-  if (names.length === 0) problems.collectors = "At least one collector is needed.";
-  for (const name of names) {
-    const found = await personByName(conn, name);
-    if (typeof found === "string") {
-      problems.collectors = `${found}.`;
-      break;
-    }
-    if (collectorIds.includes(found.entity_id)) {
-      problems.collectors = `${found.display_name} is named twice.`;
-      break;
-    }
-    collectorIds.push(found.entity_id);
-  }
+  // Named as every list of collectors is named (src/collector-match.ts).
+  const matched = await matchCollectors(conn, form.collectors, { staff });
+  const collectorIds = "problem" in matched ? [] : matched.collectors.map((c) => c.person_id);
+  if ("problem" in matched) problems.collectors = matched.problem;
 
   const start = parseDate(form.date_start);
   if (start === null) problems.date_start = "The day the traps were set is needed.";

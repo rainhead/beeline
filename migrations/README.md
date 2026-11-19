@@ -6,7 +6,11 @@ these files exist only because the sandbox — production after cutover — can'
 be blown away and rebuilt.
 
 Write the change in `schema/` first, then copy the delta here as
-`NNNN-slug.sql` (filename order is apply order). Local databases never run
+`NNNN-slug.sql` (filename order is apply order). A migration that changes
+something the schema does not make, such as the views legacy promotion
+leaves behind, names those objects on its first line, `-- needs: a, b`; a
+store lacking any of them records the migration without running it, since
+there is nothing there to change (0109 is the first). Local databases never run
 them: `pnpm db:build` stamps every migration as applied, because a fresh
 build already has the change.
 

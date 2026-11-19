@@ -39,7 +39,7 @@ import { describeRefresh, refreshEcdysisTaxonomy } from "../../load-ecdysis-taxo
 import { join } from "node:path";
 import { fetchEcdysisTaxonomyInChild } from "../../fetch-ecdysis-taxonomy-child.js";
 import type { Job, JobContext } from "./framework.js";
-import { describeRegistrants, recordRegistrants } from "../../registrations.js";
+import { describeRegistrants, recordEmailFingerprints, recordRegistrants } from "../../registrations.js";
 
 /** A fresh JWT per run (src/inat-jwt.ts); a failed mint aborts the job. */
 const mintJwt = () => mintPipelineJwt();
@@ -576,6 +576,7 @@ export function buildJobs(
         | "ecdysis"
         | "ecdysisDir"
         | "idealLogic"
+        | "registrationEmailKey"
         | "driveBackup"
         | "oldBeeline"
         | "backupsDir"
@@ -852,7 +853,15 @@ export function buildJobs(
         const recorded = await ctx.step("record and link", () =>
           recordRegistrants(ctx.db, registrants, { decidedBy: "ideal-logic-registrants" }),
         );
-        return describeRegistrants(recorded);
+        // The whole table is replaced from this fetch, so a registration that
+        // left Ideal Logic loses its fingerprint and a changed key takes
+        // effect tonight. Without the key nothing is fingerprinted.
+        const key = config.registrationEmailKey;
+        const fingerprints =
+          key === undefined || key === null
+            ? "email fingerprints off (no REGISTRATION_EMAIL_KEY)"
+            : `${await ctx.step("fingerprint emails", () => recordEmailFingerprints(ctx.db, registrants, key))} email fingerprints`;
+        return `${describeRegistrants(recorded)}; ${fingerprints}`;
       },
     },
     {

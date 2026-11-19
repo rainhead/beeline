@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, it, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
 import { createKysely } from "../src/db.js";
 import type { Database } from "../src/model.js";
 import type { Registrant } from "../src/ideal-logic.js";
-import { decideRegistration, describeRegistrants, recordRegistrants } from "../src/registrations.js";
+import { fingerprintEmail } from "../src/email-fingerprint.js";
+import { decideRegistration, describeRegistrants, linkBySignInEmail, recordEmailFingerprints, recordRegistrants } from "../src/registrations.js";
 import { createMemoryDb, rows } from "./helpers.js";
 
 /**
@@ -296,5 +297,100 @@ describe("a decision about one person", () => {
       });
     }
     expect(await rows(conn, `SELECT count(*) FROM person_registration_event`)).toEqual([[0n]]);
+  });
+});
+
+const KEY = Buffer.alloc(48, 5);
+const fingerprints = () => rows(conn, `SELECT ideal_logic_id, fingerprint FROM ideal_logic_email_fingerprint ORDER BY ideal_logic_id`);
+/** A registration's fingerprint as an earlier night's job stored it. */
+const fingerprinted = async (idealLogicId: string, email: string, key = KEY) => {
+  await conn.run(`INSERT INTO ideal_logic_email_fingerprint VALUES ('${idealLogicId}', '${fingerprintEmail(key, email)}')`);
+};
+const signIn = (personId: number, email: string | null, over: { emailConfirmed?: boolean; key?: Buffer | null } = {}) =>
+  linkBySignInEmail(db, { personId, email, emailConfirmed: over.emailConfirmed ?? true, key: over.key === undefined ? KEY : over.key });
+const events = () => rows(conn, `SELECT person_id, ideal_logic_id, evidence, decided_by FROM person_registration_event ORDER BY entity_id`);
+
+describe("the nightly email fingerprints", () => {
+  it("holds one row for every registration, kept or not, and no address", async () => {
+    const fetched = [
+      registrant({ id: "A-1", givenName: "Ada", familyName: "Bramble", atlases: ["OBA"] }),
+      registrant({ id: "Z-9", givenName: "Zed", familyName: "Nobody" }),
+    ];
+    expect(await recordEmailFingerprints(db, fetched, KEY)).toBe(2);
+    expect(await fingerprints()).toEqual([
+      ["A-1", fingerprintEmail(KEY, "A-1@example.org")],
+      ["Z-9", fingerprintEmail(KEY, "Z-9@example.org")],
+    ]);
+    // Z-9 is not kept as a registrant, and is fingerprinted all the same.
+    await recordRegistrants(db, fetched, JOB);
+    expect((await kept()).map((r) => r[0])).toEqual(["A-1"]);
+    expect(JSON.stringify(await fingerprints())).not.toContain("example.org");
+  });
+
+  it("replaces the table: a registration that left is dropped, and a new key changes every row", async () => {
+    await recordEmailFingerprints(db, [registrant({ id: "A-1", givenName: "Ada", familyName: "B" }), registrant({ id: "B-2", givenName: "Bo", familyName: "S" })], KEY);
+    await recordEmailFingerprints(db, [registrant({ id: "A-1", givenName: "Ada", familyName: "B" })], Buffer.alloc(48, 6));
+    expect(await fingerprints()).toEqual([["A-1", fingerprintEmail(Buffer.alloc(48, 6), "A-1@example.org")]]);
+  });
+});
+
+describe("linking at sign-in", () => {
+  it("links a person on one confirmed match, whatever the address's case", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    expect(await signIn(id.Eve!, " Eve@Example.org ")).toBe("E-1");
+    expect(await events()).toEqual([[id.Eve, "E-1", "sign_in_email", "sign-in"]]);
+    expect(await links()).toEqual([[id.Eve, "E-1", "sign_in_email", "sign-in"]]);
+  });
+
+  it("links to a registration that has no registrant row", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    expect(await kept()).toEqual([]);
+    expect(await signIn(id.Eve!, "eve@example.org")).toBe("E-1");
+    // The next night keeps it, because it is linked.
+    await recordRegistrants(db, [registrant({ id: "E-1", givenName: "Eve", familyName: "Aster" })], JOB);
+    expect((await kept()).map((r) => r[0])).toEqual(["E-1"]);
+  });
+
+  it("does nothing when the address is not confirmed", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    expect(await signIn(id.Eve!, "eve@example.org", { emailConfirmed: false })).toBeNull();
+    expect(await events()).toEqual([]);
+  });
+
+  it("does nothing when two registrations have the address", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    await fingerprinted("E-2", "eve@example.org");
+    expect(await signIn(id.Eve!, "eve@example.org")).toBeNull();
+    expect(await events()).toEqual([]);
+  });
+
+  it("does nothing when no registration has the address, or the address is blank or absent", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    expect(await signIn(id.Eve!, "other@example.org")).toBeNull();
+    expect(await signIn(id.Eve!, "  ")).toBeNull();
+    expect(await signIn(id.Eve!, null)).toBeNull();
+    expect(await events()).toEqual([]);
+  });
+
+  it("does nothing for a person decided about before, whatever the decision", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    await conn.run(`INSERT INTO person_registration_event (person_id, ideal_logic_id, evidence, decided_by) VALUES (${id.Eve}, NULL, 'staff', 'test')`);
+    expect(await signIn(id.Eve!, "eve@example.org")).toBeNull();
+    await conn.run(`INSERT INTO person_registration_event (person_id, ideal_logic_id, evidence, decided_by) VALUES (${id.Bo}, 'B-1', 'staff', 'test')`);
+    expect(await signIn(id.Bo!, "eve@example.org")).toBeNull();
+    expect(await events()).toHaveLength(2);
+  });
+
+  it("does nothing without a key, and nothing under a different key", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    expect(await signIn(id.Eve!, "eve@example.org", { key: null })).toBeNull();
+    expect(await signIn(id.Eve!, "eve@example.org", { key: Buffer.alloc(48, 9) })).toBeNull();
+    expect(await events()).toEqual([]);
+  });
+
+  it("links a second person to a registration already linked, for the person who proves the address", async () => {
+    await fingerprinted("E-1", "eve@example.org");
+    await conn.run(`INSERT INTO person_registration_event (person_id, ideal_logic_id, evidence, decided_by) VALUES (${id.Bo}, 'E-1', 'staff', 'test')`);
+    expect(await signIn(id.Eve!, "eve@example.org")).toBe("E-1");
   });
 });

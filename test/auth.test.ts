@@ -2,17 +2,25 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "kysely";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient, SignInOutcome } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { cookieSessionResolver, endSessionsFor, hashSessionId, purgeIdleSessions, sessionRef } from "../src/app/session.js";
+import { fingerprintEmail } from "../src/email-fingerprint.js";
 import { createMemoryDb, scratchPaths } from "./helpers.js";
 import { readChanges } from "../src/person-change.js";
 
 const ORIGIN = "http://localhost:3054";
 
-type FakeIdentity = { inatUserId: number; login: string; iconUrl?: string | null; orcid?: string | null };
+type FakeIdentity = {
+  inatUserId: number;
+  login: string;
+  iconUrl?: string | null;
+  orcid?: string | null;
+  email?: string | null;
+  emailConfirmed?: boolean;
+};
 
 const fakeInat = (identity: FakeIdentity): InatClient => ({
   authorizeUrl: (state, redirectUri) =>
@@ -578,5 +586,70 @@ describe("each sign-in's outcome is reported (beeline-87rn)", () => {
         line: "[sign-in] failed: iNaturalist would not exchange the code, or say whose account it was: code exchange failed: 502",
       },
     ]);
+  });
+});
+
+describe("linking to a registration at sign-in (beeline-w8ab.7)", () => {
+  const KEY = Buffer.alloc(48, 4);
+
+  async function appWithRegistration(identity: FakeIdentity, key: Buffer | null = KEY) {
+    const { instance, conn } = await createMemoryDb();
+    await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (11, 'Member Bee')`);
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (11, 501, 'memberbee')`);
+    await conn.run(`INSERT INTO ideal_logic_email_fingerprint VALUES ('MB-1', '${fingerprintEmail(KEY, "bee@example.org")}')`);
+    const db = createKysely(instance);
+    const app = createApp({
+      ...(await scratchPaths()),
+      db,
+      config: { environment: "development", origin: ORIGIN, registrationEmailKey: key },
+      inat: fakeInat(identity),
+      resolveSession: cookieSessionResolver(db, ORIGIN),
+      personChangesPath: join(await mkdtemp(join(tmpdir(), "auth-")), "person-change.csv"),
+    });
+    const linked = async () =>
+      (await db.selectFrom("person_registration_event").select(["person_id", "ideal_logic_id", "evidence", "decided_by"]).execute()).map((r) => [
+        Number(r.person_id),
+        r.ideal_logic_id,
+        r.evidence,
+        r.decided_by,
+      ]);
+    return { app, linked };
+  }
+
+  it("links the person whose confirmed iNaturalist email is a registration's, and signs them in", async () => {
+    const { app, linked } = await appWithRegistration({ inatUserId: 501, login: "memberbee", email: "Bee@Example.org", emailConfirmed: true });
+    const cb = await signIn(app);
+    expect(cb.status).toBe(302);
+    expect(cb.headers.get("set-cookie")).toContain("beeline_session=");
+    expect(await linked()).toEqual([[11, "MB-1", "sign_in_email", "sign-in"]]);
+  });
+
+  it("links nobody on an email iNaturalist has not confirmed, and still signs them in", async () => {
+    const { app, linked } = await appWithRegistration({ inatUserId: 501, login: "memberbee", email: "bee@example.org", emailConfirmed: false });
+    expect((await signIn(app)).status).toBe(302);
+    expect(await linked()).toEqual([]);
+  });
+
+  it("links nobody where the app has no key", async () => {
+    const { app, linked } = await appWithRegistration({ inatUserId: 501, login: "memberbee", email: "bee@example.org", emailConfirmed: true }, null);
+    expect((await signIn(app)).status).toBe(302);
+    expect(await linked()).toEqual([]);
+  });
+
+  it("does not fail the sign-in when linking fails, and logs nothing of the address", async () => {
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation((...args) => void warnings.push(args.join(" ")));
+    try {
+      // A key that is no key makes the HMAC throw, as any failure would.
+      const broken = await appWithRegistration(
+        { inatUserId: 501, login: "memberbee", email: "bee@example.org", emailConfirmed: true },
+        {} as unknown as Buffer,
+      );
+      expect((await signIn(broken.app)).status).toBe(302);
+      expect(await broken.linked()).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(warnings).toEqual(["sign-in: could not link the person to a registration by email address"]);
   });
 });

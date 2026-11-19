@@ -103,7 +103,7 @@ Today is read in Oregon, as everywhere else in the app.
 The comparison cannot see these, and they are not built here. Each is something an existing correction refuses, so a later slice that applies a difference must go through that correction's function and report what it refuses, not write around it:
 
 - A changed collecting start date on a sample that has an iNaturalist observation, a method change on a sample with no old records, and a blank method on a sample entered in Beeline are refused by `src/app/sample-method.ts`.
-- Coordinates on a sample with no observation are refused by `setCoordinates`.
+- Coordinates on a sample with neither an observation, old records nor an entry in Beeline are refused by `setCoordinates`; on one of the last two they are kept under the sample's first old record, or in the store (beeline-kgyd.4.2, [Editing and corrections](editing-and-corrections.md)). A point is refused as a removal on any sample with no observation, whatever it has instead (so an all-blank coordinates unit cannot be applied as one there: staff set the right point), and as any change while a print run that has not printed holds the sample (`in_print_run`); the applying slice has to say both.
 - A blank locality on a sample with no observation changes nothing (`setPlace` in `src/app/sample-corrections.ts`); on a sample with an observation it makes the sample follow iNaturalist's locality again. The page's note says both.
 - A blank `identifiedBy`, and a determination dated before the collecting date, are refused by the sheet loader.
 

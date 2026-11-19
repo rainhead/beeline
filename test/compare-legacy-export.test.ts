@@ -281,6 +281,12 @@ describe("what the store knows about a difference", () => {
       FROM specimen sp, animal a WHERE sp.field_number = '25000005' AND a.scientific_name = 'Bombus vosnesenskii'`);
     // A label name in the register's initials form, as one collector's J.M.
     await conn.run(`UPDATE person SET label_name = 'A.D. Collector' WHERE display_name = 'Ada Collector'`);
+    // A point staff set on the sample of 25000002 (beeline-kgyd.4.2), whose county went with it: the export
+    // writes the sample's county, the old record has its own.
+    await conn.run(`UPDATE sample SET county = 'LinnCo'
+      WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000002')`);
+    await conn.run(`INSERT INTO sample_location_override (sample_id, latitude, longitude)
+      SELECT l.sample_id, l.latitude, l.longitude FROM sample_location l JOIN specimen sp ON sp.sample_id = l.sample_id WHERE sp.field_number = '25000002'`);
     dir = await mkdtemp(join(tmpdir(), "compare-store-"));
     exportPath = join(dir, "occurrences.csv");
     await writeLegacyExport(conn, exportPath);
@@ -369,6 +375,7 @@ describe("what the store knows about a difference", () => {
           OR (field_number IN ('25000002', '25000009') AND "column" = 'firstNameInitial')
           OR (field_number = '25000003' AND "column" = 'stateProvince')
           OR (field_number IN ('25000002', '25000005') AND "column" = 'decimalLatitude')
+          OR (field_number = '25000002' AND "column" = 'county')
        ORDER BY 1, 2`,
     )).getRows();
     expect(kinds).toEqual([
@@ -376,6 +383,7 @@ describe("what the store knows about a difference", () => {
       ["25000001", "lastName", "collector_alias"],
       ["25000001", "recordedBy", "collector_alias"],
       ["25000001", "specificEpithet", "taxon_alias"],
+      ["25000002", "county", "staff_point"],
       ["25000002", "decimalLatitude", "standin_replaced"],
       ["25000002", "firstNameInitial", "initial_from_surname"],
       ["25000002", "genusVolDet", "taxon_alias"],

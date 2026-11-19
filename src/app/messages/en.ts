@@ -288,6 +288,7 @@ export const en = {
       exports: "Exports",
       identify: "Identify specimens",
       unclaimed: "Unknown collectors",
+      registrations: "Registrations",
     },
     /**
      * The menu's destinations beyond the records — reference pages and staff
@@ -1257,7 +1258,8 @@ export const en = {
         open: "Change the coordinates",
         hint: "Coordinates set here are treated as the true location and replace the observation's, even when iNaturalist updates. The elevation is recalculated overnight.",
         printed: "This sample's labels are already printed. Changing the coordinates here does not change the printed labels.",
-        noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation.",
+        hintNoObservation: "Coordinates set here are treated as the true location and replace the sample's, which has no iNaturalist observation. The county and state follow them, and the elevation is recalculated overnight. To correct a wrong point, set the right one.",
+        noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation, one from old Beeline's records, or one entered in Beeline.",
         latitude: "Latitude",
         longitude: "Longitude",
         uncertainty: "Accuracy, in meters (optional)",
@@ -1268,6 +1270,8 @@ export const en = {
           "Beeline could not set the county and state from these coordinates just now, so they may not match. Check them before reprinting this sample's labels.",
         /** Refused while the overnight sync runs, which would undo or race the change. */
         busy: "Beeline is syncing with iNaturalist right now. Try again once it has finished.",
+        /** Refused while a print run that has not printed holds the sample's labels. */
+        inPrintRun: "This sample's labels are in a print run that has not printed yet, so its point cannot change now. Wait for the run to print, or cancel it.",
       },
       /**
        * Staff taking iNaturalist's location for a sample Beeline printed,
@@ -3011,6 +3015,24 @@ export const en = {
 
     // Detail page.
     backToRoster: "← All people",
+    registration: "Registration",
+    registrationHint:
+      "Which registration in Ideal Logic is this person's. Their labels' mailing address is looked up through it when staff download a print run's addresses.",
+    registrationNone: "No registration linked",
+    registrationDecidedNone: (by: string, when: string) => `No registration (decided by ${by}, ${when})`,
+    registrationOf: (name: string) => `Registered as ${name}`,
+    registrationId: "Ideal Logic id",
+    registrationEvidence: "Evidence",
+    registrationDecided: (by: string, when: string) => `Decided by ${by}, ${when}`,
+    registrationEvidenceKinds: {
+      register_email: "the old register's email address",
+      handle: "the handle typed at registration",
+      sign_in_email: "the email address iNaturalist reported at sign-in",
+      staff: "staff decided",
+    } as Record<string, string>,
+    registrationUnknown: "a registration Beeline no longer holds",
+    unlinkRegistration: "Unlink",
+    openRegistrations: "Registrations",
     identity: "Name",
     account: "iNaturalist account",
     accountHint:
@@ -3121,8 +3143,11 @@ export const en = {
     bindAccount: "Save account",
     reason: "Why",
     reasonHint: "Recorded in the overlay beside the change, and read by whoever reviews it later.",
+    /** The count the Specimens listing shows for this person, linked to it where there is a login to filter by. */
+    specimensCollected: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"} collected`,
     samplesCollected: (all: number, primary: number) =>
-      `${n(all)} collected, ${n(primary)} as primary collector`,
+      `from ${n(all)} ${all === 1 ? "sample" : "samples"}, ${n(primary)} as primary collector`,
+    inatProfile: "iNaturalist profile",
     saved: "Saved.",
     savedRebuild: "Saved.",
 
@@ -3351,6 +3376,74 @@ export const en = {
     nameBlank: "give them a name",
     nameTaken: (name: string) =>
       `somebody here is already called "${name}". If this is them, connect the account to them instead; if not, give the newcomer a name that tells them apart`,
+    problem: (why: string) => `Not saved: ${why}`,
+  },
+
+  /**
+   * The staff screen for registrations in Ideal Logic (beeline-w8ab.2).
+   * Staff-facing, English-only. Never says anything about an address or an
+   * email address: Beeline holds neither.
+   */
+  registrations: {
+    title: "Registrations",
+    heading: "Registrations in Ideal Logic",
+    intro:
+      "People register for Master Melittology in Ideal Logic. Linking a collector to their registration is how Beeline finds where to mail their labels. Beeline keeps the link and the registrant's name, never an address.",
+    collectorsHeading: (count: number) => `Collectors with no registration (${n(count)})`,
+    collectorsHint:
+      "Everyone who has collected a sample and has no decision yet: a registration linked, or a note that they have none. People with labels waiting come first, then people with labels in a run that has not been mailed.",
+    collectorsEmptyHeading: "Nobody waiting",
+    registrantsEmptyHeading: "Nobody unplaced",
+    collectorsEmpty: "Every collector has a decision about their registration.",
+    colPerson: "Person",
+    colLogin: "iNaturalist",
+    colProgram: "Belongs to",
+    colSamples: "Samples",
+    colSuggested: "Registrations that might be theirs",
+    colName: "Name",
+    colAtlases: "Atlases",
+    colHandle: "Handle typed",
+    colWhy: "Why",
+    colFirstSeen: "First seen",
+    labelsWaiting: "Labels waiting",
+    labelsInRun: "Labels in a run not yet mailed",
+    noSuggestion: "no suggestion",
+    noLogin: "no iNaturalist account",
+    notRecorded: "not recorded",
+    programShort: "Program",
+    noAtlas: "none given",
+    noHandle: "none given",
+    idealLogicId: "Ideal Logic id",
+    reasonFullName: "The name is the same.",
+    reasonFamilyName: "The family name is the same.",
+    reasonHandle: "The handle they typed is this person's iNaturalist login.",
+    alsoLinkedTo: (names: string) => `Already linked to ${names}`,
+    link: "Link",
+    linkTo: (person: string, registrant: string) => `Link ${person} to the registration of ${registrant}`,
+    none: "No registration",
+    noneFor: (person: string) => `Record that ${person} has no registration`,
+    byId: "Link by Ideal Logic id",
+    byIdHint: "For a registration none of the suggestions found. An id looks like QNN6-MX8, and it must be one Beeline has already seen.",
+    /** On the person's page, which shows no suggestions; the Registrations page does. */
+    byIdHintPerson: "An id looks like QNN6-MX8, and it must be one Beeline has already seen. The Registrations page suggests registrations that might be this person's.",
+    byIdLabel: (person: string) => `Ideal Logic id for ${person}`,
+    registrantsHeading: (count: number) => `Registered, not in Beeline (${n(count)})`,
+    registrantsHint:
+      "Registrants linked to nobody who named an atlas or typed an iNaturalist handle, newest first. They become collectors through Unknown collectors when they first collect.",
+    registrantsEmpty: "Every registrant who named an atlas or a handle is linked to somebody.",
+    openObserver: (handle: string) => `@${handle} is waiting on Unknown collectors`,
+    saved: {
+      linked: (person: string, registrant: string) => `${person} is now linked to the registration of ${registrant}.`,
+      none: (person: string) => `${person} has no registration.`,
+      unlinked: (person: string) => `${person} is no longer linked to a registration.`,
+      unchanged: (person: string) => `${person} was already recorded that way. Nothing changed.`,
+    },
+    refused: {
+      unknownRegistration:
+        "that is not the id of a registration Beeline has seen. An id looks like QNN6-MX8 and is matched exactly; Beeline knows the registrations its nightly job kept",
+      unknownPerson: "nobody here has that id",
+      blankId: "type an Ideal Logic id",
+    },
     problem: (why: string) => `Not saved: ${why}`,
   },
 

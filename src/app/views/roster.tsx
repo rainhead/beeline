@@ -25,6 +25,7 @@ import type { PersonChange } from "../../person-change.js";
 import { orcidUrl } from "../../orcid.js";
 import type { Child } from "hono/jsx";
 import type { KeyListing } from "../api-keys.js";
+import type { PersonRegistration } from "../registrations.js";
 import { KeysTable } from "./keys.js";
 import {
   Absent,
@@ -579,8 +580,8 @@ function OrcidCard({ m, person, action }: { m: Messages; person: PersonDetail; a
 
 /**
  * Whether the person's labels are mailed or kept in the lab (beeline-w8ab.4),
- * who decided and when. The note is free text and the hint says never to put
- * an address in it; the server refuses one that looks like it.
+ * who decided and when. There is no note: free text could hold an address,
+ * which Beeline never stores.
  */
 function LabelsCard({
   m,
@@ -626,24 +627,97 @@ function LabelsCard({
   );
 }
 
+/**
+ * Which registration in Ideal Logic is this person's: the registrant's name
+ * and Ideal Logic's id, never an address, which Beeline does not hold.
+ */
+function RegistrationCard({
+  m,
+  person,
+  registration: g,
+}: {
+  m: Messages;
+  person: PersonDetail;
+  registration: PersonRegistration;
+}) {
+  const p = m.people;
+  const decided = g.decided_at === null || g.decided_by === null ? null : p.registrationDecided(g.decided_by, m.format.date(g.decided_at));
+  return (
+    <Card>
+      <h2>{p.registration}</h2>
+      <Meta block>{p.registrationHint}</Meta>
+      {g.ideal_logic_id !== null ? (
+        <>
+          <p>
+            {g.registrant === null ? p.registrationUnknown : p.registrationOf(g.registrant)}
+          </p>
+          <Meta block>
+            {p.registrationId}: <code>{g.ideal_logic_id}</code> · {p.registrationEvidence}:{" "}
+            {p.registrationEvidenceKinds[g.evidence ?? ""] ?? g.evidence}
+          </Meta>
+          {decided !== null && <Meta block>{decided}</Meta>}
+          <form method="post" action={`/registrations/${person.person_id}/unlink`}>
+            <input type="hidden" name="return" value="person" />
+            <p class="row">
+              <Button variant="outlined">{p.unlinkRegistration}</Button>
+            </p>
+          </form>
+        </>
+      ) : (
+        <>
+          {g.decided && g.decided_by !== null && g.decided_at !== null ? (
+            <p>{p.registrationDecidedNone(g.decided_by, m.format.date(g.decided_at))}</p>
+          ) : (
+            <p>{p.registrationNone}</p>
+          )}
+          <details open={g.decided}>
+            <summary>{m.registrations.byId}</summary>
+            <form method="post" action={`/registrations/${person.person_id}/link`} class="form-column">
+              <input type="hidden" name="return" value="person" />
+              <TextField
+                id="registration-id"
+                name="ideal_logic_id"
+                label={m.registrations.byIdLabel(person.display_name)}
+                hint={m.registrations.byIdHintPerson}
+              />
+              <p class="row">
+                <Button variant="outlined">{m.registrations.link}</Button>
+              </p>
+            </form>
+          </details>
+        </>
+      )}
+      <p>
+        <a href="/registrations">{p.openRegistrations}</a>
+      </p>
+    </Card>
+  );
+}
+
 function Reason({ m, id }: { m: Messages; id: string }) {
   return <TextField id={id} name="reason" label={m.people.reason} hint={m.people.reasonHint} />;
 }
 
+const inatProfileHref = (login: string) => `https://www.inaturalist.org/people/${encodeURIComponent(login)}`;
+
 export function PersonPage({
   m,
   person,
+  specimens,
   atlases,
   programs,
   history,
   keys,
   mailing = null,
+  registration,
   now,
   notice,
   problem,
 }: {
   m: Messages;
   person: PersonDetail;
+  /** What they collected, and the Specimens listing that shows it (null without a login to filter by). */
+  specimens: { count: number; href: string | null };
   atlases: readonly AtlasOption[];
   programs: readonly ProgramOption[];
   /** Everything the change log holds about them, newest first (beeline-o22). */
@@ -652,6 +726,8 @@ export function PersonPage({
   keys: KeyListing[];
   /** Set where the person's labels are kept in the lab; null where they are mailed. */
   mailing?: MailingNow | null;
+  /** Which Ideal Logic registration is theirs (beeline-w8ab.2). */
+  registration: PersonRegistration;
   now: Date;
   notice?: string;
   problem?: string;
@@ -668,7 +744,22 @@ export function PersonPage({
       </p>
       <PageHeader
         title={person.display_name}
-        lede={p.samplesCollected(person.samples, person.primary_samples)}
+        lede={
+          <>
+            {specimens.href === null ? (
+              p.specimensCollected(specimens.count)
+            ) : (
+              <a href={specimens.href}>{p.specimensCollected(specimens.count)}</a>
+            )}
+            , {p.samplesCollected(person.samples, person.primary_samples)}
+            {person.login !== null && person.login !== "" && (
+              <>
+                {" · "}
+                <a href={inatProfileHref(person.login)}>{p.inatProfile}</a>
+              </>
+            )}
+          </>
+        }
         mark={atlas === undefined ? undefined : <AtlasMark code={atlas.code} name={atlas.name} />}
       />
       <Meta block>
@@ -723,7 +814,9 @@ export function PersonPage({
               {person.logins.map((l) => (
                 <tr>
                   <td>
-                    <code>{l.login}</code>
+                    <a href={inatProfileHref(l.login)}>
+                      <code>{l.login}</code>
+                    </a>
                   </td>
                   <td>
                     <OrAbsent value={l.uid} label={m.absence.notRecorded} />
@@ -749,6 +842,8 @@ export function PersonPage({
       </Card>
 
       <OrcidCard m={m} person={person} action={action} />
+
+      <RegistrationCard m={m} person={person} registration={registration} />
 
       <Card>
         <h2>{p.identity}</h2>

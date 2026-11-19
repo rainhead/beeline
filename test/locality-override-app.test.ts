@@ -263,3 +263,56 @@ describe("the staff coordinates editor", () => {
     expect(res.status).toBe(409);
   });
 });
+
+describe("the staff coordinates editor on a sample from old Beeline's records (beeline-kgyd.4.2)", () => {
+  async function oldApp(signedInAs: "alice" | "sam") {
+    const { instance, conn } = await promotedStore("occurrences");
+    const alice = await person(conn, "Alice Adams", "alice", 1);
+    const sam = await person(conn, "Sam Staff", "samstaff", 2);
+    await conn.run(`INSERT INTO person_admin (person_id) VALUES (${sam})`);
+    const [[sampleId]] = (await rows(conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00657'`)) as [[number]];
+    const paths = await scratch();
+    const people = { alice, sam };
+    const app = createApp({
+      ...(await scratchPaths()),
+      db: createKysely(instance),
+      config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: people[signedInAs], login: signedInAs === "sam" ? "samstaff" : "alice", iconUrl: null }),
+      conn,
+      ...paths,
+    });
+    return { app, conn, sampleId: Number(sampleId), ...paths };
+  }
+  const t = en.record.sample.staffCoordinates;
+
+  it("shows the pencil to staff, not to anyone else, and sets the point from the page, and offers no removal", async () => {
+    const staff = await oldApp("sam");
+    const page = await (await staff.app.request(`/samples/${staff.sampleId}`)).text();
+    expect(page).toContain(`aria-label="${t.open}"`);
+    expect(page).toContain("which has no iNaturalist observation");
+    // Nothing to take away: a sample with no observation has no removal.
+    expect(page).not.toContain("Follow iNaturalist again");
+
+    const res = await post(staff.app, `/samples/${staff.sampleId}/coordinates`, { latitude: "44.6", longitude: "-123.3", uncertainty: "15" });
+    expect(res.status).toBe(302);
+    expect(await one(staff.conn, `SELECT latitude, longitude, source FROM sample_location WHERE sample_id = ${staff.sampleId}`)).toEqual([44.6, -123.3, "staff_entry"]);
+    expect((await readSampleOverlay(staff.sampleOverlayPath))[0]).toMatchObject({ sample_ref: "legacy:bbbb2222", field: "coordinates", value: "44.6 -123.3 15" });
+    const after = await (await staff.app.request(`/samples/${staff.sampleId}`)).text();
+    expect(after).toContain("Coordinates set in Beeline by Sam Staff.");
+    expect(after).not.toContain("Follow iNaturalist again");
+    expect(after).not.toContain('name="remove"');
+    // A wrong point is corrected by setting the right one; a removal is refused with its reason.
+    const refused = await post(staff.app, `/samples/${staff.sampleId}/coordinates`, { remove: "1" });
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain("set the right one instead");
+    expect(await one(staff.conn, `SELECT latitude, source FROM sample_location WHERE sample_id = ${staff.sampleId}`)).toEqual([44.6, "staff_entry"]);
+    const again = await post(staff.app, `/samples/${staff.sampleId}/coordinates`, { latitude: "44.7", longitude: "-123.3" });
+    expect(again.status).toBe(302);
+    expect(await readSampleOverlay(staff.sampleOverlayPath)).toHaveLength(1);
+
+    const collector = await oldApp("alice");
+    expect(await (await collector.app.request(`/samples/${collector.sampleId}`)).text()).not.toContain(`aria-label="${t.open}"`);
+    expect((await post(collector.app, `/samples/${collector.sampleId}/coordinates`, { latitude: "44.6", longitude: "-123.3" })).status).toBe(403);
+  });
+});

@@ -257,11 +257,12 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
   if (row === undefined) return null;
   // A hold placed after the freeze does not change the run: it is named
   // here and the printer decides whether to cancel and prepare again, which
-  // leaves the held sample out (Peter, 2026-10-25). A past season's labels
-  // print with the run regardless, so they are not named, except those of a
-  // sample staff released for printing (sample_print_release): they are in
-  // the run because staff said so, and a hold placed since is the printer's
-  // to hear of.
+  // leaves the held sample out (Peter, 2026-10-25). Every sample is named
+  // but one from a settled season that staff have not released for printing
+  // (settled_unreleased_sample): its labels print with the run regardless. It
+  // used to be every sample of the current season, which left out a hold on
+  // last season's samples in January and February, when that season is still
+  // active.
   const held =
     row.state === "prepared" || row.state === "approved"
       ? (
@@ -273,11 +274,8 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
             JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
             JOIN person p ON p.entity_id = pc.person_id
             JOIN sample_hold h ON h.sample_id = s.entity_id
-            JOIN sample_season ss ON ss.sample_id = s.entity_id
-            CROSS JOIN season
             WHERE pl.print_run_id = ${printRunId}
-              AND (ss.season >= season.current_season
-                   OR EXISTS (SELECT 1 FROM sample_print_release rel WHERE rel.sample_id = s.entity_id))
+              AND NOT EXISTS (SELECT 1 FROM settled_unreleased_sample u WHERE u.sample_id = s.entity_id)
             ORDER BY s.sample_number, s.entity_id`.execute(db)
         ).rows.map((h) => ({ ...h, sample_id: Number(h.sample_id) }))
       : [];

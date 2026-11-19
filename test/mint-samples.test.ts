@@ -253,6 +253,57 @@ describe("reconciling against samples the store already holds", () => {
       .toEqual(["7", currentSeasonDate(7, 10), currentSeasonDate(7, 14), 3]);
   });
 
+  test("a sample entered in Beeline is not linked to a matching observation, keeps its count, and no duplicate is minted", async () => {
+    // Beeline is an entered sample's only record: an observation linked to it
+    // would make its number, count and place follow iNaturalist and undo what
+    // staff typed or released (beeline-3vs.7). It still matches, so the
+    // observation is not minted as a second sample beside it.
+    const entered = await insertCleanSample(conn, {
+      kind: "'trap'",
+      sample_number: "'7'",
+      date_start: `DATE '${currentSeasonDate(7, 10)}'`,
+      date_end: `DATE '${currentSeasonDate(7, 14)}'`,
+      specimen_count: "11",
+    });
+    const released = await insertCleanSample(conn, {
+      kind: "'trap'",
+      sample_number: "'8'",
+      date_start: `DATE '${currentSeasonDate(7, 10)}'`,
+      date_end: `DATE '${currentSeasonDate(7, 14)}'`,
+      specimen_count: "12",
+    });
+    await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered}), (${released})`);
+    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${released})`);
+    await stage(obs(7));
+    await stage(obs(8, { ofvs: ofvs("8", "3") }));
+    expect(await count("SELECT count(*) FROM sample_mint_free_link")).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_mint_pending")).toBe(0);
+    const counts = await promoteObservations(conn);
+    expect(counts).toMatchObject({ samplesMinted: 0, freeLinks: 0 });
+    expect(await count("SELECT count(*) FROM sample")).toBe(2);
+    expect(await rows(conn, `SELECT entity_id, inat_observation_id, specimen_count FROM sample ORDER BY entity_id`)).toEqual([
+      [entered, null, 11],
+      [released, null, 12],
+    ]);
+  });
+
+  test("a count that staff released is not rewritten from the observation, but an unreleased linked sample's is", async () => {
+    const linked = await insertCleanSample(conn, { sample_number: "'7'", inat_observation_id: "7", specimen_count: "11" });
+    const staffs = await insertCleanSample(conn, { sample_number: "'8'", inat_observation_id: "8", specimen_count: "12" });
+    await conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${staffs})`);
+    await stage(obs(7));
+    await stage(obs(8, { ofvs: ofvs("8", "3") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT entity_id, specimen_count FROM sample ORDER BY entity_id`)).toEqual([
+      [linked, 3],
+      [staffs, 12],
+    ]);
+    // A withdrawn release no longer protects the count.
+    await conn.run(`UPDATE sample_print_release SET withdrawn_at = current_timestamp WHERE sample_id = ${staffs}`);
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT specimen_count FROM sample WHERE entity_id = ${staffs}`)).toEqual([[3]]);
+  });
+
   test("a group matching two existing samples is neither linked nor minted", async () => {
     // Three of these on the dev store, all one collector, all trap samples of
     // the same number with overlapping ranges: duplicate collecting events

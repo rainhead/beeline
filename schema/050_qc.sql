@@ -86,12 +86,18 @@ CREATE TABLE sample_print_release (
   sample_id   INTEGER PRIMARY KEY REFERENCES sample(entity_id),
   released_by INTEGER REFERENCES person(entity_id),
   released_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-  reason      TEXT
+  reason      TEXT,
+  withdrawn_at TIMESTAMP,
+  withdrawn_by INTEGER REFERENCES person(entity_id),
+  withdraw_reason TEXT
 );
-COMMENT ON TABLE sample_print_release IS 'A staff decision that a sample from a settled season may print its labels (beeline-3vs.7). It matters only once the season has settled: an active season''s samples print without one. Written straight to the store, with no overlay file, because production is never promoted again (ADR 0006), so a development store rebuilt from the old records loses it. No sample with a release row follows an observation''s count, which promotion would otherwise put back (it does so for a sample that has an observation and no label on paper). Each writer sees to it: setSpecimenCount refuses such a sample, releaseLabels refuses it, and a sample entered in Beeline has no observation. Not a record of what printed: printed_sample is.';
+COMMENT ON TABLE sample_print_release IS 'A staff decision that a sample from a settled season may print its labels (beeline-3vs.7). It matters only once the season has settled: an active season''s samples print without one. Written straight to the store, with no overlay file, because production is never promoted again (ADR 0006), so a development store rebuilt from the old records loses it. No sample with a standing release follows an observation''s count, which promotion would otherwise put back (it does so for a sample that has an observation and no label on paper). Each writer sees to it: setSpecimenCount and releaseLabels refuse such a sample, a sample entered in Beeline has no observation, and minting does not link one to it (sample_mint_free_link, schema/108). A withdrawal keeps the row and records who withdrew it and when; settled_unreleased_sample treats a withdrawn row as no release, and a new release clears the withdrawal. Not a record of what printed: printed_sample is.';
 COMMENT ON COLUMN sample_print_release.released_by IS 'The person who released it; null for a staff login that is no person, as sample_hold.held_by and sample_entry.entered_by are.';
 COMMENT ON COLUMN sample_print_release.released_at IS 'When the release was written, UTC.';
 COMMENT ON COLUMN sample_print_release.reason IS 'What staff said when they released it; null when they said nothing.';
+COMMENT ON COLUMN sample_print_release.withdrawn_at IS 'When staff withdrew the release, UTC; null while it stands. A withdrawn row is no release.';
+COMMENT ON COLUMN sample_print_release.withdrawn_by IS 'The person who withdrew it; null while it stands, or for a staff login that is no person.';
+COMMENT ON COLUMN sample_print_release.withdraw_reason IS 'What staff said when they withdrew it; null when they said nothing.';
 
 -- Waiving these would print something false, or override a decision that is
 -- an atlas's rather than a judgement about one sample (Peter, 2026-10-25):

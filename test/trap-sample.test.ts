@@ -93,15 +93,11 @@ describe("entering and editing", () => {
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_primary_collector_invalid`)).toEqual([[0]]);
   });
 
-  it("releases the sample for printing when staff enter it, and not when a trapper does", async () => {
-    const staff = await personId("Dan O'Loughlin");
-    const first = await checkTrapSample(conn, form());
-    const second = await checkTrapSample(conn, form({ sample_number: "OBAS-20301" }));
-    if (!("sample" in first) || !("sample" in second)) throw new Error("unexpected problems");
-    const byStaff = (await createTrapSample(conn, first.sample, staff, { releasedByStaff: true })) as number;
-    const byTrapper = (await createTrapSample(conn, second.sample, staff)) as number;
-    expect(await rows(conn, `SELECT sample_id, released_by, reason FROM sample_print_release`)).toEqual([[byStaff, staff, null]]);
-    expect(byTrapper).not.toBe(byStaff);
+  it("writes no release itself: a settled season's release comes with the stamp of its place, afterwards", async () => {
+    const checked = await checkTrapSample(conn, form());
+    if (!("sample" in checked)) throw new Error("unexpected problems");
+    const id = (await createTrapSample(conn, checked.sample, await personId("Dan O'Loughlin"))) as number;
+    expect(await rows(conn, `SELECT count(*) FROM sample_print_release WHERE sample_id = ${id}`)).toEqual([[0n]]);
   });
 
   it("refuses the second of two saves that were both checked before either was written", async () => {

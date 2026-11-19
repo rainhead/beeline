@@ -190,6 +190,9 @@ FROM (
   FROM sample s
   JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
   WHERE NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+    -- Staff released it for printing: a count they set or vouched for is theirs
+    -- (sample_print_release, schema/050; beeline-3vs.7).
+    AND NOT EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = s.entity_id AND r.withdrawn_at IS NULL)
 ) followed
 WHERE sample.entity_id = followed.sample_id
   AND sample.specimen_count IS DISTINCT FROM followed.specimen_count;

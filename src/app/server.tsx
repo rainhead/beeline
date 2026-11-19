@@ -189,6 +189,7 @@ import {
   readerFor,
   recordTrapChange as recordTrapSampleChange,
   setCoordinates,
+  releaseAndStampPlace,
   releaseLabels,
   setTrapCount,
   setPlace,
@@ -1475,6 +1476,26 @@ export function createApp({
     }
     return null;
   };
+  // Whether a typed date is in a settled season (schema/102), for the note staff are shown.
+  const dateIsSettled = async (day: string): Promise<boolean> => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+    const found = await sql<{ settled: boolean }>`SELECT CAST(${day} AS DATE) < active_since AS settled FROM season`.execute(db).catch(() => null);
+    return found?.rows[0]?.settled === true;
+  };
+  // Staff saving a trap sample from a settled season releases its labels, with the place stamped from the
+  // point in the same step (beeline-3vs.7). Not the correction releaseLabels, which takes the sample's queue
+  // and so cannot run inside this turn. A refusal leaves the sample held back; the sample page offers the release.
+  const releaseSettledByStaff = async (c: Context<AppEnv>, sampleId: number): Promise<void> => {
+    if (!c.get("admin") || corrective.syncJobRunning()) return;
+    const settled = await sql<{ pending: boolean }>`
+      SELECT EXISTS (SELECT 1 FROM settled_unreleased_sample st WHERE st.sample_id = ${sampleId}) AS pending`.execute(db);
+    if (settled.rows[0]?.pending !== true) return;
+    try {
+      await releaseAndStampPlace(corrective, actorOf(c), sampleId, "");
+    } catch (err) {
+      console.warn(`could not release trap sample ${sampleId}: ${(err as Error).message}`);
+    }
+  };
   const trapPage = async (c: Context<AppEnv>, title: string, form: TrapSampleForm, problems: FieldProblems, action: string, sampleId?: number) =>
     page(
       c,
@@ -1486,6 +1507,7 @@ export function createApp({
         collectorNames={await collectorChoices(conn!)}
         action={action}
         sampleId={sampleId}
+        releasesLabels={c.get("admin") && (await dateIsSettled(form.date_start))}
       />,
     );
   const recordTrapChange = (c: Context<AppEnv>, sampleId: number, made: { created?: boolean } = {}) =>
@@ -1521,9 +1543,7 @@ export function createApp({
     if ("problems" in checked) {
       return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, checked.problems, "/trap-samples/new"), 400);
     }
-    const id = await createTrapSample(printWriter!, checked.sample, c.get("session").personId, {
-      releasedByStaff: c.get("admin"),
-    });
+    const id = await createTrapSample(printWriter!, checked.sample, c.get("session").personId);
     // Somebody else saved this number since the form was checked.
     if (id === "taken") {
       const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
@@ -1533,7 +1553,10 @@ export function createApp({
     // In the sample's own queue, taken at once: the entry may wait behind a
     // pass already running, and an edit made meanwhile would otherwise be
     // read by this pass and entered under whoever made the sample.
-    await onSample(id, () => recordTrapChange(c, id, { created: true }));
+    await onSample(id, async () => {
+      await recordTrapChange(c, id, { created: true });
+      await releaseSettledByStaff(c, id);
+    });
     return c.redirect(`/samples/${id}`);
   });
 
@@ -1567,9 +1590,14 @@ export function createApp({
     // every other correction to a sample takes (src/app/sample-queue.ts): the
     // place editor writes a trap sample's locality too, and without a turn
     // here one author's history entry could record the other's value.
+    const countBefore = (await loadTrapSample(conn!, id))?.specimen_count;
     const updated = await onSample(id, async () => {
       const outcome = await updateTrapSample(printWriter!, id, checked.sample);
-      if (outcome !== "printed" && outcome !== "taken") await recordTrapChange(c, id);
+      if (outcome !== "printed" && outcome !== "taken") {
+        await recordTrapChange(c, id);
+        // Staff changing the count is staff saying its bees need labels, as setSpecimenCount reads it.
+        if (countBefore !== String(checked.sample.specimen_count)) await releaseSettledByStaff(c, id);
+      }
       return outcome;
     });
     if (updated === "printed") {
@@ -1805,7 +1833,7 @@ export function createApp({
       const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
       return { note: field("note"), withdraw: field("withdraw") !== "" };
     });
-    if (result.ok) return c.redirect(sampleHref(id));
+    if (result.ok) return c.redirect(`/samples/${id}${result.place_settled ? "" : "?place=pending"}`);
     switch (result.refusal) {
       case "impersonating":
         return c.text(m.errors.readOnlyImpersonating, 403);
@@ -1814,7 +1842,9 @@ export function createApp({
       case "not_found":
         return errorResponse(c, "notFound");
       case "busy":
-        return c.text(m.record.sample.staffCoordinates.busy, 409);
+        return c.text(m.record.sample.printRelease.busy, 409);
+      case "place_not_derived":
+        return c.text(m.record.sample.printRelease.placeNotDerived, 409);
       case "not_settled":
         return c.text(m.record.sample.printRelease.notSettled, 409);
       case "count_follows_observation":

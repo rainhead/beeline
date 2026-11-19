@@ -169,11 +169,11 @@ export interface SampleDetail {
   from_old_records: boolean;
   /** From a settled season (schema/102): its labels print only once staff have released it. */
   settled: boolean;
-  /** Staff's release of this sample for printing (sample_print_release, beeline-3vs.7): who, when and why. Null when there is none. */
+  /** Staff's release of this sample for printing (sample_print_release, beeline-3vs.7): who, when and why, and whether it was withdrawn. Null when there never was one. */
   print_release: PrintRelease | null;
   /**
    * How many of the sample's specimens have no label on paper, by its count.
-   * Worked out only for a settled sample with no release, whose page offers
+   * Worked out only for a settled sample with no standing release, whose page offers
    * staff the release when it is above 0; 0 for any other.
    */
   labels_not_on_paper: number;
@@ -234,6 +234,8 @@ export interface PrintRelease {
   released_by: string | null;
   released_at: Date;
   reason: string | null;
+  /** Set when staff withdrew it: a withdrawn release is no release, and its row stays as the record. */
+  withdrawn: { by: string | null; at: Date; reason: string | null } | null;
 }
 
 export interface LocalitySuggestion {
@@ -647,18 +649,36 @@ async function printReleaseOf(
   sampleId: number,
   specimenCount: number,
 ): Promise<{ settled: boolean; print_release: PrintRelease | null; labels_not_on_paper: number }> {
-  const found = await sql<{ settled: boolean; released_at: Date | null; released_by: string | null; reason: string | null }>`
+  const found = await sql<{
+    settled: boolean;
+    released_at: Date | null;
+    released_by: string | null;
+    reason: string | null;
+    withdrawn_at: Date | null;
+    withdrawn_by: string | null;
+    withdraw_reason: string | null;
+  }>`
     SELECT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id) AS settled,
-           r.released_at, p.display_name AS released_by, r.reason
+           r.released_at, p.display_name AS released_by, r.reason,
+           r.withdrawn_at, wp.display_name AS withdrawn_by, r.withdraw_reason
     FROM sample s
     LEFT JOIN sample_print_release r ON r.sample_id = s.entity_id
     LEFT JOIN person p ON p.entity_id = r.released_by
+    LEFT JOIN person wp ON wp.entity_id = r.withdrawn_by
     WHERE s.entity_id = ${sampleId}`.execute(db);
   const row = found.rows[0];
   const settled = Boolean(row?.settled);
-  const release = row?.released_at == null ? null : { released_by: row.released_by, released_at: row.released_at, reason: row.reason };
+  const release: PrintRelease | null =
+    row?.released_at == null
+      ? null
+      : {
+          released_by: row.released_by,
+          released_at: row.released_at,
+          reason: row.reason,
+          withdrawn: row.withdrawn_at == null ? null : { by: row.withdrawn_by, at: row.withdrawn_at, reason: row.withdraw_reason },
+        };
   let notOnPaper = 0;
-  if (settled && release === null && specimenCount > 0) {
+  if (settled && (release === null || release.withdrawn !== null) && specimenCount > 0) {
     const paper = await sql<{ n: number }>`
       SELECT CAST(count(*) AS INTEGER) AS n FROM specimen_on_paper o
       WHERE o.sample_id = ${sampleId} AND o.specimen_number <= ${specimenCount}`.execute(db);

@@ -291,10 +291,10 @@ const ENDPOINTS: Endpoint[] = [
     method: "POST",
     route: "/samples/:id/release-labels",
     summary:
-      "Say that a sample from a settled season may print its labels, or with `withdraw` take that back. A settled season's sample prints only once released; one from an active season prints without, and releasing it is refused, as is releasing one whose count still follows its iNaturalist observation. Setting its count releases it as well, as does a staff entry. Releasing stamps the county, state and country from the sample's point at once. `pending` is how many labels the next run would print; a withdrawal leaves labels already frozen into a run that has not printed in it until that run is canceled, and `labels_in_run` says how many.",
+      "Say that a sample from a settled season may print its labels, or with `withdraw` take that back. A settled season's sample prints only once released; one from an active season prints without, and releasing it is refused, as is releasing one whose count still follows its iNaturalist observation. Setting its count releases it as well, as does a staff entry. Releasing stamps the county, state and country from the sample's point at once, and is refused (`place_not_derived`) while the point has not been derived or while a nightly or weekly job runs; `place_settled` is false when the point lies in no county. `pending` is how many labels the next run would print; a withdrawal leaves labels already frozen into a run that has not printed in it until that run is canceled, and `labels_in_run` says how many.",
     needs: "staff key",
     body: { note: "string, the reason", withdraw: "true to take a release away", reference: REFERENCE },
-    answers: "{ sample_id, outcome, pending, labels_in_run }",
+    answers: "{ sample_id, outcome, pending, labels_in_run, place_settled }",
   },
   {
     method: "POST",

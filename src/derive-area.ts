@@ -546,6 +546,76 @@ export function followsPointSql(s: string): string {
                   AND NOT EXISTS (SELECT 1 FROM settled_unreleased_sample ss WHERE ss.sample_id = ${s}.entity_id)))`;
 }
 
+/**
+ * What releasing a sample for printing asks of the place (beeline-3vs.7): the
+ * release and the stamp of its county, state and country from its point in one
+ * step, behind the print runs' lock, so that no run can be prepared between
+ * them. A run prepared between would freeze the typed place, and the stamp
+ * skips a frozen sample for good. `release` writes the release and is run
+ * inside the lock; it must not take the lock itself (it is not re-entrant).
+ *
+ * Where the stamp would matter (the sample is located, has an observation or
+ * was entered in Beeline, and no label is on paper) the point must already be
+ * tested against the gazetteer. When it is not, nothing is written and `why`
+ * says what is missing: the gazetteer is not on disk or is outdated, or the
+ * sample's point has not been derived yet. Elsewhere the stamp has nothing to
+ * do and the release is written whatever the gazetteer.
+ */
+export async function releaseAndStamp(
+  conn: Conn,
+  gazetteerPath: string | undefined,
+  sampleId: number,
+  release: () => Promise<void>,
+): Promise<{ done: true; placeSettled: boolean } | { done: false; why: "no_gazetteer" | "not_derived" }> {
+  const [facts] = await rows<{ stamps: boolean }>(
+    conn,
+    `SELECT EXISTS (SELECT 1 FROM sample_location l WHERE l.sample_id = s.entity_id)
+            AND (s.inat_observation_id IS NOT NULL OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
+            AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id) AS stamps
+     FROM sample s WHERE s.entity_id = $1`,
+    [sampleId],
+  );
+  if (facts === undefined || !facts.stamps) {
+    await withPrintRunLock(release);
+    return { done: true, placeSettled: true };
+  }
+  if (gazetteerPath === undefined) return { done: false, why: "no_gazetteer" };
+  try {
+    await access(gazetteerPath);
+  } catch {
+    return { done: false, why: "no_gazetteer" };
+  }
+  await loadSpatial(conn);
+  const G = `gazetteer_area_${++attachments}`;
+  await conn.run(`ATTACH '${gazetteerPath.replaceAll("'", "''")}' AS ${G} (READ_ONLY)`);
+  try {
+    const [build] = await rows<{ build_id: string }>(conn, `SELECT build_id FROM ${G}.gazetteer_build`);
+    const columns = await rows<{ t: string }>(
+      conn,
+      `SELECT DISTINCT table_name || '.' || column_name AS t FROM duckdb_columns() WHERE database_name = $1
+         AND ((table_name = 'wilderness' AND column_name = 'wid') OR (table_name = 'region' AND column_name = 'source_id'))`,
+      [G],
+    );
+    if (build === undefined || columns.length < 2) return { done: false, why: "no_gazetteer" };
+    const [current] = await rows<{ n: bigint | number }>(
+      conn,
+      `SELECT count(*) AS n FROM sample_area_derivation d
+         JOIN sample_location l ON l.sample_id = d.sample_id
+        WHERE d.sample_id = $1 AND d.gazetteer_build = $2 AND d.rule_version = $3
+          AND abs(d.latitude - l.latitude) <= 5e-5 AND abs(d.longitude - l.longitude) <= 5e-5`,
+      [sampleId, build.build_id, AREA_RULE_VERSION],
+    );
+    if (Number(current?.n ?? 0) === 0) return { done: false, why: "not_derived" };
+    const settled = await withPrintRunLock(async () => {
+      await release();
+      return (await stampCountiesUnlocked(conn, G, [sampleId])).unsettled.length === 0;
+    });
+    return { done: true, placeSettled: settled };
+  } finally {
+    await conn.run(`DETACH ${G}`);
+  }
+}
+
 interface StampResult {
   stamped: number[];
   /** Of the samples asked about by id, those whose place still is not their point's. */

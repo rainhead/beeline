@@ -22,7 +22,10 @@ import {
 import { withPromotionLock } from "../src/app/promotion-lock.js";
 import { onSample } from "../src/app/sample-queue.js";
 import { prepareRun } from "../src/print-run.js";
-import { createMemoryDb, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildTestGazetteer, createMemoryDb, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 
 /**
  * The refusals each sample correction makes by itself, without a page
@@ -36,7 +39,7 @@ async function person(conn: DuckDBConnection, name: string, login: string, userI
   return Number(id);
 }
 
-async function setup() {
+async function setup(opts: { gazetteer?: boolean } = {}) {
   const { instance, conn } = await createMemoryDb();
   const alice = await person(conn, "Alice Adams", "alice", 1);
   const bob = await person(conn, "Bob Barnes", "bob", 2);
@@ -53,6 +56,12 @@ async function setup() {
     samplePaths: { log: paths.sampleChangesPath, state: paths.sampleStatePath },
     syncJobRunning: () => running,
   };
+  if (opts.gazetteer === true) {
+    // The derivation's gazetteer, so the places that follow a point can be worked out (src/derive-area.ts).
+    const gazetteerPath = join(await mkdtemp(join(tmpdir(), "sample-corrections-gazetteer-")), "gazetteer.duckdb");
+    await buildTestGazetteer(gazetteerPath, "build-corrections");
+    deps.derivePaths = { gazetteerPath };
+  }
   const actor = (personId: number, login: string, extra: Partial<Actor> = {}): Actor => ({
     personId,
     signedInPersonId: personId,
@@ -602,20 +611,41 @@ describe("setSpecimenCount", () => {
     expect(await set(s, settled, "5", "bottle opened")).toMatchObject({ outcome: "saved", pending: 5 });
     expect(await set(s, current, "5")).toMatchObject({ outcome: "saved", pending: 5 });
     const [[sam]] = (await rows(s.conn, `SELECT person_id FROM inat_account WHERE login = 'samstaff'`)) as [[number]];
-    expect(await releases(s)).toEqual([
+    expect(await rows(s.conn, `SELECT sample_id, released_by, reason FROM sample_print_release ORDER BY sample_id`)).toEqual([
       [settled, sam, "bottle opened"],
       [current, sam, null],
     ]);
   });
 
-  it("releases a settled sample when staff confirm the count it already has, and says unchanged", async () => {
+  it("writes no release for a count equal to the one it has: confirming a count is not releasing", async () => {
     const s = await setup();
     const settled = await trapSample(s, { sample_number: "'T-2'", ...settledDates });
-    expect(await set(s, settled, "3")).toMatchObject({ ok: true, outcome: "unchanged", specimen_count: 3, pending: 3 });
+    expect(await set(s, settled, "3")).toMatchObject({ ok: true, outcome: "unchanged", specimen_count: 3, pending: 0 });
+    expect(await releases(s)).toEqual([]);
+    // A changed count, then the same again: one release, from the change.
+    expect(await set(s, settled, "4")).toMatchObject({ outcome: "saved", pending: 4 });
+    expect(await set(s, settled, "4")).toMatchObject({ outcome: "unchanged" });
     expect(await releases(s)).toHaveLength(1);
-    // A second confirmation finds the release standing and writes no second one.
-    expect(await set(s, settled, "3")).toMatchObject({ outcome: "unchanged" });
-    expect(await releases(s)).toHaveLength(1);
+  });
+
+  it("releases a settled sample entered in Beeline with its place stamped from its point, after the count", async () => {
+    const s = await setup({ gazetteer: true });
+    const entered = await trapSample(s, { sample_number: "'T-5'", ...settledDates, county: "'Malheur'", state_province: "'ID'" });
+    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+    expect(await set(s, entered, "5", "recount")).toMatchObject({ ok: true, outcome: "saved", specimen_count: 5, pending: 5 });
+    expect(await releases(s)).toEqual([[entered, expect.any(Number), "recount"]]);
+    // The point is in Benton County, Oregon; the typed place was somewhere else.
+    expect(await rows(s.conn, `SELECT state_province, county FROM sample WHERE entity_id = ${entered}`)).toEqual([["OR", "Benton"]]);
+  });
+
+  it("saves the count of a settled sample entered in Beeline but does not release it while its place cannot be worked out", async () => {
+    const s = await setup();
+    const entered = await trapSample(s, { sample_number: "'T-5'", ...settledDates });
+    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+    expect(await set(s, entered, "5")).toEqual({ ok: false, refusal: "place_not_derived" });
+    expect(await countOf(s, entered)).toBe(5);
+    expect(await releases(s)).toEqual([]);
+    expect(await rows(s.conn, `SELECT count(*) FROM pending_print_sample WHERE sample_id = ${entered}`)).toEqual([[0n]]);
   });
 
   it("writes no release for a count it refuses", async () => {
@@ -697,7 +727,7 @@ describe("releaseLabels", () => {
     const s = await setup();
     const id = await settledSample(s);
     expect(await pending(s, id)).toEqual([]);
-    expect(await release(s, id, "bottle is unlabelled")).toEqual({ ok: true, outcome: "saved", pending: 3, labels_in_run: 0 });
+    expect(await release(s, id, "bottle is unlabelled")).toEqual({ ok: true, outcome: "saved", pending: 3, labels_in_run: 0, place_settled: true });
     expect(await releases(s)).toEqual([[id, "bottle is unlabelled"]]);
     expect(await pending(s, id)).toEqual([[3]]);
     expect(await release(s, id, "again")).toMatchObject({ ok: true, outcome: "unchanged", pending: 3 });
@@ -709,12 +739,56 @@ describe("releaseLabels", () => {
     const id = await settledSample(s);
     expect(await release(s, id, "", true)).toMatchObject({ ok: true, outcome: "unchanged", pending: 0 });
     await release(s, id);
-    expect(await release(s, id, "", true)).toEqual({ ok: true, outcome: "removed", pending: 0, labels_in_run: 0 });
-    expect(await releases(s)).toEqual([]);
+    expect(await release(s, id, "no longer wanted", true)).toEqual({ ok: true, outcome: "removed", pending: 0, labels_in_run: 0, place_settled: true });
+    // The row stays as the record, marked withdrawn, and the sample is held back again.
+    expect(await rows(s.conn, `SELECT withdrawn_by IS NOT NULL, withdrawn_at IS NOT NULL, withdraw_reason FROM sample_print_release WHERE sample_id = ${id}`)).toEqual([[true, true, "no longer wanted"]]);
+    expect(await rows(s.conn, `SELECT count(*) FROM settled_unreleased_sample WHERE sample_id = ${id}`)).toEqual([[1n]]);
     expect(await pending(s, id)).toEqual([]);
+    expect(await release(s, id, "", true)).toMatchObject({ outcome: "unchanged" });
+    // A new release clears the withdrawal and takes the new reason.
+    expect(await release(s, id, "found it again")).toMatchObject({ outcome: "saved", pending: 3 });
+    expect(await rows(s.conn, `SELECT reason, withdrawn_at IS NULL, withdrawn_by IS NULL, withdraw_reason IS NULL FROM sample_print_release WHERE sample_id = ${id}`)).toEqual([["found it again", true, true, true]]);
+    await release(s, id, "", true);
     // Withdrawing is allowed whatever the season: it only changes what is pending.
     await s.conn.run(`INSERT INTO sample_print_release (sample_id) VALUES (${s.unlinked})`);
     expect(await release(s, s.unlinked, "", true)).toMatchObject({ outcome: "removed" });
+  });
+
+  it("stamps the place from the point as it releases a settled sample entered in Beeline, in the one step", async () => {
+    const s = await setup({ gazetteer: true });
+    const id = await settledSample(s, { county: "'Malheur'", state_province: "'ID'" });
+    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${id})`);
+    expect(await release(s, id, "unlabelled")).toMatchObject({ ok: true, outcome: "saved", pending: 3, place_settled: true });
+    expect(await rows(s.conn, `SELECT state_province, county FROM sample WHERE entity_id = ${id}`)).toEqual([["OR", "Benton"]]);
+    expect(await releases(s)).toEqual([[id, "unlabelled"]]);
+    // A run prepared now freezes the place the point gives.
+    await prepareRun(s.conn, { atlasId: null, personId: s.sam.personId, now: new Date("2026-09-21T16:00:00Z") });
+    expect(await rows(s.conn, `SELECT DISTINCT location_text FROM printed_label pl JOIN specimen sp ON sp.entity_id = pl.specimen_id WHERE sp.sample_id = ${id}`)).toEqual([["USA:OR:BentonCo Corvallis"]]);
+  });
+
+  it("releases nothing when the place that follows the point cannot be worked out yet", async () => {
+    const s = await setup();
+    const id = await settledSample(s, { county: "'Malheur'", state_province: "'ID'" });
+    await s.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${id})`);
+    expect(await release(s, id)).toEqual({ ok: false, refusal: "place_not_derived" });
+    expect(await releases(s)).toEqual([]);
+    // The point is derived only against a gazetteer that is on disk.
+    const missing = await setup();
+    const other = await settledSample(missing);
+    await missing.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${other})`);
+    missing.deps.derivePaths = { gazetteerPath: "/nonexistent/gazetteer.duckdb" };
+    expect(await release(missing, other)).toEqual({ ok: false, refusal: "place_not_derived" });
+    expect(await releases(missing)).toEqual([]);
+  });
+
+  it("is refused while a sync job runs, and writes nothing", async () => {
+    const s = await setup();
+    const id = await settledSample(s);
+    s.setRunning(true);
+    expect(await release(s, id)).toEqual({ ok: false, refusal: "busy" });
+    expect(await releases(s)).toEqual([]);
+    s.setRunning(false);
+    expect(await release(s, id)).toMatchObject({ outcome: "saved" });
   });
 
   it("says how many labels a withdrawn release leaves in a run that has not printed, and leaves them there", async () => {

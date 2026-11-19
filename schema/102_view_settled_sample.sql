@@ -67,8 +67,8 @@ CREATE VIEW settled_unreleased_sample AS
 SELECT st.sample_id
 FROM settled_sample st
 LEFT JOIN sample_print_release r ON r.sample_id = st.sample_id
-WHERE r.sample_id IS NULL;
-COMMENT ON VIEW settled_unreleased_sample IS 'Samples from a settled season that staff have not released for printing: they never print, are never pending, are held to the loose 250 m coordinate limit and do not follow their point for place. A released settled sample is none of these: it prints like an active one.';
+WHERE r.sample_id IS NULL OR r.withdrawn_at IS NOT NULL;
+COMMENT ON VIEW settled_unreleased_sample IS 'Samples from a settled season that staff have not released for printing, or whose release they withdrew: they never print, are never pending, are held to the loose 250 m coordinate limit and do not follow their point for place. A released settled sample is none of these: it prints like an active one.';
 
 CREATE VIEW sample_season AS
 SELECT entity_id AS sample_id,

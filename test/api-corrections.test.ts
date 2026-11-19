@@ -1361,14 +1361,14 @@ describe("releasing a settled season's sample for printing", () => {
       date_start: `DATE '${SETTLED_SEASON}-07-14'`,
       date_end: `DATE '${SETTLED_SEASON}-07-14'`,
     });
-    const releases = async () => rows(w.conn, `SELECT reason FROM sample_print_release WHERE sample_id = ${settled}`);
+    const releases = async () => rows(w.conn, `SELECT reason FROM sample_print_release WHERE sample_id = ${settled} AND withdrawn_at IS NULL`);
     const path = `/samples/${settled}/release-labels`;
     const saved = await w.send(w.keys.sam, path, { note: "bottle is unlabelled", reference: "ticket 3" });
     expect(saved.status).toBe(200);
-    expect(await json(saved)).toEqual({ sample_id: settled, outcome: "saved", pending: 3, labels_in_run: 0 });
+    expect(await json(saved)).toEqual({ sample_id: settled, outcome: "saved", pending: 3, labels_in_run: 0, place_settled: true });
     expect(await releases()).toEqual([["bottle is unlabelled"]]);
     expect(await json(await w.send(w.keys.sam, path, {}))).toMatchObject({ outcome: "unchanged" });
-    expect(await json(await w.send(w.keys.sam, path, { withdraw: true }))).toEqual({ sample_id: settled, outcome: "removed", pending: 0, labels_in_run: 0 });
+    expect(await json(await w.send(w.keys.sam, path, { withdraw: true }))).toEqual({ sample_id: settled, outcome: "removed", pending: 0, labels_in_run: 0, place_settled: true });
     expect(await releases()).toEqual([]);
     const active = await w.send(w.keys.sam, `/samples/${w.linked}/release-labels`, {});
     expect([active.status, (await json(active)).error]).toEqual([409, "not_settled"]);

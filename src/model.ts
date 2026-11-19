@@ -1355,6 +1355,9 @@ export interface SamplePrintReleaseTable {
   /** Defaults to the time of writing. */
   released_at: Generated<Date>;
   reason: string | null;
+  withdrawn_at: Date | null;
+  withdrawn_by: number | null;
+  withdraw_reason: string | null;
 }
 
 /** The blocking rules no waiver can set aside (beeline-1kb.9). */

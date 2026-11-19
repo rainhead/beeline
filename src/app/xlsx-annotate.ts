@@ -147,11 +147,20 @@ export function annotateWorkbook(bytes: Uint8Array, add: ColumnToAdd): Annotated
     const patched = body.replace(ROW, (whole: string, attrs: string, content: string | undefined) => {
       const r = Number(attrOf(`<row${attrs}>`, "r"));
       const text = textOf(r);
-      const cells = [...(content ?? "").matchAll(CELL)].map((m) => m[0]);
+      const matches = [...(content ?? "").matchAll(CELL)];
+      const cells = matches.map((m) => m[0]);
       const others = cells.filter((c) => columnOf(attrOf(c.slice(0, c.indexOf(">") + 1), "r") ?? "") !== column);
       if (text === "" && others.length === cells.length) return whole;
-      // Everything between the cells (an extension list, whitespace) is kept after them.
-      const rest = (content ?? "").replace(CELL, "");
+      // Everything between the cells (an extension list, whitespace) is kept after them: the
+      // text in the gaps between the matched cells, joined, rather than the row with the cells
+      // replaced away.
+      let rest = "";
+      let from = 0;
+      for (const m of matches) {
+        rest += (content ?? "").slice(from, m.index);
+        from = m.index! + m[0].length;
+      }
+      rest += (content ?? "").slice(from);
       const at = others.findIndex((c) => (columnOf(attrOf(c.slice(0, c.indexOf(">") + 1), "r") ?? "") ?? -1) > column);
       const added = text === "" ? [] : [inlineCell(`${letter}${r}`, text)];
       const ordered = at === -1 ? [...others, ...added] : [...others.slice(0, at), ...added, ...others.slice(at)];

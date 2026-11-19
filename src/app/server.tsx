@@ -73,6 +73,8 @@ import { changesDir, GENERATION, LINES, lineFile, readChangesSummary } from "../
 import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
+import { addressRows, needsLookup, runCollectors, runHasRegistration, type RunCollectors } from "./print-run-addresses.js";
+import { IdealLogicError, type Registrant } from "../ideal-logic.js";
 import { UploadPreview, UploadProblem, Uploads, uploadHref, type UploadDetail, type UploadListRow } from "./views/uploads.js";
 import { specimenWorkbook } from "./specimen-workbook.js";
 import { MAX_FILE_BYTES, comparePlan, parseUpload, type Layout as UploadLayout, type Parsed } from "./upload-plan.js";
@@ -99,6 +101,8 @@ import {
 } from "../print-run.js";
 import { PersonPage, Roster } from "./views/roster.js";
 import { ObserverPage, UnclaimedPage } from "./views/unclaimed.js";
+import { RegistrationsPage } from "./views/registrations.js";
+import { listRegistrations, registrationOf } from "./registrations.js";
 import { AddPersonPage } from "./views/add-person.js";
 import { accountStanding, inatProfiles, parseInatAccount, turnedAway, type InatProfile, type InatProfiles } from "./add-person.js";
 import { bindablePeople, listUnclaimed, mintNow, observerDetail, type ObserverDetail } from "./unclaimed.js";
@@ -113,6 +117,7 @@ import {
   rosterCsv,
   personDetail,
   personHandle,
+  specimensCollected,
   personRef,
   RECENT_CHANGES,
   resolvePersonHandle,
@@ -132,6 +137,7 @@ import {
 } from "../person-change.js";
 import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import { decideRegistration } from "../registrations.js";
+import { decideMailing } from "../mailing-instructions.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
@@ -163,6 +169,7 @@ import {
   readerFor,
   recordTrapChange as recordTrapSampleChange,
   setCoordinates,
+  setTrapCount,
   setPlace,
   takeLocation,
   unreachable,
@@ -170,7 +177,7 @@ import {
   type Actor,
   type CorrectionDeps,
 } from "./sample-corrections.js";
-import { localityReasonFor, takeLocationDefaultReason } from "./correction-reasons.js";
+import { localityReasonFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import { setSampleMethod } from "./sample-method.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
@@ -216,7 +223,11 @@ import {
   sampleCsvRow,
   SPECIMEN_CSV_HEADER,
   specimenCsvRow,
+  listingYears,
+  DETERMINATION_STATES,
+  type DeterminationState,
 } from "./listings.js";
+import { oregonToday } from "../oregon-today.js";
 import { programArchives } from "./dwc-archive.js";
 import { archiveDir, readArchiveManifest } from "./program-archives.js";
 import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
@@ -246,7 +257,7 @@ export interface JobsDep {
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir">>;
+  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir" | "idealLogic">>;
   inat: InatClient;
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
@@ -566,7 +577,11 @@ export function createApp({
       corrections: { deps: corrective, messages: messagesFor(null) },
       // Called through, since the function is defined further down with the
       // rest of the decisions about people.
-      people: { setMembership: (input) => setMembership(input), setRegistration: (input) => setRegistration(input) },
+      people: {
+        setMembership: (input) => setMembership(input),
+        setRegistration: (input) => setRegistration(input),
+        setMailing: (input) => setMailing(input),
+      },
       read: { changesPath: samplePaths.log, origin: config.origin },
     });
   // The description answers at /api/v1/ too, which the router takes for another
@@ -793,9 +808,18 @@ export function createApp({
   const errorResponse = async (
     c: Context<AppEnv>,
     kind: ErrorKind,
-    { reference, err, message, heading }: { reference?: string; err?: Error; message?: string; heading?: string } = {},
+    {
+      reference,
+      err,
+      message,
+      heading,
+      status: statusOverride,
+      title: titleOverride,
+    }: { reference?: string; err?: Error; message?: string; heading?: string; status?: 404 | 409 | 429 | 503; title?: string } = {},
   ): Promise<Response> => {
-    const status = kind === "failed" ? 500 : 404;
+    // A page that knows more than "not found" (a canceled run, a day's
+    // requests spent) says so in the not-found layout, with its own status.
+    const status = statusOverride ?? (kind === "failed" ? 500 : 404);
     const m = c.get("m") ?? messagesFor(null);
     const url = new URL(c.req.url);
     const json =
@@ -827,7 +851,7 @@ export function createApp({
         ? { text: err.stack ?? err.message, staleStore: /Binder Error|Catalog Error/.test(err.message) }
         : null;
     const body = <ErrorPage m={m} kind={kind} reference={reference} message={message} heading={heading} back={back} dev={dev} />;
-    const title = m.errorPage[kind].title;
+    const title = titleOverride ?? m.errorPage[kind].title;
     try {
       if (c.get("session") !== undefined && c.get("acting") !== undefined) {
         c.set("errorReference", reference);
@@ -1168,6 +1192,8 @@ export function createApp({
         <SampleListing
           m={m}
           query={query}
+          years={await listingYears(db)}
+          currentYear={Number(oregonToday().slice(0, 4))}
           page={results}
           atlases={atlases}
           programs={programs}
@@ -1214,6 +1240,8 @@ export function createApp({
         <SpecimenListing
           m={m}
           query={query}
+          years={await listingYears(db)}
+          currentYear={Number(oregonToday().slice(0, 4))}
           page={results}
           atlases={atlases}
           programs={programs}
@@ -1656,6 +1684,33 @@ export function createApp({
     return c.redirect(sampleHref(sample.sample_id));
   });
 
+  // How many traps a trap sample had (beeline-kgyd.4.1): staff only, on any
+  // trap sample, kept as the leading number of its effort.
+  app.post("/samples/:id/trap-count", async (c) => {
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const result = await setTrapCount(corrective, actorOf(c), id, async () => {
+      const body = await c.req.parseBody();
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+      return { count: field("count"), note: field("note"), problemFor: trapCountProblemFor(m) };
+    });
+    if (result.ok) return c.redirect(sampleHref(id));
+    switch (result.refusal) {
+      case "impersonating":
+        return c.text(m.errors.readOnlyImpersonating, 403);
+      case "not_admin":
+        return c.text("Admins only.", 403);
+      case "not_found":
+        return errorResponse(c, "notFound");
+      case "busy":
+        return c.text(m.record.sample.staffCoordinates.busy, 409);
+      case "invalid":
+        return c.text(result.problem, 400);
+      default:
+        return unreachable(result);
+    }
+  });
+
   // The coordinates, on the same terms (beeline-942). The one case a
   // volunteer cannot fix upstream at all is an obscured observation with no
   // trust, which yields no coordinates and cannot print; this is where staff
@@ -1684,6 +1739,8 @@ export function createApp({
         return errorResponse(c, "notFound");
       case "no_observation":
         return c.text(m.record.sample.staffCoordinates.noObservation, 409);
+      case "in_print_run":
+        return c.text(m.record.sample.staffCoordinates.inPrintRun, 409);
       case "busy":
         return c.text(m.record.sample.staffCoordinates.busy, 409);
       case "invalid":
@@ -1727,6 +1784,8 @@ export function createApp({
         return c.text(result.reason, 409);
       case "not_moved":
         return c.text(t.notMoved, 409);
+      case "in_print_run":
+        return c.text(m.record.sample.staffCoordinates.inPrintRun, 409);
       default:
         return unreachable(result);
     }
@@ -1899,11 +1958,14 @@ export function createApp({
       view === "sample" && Number.isInteger(specimenAsked) && specimenAsked > 0 ? await seasonOf(db, acting.personId, specimenAsked) : null;
     const asked = focusSeason ?? Number(c.req.query("season"));
     const season = seasons.some((s) => s.season === asked) ? asked : defaultSeason(seasons);
+    const askedDet = c.req.query("det") ?? "";
+    const det = (DETERMINATION_STATES as readonly string[]).includes(askedDet) ? (askedDet as DeterminationState) : "any";
     const rows =
-      view === "batch" ? await batchRows(db, acting.personId, me) : season === null ? [] : await seasonRows(db, acting.personId, me, season);
+      view === "batch" ? await batchRows(db, acting.personId, me) : season === null ? [] : await seasonRows(db, acting.personId, me, season, det);
     const data = {
       view,
       season,
+      det,
       rows,
       taxa: await rowTaxa(db, rows),
       readOnly: acting.impersonating,
@@ -2404,7 +2466,7 @@ export function createApp({
     const run = await loadRun(db, id);
     if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
     const labels = await runLabels(db, id);
-    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_abbreviation), <PrintRun m={m} run={run} labels={labels} />));
+    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_abbreviation), <PrintRun m={m} run={run} labels={labels} canDownloadAddresses={config.idealLogic != null} />));
   };
 
   app.get("/print-runs/:id", async (c) => {
@@ -2433,6 +2495,111 @@ export function createApp({
     return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
       "content-type": "application/pdf",
       "content-disposition": `inline; filename="beeline-labels-run-${id}.pdf"`,
+    });
+  });
+
+  // The mailing addresses of the run's collectors (beeline-w8ab.3). Ideal
+  // Logic's, fetched while this request is answered and never written
+  // anywhere: not the store, not a log line, not an error message. A POST,
+  // since each answer spends one of Ideal Logic's requests for the day and a
+  // prefetch must not.
+  app.post("/print-runs/:id/addresses.csv", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const t = m.printRuns.run.addresses;
+    const ideal = config.idealLogic;
+    if (ideal == null) return errorResponse(c, "notFound", { message: t.notConfigured });
+    const id = printRunId(c);
+    const canceled = () =>
+      errorResponse(c, "notFound", {
+        status: 409,
+        title: t.canceledTitle,
+        heading: t.canceledHeading,
+        message: t.canceledNoAddresses,
+      });
+    const run = await loadRun(db, id);
+    if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
+    if (run.state === "canceled") return canceled();
+    // With nobody to look up, Ideal Logic is not asked: each request counts
+    // against its limit for the day.
+    let registrants: Registrant[] = [];
+    let fetched = false;
+    // Null when the fetch worked, else the page to answer with.
+    const fetchRegistrants = async (): Promise<Response | null> => {
+      try {
+        registrants = await ideal.fetchRegistrants();
+        fetched = true;
+        return null;
+      } catch (err) {
+        // The error's text is fixed and safe to show; anything else is a fault.
+        if (!(err instanceof IdealLogicError)) throw err;
+        c.header("cache-control", "no-store");
+        return errorResponse(c, "notFound", {
+          status: err.kind === "budget" ? 429 : 503,
+          title: t.failedTitle,
+          heading: t.failedHeading,
+          message: t.failed(err.message, ideal.remaining()),
+        });
+      }
+    };
+    if (await runHasRegistration(db, id)) {
+      const failed = await fetchRegistrants();
+      if (failed !== null) return failed;
+    }
+    // The fetch can take a minute. Read the run again afterwards, so that a
+    // run canceled meanwhile is refused, and read its collectors and their
+    // registration links only now, so the file reflects the store as it is.
+    const readRun = async (): Promise<Response | RunCollectors> => {
+      const after = await loadRun(db, id);
+      if (after === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
+      if (after.state === "canceled") return canceled();
+      return runCollectors(db, id);
+    };
+    let inRun = await readRun();
+    if (inRun instanceof Response) return inRun;
+    // Staff may have switched a collector from keeping the labels in the lab
+    // back to mailing them between the first check and that read. If nobody
+    // was looked up then and somebody needs it now, look them up now, and
+    // read the run again after that wait too, for the same reasons.
+    if (needsLookup(inRun) && !fetched) {
+      const failed = await fetchRegistrants();
+      if (failed !== null) return failed;
+      inRun = await readRun();
+      if (inRun instanceof Response) return inRun;
+    }
+    const rows = addressRows(inRun, registrants);
+    // Who and how many, never a name or an address.
+    console.log(
+      `print-run addresses: person ${c.get("session").personId} downloaded run ${id}: ${rows.filter((r) => r.hasAddress).length} of ${rows.length} rows have an address`,
+    );
+    const h = t.headers;
+    const body = toCsv(
+      [h.names, h.line1, h.line2, h.city, h.stateProvince, h.postalCode, h.country, h.labels, h.printedAs, h.note],
+      rows.map((r) => [
+        r.names.join(" and "),
+        r.line1,
+        r.line2,
+        r.city,
+        r.stateProvince,
+        r.postalCode,
+        r.country,
+        r.labels,
+        r.printedAs.join("; "),
+        r.notes
+          .map((note) =>
+            note.code === "incompleteAddress"
+              ? t.notes.incompleteAddress(note.missing.map((part) => t.notes.missing[part]).join(", "))
+              : note.code === "unaccountedLabels"
+                ? t.notes.unaccountedLabels(note.labels)
+                : t.notes[note.code],
+          )
+          .join(" "),
+      ]),
+    );
+    return c.body(body, 200, {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="beeline-addresses-run-${id}.csv"`,
+      "cache-control": "no-store",
     });
   });
 
@@ -2613,6 +2780,7 @@ export function createApp({
     const m = c.get("m");
     const person = await personFromUrl(c);
     if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
+    const specimens = await specimensCollected(db, person);
     return c.html(
       await page(
         c,
@@ -2620,10 +2788,19 @@ export function createApp({
         <PersonPage
           m={m}
           person={person}
+          specimens={specimens}
           atlases={await atlasOptions(db)}
           programs={await programOptions(db)}
           history={await history(person.person_id)}
           keys={person.inat_user_id === null ? [] : await listKeys(db, person.inat_user_id, "all")}
+          mailing={
+            (await db
+              .selectFrom("person_mailing_instruction")
+              .selectAll()
+              .where("person_id", "=", person.person_id)
+              .executeTakeFirst()) ?? null
+          }
+          registration={await registrationOf(db, person.person_id)}
           now={new Date()}
           notice={notice}
           problem={problem}
@@ -3019,6 +3196,29 @@ export function createApp({
       };
     });
 
+  /**
+   * Whether a person's labels are mailed or kept in the lab (beeline-w8ab.4),
+   * for the person's page and the API alike. It takes its turn with every
+   * other decision about a person.
+   */
+  const setMailing: PeopleDeps["setMailing"] = (input) =>
+    oneDecisionAtATime(async () => {
+      const handle = parsePersonHandle(input.handle);
+      const id = handle === null ? null : await resolvePersonHandle(db, handle);
+      if (id === null) return { ok: false, refusal: "not_found" };
+      if (input.instruction !== "mail" && input.instruction !== "keep_in_lab") {
+        return { ok: false, refusal: "invalid", problem: 'The instruction is "mail" or "keep_in_lab".' };
+      }
+      const decided = await decideMailing(db, {
+        personId: id,
+        instruction: input.instruction,
+        decidedBy: input.author,
+        reference: input.reference,
+      });
+      if (!decided.ok) return { ok: false, refusal: "not_found" };
+      return { ok: true, outcome: decided.outcome, person_id: id, was: decided.was, instruction: input.instruction };
+    });
+
   const setMembership: PeopleDeps["setMembership"] = (input) =>
     oneDecisionAtATime(async () => {
       const handle = parsePersonHandle(input.handle);
@@ -3113,6 +3313,33 @@ export function createApp({
     });
   });
 
+  // Whether their labels are mailed or kept in the lab (beeline-w8ab.4).
+  // Admin only, and refused while viewing as somebody else, as every write is.
+  app.post("/people/:id/mailing", async (c) => {
+    if (c.get("acting").impersonating) return c.text(c.get("m").errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const form = await c.req.formData();
+    const decided = await setMailing({
+      handle: c.req.param("id") ?? "",
+      instruction: text(form, "instruction"),
+      author: c.get("session").login,
+      reference: null,
+    });
+    if (!decided.ok) {
+      if (decided.refusal === "not_found") return errorResponse(c, "notFound", { message: m.people.notFound });
+      return showPerson(c, undefined, decided.problem);
+    }
+    return showPerson(
+      c,
+      decided.outcome === "unchanged"
+        ? m.people.labelsUnchanged
+        : decided.instruction === "mail"
+          ? m.people.labelsSavedMail
+          : m.people.labelsSavedKeep,
+    );
+  });
+
   app.post("/people/:id/membership", (c) => decide(c, (form) => [["home_atlas", text(form, "home_atlas")]]));
 
   app.post("/people/:id/admin", (c) => decide(c, (form) => [["admin", text(form, "admin")]]));
@@ -3178,6 +3405,112 @@ export function createApp({
       ),
     );
   };
+
+  // ── Registrations in Ideal Logic (beeline-w8ab.2) ───────────────────────
+  // Which registration is each collector's: the collectors with no decision,
+  // the registrants that might be theirs, and the registrants nobody is
+  // linked to. Admin-gated, and refused outright while impersonating, as
+  // every staff write is. Nothing on these pages is an address or an email
+  // address; Beeline holds neither.
+  const showRegistrations = async (c: Context<AppEnv>, opts: { notice?: string; problem?: string } = {}) => {
+    const m = c.get("m");
+    return c.html(
+      await page(
+        c,
+        m.registrations.title,
+        <RegistrationsPage m={m} listing={await listRegistrations(db)} notice={opts.notice} problem={opts.problem} />,
+      ),
+      opts.problem === undefined ? 200 : 422,
+    );
+  };
+
+  app.get("/registrations", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    // A confirmation arrives in the address, since a decision redirects here
+    // rather than answering with the page (so a reload does not repeat it).
+    const url = new URL(c.req.url);
+    const who = /^\d{1,15}$/.test(url.searchParams.get("for") ?? "") ? Number(url.searchParams.get("for")) : null;
+    const saved = url.searchParams.get("saved");
+    let notice: string | undefined;
+    if (who !== null && saved !== null) {
+      const person = await db.selectFrom("person").select("display_name").where("entity_id", "=", who).executeTakeFirst();
+      const s = m.registrations.saved;
+      if (person !== undefined) {
+        if (saved === "none") notice = s.none(person.display_name);
+        else if (saved === "unlinked") notice = s.unlinked(person.display_name);
+        else if (saved === "unchanged") notice = s.unchanged(person.display_name);
+        else if (saved === "linked") {
+          // The id the decision saved travels in the address, so the sentence
+          // describes that decision even if somebody has changed it since.
+          const id = url.searchParams.get("id") ?? "";
+          const row = await db
+            .selectFrom("ideal_logic_registrant")
+            .select(["given_name", "family_name"])
+            .where("ideal_logic_id", "=", id)
+            .executeTakeFirst();
+          notice = s.linked(person.display_name, row === undefined ? "" : `${row.given_name} ${row.family_name}`);
+        }
+      }
+    }
+    return showRegistrations(c, { notice });
+  });
+
+  /**
+   * One decision about one person's registration, from the screen. It takes
+   * its turn with every other decision about a person, and records the
+   * evidence `staff`. `kind` is what the button said: link the id typed or
+   * chosen, record that there is none, or unlink (which records the same
+   * as none, and is said differently on the person's own page).
+   */
+  const decideFromScreen = (kind: "link" | "none" | "unlink") => async (c: Context<AppEnv>) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const r = m.registrations;
+    const raw = c.req.param("id") ?? "";
+    if (!/^\d{1,15}$/.test(raw)) return errorResponse(c, "notFound", { message: m.people.notFound });
+    const personId = Number(raw);
+    const form = await c.req.formData();
+    const fromPerson = form.get("return") === "person";
+    const typed = String(form.get("ideal_logic_id") ?? "").trim();
+    const refuse = (why: string) =>
+      fromPerson ? showPerson(c, undefined, why) : showRegistrations(c, { problem: why });
+    if (kind === "link" && typed === "") return refuse(r.refused.blankId);
+    const decided = await oneDecisionAtATime(() =>
+      decideRegistration(db, {
+        personId,
+        idealLogicId: kind === "link" ? typed : null,
+        evidence: "staff",
+        decidedBy: c.get("session").login,
+      }),
+    );
+    if (!decided.ok) {
+      if (decided.refusal === "unknown_person") return errorResponse(c, "notFound", { message: m.people.notFound });
+      return refuse(decided.refusal === "unknown_registration" ? r.refused.unknownRegistration : r.refused.unknownPerson);
+    }
+    const name = (await db.selectFrom("person").select("display_name").where("entity_id", "=", personId).executeTakeFirst())
+      ?.display_name ?? "";
+    const outcome = decided.outcome === "unchanged" ? "unchanged" : kind === "link" ? "linked" : kind === "none" ? "none" : "unlinked";
+    if (fromPerson) {
+      const said = r.saved;
+      return showPerson(
+        c,
+        outcome === "linked"
+          ? said.linked(name, decided.registrant ?? "")
+          : outcome === "none"
+            ? said.none(name)
+            : outcome === "unlinked"
+              ? said.unlinked(name)
+              : said.unchanged(name),
+      );
+    }
+    const savedId = outcome === "linked" ? `&id=${encodeURIComponent(typed)}` : "";
+    return c.redirect(`/registrations?saved=${outcome}&for=${personId}${savedId}#collectors`);
+  };
+  app.post("/registrations/:id/link", decideFromScreen("link"));
+  app.post("/registrations/:id/none", decideFromScreen("none"));
+  app.post("/registrations/:id/unlink", decideFromScreen("unlink"));
 
   app.get("/unclaimed", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);

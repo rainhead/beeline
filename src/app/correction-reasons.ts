@@ -18,3 +18,9 @@ export const localityReasonFor =
 
 /** The reason stored when staff take the observation's location and give no note. */
 export const takeLocationDefaultReason = (m: Messages): string => m.record.sample.takeObservationLocation.reason;
+
+/** The sentence for each way a trap count is refused, in the catalogue's words. */
+export const trapCountProblemFor =
+  (m: Messages) =>
+  (problem: "count" | "net" | "method"): string =>
+    m.record.sample.trapCount.problems[problem];

@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { isWriteConflict } from "../write-conflict.js";
 import { apiError, type ApiEnv } from "./api.js";
-import { localityReasonFor, takeLocationDefaultReason } from "./correction-reasons.js";
+import { localityReasonFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import type { Messages } from "./messages/index.js";
 import { EDITABLE_FIELDS, type EditableFieldName } from "./sample-edit.js";
 import {
@@ -12,6 +12,7 @@ import {
   holdSample,
   setCoordinates,
   setPlace,
+  setTrapCount,
   takeLocation,
   unreachable,
   waiveFlag,
@@ -24,6 +25,7 @@ import {
   type SetPlaceResult,
   type StaffCoordinatesCorrectionResult,
   type TakeObservationLocationCorrectionResult,
+  type TrapCountResult,
 } from "./sample-corrections.js";
 
 /**
@@ -85,7 +87,12 @@ const REFUSALS = {
   no_observation: {
     status: 409,
     error: "no_observation",
-    message: "This sample has no iNaturalist observation, and this correction is kept against the observation.",
+    message: "This sample has no iNaturalist observation, and this correction is kept against one. (A point can also be kept against old Beeline records or an entry in Beeline; this sample has neither.)",
+  },
+  in_print_run: {
+    status: 409,
+    error: "in_print_run",
+    message: "Labels for this sample are in a print run that has not printed yet, which holds the point it froze. Wait for the run to print or cancel it, then set the point.",
   },
   unavailable: { status: 503, error: "unavailable", message: "This Beeline cannot make this correction." },
 } as const satisfies Record<string, { status: ContentfulStatusCode; error: string; message: string }>;
@@ -98,6 +105,7 @@ type AnyFailure = Extract<
   | EditSampleResult
   | SetPlaceResult
   | StaffCoordinatesCorrectionResult
+  | TrapCountResult
   | TakeObservationLocationCorrectionResult
   | QcDecisionCorrectionResult,
   { ok: false }
@@ -124,6 +132,7 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "not_moved":
     case "no_staging":
     case "no_observation":
+    case "in_print_run":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
       return apiError(c, r.status, r.error, r.message);
@@ -405,6 +414,15 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     [],
     setCoordinates,
     (r) => ({ outcome: r.outcome, settled: r.settled }),
+  );
+
+  endpoint(
+    "trap-count",
+    (b) => ({ count: b.count === undefined ? "" : text(b.count), note: (b.note as string | undefined) ?? "", problemFor: trapCountProblemFor(corrections!.messages) }),
+    { count: "text_or_number", note: "string" },
+    ["count"],
+    setTrapCount,
+    (r) => ({ outcome: r.outcome, effort: r.effort }),
   );
 
   endpoint(

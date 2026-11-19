@@ -72,6 +72,7 @@ describe("the line each difference is on", () => {
     ["second_print", ["genus", "genusVolDet", "casteVolDet", "identifiedBy", "specificEpithet", "taxonRank", "caste", "scientificName", "family", "sexVolDet", "sex", "familyVolDet"]],
     ["sex_caste_vocabulary", ["sex", "sexVolDet"]],
     ["staff_correction", ["endDayofYear", "samplingProtocol", "verbatimEventDate", "year2", "month2", "startDayofYear", "county", "locality", "day2"]],
+    ["staff_point", ["decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "verbatimElevation", "coordinateSource", "country", "stateProvince", "county"]],
     ["standin_replaced", ["decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "verbatimElevation", "coordinateSource"]],
     ["subgenus_dropped", ["subgenus"]],
     ["subgenus_form", ["genus", "scientificName", "genusVolDet"]],

@@ -288,6 +288,7 @@ export const en = {
       exports: "Exports",
       identify: "Identify specimens",
       unclaimed: "Unknown collectors",
+      registrations: "Registrations",
     },
     /**
      * The menu's destinations beyond the records — reference pages and staff
@@ -805,6 +806,23 @@ export const en = {
       detAny: "Any",
       detDetermined: "Determined",
       detUndetermined: "Not determined",
+      /** How far the name goes (beeline-o9rd): the options of the same menu, each a band of ranks. */
+      detCoarse: "Named only above genus",
+      detGenus: "Named to genus only",
+      detSpecies: "Named to species",
+      detFromGenus: "Named to genus or finer",
+      detHint: "Judged on the name of record. On samples, at least one specimen is that far.",
+      /** One collection year (beeline-kgyd.8); the Identify page says it this way too. */
+      year: "Collection year",
+      yearAny: "Any year",
+      yearGo: "Show",
+      /** The links above the table that set the common filters in one click (beeline-hkd4). */
+      quick: {
+        label: "Common filters",
+        thisYear: (year: number) => `This collection year (${year})`,
+        notNamed: "Not named",
+        coarse: "Named only above genus",
+      },
       /** Whether labels are on paper (beeline-3v33): a sample's labels, or a specimen's own. */
       labels: "Labels",
       labelsAny: "Any",
@@ -917,7 +935,7 @@ export const en = {
       download: "Download as CSV",
       edit: "Download the Excel file for editing specimens",
       editNote:
-        "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. Every cell is kept as text, so Excel leaves it as it is. Staff can upload it back after you edit it.",
+        "To give specimens their names and record what became of them: the columns that help you recognise each bee, then the ones to fill in. The file holds what these filters select, so filter first, for example to one collection year. Every cell is kept as text, so Excel leaves it as it is. Only program staff can upload the file after you edit it, and an upload only lists what differs from what Beeline holds. To name your bees yourself today, use Identify specimens.",
 
       note:
         "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +
@@ -1221,6 +1239,20 @@ export const en = {
         noOldRecords: "Old Beeline holds no records of this sample and it was not entered in Beeline, so it cannot be corrected here.",
         conflict: "Someone changed this sample's method or dates after you opened the form. Reload the page to see what they saved, then make your correction again.",
       },
+      /** Staff correcting how many traps a trap sample had, from a second pencil on the Method row (beeline-kgyd.4.1). */
+      trapCount: {
+        /** The pencil, for a screen reader: it has no visible words. */
+        open: "Correct how many traps this sample had",
+        hint: "The count is kept with the kind of trap, as the sample's effort. Nothing prints it. Leave it blank to take it away.",
+        count: "Number of traps",
+        note: "Reason (optional)",
+        save: "Save",
+        problems: {
+          count: "The trap count must be a whole number of one or more, or blank to take it away.",
+          net: "This is a net sample, which has no trap count. Only a trap sample has one.",
+          method: "This sample has no method, and the count is kept with the kind of trap. Set the method first, then the count.",
+        },
+      },
       staffCoordinates: {
         setBy: (name: string) => `Coordinates set in Beeline by ${name}.`,
         setByStaff: "Coordinates set in Beeline by staff.",
@@ -1231,7 +1263,8 @@ export const en = {
         open: "Change the coordinates",
         hint: "Coordinates set here are treated as the true location and replace the observation's, even when iNaturalist updates. The elevation is recalculated overnight.",
         printed: "This sample's labels are already printed. Changing the coordinates here does not change the printed labels.",
-        noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation.",
+        hintNoObservation: "Coordinates set here are treated as the true location and replace the sample's, which has no iNaturalist observation. The county and state follow them, and the elevation is recalculated overnight. To correct a wrong point, set the right one.",
+        noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation, one from old Beeline's records, or one entered in Beeline.",
         latitude: "Latitude",
         longitude: "Longitude",
         uncertainty: "Accuracy, in meters (optional)",
@@ -1242,6 +1275,8 @@ export const en = {
           "Beeline could not set the county and state from these coordinates just now, so they may not match. Check them before reprinting this sample's labels.",
         /** Refused while the overnight sync runs, which would undo or race the change. */
         busy: "Beeline is syncing with iNaturalist right now. Try again once it has finished.",
+        /** Refused while a print run that has not printed holds the sample's labels. */
+        inPrintRun: "This sample's labels are in a print run that has not printed yet, so its point cannot change now. Wait for the run to print, or cancel it.",
       },
       /**
        * Staff taking iNaturalist's location for a sample Beeline printed,
@@ -1548,6 +1583,19 @@ export const en = {
      * reads as spring or summer (Karla Salp, 2026-11-13, beeline-mjml).
      */
     season: "Collection year",
+    /** Which specimens to list by how far the name shown goes (beeline-o9rd). */
+    named: {
+      label: "Show",
+      options: [
+        ["any", "All specimens"],
+        ["undetermined", "Not named"],
+        ["coarse", "Named only above genus"],
+        ["genus", "Named to genus only"],
+        ["species", "Named to species"],
+        ["from_genus", "Named to genus or finer"],
+        ["determined", "Named at all"],
+      ] as ReadonlyArray<readonly [string, string]>,
+    },
     /** Only without script, beside the season menu. */
     seasonGo: "Show",
     seasonOption: (season: number, unnamed: number) =>
@@ -2182,16 +2230,16 @@ export const en = {
       headingText: "What to know",
       purposeTopic: "What this file is for",
       purpose:
-        "This file is for editing specimens: giving them their names, and recording what became of them. Fill in the white columns, then upload it on the Edited downloads page. Beeline compares what you upload with what it says now and lists every difference. It does not change any record from a file yet. The grey columns are there to help you recognise each bee.",
+        "This file is for editing specimens: giving them their names, and recording what became of them. Fill in the white columns. Only program staff can upload the file today, on the Edited downloads page, so if you are not staff, name your bees on the Identify specimens page instead. When staff upload it, Beeline compares the file with what it says now and lists every difference. It does not change any record from a file yet. The grey columns are there to help you recognise each bee.",
       columnsTopic: "White and grey columns",
       columns:
-        "Beeline reads the white columns when you upload the file, and their headings are in bold. The grey columns are for reference: Beeline ignores what is in them, and tells you if you changed one, apart from fieldNumber and the two named below. Leave fieldNumber as it is: Beeline checks it against the specimen the row is for, and sets the whole row aside if the two disagree. Nothing is locked, so you can still sort and filter on any column.",
+        "Beeline reads the white columns when the file is uploaded, and their headings are in bold. The grey columns are for reference: Beeline ignores what is in them, and tells you if you changed one, apart from fieldNumber and the two named below. Leave fieldNumber as it is: Beeline checks it against the specimen the row is for, and sets the whole row aside if the two disagree. Nothing is locked, so you can still sort and filter on any column.",
       leaveTopic: "specimenId and specimenVersion",
       leave:
         "These two are grey, but Beeline does read them: it finds each row by them and uses them to see whether the record changed since you downloaded the file. Leave them as they are.",
       lookupTopic: "The names and identifiers tabs",
       lookup:
-        "These tabs are for looking things up, and Beeline does not read them when you upload, so changing them changes nothing. The scientificName column offers the names as you type; a name that is not on the names tab may be marked by your spreadsheet, and you may still type it. The identifiers tab is there to check how a person's name is spelled.",
+        "These tabs are for looking things up, and Beeline does not read them when the file is uploaded, so changing them changes nothing. The scientificName column offers the names as you type; a name that is not on the names tab may be marked by your spreadsheet, and you may still type it. The identifiers tab is there to check how a person's name is spelled.",
       windowsTopic: "Who is on the identifiers tab",
       windows:
         "The names tab holds the scientific names in Beeline's taxonomy. The identifiers tab holds people who identified a specimen in the last five years, or who identified a specimen collected in the last five years.",
@@ -2758,6 +2806,51 @@ export const en = {
       /** Beside a label that is a second print under the number it already had. */
       reprint: "reprint",
       download: "Download the sheets (PDF)",
+      /** The mailing addresses of the run's collectors, fetched from Ideal Logic as the file is made (beeline-w8ab.3). */
+      addresses: {
+        button: "Download the mailing addresses (CSV)",
+        hint: "For a mail merge onto address labels. The addresses come from Ideal Logic when you press the button and are not kept by Beeline. Each download uses one of the requests Ideal Logic allows each day, so press it once and wait. Merge from the file itself: opening it in Excel first can drop the leading zero of a ZIP code.",
+        notConfigured: "Beeline is not set up to read addresses from Ideal Logic.",
+        canceledNoAddresses: "This run was canceled, so its labels will not be mailed.",
+        canceledTitle: "Run canceled",
+        canceledHeading: "This run has no addresses to download",
+        failedTitle: "No addresses downloaded",
+        failedHeading: "The mailing addresses could not be downloaded",
+        /** The reason is the client's own fixed text, which ends without a full stop. */
+        failed: (reason: string, remaining: number) =>
+          `No file was made. ${reason}. Beeline may make ${n(remaining)} more ${remaining === 1 ? "request" : "requests"} to Ideal Logic today.`,
+        headers: {
+          names: "Names",
+          line1: "Address line 1",
+          line2: "Address line 2",
+          city: "City",
+          stateProvince: "State or province",
+          postalCode: "Postal code",
+          country: "Country",
+          labels: "Labels",
+          printedAs: "Printed as",
+          note: "Note",
+        },
+        notes: {
+          noRegistration: "No address: this collector is not linked to a registration in Ideal Logic.",
+          noAddress: "No address: the registration in Ideal Logic has no street address.",
+          notInAnswer:
+            "No address: the registration this collector is linked to was not in Ideal Logic's answer, or Beeline could not read it.",
+          keepInLab: "Keep in the lab.",
+          collectorLineDiffers:
+            "The collector line on this run's labels differs from what the sample would print today, so the labels may belong to someone else.",
+          missing: {
+            city: "no city",
+            stateProvince: "no state or province",
+            postalCode: "no postal code",
+            country: "country unknown",
+          },
+          incompleteAddress: (missing: string) =>
+            `Incomplete address: ${missing}. Finish it by hand before mailing.`,
+          unaccountedLabels: (labels: number) =>
+            `${n(labels)} ${labels === 1 ? "label of this run is" : "labels of this run are"} not in this file, because their sample no longer has exactly one primary collector, or has a different one. Find ${labels === 1 ? "it" : "them"} on the sheets.`,
+        },
+      },
       approve: "Approve",
       approveHint: "The labels have been proofed and are good to print.",
       markPrinted: "Mark printed",
@@ -2927,6 +3020,24 @@ export const en = {
 
     // Detail page.
     backToRoster: "← All people",
+    registration: "Registration",
+    registrationHint:
+      "Which registration in Ideal Logic is this person's. Their labels' mailing address is looked up through it when staff download a print run's addresses.",
+    registrationNone: "No registration linked",
+    registrationDecidedNone: (by: string, when: string) => `No registration (decided by ${by}, ${when})`,
+    registrationOf: (name: string) => `Registered as ${name}`,
+    registrationId: "Ideal Logic id",
+    registrationEvidence: "Evidence",
+    registrationDecided: (by: string, when: string) => `Decided by ${by}, ${when}`,
+    registrationEvidenceKinds: {
+      register_email: "the old register's email address",
+      handle: "the handle typed at registration",
+      sign_in_email: "the email address iNaturalist reported at sign-in",
+      staff: "staff decided",
+    } as Record<string, string>,
+    registrationUnknown: "a registration Beeline no longer holds",
+    unlinkRegistration: "Unlink",
+    openRegistrations: "Registrations",
     identity: "Name",
     account: "iNaturalist account",
     accountHint:
@@ -2941,6 +3052,23 @@ export const en = {
     belongsToHint:
       "Where this person belongs — not where their samples fell. Master Melittology itself is an answer, not a blank: volunteers outside every member atlas work under OBA staff's auspices.",
     saveMembership: "Save membership",
+    /**
+     * Where the person's printed labels go (beeline-w8ab.4). There is no
+     * note: free text could hold an address.
+     */
+    labelsHeading: "Labels",
+    labelsHint:
+      "Staff mail each collector their labels after a print run. Choose keeping them in the lab for people whose labels are handed over there, such as students in a course. The run's address file then lists them with no address and says so.",
+    labelsChoice: "Their labels are",
+    labelsMail: "Mail them",
+    labelsKeep: "Keep them in the lab",
+    saveLabels: "Save labels",
+    labelsNowMail: "Mailed. Nothing is recorded to say otherwise.",
+    labelsNowKeep: (by: string, on: string) => `Kept in the lab. Decided by ${by} on ${on}.`,
+    labelsSavedMail: "Saved. Their labels will be mailed.",
+    labelsSavedKeep: "Saved. Their labels will be kept in the lab.",
+    labelsUnchanged: "Nothing changed: that is already so.",
+    labelsBadChoice: "Choose either mailing them or keeping them in the lab.",
     /** No row: nobody has answered. Distinct from having answered "no atlas". */
     membershipUnrecorded: "Not recorded",
     membershipProgram: "Master Melittology (no atlas)",
@@ -3020,8 +3148,11 @@ export const en = {
     bindAccount: "Save account",
     reason: "Why",
     reasonHint: "Recorded in the overlay beside the change, and read by whoever reviews it later.",
+    /** The count the Specimens listing shows for this person, linked to it where there is a login to filter by. */
+    specimensCollected: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"} collected`,
     samplesCollected: (all: number, primary: number) =>
-      `${n(all)} collected, ${n(primary)} as primary collector`,
+      `from ${n(all)} ${all === 1 ? "sample" : "samples"}, ${n(primary)} as primary collector`,
+    inatProfile: "iNaturalist profile",
     saved: "Saved.",
     savedRebuild: "Saved.",
 
@@ -3250,6 +3381,74 @@ export const en = {
     nameBlank: "give them a name",
     nameTaken: (name: string) =>
       `somebody here is already called "${name}". If this is them, connect the account to them instead; if not, give the newcomer a name that tells them apart`,
+    problem: (why: string) => `Not saved: ${why}`,
+  },
+
+  /**
+   * The staff screen for registrations in Ideal Logic (beeline-w8ab.2).
+   * Staff-facing, English-only. Never says anything about an address or an
+   * email address: Beeline holds neither.
+   */
+  registrations: {
+    title: "Registrations",
+    heading: "Registrations in Ideal Logic",
+    intro:
+      "People register for Master Melittology in Ideal Logic. Linking a collector to their registration is how Beeline finds where to mail their labels. Beeline keeps the link and the registrant's name, never an address.",
+    collectorsHeading: (count: number) => `Collectors with no registration (${n(count)})`,
+    collectorsHint:
+      "Everyone who has collected a sample and has no decision yet: a registration linked, or a note that they have none. People with labels waiting come first, then people with labels in a run that has not been mailed.",
+    collectorsEmptyHeading: "Nobody waiting",
+    registrantsEmptyHeading: "Nobody unplaced",
+    collectorsEmpty: "Every collector has a decision about their registration.",
+    colPerson: "Person",
+    colLogin: "iNaturalist",
+    colProgram: "Belongs to",
+    colSamples: "Samples",
+    colSuggested: "Registrations that might be theirs",
+    colName: "Name",
+    colAtlases: "Atlases",
+    colHandle: "Handle typed",
+    colWhy: "Why",
+    colFirstSeen: "First seen",
+    labelsWaiting: "Labels waiting",
+    labelsInRun: "Labels in a run not yet mailed",
+    noSuggestion: "no suggestion",
+    noLogin: "no iNaturalist account",
+    notRecorded: "not recorded",
+    programShort: "Program",
+    noAtlas: "none given",
+    noHandle: "none given",
+    idealLogicId: "Ideal Logic id",
+    reasonFullName: "The name is the same.",
+    reasonFamilyName: "The family name is the same.",
+    reasonHandle: "The handle they typed is this person's iNaturalist login.",
+    alsoLinkedTo: (names: string) => `Already linked to ${names}`,
+    link: "Link",
+    linkTo: (person: string, registrant: string) => `Link ${person} to the registration of ${registrant}`,
+    none: "No registration",
+    noneFor: (person: string) => `Record that ${person} has no registration`,
+    byId: "Link by Ideal Logic id",
+    byIdHint: "For a registration none of the suggestions found. An id looks like QNN6-MX8, and it must be one Beeline has already seen.",
+    /** On the person's page, which shows no suggestions; the Registrations page does. */
+    byIdHintPerson: "An id looks like QNN6-MX8, and it must be one Beeline has already seen. The Registrations page suggests registrations that might be this person's.",
+    byIdLabel: (person: string) => `Ideal Logic id for ${person}`,
+    registrantsHeading: (count: number) => `Registered, not in Beeline (${n(count)})`,
+    registrantsHint:
+      "Registrants linked to nobody who named an atlas or typed an iNaturalist handle, newest first. They become collectors through Unknown collectors when they first collect.",
+    registrantsEmpty: "Every registrant who named an atlas or a handle is linked to somebody.",
+    openObserver: (handle: string) => `@${handle} is waiting on Unknown collectors`,
+    saved: {
+      linked: (person: string, registrant: string) => `${person} is now linked to the registration of ${registrant}.`,
+      none: (person: string) => `${person} has no registration.`,
+      unlinked: (person: string) => `${person} is no longer linked to a registration.`,
+      unchanged: (person: string) => `${person} was already recorded that way. Nothing changed.`,
+    },
+    refused: {
+      unknownRegistration:
+        "that is not the id of a registration Beeline has seen. An id looks like QNN6-MX8 and is matched exactly; Beeline knows the registrations its nightly job kept",
+      unknownPerson: "nobody here has that id",
+      blankId: "type an Ideal Logic id",
+    },
     problem: (why: string) => `Not saved: ${why}`,
   },
 

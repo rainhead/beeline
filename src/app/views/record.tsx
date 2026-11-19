@@ -19,6 +19,7 @@ import { programHref } from "../programs.js";
 import { plantNameKey } from "../../plant-name-key.js";
 import type { ListedFlag } from "../listings.js";
 import { methodNamesTrap } from "../../trap-method.js";
+import { trapCountOf } from "../../trap-sample.js";
 import {
   Absent,
   AtlasMark,
@@ -170,6 +171,7 @@ export function SampleFacts({
   sample,
   placeEdit = null,
   methodEdit = false,
+  trapCountEdit = false,
   personLinks = false,
 }: {
   m: Messages;
@@ -185,6 +187,8 @@ export function SampleFacts({
    * its own form (beeline-0wbq).
    */
   methodEdit?: boolean;
+  /** Whether the reader may correct a trap sample's trap count: staff, on any trap sample (beeline-kgyd.4.1). */
+  trapCountEdit?: boolean;
   /**
    * Whether the reader may change the locality from the Place row, and
    * whether they may write any name or only one offered (`samplePlaceEdit`).
@@ -210,6 +214,7 @@ export function SampleFacts({
             {protocolSaysMore(sample) && <Meta> · {sample.protocol}</Meta>}
           </span>
           {methodEdit && <MethodEdit m={m} sample={sample} />}
+          {trapCountEdit && sample.kind === "trap" && <TrapCountEdit m={m} sample={sample} />}
         </>
       ),
     },
@@ -381,19 +386,24 @@ export function WhereCollected({
   m,
   sample,
   admin = false,
+  canSetPoint = false,
   placePending = false,
 }: {
   m: Messages;
   sample: SampleDetail;
   admin?: boolean;
+  /** The sample can hold a staff point: it has an observation, old records, or was entered in Beeline. */
+  canSetPoint?: boolean;
   placePending?: boolean;
 }) {
   const w = m.record.sample.where;
   // The staff editor belongs on both branches, and matters most on the one
   // with no coordinates: an obscured observation with no trusted access
   // yields none and cannot print, and only a person can put the true point
-  // in (beeline-942). A sample with no observation is not offered it.
-  const edit = admin && sample.inat_observation_id !== null ? <CoordinatesEdit m={m} sample={sample} /> : null;
+  // in (beeline-942). A sample with no observation is offered it too when
+  // it is one that can hold a point: built from old records, or entered in
+  // Beeline (beeline-kgyd.4.2, `canSetPoint`).
+  const edit = admin && canSetPoint ? <CoordinatesEdit m={m} sample={sample} /> : null;
   // Staff never reach this: a withheld location is a volunteer reading
   // somebody else's protected sample (src/app/listings.ts `withheld`).
   if (sample.location_withheld) {
@@ -629,6 +639,28 @@ function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
 }
 
 /**
+ * Staff correcting how many traps a trap sample had, from its own pencil on
+ * the Method row. The count is the leading number of the sample's effort, so
+ * the form shows that number and a blank takes it away (src/trap-sample.ts).
+ */
+function TrapCountEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.trapCount;
+  return (
+    <InlineEdit
+      label={t.open}
+      action={`/samples/${sample.sample_id}/trap-count`}
+      back={sampleHref(sample.sample_id)}
+      save={t.save}
+      cancel={m.listings.samples.placeEdit.cancel}
+    >
+      <Meta block>{t.hint}</Meta>
+      <TextField id="trap-count" name="count" label={t.count} value={trapCountOf(sample.sampling_effort)?.toString() ?? null} />
+      <TextField id="trap-count-note" name="note" label={t.note} />
+    </InlineEdit>
+  );
+}
+
+/**
  * Staff setting the coordinates (beeline-942), from a pencil on the
  * Coordinates row (beeline-8w8n), as the place is changed from its row. The
  * pair and its accuracy in one small form, and where staff coordinates
@@ -648,7 +680,7 @@ function CoordinatesEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
       save={t.save}
       cancel={m.listings.samples.placeEdit.cancel}
       after={
-        sample.location_override === null ? undefined : (
+        sample.location_override === null || sample.inat_observation_id === null ? undefined : (
           <form method="post" action={action}>
             <input type="hidden" name="remove" value="1" />
             <button type="submit" class="outlined compact-button">
@@ -658,7 +690,7 @@ function CoordinatesEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
         )
       }
     >
-      <Meta block>{t.hint}</Meta>
+      <Meta block>{sample.inat_observation_id === null ? t.hintNoObservation : t.hint}</Meta>
       {sample.printed ? <Meta block>{t.printed}</Meta> : null}
       <TextField id="staff-latitude" name="latitude" label={t.latitude} value={num(sample.latitude)} />
       <TextField id="staff-longitude" name="longitude" label={t.longitude} value={num(sample.longitude)} />
@@ -1021,12 +1053,19 @@ export function SamplePage({
           sample={sample}
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
           methodEdit={admin && (sample.from_old_records || enteredPastItsForm)}
+          trapCountEdit={admin}
           personLinks={admin}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
       </Card>
       <Card>
-        <WhereCollected m={m} sample={sample} admin={admin} placePending={placePending} />
+        <WhereCollected
+          m={m}
+          sample={sample}
+          admin={admin}
+          canSetPoint={sample.inat_observation_id !== null || sample.from_old_records || entered}
+          placePending={placePending}
+        />
       </Card>
       <Card>
         <SampleFlags

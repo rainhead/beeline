@@ -39,6 +39,7 @@ import {
   EmptyState,
   Field,
   FilterPills,
+  HiddenParams,
   FindingDetail,
   Meta,
   OrAbsent,
@@ -191,6 +192,7 @@ const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir" | "act"
   taxon: "",
   host: "",
   det: "any",
+  year: null,
   labels: "any",
   kind: "any",
   qc: "any",
@@ -249,10 +251,11 @@ function activeFilters(
   if (query.det !== "any") {
     out.push({
       label: f.det,
-      value: query.det === "determined" ? f.detDetermined : f.detUndetermined,
+      value: detLabel(f, query.det),
       clearHref: clear({ det: "any" }),
     });
   }
+  if (query.year !== null) out.push({ label: f.year, value: String(query.year), clearHref: clear({ year: null }) });
   if (query.labels !== "any") {
     // A sample's labels, or a specimen's own: the same filter in each
     // listing's own words.
@@ -500,6 +503,65 @@ export interface ListingProps<Row> {
   admin: boolean;
   /** The atlas the viewer belongs to, for the scope toggle; null when none is recorded. */
   homeAtlas?: AtlasOption | null;
+  /** The collection years there are samples from, newest first, for the year menu. */
+  years: readonly number[];
+  /** The current collection year as Oregon reads today, for "this collection year". */
+  currentYear: number;
+}
+
+/**
+ * One collection year, where it can be seen (beeline-kgyd.8): the date range
+ * under the Date heading's menu was not found. A plain GET form like the
+ * search box, so it works without script and the URL says what it chose.
+ */
+function YearForm({ m, path, query, years }: { m: Messages; path: string; query: ListingQuery; years: readonly number[] }) {
+  const f = m.listings.filters;
+  // A year in the URL the store has no samples from still shows as chosen.
+  const offered = query.year !== null && !years.includes(query.year) ? [query.year, ...years].sort((a, b) => b - a) : years;
+  return (
+    <form class="year-form" method="get" action={path}>
+      <HiddenParams params={listingParams(query)} except={["year"]} />
+      <label for="year">{f.year}</label>
+      <select id="year" name="year">
+        <option value="">{f.yearAny}</option>
+        {offered.map((y) => (
+          <option value={String(y)} selected={y === query.year}>
+            {y}
+          </option>
+        ))}
+      </select>
+      <button type="submit" class="outlined compact-button">
+        {f.yearGo}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * Links that set the filters people reach for most (beeline-hkd4). Each
+ * layers on what is already chosen, and one in force is a link that takes it
+ * away again.
+ */
+function QuickFilters({ m, path, query, currentYear }: { m: Messages; path: string; query: ListingQuery; currentYear: number }) {
+  const q = m.listings.filters.quick;
+  const links: Array<[string, Partial<ListingQuery>, Partial<ListingQuery>, boolean]> = [
+    [q.thisYear(currentYear), { year: currentYear }, { year: null }, query.year === currentYear],
+    [q.notNamed, { det: "undetermined" }, { det: "any" }, query.det === "undetermined"],
+    [q.coarse, { det: "coarse" }, { det: "any" }, query.det === "coarse"],
+  ];
+  return (
+    <nav class="quick-filters" aria-label={q.label}>
+      {links.map(([label, on, off, inForce]) =>
+        inForce ? (
+          <a href={listingHref(path, query, { ...off, page: 1 })} aria-current="true">
+            {label}
+          </a>
+        ) : (
+          <a href={listingHref(path, query, { ...on, page: 1 })}>{label}</a>
+        ),
+      )}
+    </nav>
+  );
 }
 
 /** The part above the table that both listings share. */
@@ -507,10 +569,13 @@ function Toolbar<Row>({
   copy,
   path,
   props,
+  quick = false,
 }: {
   copy: { count: (total: number) => string };
   path: string;
   props: ListingProps<Row>;
+  /** Whether the one-click filters are offered (the specimens listing's). */
+  quick?: boolean;
 }) {
   const { m, query, admin } = props;
   const atlases = props.programs ?? props.atlases;
@@ -528,7 +593,9 @@ function Toolbar<Row>({
           label={m.listings.filters.search}
           placeholder={m.listings.filters.searchHint}
         />
+        <YearForm m={m} path={path} query={query} years={props.years} />
       </div>
+      {quick && <QuickFilters m={m} path={path} query={query} currentYear={props.currentYear} />}
       <FilterPills
         filters={filters}
         clearAllHref={isFiltered(query) ? listingHref(path, query, { ...emptyFilters, page: 1 }) : null}
@@ -658,6 +725,17 @@ function atlasColumn({ m, path, query, label, programs }: WithPrograms): TableCo
   });
 }
 
+const detLabel = (f: Messages["listings"]["filters"], det: ListingQuery["det"]): string =>
+  ({
+    any: f.detAny,
+    determined: f.detDetermined,
+    undetermined: f.detUndetermined,
+    coarse: f.detCoarse,
+    genus: f.detGenus,
+    species: f.detSpecies,
+    from_genus: f.detFromGenus,
+  })[det];
+
 function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
   const f = m.listings.filters;
   return (
@@ -666,10 +744,15 @@ function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
       name="det"
       label={f.det}
       value={query.det}
+      hint={f.detHint}
       options={[
         ["any", f.detAny],
-        ["determined", f.detDetermined],
         ["undetermined", f.detUndetermined],
+        ["determined", f.detDetermined],
+        ["coarse", f.detCoarse],
+        ["genus", f.detGenus],
+        ["species", f.detSpecies],
+        ["from_genus", f.detFromGenus],
       ]}
     />
   );
@@ -1003,7 +1086,7 @@ export function SpecimenListing(
         }
       />
       {reprinted !== null && <Callout tone="success">{copy.bulk.done(reprinted.requested, reprinted.of)}</Callout>}
-      <Toolbar copy={copy} path={path} props={props} />
+      <Toolbar copy={copy} path={path} props={props} quick />
       {/* Immediately above the table, since they act on its rows (Peter,
           2026-10-31). While an action is chosen its note takes the row's place. */}
       {marking ? (

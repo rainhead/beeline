@@ -139,8 +139,47 @@ export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean", "l
  * determined specimens, so the gap — "what is still waiting for a name?" —
  * needs its own control (Peter, 2026-08-23).
  */
-export type DeterminationState = "any" | "determined" | "undetermined";
-export const DETERMINATION_STATES = ["any", "determined", "undetermined"] as const;
+export type DeterminationState = (typeof DETERMINATION_STATES)[number];
+/**
+ * How far a specimen's determination of record goes (beeline-o9rd). `determined`
+ * and `undetermined` are the original two and keep their meaning. The rest
+ * split the determined by rank, read off `animal_rank.ordinal` (schema/020):
+ * `coarse` is named only above genus (family, order, ...), `genus` is genus or
+ * subgenus and nothing finer, `species` is species or subspecies, and
+ * `from_genus` is genus or anything finer, which is what a volunteer means by
+ * "named".
+ */
+export const DETERMINATION_STATES = ["any", "determined", "undetermined", "coarse", "genus", "species", "from_genus"] as const;
+
+/** The ordinals the bands break at; the ranks themselves are in schema/020, and a test pins them. */
+export const GENUS_ORDINAL = 180;
+export const SPECIES_ORDINAL = 220;
+
+/**
+ * The ordinal test for a naming band, or null for a state that is not one.
+ * Nothing lies between subgenus (190) and species (220) today; a rank put
+ * there would read as genus level, the nearer reading of "genus or finer".
+ */
+export function rankBand(det: DeterminationState): string | null {
+  switch (det) {
+    case "coarse":
+      return `ordinal < ${GENUS_ORDINAL}`;
+    case "genus":
+      return `ordinal >= ${GENUS_ORDINAL} AND ordinal < ${SPECIES_ORDINAL}`;
+    case "species":
+      return `ordinal >= ${SPECIES_ORDINAL}`;
+    case "from_genus":
+      return `ordinal >= ${GENUS_ORDINAL}`;
+    default:
+      return null;
+  }
+}
+
+/** A predicate over a rank column: it is in the band. Null where the state is not a band. */
+export function inRankBand(det: DeterminationState, rankColumn: string) {
+  const band = rankBand(det);
+  return band === null ? null : sql<boolean>`${sql.raw(rankColumn)} IN (SELECT rank FROM animal_rank WHERE ${sql.raw(band)})`;
+}
 
 /**
  * Whether labels are on paper (beeline-3v33, Peter 2026-11-04): what is still
@@ -262,6 +301,12 @@ export interface ListingQuery {
    * least one specimen still waiting for a name.
    */
   det: DeterminationState;
+  /**
+   * One collection year, the calendar year of a sample's first day (the
+   * season, as the Identify page says "collection year"); null for any.
+   * Beside the from and to dates, which it does not replace.
+   */
+  year: number | null;
   /** Whether the labels are on paper yet (LabelFilter). */
   labels: LabelFilter;
   /** Net or trap; on specimens, the kind of the sample each came from. */
@@ -289,6 +334,7 @@ export const EMPTY_QUERY: ListingQuery = {
   taxon: "",
   host: "",
   det: "any",
+  year: null,
   labels: "any",
   kind: "any",
   qc: "any",
@@ -335,6 +381,7 @@ export function parseListingQuery(
   const qc = params.get("qc") ?? "";
   const flag = params.get("flag") ?? "";
   const det = params.get("det") ?? "";
+  const year = params.get("year") ?? "";
   const labels = params.get("labels") ?? "";
   const kind = params.get("kind") ?? "";
   const sortParam = params.get("sort") ?? "";
@@ -354,6 +401,7 @@ export function parseListingQuery(
     taxon: text(params.get("taxon")),
     host: text(params.get("host")),
     det: (DETERMINATION_STATES as readonly string[]).includes(det) ? (det as DeterminationState) : "any",
+    year: /^\d{4}$/.test(year) && Number(year) >= 1900 ? Number(year) : null,
     labels: (LABEL_FILTERS as readonly string[]).includes(labels) ? (labels as LabelFilter) : "any",
     kind: (KIND_FILTERS as readonly string[]).includes(kind) ? (kind as KindFilter) : "any",
     sort,
@@ -398,6 +446,7 @@ export function listingParams(query: ListingQuery, overrides: Partial<ListingQue
   if (merged.taxon !== "") params.set("taxon", merged.taxon);
   if (merged.host !== "") params.set("host", merged.host);
   if (merged.det !== "any") params.set("det", merged.det);
+  if (merged.year !== null) params.set("year", String(merged.year));
   if (merged.labels !== "any") params.set("labels", merged.labels);
   if (merged.kind !== "any") params.set("kind", merged.kind);
   if (merged.qc !== "any") params.set("qc", merged.qc);
@@ -430,6 +479,7 @@ export const isFiltered = (q: ListingQuery) =>
   q.taxon !== "" ||
   q.host !== "" ||
   q.det !== "any" ||
+  q.year !== null ||
   q.labels !== "any" ||
   q.kind !== "any" ||
   q.qc !== "any" ||
@@ -1359,6 +1409,22 @@ async function filteredSamples(
       ),
     );
   }
+  // A naming band on a sample: at least one of its specimens is named that far,
+  // as the taxon filter finds a sample by any one specimen.
+  const band = inRankBand(query.det, "an.rank");
+  if (band !== null) {
+    base = base.where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom("specimen as sp")
+          .innerJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
+          .innerJoin("animal as an", "an.entity_id", "d.animal_id")
+          .select("sp.entity_id")
+          .whereRef("sp.sample_id", "=", "s.entity_id")
+          .where(band),
+      ),
+    );
+  }
+  if (query.year !== null) base = base.where(sql<number>`extract(year from s.date_start)`, "=", query.year);
   // "Undetermined" on a sample means at least one of its specimens is still
   // waiting for a name; "determined" means none is, and there is something to
   // determine. A sample with no specimens yet is neither.
@@ -1624,6 +1690,9 @@ async function filteredSpecimens(
   if (animals !== null) base = base.where("d.animal_id", "in", animals.length === 0 ? [-1] : animals);
   if (query.det === "undetermined") base = base.where("d.specimen_id", "is", null);
   if (query.det === "determined") base = base.where("d.specimen_id", "is not", null);
+  const specimenBand = inRankBand(query.det, "an.rank");
+  if (specimenBand !== null) base = base.where(specimenBand);
+  if (query.year !== null) base = base.where(sql<number>`extract(year from s.date_start)`, "=", query.year);
   if (query.host !== "") base = base.where(hostMatches(query.host));
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
   if (exact.sample_number !== undefined) base = base.where(sql<boolean>`lower(s.sample_number) = ${exact.sample_number.toLowerCase()}`);
@@ -2385,3 +2454,14 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   specimenVersion(r),
   sampleVersion(r),
 ];
+
+/**
+ * The collection years there are samples from, newest first, for the listings'
+ * year menu. The calendar year of a sample's first day, as `sample_season`
+ * says (schema/102), so a year offered here and one filtered on are one thing.
+ */
+export async function listingYears(db: Kysely<Database>): Promise<number[]> {
+  const result = await sql<{ y: number }>`
+    SELECT DISTINCT CAST(extract(year FROM date_start) AS INTEGER) AS y FROM sample ORDER BY y DESC`.execute(db);
+  return result.rows.map((r) => r.y);
+}

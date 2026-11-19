@@ -684,7 +684,7 @@ describe("the description at /api/v1", () => {
     const body = await w.json(w.keys.alice, "");
     for (const e of body.endpoints.filter((e: any) => e.method === "GET" && e.parameters && ["/samples", "/specimens", "/samples/count", "/specimens/count"].includes(e.route))) {
       for (const [name, spec] of Object.entries<any>(e.parameters)) {
-        const value = spec.values?.[0] ?? (name === "from" || name === "to" ? "2026-01-01" : name === "page" || name === "page_size" ? "1" : name === "inat_observation_id" ? "1" : "x");
+        const value = spec.values?.[0] ?? (name === "from" || name === "to" ? "2026-01-01" : name === "page" || name === "page_size" ? "1" : name === "year" ? "2026" : name === "inat_observation_id" ? "1" : "x");
         const res = await w.get(w.keys.alice, `${e.route}?${name}=${encodeURIComponent(value)}`);
         expect(res.status, `${e.route} ${name}`).toBe(200);
       }

@@ -87,6 +87,7 @@ function MoreLinks({ m, admin, jobsFailing }: { m: Messages; admin: boolean; job
         { href: "/areas", label: m.layout.nav.areas, shown: admin },
         { href: "/people", label: m.layout.nav.people, shown: admin },
         { href: "/unclaimed", label: m.layout.nav.unclaimed, shown: admin },
+        { href: "/registrations", label: m.layout.nav.registrations, shown: admin },
         { href: "/jobs", label: m.layout.nav.jobs, shown: admin },
         { href: "/print-runs", label: m.layout.nav.printRuns, shown: admin },
         { href: "/exports", label: m.layout.nav.exports, shown: admin },

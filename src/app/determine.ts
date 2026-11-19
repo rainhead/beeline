@@ -1,7 +1,7 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import type { Database, DraftCaste, DraftSex } from "../model.js";
 import { BEE_FAMILIES, notABee } from "../bee-families.js";
-import { observationGone } from "./listings.js";
+import { DETERMINATION_STATES, inRankBand, observationGone, type DeterminationState } from "./listings.js";
 import { NumberIndex, type NumberEntry, type NumberProblem } from "../determination-numbers.js";
 import { methodNamesTrapSql } from "../trap-method.js";
 
@@ -79,6 +79,17 @@ export interface EntryTaxon {
   order: string | null;
   bee: boolean;
   castes: boolean;
+}
+
+const SHOWN_RANK = "(SELECT x.rank FROM animal x WHERE x.entity_id = coalesce(dd.animal_id, vol.animal_id))";
+
+/** The condition for a naming state on the rows `loadRows` builds, where `vol` and `dd` are joined. */
+function namedWhere(det: DeterminationState): RawBuilder<unknown> {
+  const hasName = sql`(coalesce(dd.animal_id, vol.animal_id) IS NOT NULL OR dd.ecdysis_tid IS NOT NULL)`;
+  if (det === "any") return sql`true`;
+  if (det === "determined") return hasName;
+  if (det === "undetermined") return sql`NOT ${hasName}`;
+  return inRankBand(det, SHOWN_RANK) ?? sql`true`;
 }
 
 /** Specimens a person can reach, as a subquery over sample ids. */
@@ -208,9 +219,16 @@ async function loadRows(
  */
 const BY_SAMPLE = sql`s.date_start, length(s.sample_number), s.sample_number, s.date_end, s.entity_id, sp.specimen_number`;
 
-export const seasonRows = (db: Kysely<Database>, personId: number, determinerId: number, season: number) =>
+/**
+ * One collection year's rows, optionally only those named a given distance
+ * (beeline-o9rd). Judged as this page judges a name, on what the person sees:
+ * their draft if they have one, else the newest volunteer determination, never
+ * the determination of record. A draft naming a taxon the tree does not hold
+ * yet has no rank to judge, so it counts as named and falls in no band.
+ */
+export const seasonRows = (db: Kysely<Database>, personId: number, determinerId: number, season: number, det: DeterminationState = "any") =>
   loadRows(db, personId, determinerId, {
-    where: sql`sp.sample_id IN (SELECT sample_id FROM sample_season WHERE season = ${season})`,
+    where: sql`sp.sample_id IN (SELECT sample_id FROM sample_season WHERE season = ${season}) AND ${namedWhere(det)}`,
     order: BY_SAMPLE,
   });
 

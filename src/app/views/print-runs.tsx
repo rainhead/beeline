@@ -189,7 +189,18 @@ function NextAction({ m, run }: { m: Messages; run: RunDetail }) {
   );
 }
 
-export function PrintRun({ m, run, labels }: { m: Messages; run: RunDetail; labels: RunLabelRow[] }) {
+export function PrintRun({
+  m,
+  run,
+  labels,
+  canDownloadAddresses = false,
+}: {
+  m: Messages;
+  run: RunDetail;
+  labels: RunLabelRow[];
+  /** Whether Beeline holds a key for Ideal Logic, which is where the addresses come from. */
+  canDownloadAddresses?: boolean;
+}) {
   const r = m.printRuns.run;
   const warned = labels.filter((l) => l.warnings !== null);
   return (
@@ -249,6 +260,14 @@ export function PrintRun({ m, run, labels }: { m: Messages; run: RunDetail; labe
               {r.download}
             </LinkButton>
           </p>
+        )}
+        {/* A POST, so that nothing prefetches it: each download spends one of
+            Ideal Logic's requests for the day. */}
+        {run.state !== "canceled" && canDownloadAddresses && (
+          <form method="post" action={`${printRunHref(run.print_run_id)}/addresses.csv`} class="row">
+            <Button variant="tonal">{r.addresses.button}</Button>
+            <Meta>{r.addresses.hint}</Meta>
+          </form>
         )}
         <NextAction m={m} run={run} />
       </Card>

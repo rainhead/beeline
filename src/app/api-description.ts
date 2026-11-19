@@ -95,7 +95,8 @@ const FILTER_MEANING: Record<string, string> = {
   member: `Whose collectors belong to which program: an atlas code, ${PROGRAM_MEMBERSHIP} (Master Melittology), or ${MEMBER_UNRECORDED}.`,
   taxon: "A taxon name. Anything below it in the taxonomy matches too, so a family name finds its genera.",
   host: "Part of the floral host's name, in any case. It matches the name as the observation gave it, what iNaturalist calls the host now, or its common name, so a row can be found by a name it does not show.",
-  det: "Whether the determination of record exists. On samples, undetermined means at least one specimen is still waiting for a name.",
+  det: "How far the determination of record goes. determined is any name, undetermined none. coarse is a name above genus only (family, order and so on), genus a genus or subgenus and no finer, species a species or subspecies, and from_genus a genus or anything finer. On samples, coarse, genus, species and from_genus need at least one specimen so named, undetermined means at least one is still waiting for a name, and determined means the sample has specimens and every one has a name.",
+  year: "One collection year, the calendar year of the sample's first day, as YYYY. Beside from and to, which narrow further.",
   labels: "Whether labels are on paper: waiting, or printed.",
   kind: "net, or trap.",
   qc: "The sample's quality-control status: flagged is any flag, blocking or warning, and locality is a locality that will not do for a label.",
@@ -247,6 +248,14 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     method: "POST",
+    route: "/samples/:id/trap-count",
+    summary: "Set how many traps a trap sample had, or take the count away with an empty one.",
+    needs: "staff key",
+    body: { count: "whole number as text or number; empty to clear", note: "string", reference: REFERENCE },
+    answers: "{ sample_id, outcome, effort }",
+  },
+  {
+    method: "POST",
     route: "/samples/:id/take-observation-location",
     summary: "Use iNaturalist's location for the sample.",
     needs: "staff key",
@@ -290,6 +299,19 @@ const ENDPOINTS: Endpoint[] = [
         "reference: an optional note of 1 to 500 characters pointing at the request behind the change, kept in the record of the key's use and on the decision itself. Never an address or a name",
     },
     answers: "{ person_id, outcome, was, ideal_logic_id, registrant } where registrant is the name on the registration, to check against the person",
+  },
+  {
+    method: "POST",
+    route: "/people/:id/mailing",
+    summary:
+      "Say whether a person's printed labels are mailed or kept in the lab, as their page does. The id is the person's id or their iNaturalist login. Mailing is the default, so mail for a person not kept in the lab records nothing. Never send an address or an email address.",
+    needs: "staff key",
+    body: {
+      instruction: "mail or keep_in_lab",
+      reference:
+        "reference: an optional note of 1 to 500 characters pointing at the request behind the change, kept in the record of the key's use and on the decision itself. Never an address or a name",
+    },
+    answers: "{ person_id, outcome, was, instruction } where outcome is saved or unchanged and was is what the person had before",
   },
 ];
 

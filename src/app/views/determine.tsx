@@ -2,6 +2,7 @@ import type { Messages } from "../messages/index.js";
 import type { EntryRow, EntrySeason } from "../determine.js";
 import { Callout, EmptyState } from "./components/feedback.js";
 import { PageHeader } from "./components/text.js";
+import type { DeterminationState } from "../listings.js";
 import { Term } from "./components/term.js";
 
 /**
@@ -18,6 +19,8 @@ export type DetermineView = "sample" | "batch";
 export interface DeterminePageData {
   view: DetermineView;
   season: number | null;
+  /** Which rows to show by how far their name goes (beeline-o9rd); "any" shows all. */
+  det: DeterminationState;
   rows: EntryRow[];
   /** Every name the rows already use, so they render before the picker's list arrives. */
   taxa: Record<number, { name: string; rank: string; castes: boolean }>;
@@ -76,6 +79,14 @@ export function DeterminePage({ m, seasons, data }: { m: Messages; seasons: Entr
                   {seasons.map((s) => (
                     <option value={String(s.season)} selected={s.season === data.season}>
                       {d.seasonOption(s.season, s.unnamed)}
+                    </option>
+                  ))}
+                </select>
+                <label for="determine-named">{d.named.label}</label>
+                <select id="determine-named" name="det">
+                  {d.named.options.map(([value, label]) => (
+                    <option value={value} selected={value === data.det}>
+                      {label}
                     </option>
                   ))}
                 </select>

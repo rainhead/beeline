@@ -29,13 +29,15 @@ import { join } from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { readXlsxHere as readXlsx } from "../src/app/xlsx-reader.js";
-import { MAX_SHEET_ROWS, columnIndex, columnName } from "../src/app/xlsx.js";
+import { MAX_SHEET_ROWS, columnIndex, columnName, writeXlsx } from "../src/app/xlsx.js";
 import * as XLSX from "xlsx";
 import { specimenWorkbook } from "../src/app/specimen-workbook.js";
 import { SPECIMEN_CHOICES, SPECIMENS_LAYOUT, columnRule } from "../src/app/upload-plan.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
 import { refreshPlantCommonNames } from "../src/plant-common-names.js";
+import { GENUS_ORDINAL, SPECIES_ORDINAL, rankBand } from "../src/app/listings.js";
+import { oregonToday } from "../src/oregon-today.js";
 import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
@@ -625,6 +627,105 @@ describe("what is still waiting for a name", () => {
     const flagged = await get(app, "/samples?scope=all&qc=flagged");
     expect(flagged).toContain("A-2");
     expect(flagged).toContain("1 sample");
+  });
+});
+
+describe("how far a specimen is named (beeline-o9rd)", () => {
+  // OBA00001 is named to species (Bombus vosnesenskii), WABA0001 to genus
+  // (Andrena), and OBA00002 has no name until a test gives it a family.
+  const nameOBA2AsFamily = (conn: Awaited<ReturnType<typeof listingApp>>["conn"]) =>
+    conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name)
+       SELECT sp.entity_id, an.entity_id, false, 'legacy_import', 'A Volunteer'
+       FROM specimen sp, animal an WHERE sp.field_number = 'OBA00002' AND an.scientific_name = 'Apidae'`,
+    );
+
+  it("splits the named by rank, and keeps the older states", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await nameOBA2AsFamily(conn);
+    const found = async (det: string) => {
+      const body = await get(app, `/specimens?scope=all&det=${det}`);
+      return ["OBA00001", "OBA00002", "WABA0001"].filter((n) => body.includes(n));
+    };
+    expect(await found("species")).toEqual(["OBA00001"]);
+    expect(await found("genus")).toEqual(["WABA0001"]);
+    expect(await found("coarse")).toEqual(["OBA00002"]);
+    expect(await found("from_genus")).toEqual(["OBA00001", "WABA0001"]);
+    expect(await found("determined")).toEqual(["OBA00001", "OBA00002", "WABA0001"]);
+    // Named only coarsely is not "not named".
+    expect(await found("undetermined")).toEqual([]);
+  });
+
+  it("on samples, finds a sample with at least one specimen named that far", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await nameOBA2AsFamily(conn);
+    const coarse = await get(app, "/samples?scope=all&det=coarse");
+    expect(coarse).toContain("A-1");
+    expect(coarse).not.toContain("B-1");
+    const genus = await get(app, "/samples?scope=all&det=genus");
+    expect(genus).toContain("B-1");
+    expect(genus).not.toContain("A-1");
+  });
+
+  it("puts every rank in a band, with nothing between subgenus and species", async () => {
+    const { conn } = await listingApp("staffer");
+    const ranks = (await rows(conn, `SELECT rank, ordinal FROM animal_rank ORDER BY ordinal`)) as [string, number][];
+    const band = (ordinal: number) => (ordinal < GENUS_ORDINAL ? "coarse" : ordinal < SPECIES_ORDINAL ? "genus" : "species");
+    expect(Object.fromEntries(ranks.map(([r, o]) => [r, band(o)]))).toEqual({
+      kingdom: "coarse",
+      phylum: "coarse",
+      class: "coarse",
+      order: "coarse",
+      suborder: "coarse",
+      superfamily: "coarse",
+      family: "coarse",
+      genus: "genus",
+      subgenus: "genus",
+      species: "species",
+      subspecies: "species",
+    });
+    // The SQL says the same as the constants.
+    expect(rankBand("genus")).toBe("ordinal >= 180 AND ordinal < 220");
+  });
+});
+
+describe("one collection year (beeline-kgyd.8)", () => {
+  it("narrows both listings to the samples whose first day is in that year", async () => {
+    const { app } = await listingApp("staffer");
+    const y25 = await get(app, "/samples?scope=all&year=2025");
+    expect(y25).toContain("A-2");
+    expect(y25).not.toContain("A-1");
+    const y26 = await get(app, "/specimens?scope=all&year=2026");
+    expect(y26).toContain("OBA00001");
+    expect(await get(app, "/specimens?scope=all&year=2025")).not.toContain("OBA00001");
+  });
+
+  it("is offered as a menu above the table, and shows as a pill when chosen", async () => {
+    const { app } = await listingApp("staffer");
+    const body = await get(app, "/specimens?scope=all&year=2025");
+    expect(body).toContain('<select id="year" name="year">');
+    expect(body).toContain(en.listings.filters.year);
+    // The menu keeps the other filters, so choosing a year does not drop them.
+    expect(body).toContain('<input type="hidden" name="scope" value="all"');
+  });
+});
+
+describe("one-click filters on the specimens listing (beeline-hkd4)", () => {
+  it("are links that set the query, this collection year read in Oregon", async () => {
+    const { app } = await listingApp("staffer");
+    const body = await get(app, "/specimens?scope=all");
+    const year = Number(oregonToday().slice(0, 4));
+    expect(body).toContain(`href="/specimens?scope=all&amp;year=${year}"`);
+    expect(body).toContain('href="/specimens?scope=all&amp;det=undetermined"');
+    expect(body).toContain('href="/specimens?scope=all&amp;det=coarse"');
+    // In force, a link takes its filter away again.
+    const on = await get(app, "/specimens?scope=all&det=coarse");
+    expect(on).toContain('<a href="/specimens?scope=all" aria-current="true">');
+  });
+
+  it("are not on the samples listing", async () => {
+    const { app } = await listingApp("staffer");
+    expect(await get(app, "/samples?scope=all")).not.toContain("quick-filters");
   });
 });
 
@@ -2033,7 +2134,7 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     const xml = new TextDecoder().decode(unzipSync(bytes)["xl/worksheets/sheet1.xml"]);
     expect(xml).not.toContain("<f>");
     // Every cell has the Text format.
-    for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toMatch(/ s="[123]"/);
+    for (const m of xml.matchAll(/<c [^>]*>/g)) expect(m[0]).toMatch(/ s="[1-5]"/);
   });
 
   it("is stamped as an Excel file, and gives each person the rows they are shown", async () => {
@@ -2153,6 +2254,29 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
     ]);
   });
 
+  it("wraps the columns whose text can be long, so none is drawn over the empty cell beside it (beeline-kgyd.11)", async () => {
+    const { db } = await tabsFixture();
+    const { options, header } = await specimenWorkbook(db, en, TODAY);
+    // The ones that spilled: a host, a determiner's name, a name with a subgenus.
+    for (const h of ["associatedTaxa", "identifiedBy", "scientificName"]) {
+      expect(options.wrappedColumns, h).toContain(h);
+      expect(options.widths?.[h], h).toBeGreaterThan(16);
+    }
+    // Written, the cell of a long host in a row with nothing beside it carries the wrapping style.
+    const longHost = `"visits flowers of":"Chrysothamnus viscidiflorus ssp. viscidiflorus"`;
+    const row = header.map((h) => (h === "associatedTaxa" ? longHost : null));
+    const files = unzipSync(writeXlsx({ sheetName: "specimens", header, ...options }, [row]));
+    const xml = strFromU8(files["xl/worksheets/sheet1.xml"]!);
+    const styles = strFromU8(files["xl/styles.xml"]!);
+    const wrapStyles = [...styles.matchAll(/<xf [^>]*>(<alignment wrapText="1"\/>)?/g)].flatMap((m, at) => (m[1] === undefined ? [] : [at]));
+    const hostAt = columnName(header.indexOf("associatedTaxa"));
+    const hostCell = xml.match(new RegExp(`<c r="${hostAt}2" s="(\\d+)"`));
+    expect(wrapStyles).toContain(Number(hostCell![1]));
+    // The empty cell beside it is the one the text would have been drawn over.
+    const nextAt = columnName(header.indexOf("associatedTaxa") + 1);
+    expect(xml).toMatch(new RegExp(`<c r="${nextAt}2" s="\\d+"/>`));
+  });
+
   it("lists people who identified a specimen in the last five years, as identifiedBy writes them, once each and sorted", async () => {
     const { db } = await tabsFixture();
     const { options } = await specimenWorkbook(db, en, TODAY);
@@ -2250,7 +2374,8 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       const xml = sheetXml(bytes);
       const head = rowsOf(book(bytes), "specimens")[0]!;
       const styleOf = (ref: string) => new RegExp(`<c r="${ref}" s="(\\d)"`).exec(xml)![1];
-      const grey = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "3");
+      // 3 is grey and 5 is grey with the text wrapped; 1 is plain and 4 plain wrapped.
+      const grey = head.filter((c, at) => ["3", "5"].includes(styleOf(`${columnName(at)}1`)!));
       const bold = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "2");
       expect(head).toEqual([
         "fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa",
@@ -2264,7 +2389,7 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       expect(grey).toEqual(head.filter((c) => !SPECIMENS_LAYOUT.read.includes(c)));
       for (const c of SPECIMENS_LAYOUT.read) expect(["determination", "disposition"], c).toContain(columnRule(c)!.kind);
       // The whole of a grey column is grey, a white column's cells are plain, in the first data row too.
-      head.forEach((c, at) => expect(styleOf(`${columnName(at)}2`), c).toBe(grey.includes(c) ? "3" : "1"));
+      head.forEach((c, at) => expect(["3", "5"].includes(styleOf(`${columnName(at)}2`)!), c).toBe(grey.includes(c)));
       // Nothing is locked, so a person may still sort and filter.
       expect(xml).not.toContain("sheetProtection");
       expect(strFromU8(unzipSync(bytes)["xl/workbook.xml"]!)).not.toContain("workbookProtection");

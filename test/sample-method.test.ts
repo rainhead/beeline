@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
+import type { Kysely } from "kysely";
 import { createKysely } from "../src/db.js";
+import type { Database } from "../src/model.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { parseCsv } from "../src/corrections.js";
@@ -35,7 +37,26 @@ const unusedInat: InatClient = {
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const t = en.record.sample.methodEdit;
 
-async function methodApp(signedInAs: "staff" | "collector", opts: { observation?: boolean } = {}) {
+/** A Kysely whose first transaction loses a write conflict, as a store write racing another does. */
+function losingOnce(db: Kysely<Database>): Kysely<Database> {
+  let fired = false;
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === "transaction" && !fired) {
+        fired = true;
+        return () => ({
+          execute: async () => {
+            throw new Error("TransactionContext Error: Conflict on update!");
+          },
+        });
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as Kysely<Database>;
+}
+
+async function methodApp(signedInAs: "staff" | "collector", opts: { observation?: boolean; losesOnce?: boolean } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "beeline-method-"));
   const paths = {
     correctionsPath: join(dir, "corrections.csv"),
@@ -62,7 +83,7 @@ async function methodApp(signedInAs: "staff" | "collector", opts: { observation?
   // The store as it stood, so the edit is recorded as a change rather than
   // taken for the first snapshot.
   await recordSampleChanges(duckdbReader(conn), { log: paths.sampleChangesPath, state: paths.sampleStatePath }, { source: "observation_promotion" });
-  const db = createKysely(instance);
+  const db = opts.losesOnce ? losingOnce(createKysely(instance)) : createKysely(instance);
   const app = createApp({
     ...(await scratchPaths()),
     db,
@@ -195,6 +216,23 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     const [[live]] = (await rows(conn, `SELECT protocol FROM sample WHERE entity_id = ${sampleId}`)) as [[string]];
     const written = (await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol").map((e) => e.new_value);
     expect(new Set(written)).toEqual(new Set([live]));
+  });
+
+  it("says a change that lost a write conflict is not applied yet, and saving it again applies it once", async () => {
+    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", { losesOnce: true });
+    const before = await sampleRow(conn, sampleId);
+    const [[records]] = (await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[bigint]];
+    const body = { protocol: "pan traps", date_end: later(2) };
+    const lost = await post(app, `/samples/${sampleId}/method`, body);
+    expect(lost.status).toBe(409);
+    expect(await lost.text()).toBe(en.sampleEdit.notApplied);
+    // The file holds the change; the sample does not, and nothing will put it there on its own.
+    expect((await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol")).toHaveLength(Number(records));
+    expect(await sampleRow(conn, sampleId)).toEqual(before);
+    const again = await post(app, `/samples/${sampleId}/method`, body);
+    expect(again.status).toBe(302);
+    expect((await sampleRow(conn, sampleId))![1]).toBe("pan traps");
+    expect((await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol")).toHaveLength(Number(records));
   });
 
   it("is refused to staff looking as the collector", async () => {

@@ -1,6 +1,6 @@
 # Project Instructions for AI Agents
 
-This file provides instructions and context for AI coding agents working on this project. (CLAUDE.md is a symlink to this file.)
+This file provides instructions and context for AI coding agents working on this project. (CLAUDE.md is a symlink to this file.) `test/agents-md-size.test.ts` holds it under 12 KB: put detail that matters only for one kind of work in `docs/agents/` behind a pointer, not here.
 
 ## Build & Test
 

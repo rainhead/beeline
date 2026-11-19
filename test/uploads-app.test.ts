@@ -505,8 +505,11 @@ describe("the page and the file with notes", () => {
     const noted = new Uint8Array(await res.arrayBuffer());
     const sent = matrixOf(bytes);
     const back = matrixOf(noted);
-    expect(back[0]).toEqual([NOTE_COLUMN, ...sent[0]!]);
-    back.slice(1).forEach((row, i) => expect(row.slice(1)).toEqual(sent[i + 1]));
+    // The same file, its tabs, and one column after its last.
+    expect(back[0]).toEqual([...sent[0]!, NOTE_COLUMN]);
+    back.slice(1).forEach((row, i) => expect(row.slice(0, -1)).toEqual(sent[i + 1]));
+    const parts = (b: Uint8Array) => Object.keys(unzipSync(b)).sort();
+    expect(parts(noted)).toEqual(parts(bytes));
     // Uploaded again, the note column is neither read nor reported, and the page says what the first one did.
     const again = await pageOf(f, noted);
     expect(again).not.toContain(esc(p.unrecognised(NOTE_COLUMN)));
@@ -522,7 +525,8 @@ describe("the page and the file with notes", () => {
     const row = matrix.find((r) => r.includes("OBA10001"))!;
     const location = (await upload(f, buildWorkbook([matrix[0]!, ...Array.from({ length: 250 }, () => row)]))).headers.get("location")!;
     const back = matrixOf(new Uint8Array(await (await f.app.request(`${location}/notes`)).arrayBuffer()));
-    expect(back.slice(1).every((r) => r[0] === n.cantUse(n.reason.repeated!))).toBe(true);
+    const at = back[0]!.indexOf(NOTE_COLUMN);
+    expect(back.slice(1).every((r) => r[at] === n.cantUse(n.reason.repeated!))).toBe(true);
     expect(back).toHaveLength(251);
   });
 });
@@ -531,7 +535,8 @@ describe("the page and the file with notes", () => {
 async function notesOf(f: UploadFixture, location: string): Promise<Map<string, string>> {
   const m = matrixOf(new Uint8Array(await (await f.app.request(`${location}/notes`)).arrayBuffer()));
   const at = m[0]!.indexOf("specimenId");
-  return new Map(m.slice(1).map((r) => [r[at]!, r[0]!]));
+  const note = m[0]!.indexOf(NOTE_COLUMN);
+  return new Map(m.slice(1).map((r) => [r[at]!, r[note] ?? ""]));
 }
 
 describeInOrder("reading an upload in a worker", () => {

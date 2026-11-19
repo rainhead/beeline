@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database, DraftCaste, DraftSex } from "../model.js";
 import { entryRowsFor, type DraftWrite, type EntryRow } from "./determine.js";
 import { ownIdentifications } from "./own-identification.js";
-import type { CellValue, HeldItem, HoldReason, SpecimenDifference, UploadPlan } from "./upload-plan.js";
+import type { CellValue, HeldItem, HoldReason, ParsedUpload, SpecimenDifference, UploadPlan } from "./upload-plan.js";
 
 /**
  * A volunteer's identifications from their file, as drafts (beeline-kgyd.7).
@@ -56,8 +56,6 @@ export interface DraftPlan {
   notYours: number;
   /** What saving would write, as a short hash: the preview's form carries it, and saving refuses a plan that changed since. */
   digest: string;
-  /** What the store said of the specimens to be written, when this was worked out (`draftState`). */
-  state: string;
 }
 
 const CHUNK = 1000;
@@ -256,15 +254,29 @@ export async function draftPlan(db: Kysely<Database>, compared: UploadPlan, who:
     held: [...held, ...others.values()].sort(order),
     notApplied: compared.notApplied.filter((c) => yours(c.specimenId)),
   };
-  return { plan, lines, notYours, digest: digestOf(lines), state: await draftState(db, who, lines.map((l) => l.write.specimenId)) };
+  return { plan, lines, notYours, digest: digestOf(lines) };
+}
+
+/** Every specimen a file's rows name by their specimenId cell, as the comparison reads that cell. */
+export function fileSpecimenIds(upload: ParsedUpload): number[] {
+  const at = upload.columns.get("specimenId");
+  if (at === undefined) return [];
+  const ids = new Set<number>();
+  for (const { cells } of upload.rows) {
+    const t = (cells.get(at)?.text ?? "").trim();
+    const n = /^\d+$/.test(t) ? Number(t) : 0;
+    if (Number.isSafeInteger(n) && n > 0) ids.add(n);
+  }
+  return [...ids];
 }
 
 /**
- * A short hash of everything a draft plan read about these specimens that can change between working the plan out
+ * A short hash of everything a draft plan reads about these specimens that can change between working the plan out
  * and saving it: whether the person can still name each one, their draft, the newest volunteer identification, and
- * their own identification. Saving works the plan out before it takes the drafts' turn, since that takes tens of
- * seconds for a file of thousands of rows and the turn holds every save on Identify specimens; inside the turn it
- * reads this again, which is quick, and saves only if it has not changed.
+ * their own identification. Saving reads it over every specimen the file names before it works the plan out, since
+ * that takes seconds to tens of seconds for a file of thousands of rows and the drafts' turn holds every save on
+ * Identify specimens; inside the turn it reads it again, which is quick, and saves only if nothing changed, so a
+ * change made on Identify specimens while the plan was being worked out is never overwritten.
  */
 export async function draftState(db: Kysely<Database>, who: DraftWho, ids: readonly number[]): Promise<string> {
   const entries = await reachable(db, who, ids);

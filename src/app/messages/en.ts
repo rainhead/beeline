@@ -2261,7 +2261,7 @@ export const en = {
           "This file is for naming your own bees. The white columns, scientificName, sex and caste, are your own identification of each bee: what you have on Identify specimens now, or else the last identification you made, or else nothing. Nobody else's identification is ever in them. Fill them in or correct them. The grey columns are there to help you recognise each bee.",
         draftsTopic: "What happens when you upload it",
         drafts:
-          "Upload the file on the Edited downloads page, which you reach from Specimens. Beeline says how many of your identifications it can save, and saves them when you choose. They then appear on Identify specimens, just as if you had typed them there, and can be undone there until 1am Pacific. If some can't be saved, download your file with notes: a column at the left says why on each row. Only the bees Identify specimens lets you name are saved.",
+          "Upload the file on the Edited downloads page, which you reach from Specimens. Beeline says how many of your identifications it can save, and saves them when you choose. They then appear on Identify specimens, just as if you had typed them there, and can be undone there until 1am Pacific. If some can't be saved, download your file with notes: a column added at the end, headed Beeline's note, says why on each row. Only the bees Identify specimens lets you name are saved.",
         scientificName:
           "A scientific name from the names tab. A name that is not there is not saved: give it on Identify specimens instead, where you can also choose a name from Ecdysis.",
         caste:
@@ -2355,6 +2355,8 @@ export const en = {
       grey: (count: number) => `${n(count)} ${count === 1 ? "has" : "have"} changes in the grey columns, which Beeline doesn't save.`,
       save: (count: number) => `Save ${n(count)} ${count === 1 ? "identification" : "identifications"}`,
       download: "Download your file with notes",
+      notesCopy:
+        "Beeline couldn't add its notes to your own file as it is, so the download is a copy it made of your rows, with the notes in a column at the end. Your own tabs, formatting and formulas aren't in the copy.",
       saved: (when: string, count: number) =>
         `Saved ${n(count)} ${count === 1 ? "identification" : "identifications"} on ${when}. They are on Identify specimens now, and can be undone there until 1am Pacific.`,
       identifyLink: "Open Identify specimens",
@@ -2374,7 +2376,7 @@ export const en = {
       fileAltered: "The file kept for this upload is not the file that was uploaded, so Beeline will not compare it.",
     },
     /**
-     * The note on each row of the file handed back, in a column at the left. Blank where a volunteer's
+     * The note on each row of the file handed back, in a column added after its last. Blank where a volunteer's
      * identification will be saved or nothing changed. Each reason says what is wrong and what to do.
      */
     notes: {
@@ -2411,12 +2413,14 @@ export const en = {
         latitude_range: "the latitude isn't between -90 and 90.",
         longitude_range: "the longitude isn't between -180 and 180.",
         uncertainty_invalid: "the coordinate uncertainty must be a whole number of meters above zero.",
-        specimen_changed_since: "this bee's record changed in Beeline after the file was downloaded. Download a new file and make the change there.",
+        specimen_changed_since:
+          "this bee changed in Beeline after the file was downloaded, so this row's change wasn't used. Make it again on Identify specimens, or in a new download.",
         sample_changed_since:
           "this sample's details in the file aren't what Beeline has now: it changed, or the file was downloaded by someone who isn't shown its location. Download a new file, signed in as staff.",
         rows_disagree: "rows of the same sample say different things. Make them the same.",
         column_missing: "the file is missing a column. Download a new file.",
-        not_yours: "someone else's bee.",
+        not_yours:
+          "this bee isn't one you can name. If it's a bee of someone you act for, choose Act for them in your account menu and upload the file again; otherwise leave this row as it is.",
         name_not_in_tree: "Beeline doesn't know this name. Name it on Identify specimens.",
         name_ambiguous: "Beeline has this name at more than one rank. Name it on Identify specimens.",
         sex_not_draft: "sex must be female or male, or blank.",

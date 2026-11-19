@@ -8,6 +8,8 @@ import { draftState } from "../src/app/upload-drafts.js";
 import { commitDeterminationDrafts } from "../src/commit-determinations.js";
 import { insertCleanSample, rows } from "./helpers.js";
 import { edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
+import { buildWorkbook } from "./workbook.js";
+import { unzipSync } from "fflate";
 
 /**
  * A volunteer naming their own bees from their own copy of the specimens download (beeline-kgyd.7): the file
@@ -48,9 +50,10 @@ async function notesOf(f: UploadFixture | { app: UploadFixture["app"] }, href: s
   const res = await f.app.request(`${href}/notes`, cookie === undefined ? {} : { headers: { cookie } });
   expect(res.status).toBe(200);
   const m = matrixOf(new Uint8Array(await res.arrayBuffer()));
-  expect(m[0]![0]).toBe(NOTE_COLUMN);
+  const note = m[0]!.indexOf(NOTE_COLUMN);
+  expect(note).toBeGreaterThan(-1);
   const at = m[0]!.indexOf("specimenId");
-  return new Map(m.slice(1).map((r) => [r[at]!, r[0]!]));
+  return new Map(m.slice(1).map((r) => [r[at]!, r[note] ?? ""]));
 }
 
 const p = en.uploads.page;
@@ -366,6 +369,46 @@ describe("uploading a volunteer's file", () => {
     expect(await rows(f.conn, `SELECT count(*) FROM upload_applied`)).toEqual([[1n]]);
   });
 
+  it("tells a second Save that the first saved, when the second works its plan out after the first has saved", async () => {
+    // Both requests read the upload before either saves; the one that arrives second works its plan out only after
+    // the other is done, so it sees the saved rows as the same as Beeline has and a plan that changed.
+    let arrived = 0;
+    let bothIn!: () => void;
+    const together = new Promise<void>((resolve) => (bothIn = resolve));
+    let eitherDone: Promise<unknown> | undefined;
+    const f = await uploadFixture("volunteer", {
+      applyPause: async () => {
+        if (++arrived === 1) await together;
+        else {
+          bothIn();
+          await eitherDone;
+        }
+      },
+    });
+    const { href, digest } = await preview(f, edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus" } }]));
+    const one = Promise.resolve(apply(f, href, digest!));
+    const two = Promise.resolve(apply(f, href, digest!));
+    eitherDone = Promise.race([one, two]);
+    const answers = await Promise.all([one, two]);
+    expect(arrived).toBe(2);
+    expect(answers.map((r) => r.status)).toEqual([303, 303]);
+    for (const r of answers) expect(r.headers.get("location")).toBe(href);
+    expect(await rows(f.conn, `SELECT count(*) FROM upload_applied`)).toEqual([[1n]]);
+  });
+
+  it("saves nothing when something changed on Identify specimens while the plan was worked out, even on a row the file leaves alone", async () => {
+    let changed: (() => Promise<unknown>) | undefined;
+    const f = await uploadFixture("volunteer", { applyPause: async () => void (await changed?.()) });
+    const { href, digest } = await preview(f, edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus" } }]));
+    // While the plan is being worked out, she names a1 on Identify specimens: a row the file does not change.
+    changed = () => saveDrafts(f.db, f.volunteer, f.volunteer, [{ specimenId: f.ids.a1, sex: "female", caste: null }]);
+    const res = await apply(f, href, digest!);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(esc(p.changedSince));
+    expect(await rows(f.conn, `SELECT count(*) FROM upload_applied`)).toEqual([[0n]]);
+    expect((await drafts(f)).map((r) => r[0])).toEqual([f.ids.a1]);
+  });
+
   it("re-reads, when saving, what it read of the bees to be saved, and sees a change made on Identify specimens", async () => {
     const f = await uploadFixture("volunteer");
     const who = { personId: f.volunteer, determinerId: f.volunteer };
@@ -437,12 +480,42 @@ describe("the page", () => {
     const first = await preview(f, edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus imaginarius" } }]));
     expect(first.notes.get(String(f.ids.a2))).toBe(n.notSaved(n.reason.name_not_in_tree!));
     const noted = new Uint8Array(await (await f.app.request(`${first.href}/notes`)).arrayBuffer());
-    expect(XLSX.read(noted, { type: "array" }).SheetNames).toEqual(["specimens", "names", "words", "about"]);
+    // Her own file, tabs and all: this one was made with only the one tab.
+    expect(XLSX.read(noted, { type: "array" }).SheetNames).toEqual(["specimens"]);
     // She fixes the name in the file with notes and uploads it: the note column is not read, and the name is ready.
     const again = await preview(f, edited(noted, [{ id: f.ids.a2, set: { scientificName: "Bombus" } }]));
     expect(again.html).toContain(p.ready(1));
     expect(again.html).not.toContain("didn&#39;t read these columns");
     expect(again.notes.get(String(f.ids.a2))).toBe("");
+  });
+
+  it("hands back Beeline's own download as she uploaded it, every part the same, with the note column after the last", async () => {
+    const f = await uploadFixture("volunteer");
+    const mine = await ownFile(f);
+    // After she downloads, she names a2 on Identify specimens: her file's blank name for it now can't be saved.
+    await saveDrafts(f.db, f.volunteer, f.volunteer, [{ specimenId: f.ids.a2, animalId: null, sex: "male", caste: null }]);
+    const { href, notes, html } = await preview(f, mine);
+    expect(html).not.toContain(esc(p.notesCopy));
+    expect(notes.get(String(f.ids.a2))).toMatch(/^Not saved: /);
+    const back = new Uint8Array(await (await f.app.request(`${href}/notes`)).arrayBuffer());
+    const [a, b] = [unzipSync(mine), unzipSync(back)];
+    expect(Object.keys(b).sort()).toEqual(Object.keys(a).sort());
+    const changed = Object.keys(a).filter((name) => Buffer.compare(Buffer.from(a[name]!), Buffer.from(b[name]!)) !== 0);
+    expect(changed).toEqual(["xl/worksheets/sheet1.xml"]);
+    const [was, now] = [matrixOf(mine), matrixOf(back)];
+    expect(now[0]).toEqual([...was[0]!, NOTE_COLUMN]);
+    was.slice(1).forEach((row, i) => expect(now[i + 1]!.slice(0, row.length)).toEqual(row));
+  });
+
+  it("hands back a copy, and says so, for a file it cannot add a column to safely", async () => {
+    const f = await uploadFixture("volunteer");
+    const m = matrixOf(edited(await ownFile(f), [{ id: f.ids.a2, set: { scientificName: "Bombus imaginarius" } }]));
+    const withTable = buildWorkbook(m, { afterSheetData: `<tableParts count="1"><tablePart r:id="rId5"/></tableParts>` });
+    const { href, html, notes } = await preview(f, withTable);
+    expect(html).toContain(esc(p.notesCopy));
+    expect(notes.get(String(f.ids.a2))).toBe(n.notSaved(n.reason.name_not_in_tree!));
+    const book = XLSX.read(new Uint8Array(await (await f.app.request(`${href}/notes`)).arrayBuffer()), { type: "array" });
+    expect(book.SheetNames).toEqual(["specimens", "names", "words", "about"]);
   });
 
   it("never says held, hold, draft, plan, unit, reader or layout to a volunteer, on the page, in the notes, or in the file's about tab", async () => {

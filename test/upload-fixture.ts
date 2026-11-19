@@ -144,7 +144,14 @@ async function buildStore(unprinted: boolean) {
 export async function uploadFixture(
   signedInAs: "staffer" | "volunteer" | "delegate" = "staffer",
   /** `unprinted` adds a sample (UP-3) whose one specimen is in a print run that has not printed. */
-  options: { unprinted?: boolean; readLimits?: Partial<ReadLimits>; layout?: Layout; archive?: UploadArchive } = {},
+  options: {
+    unprinted?: boolean;
+    readLimits?: Partial<ReadLimits>;
+    layout?: Layout;
+    archive?: UploadArchive;
+    /** Awaited when saving, between reading what saving depends on and working out the plan (createApp's uploadApplyPause). */
+    applyPause?: (uploadId: number) => Promise<void>;
+  } = {},
 ) {
   const { instance, conn, staffer, volunteer, delegate, ids } = await storeOf(options.unprinted === true);
   const people = { staffer, volunteer, delegate };
@@ -163,6 +170,7 @@ export async function uploadFixture(
     uploadLayout: options.layout,
     // Never the real folder: a test that is about the copy in Drive gives a fake.
     uploadArchive: options.archive ?? null,
+    uploadApplyPause: options.applyPause,
     resolveSession: async () => ({ personId: people[who], login: who, iconUrl: null }),
   });
   const app = appAs(signedInAs);

@@ -116,6 +116,7 @@ export function UploadPreview({
   volunteer = null,
   staffSummary = null,
   staff = true,
+  notesCopy = false,
 }: {
   m: Messages;
   upload: UploadDetail;
@@ -127,6 +128,8 @@ export function UploadPreview({
   staffSummary?: StaffSummary | null;
   /** Whether the reader is staff, who alone can open the copy kept in the program's shared drive. */
   staff?: boolean;
+  /** The file with notes is a copy Beeline makes, since the person's own file cannot have a column added safely. */
+  notesCopy?: boolean;
 }) {
   const p = m.uploads.page;
   const rows = volunteer?.summary.rows ?? staffSummary?.rows ?? upload.row_count;
@@ -183,6 +186,7 @@ export function UploadPreview({
         )}
       </div>
       {staffSummary !== null && notes && <Meta block>{p.staffNotes}</Meta>}
+      {notes && notesCopy && <Meta block>{p.notesCopy}</Meta>}
     </>
   );
 }

@@ -5,12 +5,14 @@ import { specimenWorkbook, type Audience } from "./specimen-workbook.js";
 import type { DraftPlan } from "./upload-drafts.js";
 import { NOTE_COLUMN, type HeldItem, type ParsedUpload, type UploadPlan } from "./upload-plan.js";
 import { writeXlsx } from "./xlsx.js";
+import { annotateWorkbook } from "./xlsx-annotate.js";
 
 /**
  * What an upload's page and its file with notes say (beeline-kgyd.7, Peter, 2026-11-18: "Karla has hundreds (at
  * least) of 2025 bees, and this page will be huge. Errors should maybe just come back as a column on the file, in a
  * download."). The page is a few counts and two actions; what is wrong with a row, and what to do about it, is a
- * note on that row of the person's own file, in a column at the left that an upload of the file does not read.
+ * note on that row of the person's own file, in a column added after its last, which an upload of the file does
+ * not read.
  */
 
 export interface VolunteerSummary {
@@ -121,15 +123,58 @@ export function staffNotes(m: Messages, upload: ParsedUpload, plan: UploadPlan):
 }
 
 /** How wide the note column is drawn, in characters. */
-const NOTE_WIDTH = 60;
+export const NOTE_WIDTH = 60;
 
 /**
- * The person's file handed back: the same rows and cells, under the same headings, with Beeline's tabs as their
- * own download has them, and a note on every row in a column at the left. A note column already in the file (an
- * earlier file with notes, uploaded again) is replaced, not repeated. An upload of this file reads it as it read
- * the first: the note column is not read and not reported.
+ * The person's own file with the note column added after its last column (src/app/xlsx-annotate.ts), or, where
+ * that file cannot be patched safely, a copy Beeline makes (`notesCopy`). A note column already in the file (an
+ * earlier file with notes, uploaded again) is written into, not repeated. The patched file is read again before it
+ * is handed back, and must give every row the cells it gave before; otherwise the copy is handed back instead.
  */
-export async function notesWorkbook(
+export async function notesFile(
+  db: Kysely<Database>,
+  m: Messages,
+  original: Uint8Array,
+  upload: ParsedUpload,
+  notes: ReadonlyMap<number, string>,
+  audience: Audience,
+  reread: (bytes: Uint8Array) => Promise<ParsedUpload | null>,
+): Promise<{ bytes: Uint8Array; copy: boolean }> {
+  const existing = upload.header.indexOf(NOTE_COLUMN);
+  const patched = annotateWorkbook(original, {
+    sheetName: upload.sheetName,
+    headerRow: upload.headerRow,
+    heading: NOTE_COLUMN,
+    values: notes,
+    replace: existing === -1 ? null : existing,
+    width: NOTE_WIDTH,
+  });
+  if (patched.ok) {
+    const again = await reread(patched.bytes);
+    if (again !== null && sameCells(upload, again)) return { bytes: patched.bytes, copy: false };
+  }
+  return { bytes: await notesCopy(db, m, upload, notes, audience), copy: true };
+}
+
+/** Whether two readings of a file give every row the same cells, the note column aside. */
+function sameCells(a: ParsedUpload, b: ParsedUpload): boolean {
+  if (a.rows.length !== b.rows.length) return false;
+  const skip = (u: ParsedUpload) => new Set(u.header.flatMap((h, at) => (h === NOTE_COLUMN ? [at] : [])));
+  const [sa, sb] = [skip(a), skip(b)];
+  return a.rows.every((row, i) => {
+    const other = b.rows[i]!;
+    if (other.row !== row.row) return false;
+    const cells = (r: typeof row, s: Set<number>) => JSON.stringify([...r.cells].filter(([at]) => !s.has(at)).map(([at, c]) => [at, c.text, c.type]).sort((x, y) => (x[0] as number) - (y[0] as number)));
+    return cells(row, sa) === cells(other, sb);
+  });
+}
+
+/**
+ * A copy of the person's file, for one that cannot be patched: the same rows and cells, under the same headings,
+ * with Beeline's tabs as their own download has them, and the note column after the last. It is not their file:
+ * their own tabs, formatting and checks are not in it, and the page says so.
+ */
+export async function notesCopy(
   db: Kysely<Database>,
   m: Messages,
   upload: ParsedUpload,
@@ -137,11 +182,11 @@ export async function notesWorkbook(
   audience: Audience,
 ): Promise<Uint8Array> {
   const keep = upload.header.map((h, at) => ({ h, at })).filter(({ h }) => h !== NOTE_COLUMN);
-  const header = [NOTE_COLUMN, ...keep.map(({ h }) => h)];
+  const header = [...keep.map(({ h }) => h), NOTE_COLUMN];
   const has = (c: string) => header.includes(c);
   const book = await specimenWorkbook(db, m, undefined, audience);
   const o = book.options;
-  const rows = upload.rows.map(({ row, cells }) => [notes.get(row) ?? "", ...keep.map(({ at }) => cells.get(at)?.text ?? null)]);
+  const rows = upload.rows.map(({ row, cells }) => [...keep.map(({ at }) => cells.get(at)?.text ?? null), notes.get(row) ?? ""]);
   return writeXlsx(
     {
       sheetName: "specimens",

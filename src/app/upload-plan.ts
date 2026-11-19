@@ -77,7 +77,7 @@ export type Refusal = (typeof REFUSALS)[number];
 const _readerRefusalsAreRefusals: (typeof XLSX_REFUSALS)[number] extends Refusal ? true : never = true;
 void _readerRefusalsAreRefusals;
 
-/** The column Beeline puts at the left of a file it hands back with a note on each row (src/app/upload-notes.ts). */
+/** The column Beeline adds after the last column of a file it hands back with a note on each row (src/app/upload-notes.ts). */
 export const NOTE_COLUMN = "Beeline's note";
 
 /** The sheet of the download, and so the sheet that is read. */
@@ -486,6 +486,9 @@ export interface ParsedUpload {
   columns: Map<string, number>;
   /** Every heading of the file by its position, "" where there is none: what the file with notes repeats. */
   header: string[];
+  /** The tab that was read, and the row of the sheet its headings are in: where the file with notes adds its column. */
+  sheetName: string;
+  headerRow: number;
   unrecognised: UnrecognisedColumn[];
   /** The names of the workbook's other sheets, which were not read. */
   otherSheets: string[];
@@ -535,7 +538,7 @@ export async function parseUpload(bytes: Uint8Array, limits: Partial<ReadLimits>
   if (rows.length > MAX_ROWS) return { ok: false, refusal: "too_many_rows" };
   if (rows.length === 0) return { ok: false, refusal: "no_rows" };
   const header = Array.from({ length: headings.length }, (_, at) => headings[at] ?? "");
-  return { ok: true, upload: { layout, columns, header, unrecognised, otherSheets: read.otherSheets.filter((n) => !(REFERENCE_TABS as readonly string[]).includes(n)), rows } };
+  return { ok: true, upload: { layout, columns, header, sheetName: read.sheet.name, headerRow: head?.row ?? 1, unrecognised, otherSheets: read.otherSheets.filter((n) => !(REFERENCE_TABS as readonly string[]).includes(n)), rows } };
 }
 
 // --- Reading a cell ---

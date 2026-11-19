@@ -4,7 +4,7 @@ import { en } from "../src/app/messages/en.js";
 import { APPLY_JOB, applyPending, applyWaiting } from "../src/app/samples-upload-apply.js";
 import { buildJobs } from "../src/app/jobs/registry.js";
 import { startScheduler, runJob } from "../src/app/jobs/framework.js";
-import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, seriesNumberProblem, SERIES_MARGIN } from "../src/trap-sample.js";
+import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, seriesNumberProblem, seriesReach, SERIES_MARGIN } from "../src/trap-sample.js";
 import { parseSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { duckdbReader } from "../src/person-change.js";
 import { CURRENT_SEASON, rows } from "./helpers.js";
@@ -347,6 +347,13 @@ describe("the guard on new numbers", () => {
     expect(seriesNumberProblem(`OBAS-${String(11 + SERIES_MARGIN).padStart(5, "0")}`, 10)).toContain("one mistyped number would move the next one offered for good");
     expect(seriesNumberProblem("OBAS-123", 10)).toContain("five digits");
     expect(seriesNumberProblem("OBAS-000123", 10)).toContain("five digits");
+    // A run of consecutive numbers reaches as far as it goes; a number that jumps ahead of it does not.
+    const run = Array.from({ length: 120 }, (_, i) => `OBAS-${String(11 + i).padStart(5, "0")}`);
+    expect(seriesReach(10, run)).toBe(130);
+    expect(seriesReach(10, [...run, "OBAS-12345"])).toBe(130);
+    expect(seriesNumberProblem("OBAS-12345", seriesReach(10, [...run, "OBAS-12345"]))).toContain("one mistyped number");
+    expect(seriesReach(10, ["OBAS-00100", "OBAS-00055"])).toBe(100);
+    expect(seriesReach(10, ["OBAS-abc", "X-00011"])).toBe(10);
     expect(seriesNumberProblem("OBAS-1234x", 10)).toContain("five digits");
     // Another series is the collector's own.
     expect(seriesNumberProblem("UP-99999", 10)).toBeNull();

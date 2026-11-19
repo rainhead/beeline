@@ -159,8 +159,27 @@ export const PROGRAM_SERIES = "OBAS-";
 export const SERIES_MARGIN = 50;
 
 /**
+ * How far a file's new numbers in the program's series may reach: from the highest in Beeline, each number of the
+ * file in turn, smallest first, extends the reach if it is within SERIES_MARGIN of it. So a year's batch of
+ * consecutive numbers is taken whole, however long, while one number that jumps ahead of the run is not.
+ */
+export function seriesReach(highest: number, numbers: readonly string[]): number {
+  const own = numbers
+    .filter((n) => n.startsWith(PROGRAM_SERIES) && /^\d{5}$/.test(n.slice(PROGRAM_SERIES.length)))
+    .map((n) => Number(n.slice(PROGRAM_SERIES.length)))
+    .sort((a, b) => a - b);
+  let reach = highest;
+  for (const n of own) {
+    if (n > reach + SERIES_MARGIN) break;
+    reach = Math.max(reach, n);
+  }
+  return reach;
+}
+
+/**
  * The sentence saying why a number in the program's series cannot be used, or null if it can. A number outside the
- * series is not judged: a collector's own numbers are theirs.
+ * series is not judged: a collector's own numbers are theirs. `highest` is the highest number in Beeline, or the
+ * reach of a file's own numbers (seriesReach).
  */
 export function seriesNumberProblem(sampleNumber: string, highest: number): string | null {
   if (!sampleNumber.startsWith(PROGRAM_SERIES)) return null;
@@ -169,7 +188,7 @@ export function seriesNumberProblem(sampleNumber: string, highest: number): stri
     return `A number starting ${PROGRAM_SERIES} is the program's own and is written ${PROGRAM_SERIES} and five digits, such as ${PROGRAM_SERIES}00657.`;
   }
   if (Number(digits) > highest + SERIES_MARGIN) {
-    return `${sampleNumber} is more than ${SERIES_MARGIN} past ${PROGRAM_SERIES}${String(highest).padStart(5, "0")}, the highest in Beeline, and one mistyped number would move the next one offered for good. Check it, or enter the sample on its own form.`;
+    return `${sampleNumber} is more than ${SERIES_MARGIN} past ${PROGRAM_SERIES}${String(highest).padStart(5, "0")}, the highest in Beeline or reached by the numbers before it, and one mistyped number would move the next one offered for good. Check it, or enter the sample on its own form.`;
   }
   return null;
 }

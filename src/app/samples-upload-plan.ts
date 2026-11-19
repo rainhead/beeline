@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { matchCollectors, matchName, readPeople, type MatchedCollector } from "../collector-match.js";
 import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
-import { checkTrapSample, findLookalikes, highestSampleNumber, seriesNumberProblem, type Lookalike, type TrapSampleForm } from "../trap-sample.js";
+import { PROGRAM_SERIES, checkTrapSample, findLookalikes, highestSampleNumber, seriesNumberProblem, seriesReach, type Lookalike, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import {
@@ -436,7 +436,11 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
       } else {
         // The program's own numbers are guarded: a number far above the series would move the next one offered for good.
         const sample = checked.sample;
-        if (series === null && sample.sample_number.startsWith("OBAS-")) series = { highest: await highestSampleNumber(conn) };
+        if (series === null && sample.sample_number.startsWith(PROGRAM_SERIES)) {
+          // The file's own new numbers extend the reach, so a run of consecutive numbers is taken whole.
+          const newNumbers = rows.filter(({ cells: c }) => text(c, "sampleId") === "").map(({ cells: c }) => text(c, "fieldNumber"));
+          series = { highest: seriesReach(await highestSampleNumber(conn), newNumbers) };
+        }
         const wrong = series === null ? null : seriesNumberProblem(sample.sample_number, series.highest);
         if (wrong !== null) {
           result.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: wrong, cells: [] });

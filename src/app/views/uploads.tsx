@@ -178,7 +178,7 @@ export function UploadPreview({
       if (o.notCreated > 0) lines.push(p.samplesNotCreated(o.notCreated));
     }
     if (total(c.newReady) > 0) lines.push(p.samplesNew(total(c.newReady), split(c.newReady)));
-    if (total(c.newHeld) > 0) lines.push(p.samplesHeld(total(c.newHeld)));
+    if (total(c.newHeld) > 0) lines.push(p.samplesHeld(total(c.newHeld), split(c.newHeld)));
     if (total(c.cantUse) > 0) lines.push(p.samplesCantUse(total(c.cantUse), split(c.cantUse)));
     if (total(c.differ) > 0) lines.push(p.samplesDiffer(total(c.differ), split(c.differ)));
     if (total(c.same) > 0) lines.push(p.samplesSame(total(c.same), split(c.same)));

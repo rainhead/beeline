@@ -139,6 +139,12 @@ export interface NewRowCreate {
   lookalike: Lookalike | null;
   /** The look-alike was ticked "create anyway", so the row is not held. */
   anyway: boolean;
+  /**
+   * For a number in the program's series, the bound the preview judged it by (seriesNumberProblem): the highest number
+   * in Beeline then and how many of the file's rows were in the series. The job judges it by the same, so a row the
+   * preview took is never refused for a count that differs. Null for a number outside the series.
+   */
+  series: { highest: number; own: number } | null;
 }
 
 export interface SampleRowResult {
@@ -446,7 +452,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         // Someone who is not staff may not see where every sample is: they are told the row is held, and not which sample.
         const lookalike = found !== undefined && options.reader !== undefined && !options.reader.staff ? { sampleId: 0, sampleNumber: "" } : (found ?? null);
         // A tick counts only for a row that looks like something, so a stale or made-up one cannot switch off a later check.
-        result.create = { form: { ...form, collectors: sample.collector_ids.map(String) }, lookalike, anyway: lookalike !== null && (options.createAnyway?.has(row) ?? false) };
+        result.create = { form: { ...form, collectors: sample.collector_ids.map(String) }, lookalike, anyway: lookalike !== null && (options.createAnyway?.has(row) ?? false), series: null };
       }
       if (fileNumber !== "") (newNumbers.get(fileNumber) ?? newNumbers.set(fileNumber, []).get(fileNumber)!).push(index);
       continue;
@@ -518,15 +524,18 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
 
   // The program's own numbers are guarded: a number far above the series would move the next one offered for good. The
   // bound is the highest number in Beeline plus the file's rows in the series that have nothing else wrong, plus the
-  // margin (seriesNumberProblem): it depends on no other row's outcome or tick. The job asks again with the same count,
-  // which it finds as the upload's queued rows.
+  // margin (seriesNumberProblem): it depends on no other row's outcome or tick. The bound is kept with each row, and the
+  // job judges the row by it again.
   const candidates = results.filter((r) => r.kind === "new" && r.create !== null);
   const own = candidates.filter((r) => r.create!.form.sample_number.startsWith(PROGRAM_SERIES));
   if (own.length > 0) {
     const highest = await highestSampleNumber(conn);
     for (const r of candidates) {
       const wrong = seriesNumberProblem(r.create!.form.sample_number, highest, own.length);
-      if (wrong === null) continue;
+      if (wrong === null) {
+        if (r.create!.form.sample_number.startsWith(PROGRAM_SERIES)) r.create!.series = { highest, own: own.length };
+        continue;
+      }
       r.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: wrong, cells: [] });
       r.create = null;
     }

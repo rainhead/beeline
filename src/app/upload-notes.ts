@@ -198,7 +198,7 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
         r.problems.length > 0
           ? n.newTrapCantUse(reasons(r))
           : r.create?.lookalike != null && !r.create.anyway
-            ? n.newTrapHeld(r.create.lookalike.sampleNumber)
+            ? n.newTrapHeld(redact ? "" : r.create.lookalike.sampleNumber)
             : n.newTrap,
       );
     } else {

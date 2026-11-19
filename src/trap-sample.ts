@@ -467,9 +467,9 @@ export function deleteTrapSample(
  * collector left, may be deleted again to finish it.
  */
 export async function deletable(conn: DuckDBConnection, id: number): Promise<{ number: string; cutShort: boolean } | { refused: DeleteRefusal }> {
-  const found = await rows<{ sample_number: string; entered: boolean; cut_short: boolean; printed: boolean; in_run: boolean; specimens: number }>(
+  const found = await rows<{ sample_number: string; kind: string; entered: boolean; cut_short: boolean; printed: boolean; in_run: boolean; specimens: number }>(
     conn,
-    `SELECT s.sample_number,
+    `SELECT s.sample_number, s.kind,
             EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id) AS entered,
             EXISTS (SELECT 1 FROM sample_deletion d WHERE d.sample_id = s.entity_id)
               AND NOT EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id)
@@ -482,7 +482,8 @@ export async function deletable(conn: DuckDBConnection, id: number): Promise<{ n
   );
   const r = found[0];
   if (r === undefined) return { refused: "not_found" };
-  if (!r.entered && !r.cut_short) return { refused: "not_entered" };
+  // Only a trap sample is entered in Beeline; a net sample is never deleted here, whatever marks it carries.
+  if ((!r.entered && !r.cut_short) || r.kind !== "trap") return { refused: "not_entered" };
   if (r.printed) return { refused: "printed" };
   if (r.in_run) return { refused: "in_print_run" };
   if (r.specimens > 0) return { refused: "has_specimens" };

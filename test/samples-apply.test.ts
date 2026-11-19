@@ -7,7 +7,7 @@ import { startScheduler, runJob, ON_DEMAND_RETRY_MS, type Job } from "../src/app
 import { onSample } from "../src/app/sample-queue.js";
 import { planSamples } from "../src/app/samples-upload-plan.js";
 import { SAMPLES_LAYOUT, parseUpload } from "../src/app/upload-plan.js";
-import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, seriesNumberProblem, SERIES_MARGIN } from "../src/trap-sample.js";
+import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, highestSampleNumber, seriesNumberProblem, SERIES_MARGIN } from "../src/trap-sample.js";
 import { parseSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { duckdbReader } from "../src/person-change.js";
 import { CURRENT_SEASON, rows } from "./helpers.js";
@@ -284,7 +284,7 @@ describe("a new row that looks like an existing sample", () => {
     const f = await uploadFixture();
     const { location, html, digest } = await offered(f, [looks(), newRow(2)]);
     expect(html).toContain(`href="/samples/${f.ids.sampleA}"`);
-    expect(html).toContain(esc(en.uploads.page.samplesHeld(1)));
+    expect(html).toContain(esc(en.uploads.page.samplesHeld(1, " (1 in the active seasons)")));
     expect(html).toContain(`name="anyway" value="${await heldRow(f)}"`);
     await apply(f, location, { digest });
     expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 0, skipped: 0 });
@@ -444,11 +444,16 @@ describe("deleting a trap sample", () => {
     await f.conn.run(`INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text, collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
       SELECT (SELECT max(entity_id) FROM print_run), ${sp}, 1, 0, 'x', 'x', 'd', 'c', 'm', 'OBA20001', 44.5, -123.6, s.date_start, s.date_end FROM sample s WHERE s.entity_id = ${printed}`);
     expect(await refused(printed)).toContain(esc(en.trapSample.delete.refused.printed!));
-    // In an unprinted run (the fixture's UP-3 is not entered here, so enter it).
+    // In an unprinted run (the fixture's UP-3 is a net sample not entered here, so make it an entered trap sample).
     const sampleC = f.ids.sampleC!;
+    await f.conn.run(`UPDATE sample SET kind = 'trap' WHERE entity_id = ${sampleC}`);
     await f.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${sampleC}, ${f.staffer})`);
     expect(await refused(sampleC)).toContain(esc(en.trapSample.delete.refused.in_print_run!));
-    expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE entity_id IN (${bare}, ${withSpecimen}, ${printed}, ${sampleC})`)).toEqual([[4n]]);
+    // A net sample is never deleted here, whatever marks it carries.
+    const net = await entered("OBAS-00034");
+    await f.conn.run(`UPDATE sample SET kind = 'net' WHERE entity_id = ${net}`);
+    expect(await refused(net)).toContain(esc(en.trapSample.delete.refused.not_entered!));
+    expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE entity_id IN (${bare}, ${withSpecimen}, ${printed}, ${sampleC}, ${net})`)).toEqual([[5n]]);
   });
 
   it("finds its satellite tables in the store, so one added later is deleted too", async () => {
@@ -737,7 +742,18 @@ describe("what staff are told, and who sees what", () => {
       newRow(3, { fieldNumber: "OBAS-00090" }),
     ]);
     expect(html).toContain(esc(en.uploads.page.samplesCantUse(2, en.uploads.page.split(2, 0, 0))));
-    expect(html).toContain(esc(en.uploads.page.samplesHeld(1)));
+    expect(html).toContain(esc(en.uploads.page.samplesHeld(1, " (1 in the active seasons)")));
+  });
+
+  it("judges a row in the job by the bound the preview judged it by, so a row at the edge beside a refused one is made", async () => {
+    const f = await uploadFixture();
+    const highest = await highestSampleNumber(f.conn);
+    // Two rows in the series: the bound is the highest plus two plus the margin, so the first is just inside it.
+    const edge = `OBAS-${String(highest + 2 + SERIES_MARGIN).padStart(5, "0")}`;
+    const { location, digest } = await offered(f, [newRow(1, { fieldNumber: edge }), newRow(2, { fieldNumber: "OBAS-90001" })]);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 0, skipped: 0 });
+    expect((await outcomes(f)).map((r) => [r[1], r[2]])).toEqual([["created", edge]]);
   });
 
   it("holds a row for a reader who may not see the sample it looks like, without naming it", async () => {

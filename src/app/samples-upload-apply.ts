@@ -32,6 +32,8 @@ export interface QueuedRow {
   form: TrapSampleForm;
   /** The look-alike was ticked "create anyway", so the job does not look for one again. */
   anyway: boolean;
+  /** The bound the preview judged a number in the program's series by; null outside the series. */
+  series: { highest: number; own: number } | null;
 }
 
 /** The rows of a plan that applying would act on: the new ones with nothing wrong, held ones only if ticked. */
@@ -85,7 +87,7 @@ export async function claimUpload(
         .values({ upload_id: claim.uploadId, applied_by: claim.appliedBy, applied_at: at, draft_count: todo.length })
         .execute();
       const rows = [
-        ...todo.map((r) => ({ r, outcome: "pending" as const, detail: null as string | null, payload: JSON.stringify({ form: r.create.form, anyway: r.create.anyway } satisfies QueuedRow) })),
+        ...todo.map((r) => ({ r, outcome: "pending" as const, detail: null as string | null, payload: JSON.stringify({ form: r.create.form, anyway: r.create.anyway, series: r.create.series } satisfies QueuedRow) })),
         ...held.map((r) => ({ r, outcome: "skipped" as const, detail: lookalikeSentence(r.create.lookalike!.sampleNumber), payload: null })),
       ];
       for (const { r, outcome, detail, payload } of rows) {
@@ -248,6 +250,12 @@ function readQueued(payload: string | null): QueuedRow | { unreadable: string } 
   }
   if (!Array.isArray(form.collectors) || !form.collectors.every((c) => typeof c === "string")) return { unreadable: "collectors is not a list of text" };
   if (typeof q?.anyway !== "boolean") return { unreadable: "anyway is not true or false" };
+  const series = (parsed as { series?: unknown }).series;
+  const isBound = (v: unknown): boolean => {
+    const b = v as { highest?: unknown; own?: unknown } | null;
+    return typeof b === "object" && b !== null && Number.isSafeInteger(b.highest) && Number.isSafeInteger(b.own);
+  };
+  if (series !== null && !isBound(series)) return { unreadable: "series is not a bound" };
   return q as unknown as QueuedRow;
 }
 
@@ -272,18 +280,13 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
     return { outcome: "refused" };
   }
   const sample = checked.sample;
-  // The guard on the program's own numbers again, with the preview's bound: the highest number as the upload found it
-  // (leaving out what it has made since, so a resumed run gives the answer the first run would have) and the upload's
-  // own rows in the series, which are all of its rows, whatever became of them.
+  // The guard on the program's own numbers again, by the bound the preview judged the row by, kept with it: a resumed
+  // run gives the answer the first run would have, and no row the preview took is refused for a count that differs.
   if (sample.sample_number.startsWith(PROGRAM_SERIES)) {
-    const own = await deps.db
-      .selectFrom("upload_sample_outcome")
-      .select(({ fn }) => fn.countAll<number>().as("n"))
-      .where("upload_id", "=", p.upload_id)
-      .where("unit", "=", ROW_UNIT)
-      .where("sample_number", "like", `${PROGRAM_SERIES}%`)
-      .executeTakeFirstOrThrow();
-    const wrong = seriesNumberProblem(sample.sample_number, await highestSampleNumber(deps.conn, PROGRAM_SERIES, p.upload_id), Number(own.n));
+    const wrong =
+      queued.series === null
+        ? "This number was not judged against the program's series when the file was applied; upload the row again."
+        : seriesNumberProblem(sample.sample_number, queued.series.highest, queued.series.own);
     if (wrong !== null) {
       await settle(deps.db, p, "refused", wrong);
       return { outcome: "refused" };

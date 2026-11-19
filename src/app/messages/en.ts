@@ -2444,8 +2444,8 @@ export const en = {
       downloadStaff: "Download the file with notes",
       /** The samples file's page (beeline-kgyd.4.9): counts, each with how many are in the active seasons and how many in settled ones. */
       samplesNew: (count: number, split: string) => `${n(count)} new trap ${count === 1 ? "sample" : "samples"} can be created${split}.`,
-      samplesHeld: (count: number) =>
-        `${n(count)} new ${count === 1 ? "row looks" : "rows look"} like ${count === 1 ? "a sample" : "samples"} Beeline already has, so ${count === 1 ? "it is" : "they are"} left out unless you tick create anyway.`,
+      samplesHeld: (count: number, split: string) =>
+        `${n(count)} new ${count === 1 ? "row looks" : "rows look"} like ${count === 1 ? "a sample" : "samples"} Beeline already has${split}, so ${count === 1 ? "it is" : "they are"} left out unless you tick create anyway.`,
       heldHeading: "New rows that look like an existing sample",
       heldColumns: { row: "Row", number: "Number in the file", like: "Looks like", anyway: "Create anyway" },
       heldAnyway: (row: number) => `Create row ${n(row)} anyway`,

@@ -20,6 +20,7 @@ import { withPromotionLock } from "./promotion-lock.js";
 import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { loadSample, type LocalitySuggestion } from "./record.js";
 import { applySampleEdit, loadEditableSample, planSampleEdit, type EditableFieldName, type EditableSample } from "./sample-edit.js";
+import { setStaffPlace, type PlaceChange, type PlaceField } from "./sample-place.js";
 import { onSample } from "./sample-queue.js";
 
 /**
@@ -689,6 +690,60 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
     }
     await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "trap count change");
     return { ok: true, outcome: effort === null ? "removed" : "saved", effort };
+  });
+}
+
+export interface SamplePlaceInput {
+  /** The fields to change, from country, state_province and county; absent ones stay. */
+  values: Partial<Record<PlaceField, string>>;
+  note: string;
+}
+
+export type SamplePlaceResult =
+  | { ok: true; outcome: Outcome; /** What changed, the atlas included where a new state moved it. */ changes: PlaceChange[] }
+  | Common
+  | StaffOnly
+  | Refused<"follows_point" | "in_print_run" | "busy" | "not_applied">
+  | Invalid;
+
+/**
+ * Staff correct the country, state and county a sample was collected in
+ * (beeline-kgyd.4.3): any sample, printed or not, except one whose place
+ * follows its point, which the nightly would write over, and one whose labels
+ * a print run that has not printed holds. Staff only, refused while
+ * impersonating. The rules and where the change is kept are in
+ * src/app/sample-place.ts.
+ */
+export function setSamplePlace(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<SamplePlaceInput>): Promise<SamplePlaceResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const found = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select("entity_id").executeTakeFirst();
+    if (found === undefined) return refused("not_found");
+    return { ready: null };
+  };
+  return correct(sampleId, input, gates, async (_, form): Promise<SamplePlaceResult> => {
+    const note = form.note.trim();
+    const result = await setStaffPlace(deps.db, deps.correctionsPath, sampleId, { values: form.values, note, author: actor.login });
+    switch (result.outcome) {
+      case "not_found":
+      case "follows_point":
+      case "in_print_run":
+      case "not_applied":
+        return refused(result.outcome);
+      // Nothing was recorded anywhere, so nothing was done: say so, as the trap count does.
+      case "conflict":
+        return refused("busy");
+      case "invalid":
+        return { ok: false, refusal: "invalid", problem: result.problem };
+      case "unchanged":
+        return { ok: true, outcome: "unchanged", changes: [] };
+      case "saved":
+        await recordChange(deps, sampleId, actor, note || undefined, "place change");
+        return { ok: true, outcome: "saved", changes: result.changes };
+      default:
+        return unreachable(result);
+    }
   });
 }
 

@@ -526,6 +526,22 @@ ${places ? `    UNION ALL
  * and the next stamp replaces it: so a sample is never without a county
  * waiting for the nightly. Returns which samples changed.
  */
+/**
+ * Whether a sample's county, state and country follow its point, as SQL over
+ * a `sample` row named `s`: the first half of stampCounties' condition above
+ * (a staff point, or a sample still to print with an observation or entered
+ * in Beeline). One definition for the stamp and for the staff correction of
+ * the place (src/app/sample-place.ts), which refuses a sample the stamp would
+ * write over.
+ */
+export function followsPointSql(s: string): string {
+  return `(EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = ${s}.entity_id)
+              OR ((${s}.inat_observation_id IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = ${s}.entity_id))
+                  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = ${s}.entity_id)
+                  AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = ${s}.entity_id)))`;
+}
+
 interface StampResult {
   stamped: number[];
   /** Of the samples asked about by id, those whose place still is not their point's. */
@@ -583,11 +599,7 @@ async function stampCountiesUnlocked(conn: Conn, G: string, sampleIds?: readonly
     FROM (
       SELECT s.entity_id AS sample_id, s.country, s.state_province, s.county AS sample_county,
              point.county, point.country AS point_country, point.state AS point_state, point.inside,
-             (EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = s.entity_id)
-              OR ((s.inat_observation_id IS NOT NULL
-                   OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
-                  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
-                  AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = s.entity_id))) AS follows
+             ${followsPointSql("s")} AS follows
       FROM sample s
       JOIN county_point point ON point.sample_id = s.entity_id
       WHERE point.county IS NOT NULL

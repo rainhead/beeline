@@ -248,6 +248,21 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     method: "POST",
+    route: "/samples/:id/country-state-county",
+    summary:
+      "Correct the country, state and county a sample was collected in, printed or not; a new state moves the atlas geography gave it. Refused (409 follows_point) where Beeline writes them from the sample's coordinates each night: correct the coordinates there instead.",
+    needs: "staff key",
+    body: {
+      country: "three-letter code such as USA or CAN; absent to leave it",
+      state_province: "two-letter code such as OR or BC; absent to leave it",
+      county: "the county's name alone, such as Benton; empty for none; absent to leave it",
+      note: "string",
+      reference: REFERENCE,
+    },
+    answers: "{ sample_id, outcome, changes: [{ field, from, to }] }, the atlas among the fields where it moved",
+  },
+  {
+    method: "POST",
     route: "/samples/:id/trap-count",
     summary: "Set how many traps a trap sample had, or take the count away with an empty one.",
     needs: "staff key",

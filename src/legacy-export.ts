@@ -219,14 +219,17 @@ export function legacyExportSql(
   const END_FIELDS = ["verbatimEventDate", "day2", "month2", "year2", "startDayofYear", "endDayofYear"];
   const ownRow = (flag: string, col: string, model: string) =>
     rowSource ? `CASE WHEN dg.${flag} AND lr._id IS NOT NULL THEN lr."${col}" ELSE ${model} END` : model;
-  // Whether staff put someone else first on this record: the first name of
-  // its recordedBy as corrected is not the old record's, typography aside
-  // (src/app/sample-collectors.ts). A collector added or removed after the
-  // first leaves the record's own login standing for the same person.
-  const firstOf = (x: string) => `regexp_replace(lower(trim(split_part(${x}, '|', 1))), '[^a-z0-9]', '', 'g')`;
-  const collectorsCorrected = rowSource
+  // Whether staff put someone else first on this record: its collectors were
+  // corrected (src/app/sample-collectors.ts), and the sample's first collector
+  // is not the person promotion read the record's own names as. Decided by
+  // person, not by spelling, so a first collector renamed since, or reached
+  // through a collector alias, is still the same person, and adding a
+  // collector after them leaves the record's own login standing. Only a
+  // store promotion left has the corrections and legacy_person_map.
+  const promoted = rowSource === "legacy_occurrence_corrected";
+  const collectorsCorrected = promoted
     ? `(lr._id IS NOT NULL AND lr."recordedBy" IS DISTINCT FROM lo."recordedBy"
-        AND ${firstOf('lr."recordedBy"')} IS DISTINCT FROM ${firstOf('lo."recordedBy"')})`
+        AND lpm.person_id IS DISTINCT FROM pc.person_id)`
     : "false";
   const disagreeing = rowSource
     ? `,
@@ -242,8 +245,14 @@ disagreeing AS (
     ? `LEFT JOIN disagreeing dg ON dg.sample_id = sp.sample_id
   LEFT JOIN sample_locality_override slo ON slo.sample_id = sp.sample_id
   LEFT JOIN sample_location_override slc ON slc.sample_id = sp.sample_id
-  LEFT JOIN (SELECT _id, ${[...ROW_FIELDS, ...END_FIELDS, "recordedBy"].map((f) => `CAST("${f}" AS VARCHAR) AS "${f}"`).join(", ")}
-             FROM ${rowSource}) lr ON lr._id = lo._id`
+  LEFT JOIN (SELECT _id, ${[...ROW_FIELDS, ...END_FIELDS, "recordedBy", "firstName", "lastName"].map((f) => `CAST("${f}" AS VARCHAR) AS "${f}"`).join(", ")}
+             FROM ${rowSource}) lr ON lr._id = lo._id${
+               promoted
+                 ? `
+  LEFT JOIN legacy_person_map lpm ON lpm.fn IS NOT DISTINCT FROM nullif(trim(lr."firstName"), '')
+                                 AND lpm.ln IS NOT DISTINCT FROM nullif(trim(lr."lastName"), '')`
+                 : ""
+             }`
     : "";
   const rows = `
 WITH RECURSIVE up(node_id, anc_id) AS (

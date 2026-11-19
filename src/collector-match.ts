@@ -16,7 +16,8 @@ import type { DuckDBConnection } from "@duckdb/node-api";
  * A name two people answer to, exactly or folded, is refused rather than
  * guessed between, and so is a name with no letter or digit in it. Nobody is
  * ever created here: a collector Beeline does not know is added first, on
- * /unclaimed or /people.
+ * /unclaimed or /people. Those pages are staff's, so a collector at the trap
+ * form is told to ask staff instead (`staff: false`).
  *
  * This is deliberately narrower than the person overlay's resolver
  * (src/apply-person-overlay.ts), which also knows every spelling legacy
@@ -48,7 +49,9 @@ async function rows<T>(conn: DuckDBConnection, sql: string, params: unknown[] = 
  * Who one entry names, or why it names nobody. `people` is every person, as
  * display names; read once for a whole list.
  */
-async function matchOne(conn: DuckDBConnection, entry: string, people: MatchedCollector[]): Promise<MatchedCollector | string> {
+async function matchOne(conn: DuckDBConnection, entry: string, people: MatchedCollector[], staff: boolean): Promise<MatchedCollector | string> {
+  // Staff can tell people apart by id and add them on /unclaimed or /people; a collector cannot reach either.
+  const tellApart = staff ? "name one by their id or iNaturalist login" : "ask staff to tell them apart";
   if (/^\d+$/.test(entry)) {
     const found = people.find((p) => p.person_id === Number(entry));
     return found ?? `Beeline has nobody whose id is ${entry}`;
@@ -72,15 +75,15 @@ async function matchOne(conn: DuckDBConnection, entry: string, people: MatchedCo
   }
   const exact = people.filter((p) => p.display_name === entry);
   if (exact.length === 1) return exact[0]!;
-  if (exact.length > 1) return `${exact.length} people are called ${entry}; name one by their id or iNaturalist login`;
+  if (exact.length > 1) return `${exact.length} people are called ${entry}; ${tellApart}`;
   const key = foldName(entry);
   if (key === "") return `${JSON.stringify(entry)} is not a name`;
   const folded = people.filter((p) => foldName(p.display_name) === key);
   if (folded.length === 1) return folded[0]!;
   if (folded.length > 1) {
-    return `${entry} could be any of ${folded.map((p) => p.display_name).join(", ")}; name one by their id or iNaturalist login`;
+    return `${entry} could be any of ${folded.map((p) => p.display_name).join(", ")}; ${tellApart}`;
   }
-  return `Beeline has nobody called ${entry}; add them on /unclaimed or /people first`;
+  return `Beeline has nobody called ${entry}; ${staff ? "add them on /unclaimed or /people first" : "ask staff to add them"}`;
 }
 
 /**
@@ -89,7 +92,7 @@ async function matchOne(conn: DuckDBConnection, entry: string, people: MatchedCo
  * nobody, an entry that names nobody or several people, and one person named
  * twice. The problem is a sentence for whoever wrote the list.
  */
-export async function matchCollectors(conn: DuckDBConnection, entries: readonly string[]): Promise<CollectorMatch> {
+export async function matchCollectors(conn: DuckDBConnection, entries: readonly string[], { staff }: { staff: boolean }): Promise<CollectorMatch> {
   const given = entries.map((e) => e.trim()).filter((e) => e !== "");
   if (given.length === 0) return { problem: "At least one collector is needed." };
   const people = (await rows<{ person_id: number; display_name: string }>(conn, `SELECT entity_id AS person_id, display_name FROM person`)).map(
@@ -97,7 +100,7 @@ export async function matchCollectors(conn: DuckDBConnection, entries: readonly 
   );
   const collectors: MatchedCollector[] = [];
   for (const entry of given) {
-    const found = await matchOne(conn, entry, people);
+    const found = await matchOne(conn, entry, people, staff);
     if (typeof found === "string") return { problem: `${found}.` };
     if (collectors.some((c) => c.person_id === found.person_id)) return { problem: `${found.display_name} is named twice.` };
     collectors.push(found);

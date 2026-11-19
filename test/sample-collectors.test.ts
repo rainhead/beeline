@@ -236,6 +236,29 @@ describe("staff correcting a sample's collectors", { timeout: 120_000 }, () => {
       expect(await listOf(s.conn, s.solo)).toEqual(["Bea Trapper", "Ada Collector"]);
     });
 
+    it("asks again under the lock whether an observation is tied, since one may arrive while the save waits", async () => {
+      const s = await setup();
+      const [[end]] = (await rows(s.conn, `SELECT date_end FROM sample WHERE entity_id = ${s.solo}`)) as [[unknown]];
+      const writer = s.deps.printWriter as unknown as { runAndReadAll: (sql: string, ...rest: unknown[]) => Promise<unknown> };
+      const read = writer.runAndReadAll.bind(writer);
+      let fired = false;
+      writer.runAndReadAll = async (sql: string, ...rest: unknown[]) => {
+        // The first statement under the lock: Ada's observation of OBAS-00657 has just been synced.
+        if (!fired) {
+          fired = true;
+          await s.conn.run(
+            `INSERT INTO observation_field (inat_id, user_id, sample_number_raw, specimen_count_raw, observed_on)
+             VALUES (777002, 100001, 'OBAS-00657', '4', DATE '${String(end).slice(0, 10)}')`,
+          );
+        }
+        return read(sql, ...rest);
+      };
+      expect(await answer(s, s.solo, ["Ada Collector"])).toBe("observation_tied");
+      writer.runAndReadAll = read;
+      expect(await listOf(s.conn, s.solo)).toEqual(["Bea Trapper"]);
+      expect(await correctionsIn(s.paths.correctionsPath)).toEqual([]);
+    });
+
     it("refuses a new first collector who already has a sample with this number on this day", async () => {
       const s = await setup();
       const [[start, end]] = (await rows(s.conn, `SELECT date_start, date_end FROM sample WHERE entity_id = ${s.pair}`)) as [[unknown, unknown]];
@@ -410,10 +433,34 @@ describe("staff correcting a sample's collectors", { timeout: 120_000 }, () => {
       expect((await out.kinds("bbbb2222")).filter(([column]) => column === "userLogin" || column === "userId")).toEqual([]);
     });
 
-    it("leaves a record nobody corrected as it was", async () => {
+    it("keeps the login of a first collector who stays, however their name is spelled now", async () => {
       const s = await setup();
+      // Bea was renamed on her page since promotion, and has no account in Beeline: the record's own login is still hers.
+      await s.conn.run(`UPDATE person SET display_name = 'Bea Trapper-Jones' WHERE entity_id = ${s.people.bea}`);
+      await s.conn.run(`DELETE FROM inat_account WHERE person_id = ${s.people.bea}`);
+      await send(s, s.solo, ["Bea Trapper-Jones", "Cy Newcomer"]);
+      const out = await exported(s);
+      expect(await out.record("bbbb2222")).toEqual(["Bea Trapper-Jones | Cy Newcomer", "Bea | ", "Trapper | ", "B. | ", "trapline", "100002"]);
+      expect((await out.kinds("bbbb2222")).filter(([column]) => column === "userLogin" || column === "userId")).toEqual([]);
+    });
+
+    it("leaves every record nobody corrected exactly as it was", async () => {
+      const s = await setup();
+      const dir = await mkdtemp(join(tmpdir(), "sample-collectors-"));
+      const before = join(dir, "before.csv");
+      const after = join(dir, "after.csv");
+      await writeLegacyExport(s.conn, before);
       await send(s, s.solo, ["Cy Newcomer"]);
-      expect(await (await exported(s)).record("eeee5555")).toEqual(["Bea Trapper | Ada Collector", "Bea | Ada", "Trapper | Collector", "B. | A.", "trapline", "100002"]);
+      await writeLegacyExport(s.conn, after);
+      // The corrected record's line, by its field number, is the only one that may differ.
+      const [[fieldNumber]] = (await rows(s.conn, `SELECT "fieldNumber" FROM legacy_occurrence WHERE _id = 'bbbb2222'`)) as [[string]];
+      const others = async (path: string) => {
+        const lines = (await readFile(path, "utf8")).split("\n");
+        return lines.filter((line) => !line.includes(`,${fieldNumber},`)).join("\n");
+      };
+      expect((await readFile(before, "utf8")).split("\n").filter((l) => l.includes(`,${fieldNumber},`))).toHaveLength(1);
+      expect(await others(after)).toBe(await others(before));
+      expect((await readFile(after, "utf8")) === (await readFile(before, "utf8"))).toBe(false);
     });
   });
 });

@@ -235,7 +235,7 @@ export async function setStaffCollectors(deps: CollectorsDeps, sampleId: number,
   if (given.length === before.length && given.every((n, i) => n === before[i]!.display_name)) {
     return { outcome: "unchanged", collectors: lines(before) };
   }
-  const matched = await matchCollectors(conn, given);
+  const matched = await matchCollectors(conn, given, { staff: true });
   if ("problem" in matched) return { outcome: "invalid", problem: matched.problem };
   const after = matched.collectors;
   if (sameIds(before, after)) return { outcome: "unchanged", collectors: lines(before) };
@@ -276,6 +276,8 @@ export async function setStaffCollectors(deps: CollectorsDeps, sampleId: number,
     const now = await sampleRow(writer, sampleId);
     const same = (k: keyof SampleRow) => String(now?.[k] ?? "") === String(sample[k] ?? "");
     if (now === undefined || !(["sample_number", "date_start", "date_end", "inat_observation_id"] as const).every(same)) return { outcome: "changed" };
+    // And whether an observation is tied now: one may have arrived while this waited.
+    if (firstChanged && (await observationTied(writer, sampleId, now, after[0]!.person_id))) return { outcome: "observation_tied" };
     if (firstChanged && (await numberTaken(writer, sampleId, sample, after[0]!.person_id))) return { outcome: "number_taken" };
     // Durability before immediacy: if the file write fails, nothing applied.
     if (events.length > 0) await upsertCorrections(deps.correctionsPath, events);

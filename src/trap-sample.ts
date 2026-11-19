@@ -186,6 +186,8 @@ export async function checkTrapSample(
   conn: DuckDBConnection,
   form: TrapSampleForm,
   sampleId: number | null = null,
+  /** Whoever is at the form is staff: a problem with a name then points at the staff pages that settle it. */
+  { staff = false }: { staff?: boolean } = {},
 ): Promise<{ sample: TrapSample } | { problems: FieldProblems }> {
   const problems: FieldProblems = {};
   const sampleNumber = form.sample_number.trim();
@@ -195,7 +197,7 @@ export async function checkTrapSample(
   }
 
   // Named as every list of collectors is named (src/collector-match.ts).
-  const matched = await matchCollectors(conn, form.collectors);
+  const matched = await matchCollectors(conn, form.collectors, { staff });
   const collectorIds = "problem" in matched ? [] : matched.collectors.map((c) => c.person_id);
   if ("problem" in matched) problems.collectors = matched.problem;
 

@@ -529,16 +529,21 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
     // And the columns written from the collectors where staff corrected a
     // record's collectors and the export wrote them as corrected: the name
     // columns and the initials; and the first collector's login and id where
-    // staff put someone else first, as the export decides it, so a login
-    // renamed under an unchanged first collector stays login_renamed.
-    const firstOf = (x: string) => `regexp_replace(lower(trim(split_part(${x}, '|', 1))), '[^a-z0-9]', '', 'g')`;
+    // staff put someone else first, decided by person as the export decides
+    // it (the sample's first collector is not whom promotion read the record's
+    // names as), so a login renamed under an unchanged first collector stays
+    // login_renamed.
     await conn.run(`
       UPDATE cmp_value_difference d SET kind = 'staff_correction'
       WHERE (d."column" IN (${list(COLLECTOR_DERIVED_COLUMNS)})
              OR (d."column" IN (${list(FIRST_COLLECTOR_COLUMNS)})
                  AND EXISTS (SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
+                             JOIN legacy_specimen_number n ON n._id = o._id
+                             JOIN sample_primary_collector pc ON pc.sample_id = n.sample_id
+                             LEFT JOIN legacy_person_map pm ON pm.fn IS NOT DISTINCT FROM nullif(trim(c."firstName"), '')
+                                                           AND pm.ln IS NOT DISTINCT FROM nullif(trim(c."lastName"), '')
                              WHERE o."fieldNumber" = d.field_number
-                               AND ${firstOf('c."recordedBy"')} IS DISTINCT FROM ${firstOf('o."recordedBy"')})))
+                               AND pm.person_id IS DISTINCT FROM pc.person_id)))
         AND EXISTS (
           SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
           JOIN cmp_pairs p ON p."e_fieldNumber" = o."fieldNumber"

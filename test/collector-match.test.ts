@@ -24,8 +24,8 @@ beforeEach(async () => {
   await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${ids["Amy Grotta"]}, 4242, 'agrotta')`);
 });
 
-const names = async (entries: string[]) => {
-  const found = await matchCollectors(conn, entries);
+const names = async (entries: string[], staff = true) => {
+  const found = await matchCollectors(conn, entries, { staff });
   return "problem" in found ? found.problem : found.collectors.map((c) => c.display_name);
 };
 
@@ -71,6 +71,11 @@ describe("naming collectors", () => {
     expect(await names(["Amy Grotta", "inat:agrotta"])).toBe("Amy Grotta is named twice.");
   });
 
+  it("tells a collector, who cannot reach the staff pages, to ask staff", async () => {
+    expect(await names(["Emma Hoskins"], false)).toBe("Beeline has nobody called Emma Hoskins; ask staff to add them.");
+    expect(await names(["ann-lee"], false)).toBe("ann-lee could be any of Ann Lee, AnnLee; ask staff to tell them apart.");
+  });
+
   it("is the trap form's rule too", async () => {
     const form: TrapSampleForm = {
       sample_number: "OBAS-20300",
@@ -92,6 +97,8 @@ describe("naming collectors", () => {
     if (!("sample" in checked)) throw new Error(JSON.stringify(checked.problems));
     expect(checked.sample.collector_ids).toEqual([ids["Mary Jo Mosby"], ids["Amy Grotta"]]);
     const refused = await checkTrapSample(conn, { ...form, collectors: ["ann-lee"] });
-    expect("problems" in refused && refused.problems.collectors).toMatch(/could be any of/);
+    expect("problems" in refused && refused.problems.collectors).toMatch(/could be any of .*; ask staff to tell them apart/);
+    const forStaff = await checkTrapSample(conn, { ...form, collectors: ["Dee Nobody"] }, null, { staff: true });
+    expect("problems" in forStaff && forStaff.problems.collectors).toMatch(/add them on \/unclaimed or \/people first/);
   });
 });

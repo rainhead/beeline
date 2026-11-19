@@ -1,7 +1,11 @@
-import { describe, expect, test } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { describe, expect, test, vi } from "vitest";
 import { createMemoryDb as buildFromSchema } from "../src/schema.js";
 import { createMemoryDb } from "./helpers.js";
-import { storeContents } from "./store-template.js";
+import { sessionState, storeContents, templateFile } from "./store-template.js";
 
 // Nearly every test runs on the copy createMemoryDb hands out rather than on
 // a store built from schema/*.sql (beeline-tl4q), so this is the test that
@@ -17,6 +21,16 @@ describe("the copy of the schema that createMemoryDb hands out", () => {
     }
     for (const [relation, rows] of Object.entries(want.rows)) expect(got.rows[relation], relation).toBe(rows);
     expect(got).toEqual(want);
+  });
+
+  test("sets, loads and keeps aside nothing a store built from the schema does not", async () => {
+    const { conn: built } = await buildFromSchema();
+    const { conn: copied } = await createMemoryDb();
+    const [want, got] = [await sessionState(built), await sessionState(copied)];
+    for (const [part, entries] of Object.entries(want)) expect(got[part as keyof typeof got], part).toEqual(entries);
+    // Not vacuous: DuckDB has well over a hundred settings, and loads some extensions itself.
+    expect(want.settings.length).toBeGreaterThan(100);
+    expect(want.extensions.length).toBeGreaterThan(0);
   });
 
   test("compares a schema that has each thing a copy could lose", async () => {
@@ -39,5 +53,44 @@ describe("the copy of the schema that createMemoryDb hands out", () => {
     // The schema seeds rows (programs, atlas regions, QC rules), some drawing on entity_id_seq.
     expect(Object.values(rows).some((r) => r !== "[]")).toBe(true);
     expect(catalog.sequences[0]!.last_value).not.toBeNull();
+  });
+});
+
+describe("the lock on a template being built", () => {
+  // Named for this process, so no other test or worker builds the same file.
+  const files = async (name: string) => {
+    const dir = join(process.env.BEELINE_TEST_RUN_DIR!, "store-templates");
+    await mkdir(dir, { recursive: true });
+    return { done: join(dir, `${name}.duckdb`), lock: join(dir, `${name}.lock`) };
+  };
+
+  test("left by a process that is no longer running is reported at once, not waited out", async () => {
+    const name = `stale-${process.pid}`;
+    const { lock } = await files(name);
+    const gone = spawnSync(process.execPath, ["-e", ""]).pid!;
+    await writeFile(lock, String(gone));
+    const build = vi.fn(async () => {});
+    await expect(templateFile(name, build)).rejects.toThrow(`was left by process ${gone}, which is no longer running`);
+    expect(build).not.toHaveBeenCalled();
+    await rm(lock);
+  });
+
+  test("is waited on without timers, so a test that fakes them still gets its template", async () => {
+    const name = `fake-timers-${process.pid}`;
+    const { done, lock } = await files(name);
+    // Held by a live process, this one, as though another test in it were building.
+    await writeFile(lock, String(process.pid));
+    vi.useFakeTimers();
+    try {
+      const waiting = templateFile(name, async () => {
+        throw new Error("the waiter must not build while the lock is held");
+      });
+      await sleep(300);
+      await writeFile(done, "");
+      await rm(lock);
+      await expect(waiting).resolves.toBe(done);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

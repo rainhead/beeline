@@ -1240,6 +1240,8 @@ describe("a column whose filter is in use is marked (beeline-5ei8)", () => {
     const { app } = await listingApp("staffer");
     expect(await get(app, "/samples?scope=all")).not.toContain("data-filtered");
     expect(await get(app, "/samples")).not.toContain("data-filtered");
+    // A program chosen in the Atlas column's menu does narrow, and is marked.
+    expect(heading(await get(app, "/samples?scope=WaBA"), "Atlas")).toContain("data-filtered");
   });
 });
 

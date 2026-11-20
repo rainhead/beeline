@@ -344,23 +344,25 @@ interface ColumnOptions {
   fields?: ReadonlyArray<keyof ListingQuery>;
   /** The filter's controls. */
   controls?: Child;
+  /** The reader's own atlas, a position of the scope toggle rather than a filter. */
+  homeAtlasCode?: string;
 }
 
 /**
  * Whether one of a column's filter fields is narrowing the list: it differs
- * from what an unfiltered listing holds. The scope is the exception: "mine"
- * and "all" are positions of the toggle above the table, so only a program
- * chosen in the Atlas column's menu counts.
+ * from what an unfiltered listing holds. The scope is the exception: "mine",
+ * "all" and the reader's own atlas are positions of the toggle above the
+ * table, so only a program chosen in the Atlas column's menu counts.
  */
-function filterInUse(query: ListingQuery, field: keyof ListingQuery): boolean {
-  if (field === "scope") return query.scope !== MINE && query.scope !== ALL;
+function filterInUse(query: ListingQuery, field: keyof ListingQuery, homeAtlasCode?: string): boolean {
+  if (field === "scope") return query.scope !== MINE && query.scope !== ALL && query.scope !== homeAtlasCode;
   return query[field] !== EMPTY_QUERY[field];
 }
 
-function column({ m, path, query, label, sort, kind = "text", fields = [], controls }: ColumnOptions): TableColumn {
+function column({ m, path, query, label, sort, kind = "text", fields = [], controls, homeAtlasCode }: ColumnOptions): TableColumn {
   if (sort === null && fields.length === 0) return { label };
   const copy = columnCopy(m, label, kind, sort !== null, fields.length > 0);
-  const filtered = fields.some((field) => filterInUse(query, field));
+  const filtered = fields.some((field) => filterInUse(query, field, homeAtlasCode));
   const sortHref = (dir: SortDirection) => listingHref(path, query, { sort: sort ?? DEFAULT_SORT, dir, page: 1 });
   return {
     label,
@@ -644,7 +646,7 @@ function Toolbar<Row>({
 }
 
 /** The column menus both listings share: date, collectors, place, atlas. */
-type Shared = { m: Messages; path: string; query: ListingQuery; label: string };
+type Shared = { m: Messages; path: string; query: ListingQuery; label: string; homeAtlasCode?: string };
 
 function dateColumn({ m, path, query, label }: Shared): TableColumn {
   const f = m.listings.filters;
@@ -730,8 +732,9 @@ function hostColumn({ m, path, query, label }: Shared): TableColumn {
  * ground outside every atlas (beeline-t0rh). "My records" is not here: it is
  * the scope toggle's first position, which is where it is reached.
  */
-function atlasColumn({ m, path, query, label, programs }: WithPrograms): TableColumn {
+function atlasColumn({ m, path, query, label, programs, homeAtlasCode }: WithPrograms): TableColumn {
   return column({
+    homeAtlasCode,
     m,
     path,
     query,
@@ -796,7 +799,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
   const copy = m.listings.samples;
   const f = m.listings.filters;
   const path = "/samples";
-  const col = { m, path, query };
+  const col = { m, path, query, homeAtlasCode: props.homeAtlas?.code };
   return (
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, props.programs ?? atlases)} />
@@ -1098,7 +1101,7 @@ export function SpecimenListing(
   const copy = m.listings.specimens;
   const f = m.listings.filters;
   const path = "/specimens";
-  const col = { m, path, query };
+  const col = { m, path, query, homeAtlasCode: props.homeAtlas?.code };
   // The reprint action's mode (query.act, cleared by the route for anyone
   // but staff): a tick column, whose heading box ticks every row on the page
   // that can be marked and is drawn hidden for the island to reveal.

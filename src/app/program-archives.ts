@@ -14,7 +14,8 @@ import {
   type LicenseId,
   type ProgramGovernance,
 } from "../program-governance.js";
-import { identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
+import { classificationsByAnimal, identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
+import { ECDYSIS_COLLECTIONS } from "../fetch-ecdysis.js";
 import { checklistArchive, programChecklist } from "./dwc-checklist.js";
 import { EMPTY_QUERY, hostNamesOnce, listSpecimens, OUTSIDE, STAFF_READER } from "./listings.js";
 
@@ -163,11 +164,13 @@ export async function writeProgramArchives(
   const governance = await readProgramGovernance(opts.governance);
   const counts = await countsByYear(db);
   const step = opts.step ?? ((_label, fn) => fn());
+  // Once for the run: a classification belongs to the animal, and every archive reads the same tree.
+  const classifications = await classificationsByAnimal(db);
   const entries: ArchiveEntry[] = [];
   const checklists: ChecklistEntry[] = [];
   const allYears: AllYearsEntry[] = [];
   /** One archive of the program's specimens, a year of them or (with no year) every one. */
-  const writeArchive = (scope: string, file: string, license: LicenseId | null, year?: number) => {
+  const writeArchive = (scope: string, catalogPrefix: string | null, file: string, license: LicenseId | null, year?: number) => {
     const hostNames = hostNamesOnce(db);
     return writeStream(
       join(dir, file),
@@ -178,13 +181,15 @@ export async function writeProgramArchives(
           });
           return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
         },
-        { license: license === null ? null : LICENSES[license].url },
+        { license: license === null ? null : LICENSES[license].url, catalogPrefix, classifications },
       ),
     );
   };
   for (const program of await programArchives(db)) {
     if (program.scope === null) continue;
     const scope = program.scope;
+    // The program's code is what ECDYSIS_COLLECTIONS names, so its prefix is found there and not guessed from the scope.
+    const catalogPrefix = ECDYSIS_COLLECTIONS.find((c) => c.program === program.code)?.catalogPrefix ?? null;
     const years = [...(counts.get(scope) ?? new Map<number, number>()).entries()].sort(([a], [b]) => a - b);
     if (years.length > 0) {
       const file = checklistFileName(program.code);
@@ -205,7 +210,7 @@ export async function writeProgramArchives(
     for (const [year, specimens] of years) {
       const { license, policy } = governanceFor(governance, program.code, year);
       const file = archiveFileName(program.code, year);
-      const bytes = await step(`${program.code} ${year}`, () => writeArchive(scope, file, license?.license ?? null, year));
+      const bytes = await step(`${program.code} ${year}`, () => writeArchive(scope, catalogPrefix, file, license?.license ?? null, year));
       entries.push({
         program: program.code,
         name: program.name,
@@ -221,7 +226,7 @@ export async function writeProgramArchives(
     if (years.length > 0) {
       const file = allYearsFileName(program.code);
       const license = sharedLicense(governance, program.code, years.map(([y]) => y));
-      const bytes = await step(`${program.code} every year`, () => writeArchive(scope, file, license));
+      const bytes = await step(`${program.code} every year`, () => writeArchive(scope, catalogPrefix, file, license));
       allYears.push({
         program: program.code,
         specimens: years.reduce((n, [, count]) => n + count, 0),

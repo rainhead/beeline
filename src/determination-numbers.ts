@@ -62,6 +62,27 @@ export function numberTokens(raw: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Whether text typed into a name box is only a field number, or several:
+ * digits, with the separators the number boxes accept (commas, semicolons,
+ * spaces, dashes for a range) and at least one digit. A taxon name never
+ * contains a digit, so such text cannot be a name. A barcode scanner types
+ * the digits and then Enter, and the volunteer's cursor may be in the name
+ * box instead of the number box (Karla Salp, 2026-11-20, beeline-sz38).
+ */
+export const isOnlyFieldNumbers = (text: string): boolean => /^[\d\s,;\-–—]*\d[\d\s,;\-–—]*$/.test(text);
+
+/**
+ * Add a number to what a box already holds, separated as its own entries
+ * are: a comma and a space, not doubled when the text already ends with a
+ * comma or semicolon. Empty text is replaced.
+ */
+export function appendNumbers(existing: string, added: string): string {
+  const kept = existing.trimEnd();
+  if (kept === "") return added;
+  return /[,;]$/.test(kept) ? `${kept} ${added}` : `${kept}, ${added}`;
+}
+
 /** A column copied from a spreadsheet, as one line a text field can hold. */
 export const pastedList = (text: string): string =>
   text

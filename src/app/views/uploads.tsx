@@ -109,6 +109,8 @@ export interface SamplesPreview {
   stoppedRow: number | null;
   /** Staff may choose Try again for a stopped upload. */
   canRetry: boolean;
+  /** What the change the job stopped at says, such as that the corrections file already holds it. */
+  stoppedNote: string | null;
   /** Staff may delete the samples this upload made (the job is not working on it, and it made some that still exist). */
   canUndo: boolean;
 }
@@ -156,6 +158,9 @@ export function UploadPreview({
   notesCopy?: boolean;
 }) {
   const p = m.uploads.page;
+  const total = (of: SeasonSplit) => of.active + of.settled + of.unplaced;
+  // Each count says how many of its rows are in the active seasons and how many in settled ones.
+  const split = (of: SeasonSplit) => p.split(of.active, of.settled, of.unplaced);
   const rows = volunteer?.summary.rows ?? staffSummary?.rows ?? samplesSummary?.rows ?? upload.row_count;
   // Only the counts that are not zero: a line that says nothing is left off.
   const lines: string[] = [];
@@ -174,14 +179,16 @@ export function UploadPreview({
   }
   if (samplesSummary !== null) {
     const c = samplesSummary.counts;
-    const total = (split: SeasonSplit) => split.active + split.settled + split.unplaced;
-    // Each count says how many of its rows are in the active seasons and how many in settled ones.
-    const split = (of: SeasonSplit) => p.split(of.active, of.settled, of.unplaced);
     const o = samplesSummary.outcomes;
     if (o !== null) {
       if (o.pending > 0) lines.push(p.samplesApplying(o.total - o.pending, o.total));
       if (o.created > 0) lines.push(p.samplesCreated(o.created, o.deleted));
       if (o.notCreated > 0) lines.push(p.samplesNotCreated(o.notCreated));
+      const c = o.changes;
+      if (total(c.applied) > 0) lines.push(p.samplesChangedCount(total(c.samples), total(c.applied), split(c.samples)));
+      if (total(c.unchanged) > 0) lines.push(p.changesUnchanged(total(c.unchanged), split(c.unchanged)));
+      if (total(c.notApplied) > 0) lines.push(p.changesNotApplied(total(c.notApplied), split(c.notApplied)));
+      if (total(c.notChosen) > 0) lines.push(p.changesNotChosen(total(c.notChosen), split(c.notChosen)));
       // Once applied, the page counts only what applying did; what the file says of its other rows is in its notes.
       lines.push(p.samplesOthersInNotes);
     }
@@ -221,6 +228,7 @@ export function UploadPreview({
       {samplesSummary !== null && samples?.stoppedRow != null && (
         <Callout tone="warning">
           {p.samplesStopped(samples.stoppedRow)}
+          {samples.stoppedNote !== null && <p>{samples.stoppedNote}</p>}
           {samples.canRetry && (
             <form method="post" action={`${uploadHref(upload.entity_id)}/apply-samples/retry`}>
               <Button>{p.samplesTryAgain}</Button>
@@ -235,7 +243,7 @@ export function UploadPreview({
       )}
       {samplesSummary !== null && samples?.applied != null && samples.stoppedRow === null && (samplesSummary.outcomes?.pending ?? 0) === 0 && (
         <Callout tone="success">
-          {p.samplesApplied(m.format.dateTime(samples.applied.at), samples.applied.by)} {p.samplesExistingNotApplied}
+          {p.samplesApplied(m.format.dateTime(samples.applied.at), samples.applied.by)}
         </Callout>
       )}
       {lines.map((line) => (
@@ -262,11 +270,45 @@ export function UploadPreview({
                       {h.likeRow !== null ? p.heldRowOfFile(h.likeRow, h.likeNumber) : <a href={`/samples/${h.likeId}`}>{h.likeNumber}</a>}
                     </td>
                     <td>
-                      <input type="checkbox" name="anyway" value={String(h.row)} aria-label={p.heldAnyway(h.row)} />
+                      <input type="checkbox" name="anyway" value={String(h.row)} checked={h.ticked} aria-label={p.heldAnyway(h.row)} />
                     </td>
                   </tr>
                 ))}
               </DataTable>
+            </>
+          )}
+          {samplesSummary.changes !== null && (
+            <>
+              <h2>{p.changesHeading}</h2>
+              <p>{p.changesLine(total(samplesSummary.changes.samples), split(samplesSummary.changes.samples))}</p>
+              {total(samplesSummary.changes.points.moving) > 0 && (
+                <p>
+                  {p.pointsLine(
+                    total(samplesSummary.changes.points.moving),
+                    total(samplesSummary.changes.points.far),
+                    m.uploads.notes.distance(samplesSummary.changes.points.largest),
+                    split(samplesSummary.changes.points.moving),
+                    split(samplesSummary.changes.points.far),
+                  )}
+                </p>
+              )}
+              {total(samplesSummary.changes.firstCollector) > 0 && (
+                <p>{p.firstCollectorLine(total(samplesSummary.changes.firstCollector), split(samplesSummary.changes.firstCollector), samplesSummary.changes.reprint)}</p>
+              )}
+              {total(samplesSummary.changes.mayNot) > 0 && <p>{p.mayNotLine(total(samplesSummary.changes.mayNot), split(samplesSummary.changes.mayNot))}</p>}
+              <p>{p.changesChoose}</p>
+              {/* Posted with the button, so that the kinds left unticked are told apart from a form that sent none. */}
+              <input type="hidden" name="kinds_shown" value="1" />
+              <ul>
+                {samplesSummary.changes.kinds.map((k) => (
+                  <li>
+                    <label>
+                      <input type="checkbox" name="kind" value={k.unit} checked={k.chosen} /> {p.changeKind(p.changeKinds[k.unit] ?? k.unit, total(k.samples), split(k.samples))}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              {samplesSummary.changes.kinds.some((k) => k.unit === "coordinates") && <Meta block>{p.changeCoordinatesNote}</Meta>}
             </>
           )}
           {samplesSummary.obas !== null && (
@@ -274,7 +316,7 @@ export function UploadPreview({
               {p.obasLine(samplesSummary.obas.rows, samplesSummary.obas.lowest, samplesSummary.obas.highest, samplesSummary.obas.blank, samplesSummary.obas.from, samplesSummary.obas.to)}
               <br />
               <label>
-                <input type="checkbox" name="obas" value="1" /> {p.obasBox}
+                <input type="checkbox" name="obas" value="1" checked={samplesSummary.obas.checked} /> {p.obasBox}
               </label>
             </p>
           )}

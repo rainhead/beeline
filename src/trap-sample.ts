@@ -202,6 +202,24 @@ export function seriesNumberProblem(sampleNumber: string): string | null {
 export const isSeriesNumber = (sampleNumber: string): boolean => /^[A-Za-z]+-/.test(sampleNumber);
 
 /**
+ * Whether another trap sample has this number, judged only for a number in a series (letters, a hyphen and what
+ * follows; the program's own compared folded, so `OBAS 00011` is `OBAS-00011`). A plain number ("1") is the
+ * collector's for the day and is held by many trap samples of the old Beeline, so it is never a clash. For a net sample
+ * that an end day would make a trap sample (the method correction).
+ */
+export async function seriesTrapNumberTaken(conn: DuckDBConnection, sampleNumber: string, sampleId: number): Promise<boolean> {
+  if (isProgramSeries(sampleNumber)) {
+    const found = await rows<{ entity_id: number }>(
+      conn,
+      `SELECT entity_id FROM sample WHERE kind = 'trap' AND entity_id <> $2 AND ${FOLDED_NUMBER} = $1 LIMIT 1`,
+      [foldNumber(sampleNumber), sampleId],
+    );
+    return found.length > 0;
+  }
+  return isSeriesNumber(sampleNumber) && numberTaken(conn, sampleNumber, sampleId);
+}
+
+/**
  * The sample, of any kind, that has this number, if the number is a series number. A series number is the program's
  * and unique, though the old Beeline holds some trap bottles as net samples, and a net sample's own plain numbers
  * ("3") are the collector's for the day and shared, so only a series number is judged. The program's own series is
@@ -225,7 +243,7 @@ export async function seriesNumberHolder(conn: DuckDBConnection, sampleNumber: s
 
 /** What a series number that another sample already has is told, with how to compare the row with that sample. */
 export const seriesNumberHeldProblem = (sampleNumber: string, holder: { sampleId: number; kind: string }) =>
-  `${sampleNumber} is already a ${holder.kind} sample in Beeline, sampleId ${holder.sampleId}. To compare this row with that sample, put its sampleId in the row (changes to existing samples are not applied yet); otherwise give the new sample another number.`;
+  `${sampleNumber} is already a ${holder.kind} sample in Beeline, sampleId ${holder.sampleId}. To change that sample instead, edit its row in a fresh download, which carries its sampleId, sampleVersion and fieldNumber; otherwise give the new sample another number.`;
 
 /** How near a new sample's point must be to an existing sample's, in metres, for the two to look like one sample. */
 export const LOOKALIKE_METRES = 100;
@@ -304,7 +322,7 @@ export async function findLookalikes(
  * inside the print runs' lock, which every trap write takes, so two saves of
  * the number the form offered both cannot pass (CodeRabbit).
  */
-async function numberTaken(conn: DuckDBConnection, sampleNumber: string, sampleId: number | null): Promise<boolean> {
+export async function numberTaken(conn: DuckDBConnection, sampleNumber: string, sampleId: number | null): Promise<boolean> {
   const taken = await rows<{ entity_id: number }>(
     conn,
     `SELECT entity_id FROM sample WHERE kind = 'trap' AND sample_number = $1 AND entity_id IS DISTINCT FROM $2 LIMIT 1`,

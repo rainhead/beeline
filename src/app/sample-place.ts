@@ -137,7 +137,7 @@ async function problemWith(db: Kysely<Database>, next: Record<PlaceField, string
  * rule and the newest build any derivation used counts. The store does not
  * hold which gazetteer is current, so the newest build in use stands for it.
  */
-async function followsItsPoint(db: Kysely<Database>, sampleId: number): Promise<boolean> {
+export async function followsItsPoint(db: Kysely<Database>, sampleId: number): Promise<boolean> {
   const found = await sql<{ follows: boolean }>`
     SELECT ${sql.raw(followsPointSql("s"))}
            AND EXISTS (
@@ -155,7 +155,7 @@ async function followsItsPoint(db: Kysely<Database>, sampleId: number): Promise<
 }
 
 /** Whether labels for this sample are in a print run that has not printed (as setStaffCoordinates asks). */
-async function heldByUnprintedRun(db: Kysely<Database>, sampleId: number): Promise<boolean> {
+export async function heldByUnprintedRun(db: Kysely<Database>, sampleId: number): Promise<boolean> {
   const found = await sql<{ e: boolean }>`
     SELECT EXISTS (SELECT 1 FROM sample_label_in_progress WHERE sample_id = ${sampleId} AND printing_count > 0) AS e`.execute(db);
   return Boolean(found.rows[0]?.e);

@@ -6,6 +6,7 @@ import {
   OUTSIDE,
   pagedStream,
   ROUND_TRIP_COLUMNS,
+  SPECIMEN_CSV_HEADER,
   SPECIMEN_DWC_COLUMNS,
   SPECIMEN_OWN_COLUMNS,
   specimenCsvRow,
@@ -21,16 +22,72 @@ import type { CsvTiming } from "./request-timing.js";
  * the listings CSV and the API carry the common name, the archive and labels
  * do not). The columns that serve loading an edited download back into
  * Beeline (beeline-kgyd) are Beeline's bookkeeping and mean nothing to a
- * museum database. Caste is left out with them for now: whether the archive
- * should publish it, and under which term, has not been decided.
+ * museum database. Caste is not here: the archive writes it under its Darwin
+ * Core term, `caste`, beside `sex`, so it is a declared column and is kept out
+ * of the undeclared ones by `ARCHIVE_DECLARED_OWN`.
  */
-const NOT_IN_ARCHIVE = new Set<string>(["hostCommonName", "caste", ...ROUND_TRIP_COLUMNS]);
-const ARCHIVE_OWN_COLUMNS = SPECIMEN_OWN_COLUMNS.filter((c) => !NOT_IN_ARCHIVE.has(c));
-/** Where each column the archive keeps sits in a specimens CSV row. */
-const ARCHIVE_KEEP = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS]
-  .map((c, i) => (NOT_IN_ARCHIVE.has(c) ? -1 : i))
-  .filter((i) => i >= 0);
-const archiveRow = (row: unknown[]): unknown[] => ARCHIVE_KEEP.map((i) => row[i]);
+const NOT_IN_ARCHIVE = new Set<string>(["hostCommonName", ...ROUND_TRIP_COLUMNS]);
+
+/** The CSV columns the archive writes under a Darwin Core term of its own list, so they are not also written undeclared. */
+const ARCHIVE_DECLARED_OWN = new Set<string>(["caste"]);
+
+/**
+ * The higher classification the occurrence row carries, as the Darwin Core
+ * terms, from the animal tree (beeline-t54r). GBIF places a name by its
+ * classification where it does not know the name itself: a genus or a rank it
+ * does not use falls all the way to "Animalia" without one.
+ */
+export const CLASSIFICATION_RANKS = ["kingdom", "phylum", "class", "order", "family", "genus", "subgenus"] as const;
+export type ClassificationRank = (typeof CLASSIFICATION_RANKS)[number];
+/** One specimen's classification; a rank the tree has no ancestor at is absent. */
+export type Classification = Partial<Record<ClassificationRank, string>>;
+
+/**
+ * The archives' Darwin Core columns, in the order they are written and
+ * declared. They are the staff download's (`SPECIMEN_DWC_COLUMNS`) with
+ * `recordNumber` after `fieldNumber`, `caste` after `sex`, and the higher
+ * classification after the name. The download keeps its own list: an edited
+ * copy of it is loaded back by position and name, so a change made for
+ * Ecdysis and GBIF must not move a column there.
+ */
+export const ARCHIVE_DWC_COLUMNS = [
+  ...SPECIMEN_DWC_COLUMNS.flatMap((c) =>
+    c === "fieldNumber" ? [c, "recordNumber"] : c === "sex" ? [c, "caste"] : [c],
+  ),
+  ...CLASSIFICATION_RANKS,
+] as const;
+
+/** Beeline's own columns, which follow the declared ones undeclared. */
+const ARCHIVE_OWN_COLUMNS = SPECIMEN_OWN_COLUMNS.filter((c) => !NOT_IN_ARCHIVE.has(c) && !ARCHIVE_DECLARED_OWN.has(c));
+
+/** Where the staff download's row holds each column, so the archive reads the cells the download writes rather than copying their code. */
+const CSV_AT = new Map<string, number>(SPECIMEN_CSV_HEADER.map((c, i) => [c, i]));
+
+/**
+ * One occurrence row. Most cells are the staff download's, taken by name. The
+ * numbers follow Darwin Core's definitions here and not in the download
+ * (Peter, 2026-11-18):
+ * - `fieldNumber` is the sample's number, the collecting event's;
+ * - `recordNumber` is the specimen within the sample, `<sample>.<specimen>`,
+ *   as Joel Gardner writes it in his uploads;
+ * - `catalogNumber` is the one Ecdysis reported; failing that, for a program
+ *   with a catalog prefix, the prefix and the label number; failing that,
+ *   empty. A specimen with no label number gets no made-up catalog number.
+ *   The fallback is the archive's guess at the number the museum will assign
+ *   when it takes the record; it is not a fact. `specimen_catalog_number`
+ *   still holds only what Ecdysis reported, and nothing here writes to it.
+ */
+export function archiveRow(r: SpecimenRow, page: Page<SpecimenRow>, ctx: { catalogPrefix: string | null; classification: Classification | undefined }): unknown[] {
+  const csv = specimenCsvRow(r, page);
+  const own: Record<string, unknown> = {
+    fieldNumber: r.sample_number,
+    recordNumber: `${r.sample_number}.${r.specimen_number}`,
+    catalogNumber: r.catalog_number ?? (ctx.catalogPrefix !== null && r.field_number !== null ? `${ctx.catalogPrefix}${r.field_number}` : null),
+    caste: r.caste,
+    ...Object.fromEntries(CLASSIFICATION_RANKS.map((rank) => [rank, ctx.classification?.[rank] ?? null])),
+  };
+  return [...ARCHIVE_DWC_COLUMNS, ...ARCHIVE_OWN_COLUMNS].map((c) => (c in own ? own[c] : csv[CSV_AT.get(c)!]));
+}
 import type { Database, DeterminationQualifier } from "../model.js";
 
 /**
@@ -50,23 +107,27 @@ import type { Database, DeterminationQualifier } from "../model.js";
  * volunteer determinations go downstream is the atlas staff's call after
  * downloading (beeline-pyr), so every determination is in the file.
  *
- * - `occurrence.txt`, the core: one row per specimen, the CSV's columns in the
- *   CSV's order behind an `id`. Only the Darwin Core columns are declared in
- *   `meta.xml`; Beeline's own (geoprivacy, coordinate provenance, the atlas)
- *   follow them undeclared, so a reader of the archive ignores them and a
- *   person opening the file still sees them.
+ * - `occurrence.txt`, the core: one row per specimen behind an `id`, in the
+ *   archive's own columns (`ARCHIVE_DWC_COLUMNS`). Most cells are the CSV's, but
+ *   the list is not: the archive adds `recordNumber`, `caste` and the higher
+ *   classification, and writes the numbers as Darwin Core defines them (see
+ *   `archiveRow`). Only the Darwin Core columns are declared in `meta.xml`;
+ *   Beeline's own (geoprivacy, coordinate provenance, the atlas) follow them
+ *   undeclared, so a reader of the archive ignores them and a person opening
+ *   the file still sees them.
  * - `identification.txt`, the extension: one row per determination, oldest
  *   first, joined to the core by `coreid`, with Symbiota's flag for the
- *   current one; its sex and caste, and whether an expert made it, follow
- *   undeclared.
+ *   current one, then the determination's own sex and caste, declared as
+ *   Darwin Core terms; whether an expert made it follows undeclared.
  *
  * `id` is the specimen's `entity_id`, which joins the two files.
  * `occurrenceID` is blank: Beeline mints none, and a specimen gets one from
  * the museum database its record reaches (ADR 0008, amended 2026-10-23).
- * `fieldNumber` is absent before field numbering and not unique across the
- * identifier eras, and `catalogNumber` is the museum's, empty until Ecdysis
- * has reported one. Symbiota keeps it as the record's key in a collection, so it has
- * to stay put between uploads, and it does wherever an upload could come from:
+ * `fieldNumber` is the sample's number and `recordNumber` the specimen within
+ * it; `catalogNumber` is the museum's where Ecdysis has reported one, else the
+ * program's catalog prefix and the label number, else empty. Symbiota keeps
+ * the `id` as the record's key in a collection, so it has to stay put between
+ * uploads, and it does wherever an upload could come from:
  * a rebuild redraws it (ADR 0002), but only the sandbox is ever rebuilt, and no
  * archive the sandbox writes will be uploaded to GBIF or Ecdysis (Peter,
  * 2026-10-10). Production is migrated, never rebuilt (ADR 0006).
@@ -147,7 +208,7 @@ const SYMBIOTA = "https://symbiota.org/terms/";
 
 /**
  * The identification columns meta.xml declares: the header each is written
- * under and the term it maps to. All Darwin Core but the last. Darwin Core
+ * under and the term it maps to. All Darwin Core but `identificationIsCurrent`. Darwin Core
  * cannot say which identification is current — GBIF reads the current one off
  * the occurrence — and Symbiota, which Ecdysis runs, marks it with its own
  * term, as 1 or 0, and imports every identification as not current without
@@ -168,17 +229,17 @@ export const IDENTIFICATION_TERMS: readonly (readonly [header: string, term: str
     ] as const
   ).map((t) => [t, `${DWC}${t}`] as const),
   ["identificationIsCurrent", `${SYMBIOTA}identificationIsCurrent`],
+  // Sex and caste are part of an identification (Peter, 2026-11-20): an earlier determination may have said
+  // something else than the one of record. They sit after the Symbiota flag because that is where the file
+  // already held them, before they were declared.
+  ...(["sex", "caste"] as const).map((t) => [t, `${DWC}${t}`] as const),
 ];
 
 /**
- * Beeline's own, with no term on the identification. Sex and caste are a
- * determination's too, and an earlier one may have said something else;
- * Darwin Core has `sex` on the occurrence, which carries the determination of
- * record's. Darwin Core has had a `caste` term since 2023, and Symbiota keeps the
- * caste in `reproductiveCondition` (beeline-ni5m.5); the occurrence row does
- * not write either yet.
+ * Beeline's own, with no term on the identification: whether an expert made
+ * the determination, which the core also carries undeclared.
  */
-export const IDENTIFICATION_OWN_COLUMNS = ["sex", "caste", "identifiedByExpert"] as const;
+export const IDENTIFICATION_OWN_COLUMNS = ["identifiedByExpert"] as const;
 
 /** Every determination of these specimens, each specimen's oldest first. */
 export async function identificationsOf(db: Kysely<Database>, specimenIds: number[]): Promise<IdentificationRow[]> {
@@ -216,6 +277,35 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
     is_expert: Boolean(r.is_expert),
     of_record: Boolean(r.of_record),
   })) as IdentificationRow[];
+}
+
+/**
+ * The higher classification of every animal in the tree, by animal id: the
+ * ranks `CLASSIFICATION_RANKS` names that sit at or above it, found by walking
+ * up `animal.parent_id`. A classification belongs to the animal and not to the
+ * specimen, so it is built once for a whole run of archives from the tree alone
+ * (a few thousand nodes) and each specimen's is looked up by the animal its
+ * determination of record names. Asking per page of specimens instead scanned
+ * every determination 190 times a night (beeline-8dx9.8). An animal with
+ * no ancestor at a rank has none written for it.
+ */
+export async function classificationsByAnimal(db: Kysely<Database>): Promise<Map<number, Classification>> {
+  const result = await sql<{ animal_id: number | bigint; rank: ClassificationRank; scientific_name: string }>`
+    WITH RECURSIVE walk(animal_id, rank, scientific_name, parent_id) AS (
+      SELECT entity_id, rank, scientific_name, parent_id FROM animal
+      UNION ALL
+      SELECT w.animal_id, up.rank, up.scientific_name, up.parent_id
+      FROM walk w
+      JOIN animal up ON up.entity_id = w.parent_id
+    )
+    SELECT animal_id, rank, scientific_name FROM walk
+    WHERE rank IN (${sql.join([...CLASSIFICATION_RANKS])})`.execute(db);
+  const found = new Map<number, Classification>();
+  for (const r of result.rows) {
+    const id = Number(r.animal_id);
+    found.set(id, { ...found.get(id), [r.rank]: r.scientific_name });
+  }
+  return found;
 }
 
 const identificationRow = (r: IdentificationRow): unknown[] => [
@@ -258,8 +348,8 @@ export const metaXml = (license: string | null = null) => `<?xml version="1.0" e
   <core encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Occurrence">
     <files><location>occurrence.txt</location></files>
     <id index="0"/>
-${fields(SPECIMEN_DWC_COLUMNS.map((t) => `${DWC}${t}`))}
-${license === null ? "" : `    <field default="${xmlAttr(license)}" term="http://purl.org/dc/terms/license"/>\n`}    <!-- Columns ${SPECIMEN_DWC_COLUMNS.length + 1} onwards are Beeline's own and have no Darwin Core term: ${ARCHIVE_OWN_COLUMNS.join(", ")}. -->
+${fields(ARCHIVE_DWC_COLUMNS.map((t) => `${DWC}${t}`))}
+${license === null ? "" : `    <field default="${xmlAttr(license)}" term="http://purl.org/dc/terms/license"/>\n`}    <!-- Columns ${ARCHIVE_DWC_COLUMNS.length + 1} onwards are Beeline's own and have no Darwin Core term: ${ARCHIVE_OWN_COLUMNS.join(", ")}. -->
   </core>
   <extension encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Identification">
     <files><location>identification.txt</location></files>
@@ -286,9 +376,11 @@ export interface ArchivePage extends Page<SpecimenRow> {
  */
 export function specimenArchiveStream(
   fetch: (limit: number, offset: number) => Promise<ArchivePage>,
-  opts: { license?: string | null; timing?: CsvTiming } = {},
+  opts: { license?: string | null; timing?: CsvTiming; catalogPrefix?: string | null; classifications?: Map<number, Classification> } = {},
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+  const catalogPrefix = opts.catalogPrefix ?? null;
+  const classifications = opts.classifications ?? new Map<number, Classification>();
   const out: Uint8Array[] = [];
   const zip = new Zip((err, chunk) => {
     if (err) throw err;
@@ -309,7 +401,7 @@ export function specimenArchiveStream(
       head: () => {
         file("meta.xml").push(encoder.encode(metaXml(opts.license ?? null)), true);
         core = file("occurrence.txt");
-        core.push(encoder.encode(tabLine(["id", ...SPECIMEN_DWC_COLUMNS, ...ARCHIVE_OWN_COLUMNS])));
+        core.push(encoder.encode(tabLine(["id", ...ARCHIVE_DWC_COLUMNS, ...ARCHIVE_OWN_COLUMNS])));
         identifications = file("identification.txt");
         identifications.push(
           encoder.encode(tabLine(["coreid", ...IDENTIFICATION_TERMS.map(([header]) => header), ...IDENTIFICATION_OWN_COLUMNS])),
@@ -317,7 +409,9 @@ export function specimenArchiveStream(
         return take();
       },
       page: (page) => {
-        core.push(encoder.encode(page.rows.map((r) => tabLine([r.specimen_id, ...archiveRow(specimenCsvRow(r, page))])).join("")));
+        core.push(encoder.encode(page.rows
+            .map((r) => tabLine([r.specimen_id, ...archiveRow(r, page, { catalogPrefix, classification: r.animal_id === null ? undefined : classifications.get(r.animal_id) })]))
+            .join("")));
         identifications.push(encoder.encode(page.identifications.map((r) => tabLine(identificationRow(r))).join("")));
         return take();
       },

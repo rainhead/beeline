@@ -645,6 +645,8 @@ export interface SpecimenRow {
   host_current_name: string | null;
   host_family: string | null;
   host_common_name: string | null;
+  /** The animal the determination of record names; null for a specimen nobody has determined. */
+  animal_id: number | null;
   taxon_rank: string | null;
   scientific_name: string | null;
   authorship: string | null;
@@ -1775,6 +1777,7 @@ export async function listSpecimens(
         "s.host_rank",
         "s.host_inat_taxon_id",
         "hnt.inat_taxon_id as host_name_taxon_id",
+        "an.entity_id as animal_id",
         "an.rank as taxon_rank",
         "an.scientific_name",
         "an.authorship",
@@ -2155,12 +2158,14 @@ const associatedTaxa = (host: string | null, method: string | null) =>
   host === null || host === "" ? null : `"${plantRelationship(method)}":"${host.replaceAll('"', "'")}"`;
 
 /**
- * dwc:geodeticDatum: WGS84 for a point that came from iNaturalist, which
- * stores nothing else; "unknown", as the term asks, for one nobody recorded
- * a datum for — an imported point or a staff entry.
+ * dwc:geodeticDatum: WGS84 for every point there is. iNaturalist stores
+ * nothing else, and the imported and staff-entered points came from
+ * iNaturalist or a phone. Darwin Core also allows
+ * "unknown", which this wrote for imported and staff-entered points until
+ * beeline-8dx9.8, but GBIF's parser rejects it and assumes WGS84 in its
+ * place, so saying so is no loss and spares every record a warning.
  */
-const datum = (latitude: number | null, source: string | null) =>
-  latitude === null ? null : source === "inat_trusted" || source === "inat_public" ? "WGS84" : "unknown";
+const datum = (latitude: number | null) => (latitude === null ? null : "WGS84");
 
 const qcLabel = (row: { blocking: number; warning: number }) =>
   row.blocking > 0 ? "blocking" : row.warning > 0 ? "warning" : "clean";
@@ -2229,7 +2234,7 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   r.locality,
   r.latitude,
   r.longitude,
-  datum(r.latitude, r.location_source),
+  datum(r.latitude),
   r.coordinate_uncertainty_m,
   r.elevation_m,
   r.elevation_m,
@@ -2434,7 +2439,7 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.locality,
   r.latitude,
   r.longitude,
-  datum(r.latitude, r.location_source),
+  datum(r.latitude),
   r.coordinate_uncertainty_m,
   r.elevation_m,
   r.elevation_m,

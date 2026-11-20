@@ -24,7 +24,11 @@ one thing in the whole model, forever.
   `person`, `program` (the atlases among them since the fold of 2026-10-31;
   `atlas` is no longer a relation), `animal`, `sample`, `specimen`,
   `determination`, `elevation_source`, `print_run`, `sync_run`,
-  `observation_load`, `job_run`.
+  `observation_load`, `job_run`, `event` (the program calendar's, 2026-11-19).
+  A row of `event_change` is not an entity, though its `change_id` is drawn
+  from the same sequence: nothing refers to a change, and the id only names
+  the request that made it and orders it among the others, as
+  `minted_field_number.entity_id` orders numbers.
 - **Facet tables** extend an entity 1:1 and have no identity of their own:
   their primary key is the parent's entity id, named for the parent
   (`inat_account.person_id`, `sample_location.sample_id`). A correction to a

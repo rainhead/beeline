@@ -1951,6 +1951,78 @@ export interface AnimalEcdysisStaleView {
   matched_tid: bigint | null;
 }
 
+// schema/075_events.sql, schema/176_view_event_kind_unlisted.sql (src/event.ts is the only writer)
+
+/**
+ * One thing on a program's calendar (beeline-2zej.1.4). A DATE or TIME is written as a string ('2027-06-12',
+ * '18:00:00'), and kysely-duckdb reads a DATE as a Date in the machine's zone and a TIME as a DuckDB value object,
+ * so src/event.ts reads them with CAST(... AS TEXT) and nothing else should select them through Kysely.
+ */
+export interface EventTable {
+  entity_id: Generated<number>;
+  program_id: number;
+  /** An event_kind code; plain text, checked by the view event_kind_unlisted. */
+  kind: string;
+  collecting: boolean;
+  name: string;
+  series: string | null;
+  details: string | null;
+  date_start: string;
+  date_end: string;
+  /** Wall clock in time_zone, 'HH:MM:SS'. A time needs a zone; a zone may stand without a time. */
+  time_start: string | null;
+  time_end: string | null;
+  time_zone: string | null;
+  cancelled_at: Date | null;
+  created_by: number;
+  created_at: Generated<Date>;
+}
+
+export interface EventKindTable {
+  code: string;
+  name: string;
+}
+
+export interface EventPlaceTable {
+  event_id: number;
+  name: string;
+  /** Both or neither. */
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export interface EventOnlineTable {
+  event_id: number;
+  url: string;
+}
+
+export interface EventRegistrationTable {
+  event_id: number;
+  url: string;
+  register_by: string | null;
+}
+
+/** One row per field changed after an event was created; append-only. */
+export interface EventChangeTable {
+  /** Shared by the rows of one request; drawn from entity_id_seq, so it orders changes. With field, the key. */
+  change_id: number;
+  event_id: number;
+  changed_at: Date | string;
+  /** Null: made outside Beeline and loaded afterwards, by someone not known. */
+  author_id: number | null;
+  /** form, api or load (src/event.ts); plain text, no CHECK. */
+  source: string;
+  field: string;
+  old_value: string | null;
+  new_value: string | null;
+  reason: string | null;
+}
+
+export interface EventKindUnlistedView {
+  event_id: number;
+  kind: string;
+}
+
 export interface Database {
   schema_migration: SchemaMigrationTable;
   person: PersonTable;
@@ -2147,4 +2219,11 @@ export interface Database {
   api_key_use: ApiKeyUseTable;
   person_activity: PersonActivityTable;
   impersonation: ImpersonationTable;
+  event: EventTable;
+  event_kind: EventKindTable;
+  event_place: EventPlaceTable;
+  event_online: EventOnlineTable;
+  event_registration: EventRegistrationTable;
+  event_change: EventChangeTable;
+  event_kind_unlisted: EventKindUnlistedView;
 }

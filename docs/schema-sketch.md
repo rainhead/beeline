@@ -129,15 +129,18 @@ Production is migrated and never rebuilt (ADR 0006), and three things DuckDB ref
 
 The sketch writes `id` as the rest of this document does. Built, `event` and `site` are entities with an `entity_id` from the one sequence (ADR 0002).
 
+### Decided after the review
+
+A review of this sketch on 2026-11-19 raised six questions. Peter decided four the same day.
+
+- **An event's program is for publicity only.** It says whose calendar the event is on and nothing else. A sample belongs to a program by where it was collected, except a BLM sample, which is BLM's because it came through the BLM surveys' field submissions. So no event, in any program, decides whose a sample is (beeline-85m.2.1).
+- **A change to an event is written by whoever makes it,** one row per changed field, with a reason. The form and the API call one function, which writes the event and its change together. Creating an event is not a change. The reasoning is the fourth addendum to [ADR 0007](adr/0007-authored-changes-are-events.md) (beeline-2zej.1.1).
+- **The grant to announce for a program is a field on the person overlay,** naming program codes and set on `/people` as `leads` is. The events endpoint of the API stays for staff (beeline-2zej.1.2).
+- **Everyone signed in sees an event's general location and its online link. Beeline holds no meeting points.** The program sends the meeting point only to people who signed up, so that nobody arrives who did not, and sign-ups are not in Beeline yet (beeline-2zej.1.3, beeline-2zej.1.11).
+
 ### Open before building
 
-Raised by a review of this sketch on 2026-11-19. None is decided.
-
-- **An event's program does two jobs.** It says whose calendar the event is on, and `sample_program` takes a sample's program from its event ahead of its atlas. A collecting day for the whole program, held in Oregon, would make its samples Master Melittology's and not the Oregon Bee Atlas's, and licences and archives follow the program. Nothing breaks until samples attach to events. One answer: an event of the catch-all program never overrides a sample's atlas.
-- **The shape of `event_change`.** ADR 0007 expects a change log to become a table after cutover, but its method computes each entry by comparing the store with what the log last said. `event_change` is written by whoever makes the change, beside a row that holds the current values. `person_registration_event` (`schema/014`) already takes a third shape. The choice wants an addendum to the ADR, and an answer to whether creating an event is itself a change.
 - **Loading past events.** A change needs an author and a time, so 2026's cancellations and moves cannot be loaded as they happened. A loader also needs a key of its own for each event, so that running it twice does not make each event twice.
-- **Where the grant to announce for a program lives.** It is the first permission that belongs to a program. Every existing grant is set through the person overlay and shows in the person change log.
-- **Who sees an online link, and a meeting point that may be somebody's home.**
 - **A plot day found by program, site and date is only as sound as the match of the site.** A collector types the site's name freehand, and two people's GPS points on one hectare can be 100 m apart. A miss makes a second event, not an error, so this needs a view of likely duplicates and a way to merge them. Three cases have no rule yet: a ten-minute collection that is its own submission, a submission whose date is corrected afterwards, and a submission for a day whose event was cancelled.
 
 Not sketched: days when several people collected at one place without any announcement. On last night's copy of production, 168 place-days in the 2026 season had three or more collectors, and about 117 of them matched no listed event (beeline-85m.2). Peter set these aside on 2026-11-19; the likely feature is making an event's report easy to write after the day.
@@ -145,17 +148,24 @@ Not sketched: days when several people collected at one place without any announ
 `program` and `program_region` are defined under People and programs above; this section adds what hangs off them.
 
 ```sql
--- Which program a sample was collected FOR is derived, in order of evidence: the event
--- it belongs to, stated by whoever recorded it; else the atlas it fell in; else the
--- catch-all, Master Melittology itself (Peter, 2026-09-24). A view, never a table — the
--- table version said the event's fact a second time — and its atlas stays a separate
--- fact in sample_atlas, since a BLM sample inside New Mexico is both.
+-- A sample that arrived through a program's own field submissions, which is the one way
+-- a sample belongs to a program other than by where it was collected. Today that is the
+-- BLM surveys alone, through Kobo (Peter, 2026-11-19). No row = by geography.
+CREATE TABLE sample_submitted_for (
+  sample_id  INTEGER PRIMARY KEY REFERENCES sample(id),
+  program_id INTEGER NOT NULL REFERENCES program(id)
+);
+
+-- Which program a sample was collected FOR is derived, in order of evidence: the program
+-- whose field submissions it arrived through; else the atlas it fell in; else the
+-- catch-all, Master Melittology itself. A view, never a table, and its atlas stays a
+-- separate fact in sample_atlas, since a BLM sample inside New Mexico is both. An
+-- event's program plays no part: it is for publicity only.
 CREATE VIEW sample_program AS
 SELECT s.id AS sample_id,
-       coalesce(e.program_id, sa.atlas_id, (SELECT id FROM program WHERE code = 'MM')) AS program_id
+       coalesce(sf.program_id, sa.atlas_id, (SELECT id FROM program WHERE code = 'MM')) AS program_id
 FROM sample s
-LEFT JOIN sample_event se ON se.sample_id = s.id
-LEFT JOIN event e ON e.id = se.event_id
+LEFT JOIN sample_submitted_for sf ON sf.sample_id = s.id
 LEFT JOIN sample_atlas sa ON sa.sample_id = s.id;   -- built (schema/010); atlas_id is a program with a region
 
 -- How a sample was taken: shared reference data, like animal_rank, never free text and
@@ -224,14 +234,15 @@ CREATE TABLE event (
   date_end    DATE NOT NULL,                     -- four days in West Central Idaho are one event
   time_start  TIME,                              -- on each day of the event, not only the first
   time_end    TIME,
-  time_zone   TEXT,                              -- 'America/Los_Angeles'; NULL when no time is given
+  time_zone   TEXT,                              -- 'America/Los_Angeles'. A time needs one; a zone
+                                                 -- alone says which zone a deadline's day ends in
 
   cancelled_at TIMESTAMP,                        -- NULL = not cancelled
   created_by  INTEGER NOT NULL REFERENCES person(id),
   created_at  TIMESTAMP NOT NULL,
   -- These three are here from the first day, because a CHECK can never be added later.
   CHECK (date_end >= date_start),
-  CHECK ((time_start IS NULL) = (time_zone IS NULL)),
+  CHECK (time_start IS NULL OR time_zone IS NOT NULL),
   CHECK (time_end IS NULL OR time_start IS NOT NULL)
 );
 
@@ -245,12 +256,15 @@ CREATE TABLE event_kind (
 -- Where and how, each in a table beside the event that nothing refers to, so every
 -- column stays writable and each can be built when its step arrives. No row = none:
 -- a deadline has no place, a field day has no online link.
-CREATE TABLE event_place (       -- a place that is only named
+CREATE TABLE event_place (       -- the general location, which everyone signed in may see
   event_id   INTEGER PRIMARY KEY REFERENCES event(id),
   name       TEXT NOT NULL,                      -- 'Cottonwood Canyon State Park'
-  latitude   DOUBLE,                             -- where to meet
+  latitude   DOUBLE,                             -- of the place as a whole. Never a meeting
+                                                 -- point: Beeline holds none (see above)
   longitude  DOUBLE,
-  CHECK ((latitude IS NULL) = (longitude IS NULL))
+  CHECK ((latitude IS NULL) = (longitude IS NULL)),
+  CHECK (latitude BETWEEN -90 AND 90),
+  CHECK (longitude BETWEEN -180 AND 180)
 );
 CREATE TABLE event_site (        -- a site the program returns to
   event_id INTEGER PRIMARY KEY REFERENCES event(id),
@@ -274,15 +288,20 @@ CREATE TABLE event_registration (
 -- Six of 2026's 107 events were cancelled and five were moved. Each is a change that
 -- says who made it and when, and the event's page shows it: "moved from 12 June". The
 -- event row holds the current values. Append-only, the shape of the sample change log.
+-- Built on 2026-11-19 as schema/075_events.sql, which is now the authority for event,
+-- its kinds, place, online link, registration and this log (docs/architecture/events.md).
 CREATE TABLE event_change (
+  change_id  INTEGER NOT NULL,                   -- one per request, shared by its fields; the
+                                                 -- log is read in this order
   event_id   INTEGER NOT NULL REFERENCES event(id),
   changed_at TIMESTAMP NOT NULL,
-  author_id  INTEGER NOT NULL REFERENCES person(id),
-  source     TEXT NOT NULL,                      -- the form, the API, a field submission
+  author_id  INTEGER REFERENCES person(id),      -- NULL = made outside Beeline and loaded
+  source     TEXT NOT NULL,                      -- 'form', 'api' or 'load'
   field      TEXT NOT NULL,                      -- 'date_start', 'place', 'cancelled_at'
   old_value  TEXT,
   new_value  TEXT,
-  reason     TEXT
+  reason     TEXT,
+  PRIMARY KEY (change_id, field)
 );
 
 -- Who was there. For a training whose attendance counts towards certification, the
@@ -370,7 +389,8 @@ Two people survey plot `EMPP1` on 2027-06-12, pan traps out 08:45 to 14:45 and t
 | `event_conditions` | sagebrush; 68 °F at the start, 84 °F at the end; 1/4 cloud; no precipitation; wind 4 mph in the morning, 9 mph in the afternoon |
 | `event_flora` | *Penstemon* sp., 40; *Eriogonum* sp., 200; *Cleome serrulata*, 12 |
 | `sample` × 4 | one pan-trap sample, `pan-6h`, 08:45–14:45, 61 specimens; three net samples, `net-10min`, one vial per plant, 09:20 *Penstemon*, 09:35 *Eriogonum* (0 specimens, still a record), 13:10 *Cleome* |
-| `sample_event` × 4 | all four on the one event, which is what makes them BLM samples |
+| `sample_event` × 4 | all four on the one event |
+| `sample_submitted_for` × 4 | `BLM`, because they arrived through the BLM surveys' field submissions. This, and not the event, is what makes them BLM samples |
 | `sample_atlas` × 4 | `NM`, derived from where the plot is — not written by anything here |
 | `event_photo` | two protocol photos (the plot, the *Penstemon* stand); one social photo of the pair at the truck |
 | `event_note` | "Gate on the county road locked; combination from the field office. *Eriogonum* just opening." |
@@ -387,7 +407,7 @@ A Washington Bee Atlas collecting day at a state park on 2024-05-18, recorded in
 | `event_place` | "Cottonwood Canyon State Park". No site and no protocol |
 | `event_attendance` | the six people whose samples are attached, plus two who collected nothing |
 | `sample_event` | eleven legacy samples from that date and place, attached by hand; their `sample_number`s are untouched and still run per collector per day |
-| `sample_program` (view) | `WaBA`, through the event; before the event existed it was `WaBA` through the atlas they fell in, so attaching them changed nothing here. A legacy sample outside every atlas resolves to the catch-all |
+| `sample_program` (view) | `WaBA`, through the atlas they fell in, exactly as before the event existed: attaching a sample to an event never changes its program. A legacy sample outside every atlas resolves to the catch-all |
 | `event_photo` | one social photo |
 | `event_note` | "Balsamroot past peak by mid-May here; a week earlier next year." |
 

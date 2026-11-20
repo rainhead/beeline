@@ -285,3 +285,47 @@ the same records in Ecdysis cannot both be safe. The ways out:
 
 D is available now and removes most of Joel's labour. B is the smallest step to a
 schedule but its loss window needs Ecdysis's users to accept it.
+
+### Decided, 2026-11-20
+
+Peter: build D now, and take A against B to the taxonomist meeting.
+
+## What the test of the spreadsheet upload found (2026-11-20)
+
+D means the spreadsheet upload, so it was tested the same way (section D of the
+results file).
+
+1. **A spreadsheet upload over an existing record is as destructive as an archive.**
+   Columns the file lacks, and blank cells, are emptied. There is no setting that
+   skips or protects matched records.
+2. **It also rewrites the record's current identification in place.** A file with no
+   name columns turned an expert's current identification into "undetermined" by
+   "unknown"; a file with a different name overwrote it, leaving no history of the
+   earlier one. The "undetermined" identifications by "unknown" on 4,935 of
+   Washington's 2025 records in Ecdysis look like this path's work on new records.
+3. **A file holding only new catalog numbers changes nothing else.** Every existing
+   record and identification was identical before and after (measured with a hash).
+   With matching switched off, an existing number makes a second record.
+4. **The "skeletal" upload type only fills empty fields.** It never overwrites, so it
+   cannot correct a value, but it can add one where there was none.
+5. **The associations page offers a fixed list of relationships**, of which only
+   `hasHost` and `ecologicallyOccursWith` fit. "visits flowers of" is not offered. The
+   server stores a term it is sent by hand, and exports it as given, but a person
+   using the page cannot choose it unless Ecdysis's operators add it to the list.
+   The page can match a specimen by occurrenceID as well as by catalog number.
+6. The occurrenceID, the end date in `eventDate2`, and `associatedTaxa` behave as in
+   the archive import.
+
+So the files Beeline writes for a person to upload are:
+
+- **A specimen file of new records only**: specimens whose catalog number Ecdysis has
+  not reported. Beeline knows which those are from its nightly read of Ecdysis, and
+  must refuse to write the file when that read is stale.
+- **An associations file** for the same specimens.
+- **Corrections to records already in Ecdysis are not sent by upload.** They are made
+  in Ecdysis by a person, from a list Beeline writes (the 43 specimens with obscured
+  coordinates, beeline-8dx9.7, are the first such list). A correction to a field that
+  is empty in Ecdysis could go by a skeletal upload.
+
+For the meeting or for Joel: whether Ecdysis's operators will add "visits flowers of"
+to the relationship list, since `hasHost` reads as a parasite's host in GloBI.

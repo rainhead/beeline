@@ -57,7 +57,7 @@ Peter, 2026-11-20. So:
 
 ## Part 2: the numbers follow Darwin Core (decided 2026-11-18, archives only)
 
-| Term | Today | Planned |
+| Term | Before | Now, in the archives |
 |---|---|---|
 | `fieldNumber` | the label number | the sample's number |
 | `recordNumber` | absent | the specimen within the sample, as Joel writes it (`sample.specimen`) |
@@ -152,7 +152,7 @@ Ecdysis, and should be said at the meeting:
 
 ### Rules that replace the hand filters
 
-Each of these must exist before a collection's harvest URL does.
+Each of these must exist before a collection's harvest URL does. So must an answer to what happens to a record Ecdysis already holds when it later comes under an embargo or a coordinate rule: leaving it out of a later file removes nothing from Ecdysis, so a person there has to withdraw or restrict it, and nobody has been named to do that.
 
 | Filter today | Rule needed | State |
 |---|---|---|
@@ -178,7 +178,7 @@ From the checks against GBIF's own reader in October (beeline-ob9q, beeline-t54r
   GBIF rejects `unknown` and assumes WGS84; the points came from iNaturalist or a phone.
 - The higher classification (kingdom to family, and genus) is written from Beeline's
   own tree, so GBIF can place a genus or a rank it does not use.
-- Repeated undated identifications are merged, as in Part 4.
+- Repeated undated identifications that say the same thing are merged in this archive. (The upload to Ecdysis has the opposite need: there each identification must stay distinct, Part 4.)
 - A specimen nobody has identified has no name. To decide: leave it out of a published
   archive, or publish it under a higher name. Decided (Peter, 2026-11-20): leave it
   out. The harvest to Ecdysis is different: there the record must exist before an
@@ -209,8 +209,8 @@ lists as open whether experts determine in Beeline at all.
 
 | Step | What | Waits on |
 |---|---|---|
-| 1 | Part 1 (sex and caste), Part 5's datum and classification, the archives' own column lists | nothing |
-| 2 | Part 2 (numbers) | nothing for the archives |
+| 1 | Part 1 (sex and caste), Part 5's datum and classification, the archives' own column lists | built 2026-11-20 (beeline-8dx9.8) |
+| 2 | Part 2 (numbers) | built 2026-11-20 (beeline-8dx9.8) |
 | 3 | Part 3 (occurrenceID): store the published ones, then mint | the ADR 0008 amendment and its review |
 | 3a | The determination of record goes by the determiner's date, then the date of arrival | a measurement on a copy of production |
 | 4 | Part 6 and Part 7 | a short design each |

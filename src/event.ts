@@ -83,12 +83,13 @@ export type EventSource = "form" | "api" | "load";
 const SOURCES: readonly string[] = ["form", "api", "load"];
 
 /** Who is making the change, from where, and why. */
-export interface ChangeBy {
-  /** Null for a change made outside Beeline and loaded afterwards, by someone not known. */
-  personId: number | null;
-  source: EventSource;
+export type ChangeBy = {
   reason?: string | null;
-}
+} & (
+  | { source: "form" | "api"; personId: number }
+  /** Only a change made outside Beeline and loaded afterwards may have no author: nobody is known to have made it. */
+  | { source: "load"; personId: number | null }
+);
 
 export interface EventOptions {
   /** The moment of the write as an ISO string; the time now when left out. For tests. */
@@ -201,8 +202,10 @@ function checkZone(zone: string): string {
   return zone;
 }
 
-function checkSource(source: string): void {
+function checkSource(by: { source: string; personId: number | null }): void {
+  const source = by.source;
   if (!SOURCES.includes(source)) throw new Error(`An event change's source is one of ${SOURCES.join(", ")}, not '${source}'.`);
+  if (by.personId === null && source !== "load") throw new Error(`A change from the ${source} needs the person who made it; only a load may have no author.`);
 }
 
 async function checkKind(conn: DuckDBConnection, kind: string): Promise<void> {
@@ -335,7 +338,7 @@ export function changeEvent(conn: DuckDBConnection, eventId: number, changes: Ev
   const at = opts.at ?? new Date().toISOString();
   return withPrintRunLock(() =>
     inTransaction(conn, async () => {
-      checkSource(by.source);
+      checkSource(by);
       const before = await mustRead(conn, eventId);
       if (changes.kind !== undefined) await checkKind(conn, changes.kind);
       if (changes.timeZone != null) checkZone(changes.timeZone);
@@ -373,7 +376,7 @@ export function cancelEvent(conn: DuckDBConnection, eventId: number, by: ChangeB
   const at = opts.at ?? new Date().toISOString();
   return withPrintRunLock(() =>
     inTransaction(conn, async () => {
-      checkSource(by.source);
+      checkSource(by);
       const before = await mustRead(conn, eventId);
       if (before.cancelled_at !== null) throw new Error(`Event ${eventId} is already cancelled.`);
       await conn.run(`UPDATE event SET cancelled_at = $2::TIMESTAMP WHERE entity_id = $1`, [eventId, at] as never);

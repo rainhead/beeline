@@ -354,6 +354,20 @@ describe("changing events", () => {
     expect(await changes(id)).toEqual([[id, "name", "Master Level proposals due", "Proposals due", null, "load", "loaded from the members' list"]]);
   });
 
+  it("refuses a change from the form or the API with no author, writing nothing, and accepts one from a load", async () => {
+    const id = await createEvent(conn, deadline(), ada, { at: at() });
+    for (const source of ["form", "api"] as const) {
+      await expect(changeEvent(conn, id, { name: "X" }, { personId: null, source } as never, { at: at() })).rejects.toThrow(/needs the person/);
+      await expect(cancelEvent(conn, id, { personId: null, source } as never, { at: at() })).rejects.toThrow(/needs the person/);
+    }
+    expect(await changes()).toEqual([]);
+    expect((await readEventState(conn, id))!.name).toBe("Master Level proposals due");
+    expect((await readEventState(conn, id))!.cancelled_at).toBeNull();
+    await changeEvent(conn, id, { name: "Y" }, { personId: null, source: "load" }, { at: at() });
+    await cancelEvent(conn, id, { personId: null, source: "load" }, { at: at() });
+    expect((await changes(id)).map(([, f, , , a, s]) => [f, a, s])).toEqual([["name", null, "load"], ["cancelled_at", null, "load"]]);
+  });
+
   it("reads two changes to one field at one moment back in the order they were made", async () => {
     const id = await createEvent(conn, deadline(), ada, { at: at() });
     const same = at();

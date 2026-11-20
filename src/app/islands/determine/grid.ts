@@ -16,7 +16,7 @@ import { html, LitElement, nothing, type TemplateResult } from "lit";
 import type { EntryRow, EntryValue, Located } from "../../determine.js";
 import type { DeterminePageData } from "../../views/determine.js";
 import { messagesFor } from "../../messages/index.js";
-import { NumberIndex, pastedList, type NumberProblem } from "../../../determination-numbers.js";
+import { appendNumbers, NumberIndex, pastedList, type NumberProblem } from "../../../determination-numbers.js";
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
@@ -341,6 +341,45 @@ class DetermineGrid extends LitElement {
     this.message = "";
     this.selection = markUsed(this.selection);
     void this.#write(rows, patch);
+  }
+
+  /**
+   * Put the cursor back in the number box: the Go to field number box By
+   * collection year, the Add field numbers box By field number. Done after
+   * the bar's own controls, because a barcode scanner types digits and then
+   * Enter: with the cursor left on a button, the digits are lost and the
+   * Enter presses the button, which clears the sex just set on every ticked
+   * row or undoes the last naming (Karla Salp, 2026-11-20, beeline-sz38).
+   * After the render, so that the status text is already written for a
+   * screen reader. Nothing happens if the box is not drawn or is turned off.
+   * Never used for a row's own cells: closing a row's name box returns focus
+   * to that row's name button, for people working by keyboard.
+   */
+  #focusNumberBox() {
+    void this.updateComplete.then(() => {
+      const box = this.querySelector<HTMLInputElement>(this.#batch ? "#determine-add" : ".determine-jump input");
+      if (box && !box.disabled) box.focus({ preventScroll: true });
+    });
+  }
+
+  /**
+   * A field number that reached the bar's name box goes where the page's own
+   * number box would send it: By collection year it finds the specimen, in
+   * another year if need be (#jump); By field number it adds it to the list
+   * (#addNumbers). The text is passed through that box so both behave exactly
+   * as if it had been typed there.
+   */
+  #numberFromBar(text: string) {
+    const box = this.querySelector<HTMLInputElement>(this.#batch ? "#determine-add" : ".determine-jump input");
+    if (!box || box.disabled) return;
+    // A text box drops line breaks and would run a pasted column together.
+    // By field number the box takes a list, so what was typed there and not
+    // yet added stays; By collection year it takes one number, so it is replaced.
+    const numbers = pastedList(text);
+    box.value = this.#batch ? appendNumbers(box.value, numbers) : numbers;
+    if (this.#batch) void this.#addNumbers(box);
+    else this.#jump(box);
+    this.#focusNumberBox();
   }
 
   #undoBulk() {
@@ -699,16 +738,21 @@ class DetermineGrid extends LitElement {
     const off = n === 0 || this.data.readOnly;
     return html`<div class="determine-bulk" ?data-empty=${n === 0}>
       <span class="count">${n === 0 ? b.none : html`<strong>${b.ticked(n)}</strong>`}</span>
-      <determine-taxon-picker placeholder=${b.namePlaceholder(n)} label=${b.nameLabel} ?disabled=${off}
+      <determine-taxon-picker numbers placeholder=${b.namePlaceholder(n)} label=${b.nameLabel} ?disabled=${off}
         @pick=${(e: CustomEvent<PickerTaxon>) => {
           this.taxa.set(e.detail.id, e.detail);
           this.#bulk(namePatch(e.detail), b.named(n, e.detail.name));
-        }}></determine-taxon-picker>
-      ${this.#sexControl(social ? first!.animalId : null, same, (sex, caste) => this.#bulk({ sex, caste }, b.sexSet(n)), b.sexLabel, off)}
+          this.#focusNumberBox();
+        }}
+        @number=${(e: CustomEvent<string>) => this.#numberFromBar(e.detail)}></determine-taxon-picker>
+      ${this.#sexControl(social ? first!.animalId : null, same, (sex, caste) => {
+        this.#bulk({ sex, caste }, b.sexSet(n));
+        this.#focusNumberBox();
+      }, b.sexLabel, off)}
       <span class="done">
         <span class="meta" role="status">${this.lastBulk?.text ?? ""}</span>
         ${this.lastBulk
-          ? html`<button type="button" class="outlined small" @click=${() => this.#undoBulk()}>${b.undo}</button>`
+          ? html`<button type="button" class="outlined small" @click=${() => { this.#undoBulk(); this.#focusNumberBox(); }}>${b.undo}</button>`
           : nothing}
       </span>
       ${this.#batch
@@ -752,17 +796,31 @@ class DetermineGrid extends LitElement {
       </div>`;
     }
     return html`<div class="determine-toolbar">
-      <label class="determine-jump">${d.jump.label}
-        <input type="text" inputmode="numeric" autocomplete="off" placeholder=${d.jump.placeholder}
-          @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.#jump(e.target as HTMLInputElement); }}
-          @paste=${(e: ClipboardEvent) => {
-            // Here a paste is the whole question, so it goes at once.
-            e.preventDefault();
-            const input = e.target as HTMLInputElement;
-            input.value = (e.clipboardData?.getData("text") ?? "").trim();
-            this.#jump(input);
-          }} />
-      </label>
+      <div class="determine-jump">
+        <label for="determine-jump-input">${d.jump.label}</label>
+        <!-- The listings' search box (.search in components.css): a rounded input with its magnifying-glass button, so this reads as the place to find a specimen and not as the bar's name box below. The button does what Enter does. -->
+        <div class="search">
+          <input id="determine-jump-input" type="text" inputmode="numeric" autocomplete="off" aria-describedby="determine-jump-hint"
+            @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.#jump(e.target as HTMLInputElement); }}
+            @paste=${(e: ClipboardEvent) => {
+              // Here a paste is the whole question, so it goes at once.
+              e.preventDefault();
+              const input = e.target as HTMLInputElement;
+              input.value = (e.clipboardData?.getData("text") ?? "").trim();
+              this.#jump(input);
+            }} />
+          <button type="button" aria-label=${d.jump.label}
+            @click=${(e: Event) => {
+              this.#jump((e.currentTarget as HTMLElement).parentElement!.querySelector("input")!);
+              // The cursor must not stay on the button: a scan's Enter would press it again.
+              this.#focusNumberBox();
+            }}>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"
+              ><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
+          </button>
+        </div>
+      </div>
+      <span id="determine-jump-hint" class="meta determine-hint">${d.jump.hint}</span>
     </div>`;
   }
 

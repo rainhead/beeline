@@ -29,8 +29,10 @@ determine-grid button[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 /* Toolbars */
 .determine-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-4); align-items: center; }
-.determine-jump { display: inline-flex; gap: var(--space-2); align-items: center; font: var(--md-sys-typescale-label); }
-.determine-jump input { width: 16rem; }
+.determine-jump { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; max-width: 100%; }
+.determine-jump label { font: var(--md-sys-typescale-label); }
+/* The box itself is the listings' .search (components.css); only its width is set here. */
+.determine-jump .search { flex: 0 1 18rem; min-width: 0; width: min(18rem, 100%); }
 .determine-numbers { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; }
 .determine-numbers > label { font: var(--md-sys-typescale-label); }
 .determine-numbers-box { flex: 1; min-width: min(28rem, 100%); display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; padding: var(--space-1); border: 1px solid var(--md-sys-color-outline); border-radius: var(--radius-sm); background: var(--md-sys-color-surface); }
@@ -79,6 +81,7 @@ determine-grid button.remove { min-height: 0; padding: 0 var(--space-1); backgro
 @keyframes determine-flash { from { background: var(--md-sys-color-tertiary-container); } }
 .determine-grid .name-cell { background: none; border: 1px dashed transparent; color: inherit; padding: var(--space-1); min-height: 0; text-align: left; width: 100%; border-radius: var(--radius-sm); }
 .determine-grid .name-cell:hover:not([disabled]) { border-color: var(--md-sys-color-outline); background: none; }
+.determine-toolbar .determine-hint { margin: 0; }
 .determine-numbers .determine-hint { flex-basis: 100%; margin: 0; }
 .determine-bycatch { white-space: nowrap; }
 .determine-bycatch input { width: auto; flex: none; margin: 0; }

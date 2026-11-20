@@ -270,6 +270,17 @@ describe("writing the changes", () => {
     nightBefore = second.generation;
   });
 
+  test("keeps the night an old-shaped summary names, which a reader may still be downloading from", async () => {
+    const dir = changesDir(await mkdtemp(join(tmpdir(), "legacy-changes-oldnight-")));
+    const night = "2026-11-19T12-00-00-000Z";
+    await mkdir(join(dir, night), { recursive: true });
+    await writeFile(join(dir, night, "unexplained.csv"), "old");
+    await writeFile(join(dir, "summary.json"), JSON.stringify({ generation: night, matched: { active: 1, settled: 2 }, lines: [] }));
+    const next = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), dir);
+    await stat(join(dir, night, "unexplained.csv"));
+    expect(next.generation).not.toBe(night);
+  });
+
   test("leaves no temporary table behind and puts the thread count back", async () => {
     const [[left]] = (await (await conn.run(`
       SELECT count(*) FROM (SELECT table_name AS n FROM duckdb_tables() WHERE temporary

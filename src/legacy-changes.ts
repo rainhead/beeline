@@ -540,6 +540,16 @@ async function readSummaryIn(dir: string): Promise<ChangesSummary | null> {
   }
 }
 
+/** The night's folder the summary names, whatever shape it is in, or null. */
+async function readGenerationIn(dir: string): Promise<string | null> {
+  try {
+    const g = (JSON.parse(await readFile(join(dir, SUMMARY), "utf8")) as { generation?: unknown } | null)?.generation;
+    return typeof g === "string" && GENERATION.test(g) ? g : null;
+  } catch {
+    return null;
+  }
+}
+
 const EXAMPLES_PER_LINE = 3;
 const VALUES_PER_EXAMPLE = 8;
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
@@ -632,7 +642,8 @@ export async function writeChanges(
       FROM vals v WHERE v.v <= ${VALUES_PER_EXAMPLE}
       ORDER BY v.line, v.r, v."column"`)).getRows()) as [string, string, number | bigint | null, string, string, string, string][];
 
-    const previous = (await readSummaryIn(dir))?.generation ?? null;
+    // Read apart from the shape check: the folder an old-shaped summary names is still being downloaded from.
+    const previous = await readGenerationIn(dir);
     const generation = new Date().toISOString().replace(/[:.]/g, "-");
     await mkdir(join(dir, generation), { recursive: true });
     const lines: LineSummary[] = [];

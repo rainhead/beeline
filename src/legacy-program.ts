@@ -16,6 +16,11 @@
  * that writes no state and has no sample is a different case and has its own
  * group, which the pages show only where it has records.
  *
+ * The records this reads are the ones new Beeline does not hold, which have
+ * no specimen to ask; a pair both sides hold takes its specimen's program
+ * (src/compare-legacy-export.ts), and this is its fallback only where no
+ * specimen carries the field number.
+ *
  * A program is named by its abbreviation (`program_abbreviation`: WABA, where
  * the code is WaBA), and programs are ordered as the program table is, then
  * At large, then the group with no state.

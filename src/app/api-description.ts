@@ -48,7 +48,7 @@ const COLUMN_MEANING: Record<(typeof SAMPLE_CSV_HEADER)[number] | (typeof SPECIM
   locality: "Where it was collected, in words. Empty where the location is withheld from this reader.",
   decimalLatitude: "Latitude of the collecting point. Empty where the location is withheld from this reader.",
   decimalLongitude: "Longitude of the collecting point. Empty where the location is withheld from this reader.",
-  geodeticDatum: "WGS84 for a point from iNaturalist, unknown for a point nobody recorded a datum for.",
+  geodeticDatum: "WGS84 for every point there is; empty where there is none.",
   coordinateUncertaintyInMeters: "How far from the point the bees may have been collected. Empty where the location is withheld.",
   minimumElevationInMeters: "Elevation of the point, in metres. Empty where the location is withheld.",
   maximumElevationInMeters: "The same as minimumElevationInMeters: Beeline holds one elevation.",

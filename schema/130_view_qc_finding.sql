@@ -13,7 +13,6 @@ FROM (
   SELECT * FROM qc_rule_missing_required_field
   UNION ALL SELECT * FROM qc_rule_missing_recommended_field
   UNION ALL SELECT * FROM qc_rule_obscured_no_true_coordinates
-  UNION ALL SELECT * FROM qc_rule_taxon_obscured_awaiting_atlas
   UNION ALL SELECT * FROM qc_rule_locality_format
   UNION ALL SELECT * FROM qc_rule_place_unabbreviated
   UNION ALL SELECT * FROM qc_rule_place_unrecognised

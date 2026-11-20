@@ -109,10 +109,9 @@ COMMENT ON VIEW pending_reprint IS 'Reprint requests waiting for a run: neither 
 -- were never anybody's to fix, and the reprint of a label already on a pin
 -- should not wait on them. It waits only on the flags no waiver can set
 -- aside (qc_rule_unwaivable, schema/050), because those are the ones that
--- would print something false or something an atlas has not agreed to: a
+-- would print something false or a label with a gap: a
 -- staff hold, a field the label cannot be printed without, an obscured point
--- with no true one behind it, or a taxon-obscured point its atlas has not
--- said may print. Nothing from a settled season is excluded, unlike
+-- with no true one behind it. Nothing from a settled season is excluded, unlike
 -- pending_print_sample, which leaves out a settled sample staff have not
 -- released: a person asked for this label. And a reprint needs a
 -- number to print: a request is refused for a specimen without one, so this
@@ -126,7 +125,7 @@ WHERE sp.field_number IS NOT NULL
   SELECT 1 FROM sample_qc_finding f
   JOIN qc_rule_unwaivable u ON u.name = f.rule_name
   WHERE f.sample_id = p.sample_id);
-COMMENT ON VIEW printable_reprint IS 'The pending reprints a print run can take: those of a specimen with a field number whose sample has no finding from qc_rule_unwaivable (a staff hold, a missing required field, an obscured point without a true one, a taxon-obscured point awaiting its atlas). The rest wait in pending_reprint.';
+COMMENT ON VIEW printable_reprint IS 'The pending reprints a print run can take: those of a specimen with a field number whose sample has no finding from qc_rule_unwaivable (a staff hold, a missing required field, an obscured point without a true one). The rest wait in pending_reprint.';
 
 -- The reprints an unscoped run takes, by the same rule as print_scope_sample.
 CREATE VIEW print_scope_reprint AS

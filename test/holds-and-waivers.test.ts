@@ -119,7 +119,7 @@ describe("a waiver", () => {
     for (const [field, reason] of [
       ["waiver:missing_required_field", "'missing_required_field' cannot be waived"],
       ["waiver:obscured_no_true_coordinates", "'obscured_no_true_coordinates' cannot be waived"],
-      ["waiver:taxon_obscured_awaiting_atlas", "'taxon_obscured_awaiting_atlas' cannot be waived"],
+      ["waiver:staff_hold", "'staff_hold' cannot be waived"],
       ["waiver:count_mismatch", "'count_mismatch' does not block printing, so there is nothing to waive"],
       ["waiver:no_such_rule", "'no_such_rule' is not a flag"],
     ] as const) {

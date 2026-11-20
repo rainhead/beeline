@@ -4,6 +4,7 @@ import { areaDisplayName } from "../../area-name.js";
 import {
   ALL,
   DEFAULT_SORT,
+  EMPTY_QUERY,
   MEMBER_ANY,
   MEMBER_UNRECORDED,
   MINE,
@@ -345,14 +346,27 @@ interface ColumnOptions {
   controls?: Child;
 }
 
+/**
+ * Whether one of a column's filter fields is narrowing the list: it differs
+ * from what an unfiltered listing holds. The scope is the exception: "mine"
+ * and "all" are positions of the toggle above the table, so only a program
+ * chosen in the Atlas column's menu counts.
+ */
+function filterInUse(query: ListingQuery, field: keyof ListingQuery): boolean {
+  if (field === "scope") return query.scope !== MINE && query.scope !== ALL;
+  return query[field] !== EMPTY_QUERY[field];
+}
+
 function column({ m, path, query, label, sort, kind = "text", fields = [], controls }: ColumnOptions): TableColumn {
   if (sort === null && fields.length === 0) return { label };
   const copy = columnCopy(m, label, kind, sort !== null, fields.length > 0);
+  const filtered = fields.some((field) => filterInUse(query, field));
   const sortHref = (dir: SortDirection) => listingHref(path, query, { sort: sort ?? DEFAULT_SORT, dir, page: 1 });
   return {
     label,
     menu: {
-      menuLabel: copy.menuLabel,
+      menuLabel: filtered ? m.listings.columnMenu.inUse(copy.menuLabel) : copy.menuLabel,
+      filtered,
       sort:
         sort === null
           ? undefined

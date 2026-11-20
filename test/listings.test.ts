@@ -1199,6 +1199,50 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
   });
 });
 
+describe("a column whose filter is in use is marked (beeline-5ei8)", () => {
+  /** The heading cell holding a column's menu, found by the menu's accessible name. */
+  const heading = (body: string, name: string) => {
+    const cells = body.match(/<th\b[^>]*>(?:(?!<\/th>).)*<\/th>/gs) ?? [];
+    const found = cells.filter((cell) => cell.includes(`aria-label="${name}`));
+    expect(found, name).toHaveLength(1);
+    return found[0]!;
+  };
+
+  it.each([
+    ["/samples", "Method", "kind=trap"],
+    ["/specimens", "Date", "from=2020-01-01"],
+    ["/samples", "Place", "place=Corvallis"],
+  ])("%s: marks the %s heading only while its filter narrows", async (path, column, query) => {
+    const { app, conn } = await listingApp("staffer");
+    await conn.run(`UPDATE sample SET kind = 'trap' WHERE sample_number = 'B-1'`);
+    const plain = await get(app, `${path}?scope=all`);
+    const narrowed = await get(app, `${path}?scope=all&${query}`);
+    const name = column;
+    expect(plain).not.toContain("data-filtered");
+    expect(narrowed.match(/data-filtered/g)).toHaveLength(1);
+    expect(heading(narrowed, name)).toContain('data-filtered="true"');
+    // A screen reader hears it in the heading's name, not only from the colour.
+    expect(heading(narrowed, name)).toContain("filter in use");
+    expect(heading(plain, name)).not.toContain("filter in use");
+  });
+
+  it("keeps the sorted column's marker and the filtered column's apart", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await conn.run(`UPDATE sample SET kind = 'trap' WHERE sample_number = 'B-1'`);
+    const body = await get(app, "/samples?scope=all&kind=trap&sort=place");
+    expect(body.match(/aria-sort=/g)).toHaveLength(1);
+    expect(body.match(/data-filtered/g)).toHaveLength(1);
+    expect(heading(body, "Method")).not.toContain("aria-sort");
+    expect(heading(body, "Place")).not.toContain("data-filtered");
+  });
+
+  it("does not mark the Atlas column for the scope toggle's own positions", async () => {
+    const { app } = await listingApp("staffer");
+    expect(await get(app, "/samples?scope=all")).not.toContain("data-filtered");
+    expect(await get(app, "/samples")).not.toContain("data-filtered");
+  });
+});
+
 describe("the method column", () => {
   it("says whether each sample was netted or trapped, and filters on it", async () => {
     const { app, conn } = await listingApp("staffer");

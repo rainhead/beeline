@@ -507,6 +507,13 @@ th details.col-menu > summary:hover, th details.col-menu[open] > summary { backg
    rather than as shrunken text, which is what made the old one unreadable. */
 th details.col-menu > summary .icon { flex: none; }
 th[aria-sort] details.col-menu > summary { color: var(--md-sys-color-on-surface); }
+/* A column whose filter is narrowing the list: the primary colour, a filled
+   funnel beside the name and a rule under the heading, so a reader scanning
+   the header row sees which columns the list is cut by. */
+th[data-filtered] { box-shadow: inset 0 -2px 0 var(--md-sys-color-primary); }
+th[data-filtered] details.col-menu > summary,
+th[data-filtered] details.col-menu > summary:hover,
+th[data-filtered] details.col-menu[open] > summary { color: var(--md-sys-color-primary); }
 th details.col-menu > .menu-panel {
   position: fixed;
   top: auto;

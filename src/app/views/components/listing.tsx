@@ -1,5 +1,5 @@
 import type { Child } from "hono/jsx";
-import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, SearchIcon } from "../icons.js";
+import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, FilterIcon, SearchIcon } from "../icons.js";
 import { Button } from "./button.js";
 
 /**
@@ -141,6 +141,8 @@ export interface ColumnFilter {
 export interface ColumnMenuSpec {
   /** The accessible name of the toggle: "Date: sort and filter". */
   menuLabel: string;
+  /** A filter in this column is narrowing the list now; the heading is marked. */
+  filtered?: boolean;
   sort?: ColumnSort;
   filter?: ColumnFilter;
 }
@@ -167,6 +169,7 @@ export function ColumnMenu({ label, spec }: { label: Child; spec: ColumnMenuSpec
     <details class="menu col-menu">
       <summary aria-label={spec.menuLabel}>
         <span>{label}</span>
+        {spec.filtered === true && <FilterIcon />}
         {sort?.current === "asc" && <ArrowUpIcon />}
         {sort?.current === "desc" && <ArrowDownIcon />}
         <ChevronDownIcon />

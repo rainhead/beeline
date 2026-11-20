@@ -875,6 +875,8 @@ export const en = {
       both: (column: string) => `${column}: sort and filter`,
       sort: (column: string) => `${column}: sort`,
       filter: (column: string) => `${column}: filter`,
+      /** Said after the name above when the column's filter is narrowing the list. */
+      inUse: (name: string) => `${name}, filter in use`,
     },
 
 

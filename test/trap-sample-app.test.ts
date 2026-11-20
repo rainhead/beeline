@@ -148,12 +148,17 @@ describe("entering a trap sample", () => {
 
   it("shows staff a note on the form that saving a settled season's sample releases its labels, an edit's note only about a new count, and shows it to nobody else", async () => {
     const { as } = await trapApp();
-    // A save with no latitude comes back to the form, with the note where it applies.
+    const entering = en.trapSample.releasesLabelsNew;
+    // The blank form shows staff the note from the start, before any dates are typed,
+    // since a first save that succeeds goes straight to the sample.
+    const blank = async (who: "staffer" | "trapper") => (await as(who).app.request("/trap-samples/new")).text();
+    expect(await blank("staffer")).toContain(entering);
+    expect(await blank("trapper")).not.toContain(entering);
+    // A save with no latitude comes back to the form, still with the note, whatever its season.
     const posted = async (who: "staffer" | "trapper", over: Record<string, string>) =>
       (await as(who).post("/trap-samples/new", entry({ ...over, latitude: "" }))).text();
-    const entering = en.trapSample.releasesLabelsNew;
     expect(await posted("staffer", old)).toContain(entering);
-    expect(await posted("staffer", { date_start: `${CURRENT_SEASON}-06-16` })).not.toContain(entering);
+    expect(await posted("staffer", { date_start: `${CURRENT_SEASON}-06-16` })).toContain(entering);
     expect(await posted("trapper", old)).not.toContain(entering);
     // The edit form promises a release only for a new count, never for any save.
     const id = idOf(await as("trapper").post("/trap-samples/new", entry({ ...old, sample_number: "OBAS-00662" })));

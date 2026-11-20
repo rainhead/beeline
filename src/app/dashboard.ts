@@ -126,7 +126,10 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              -- (sample_awaiting_place, schema/150) is not pending yet, but its
              -- labels are on their way, so the page counts them as waiting.
              s.specimen_count,
-             coalesce(p.pending_count, CASE WHEN aw.sample_id IS NOT NULL THEN w.waiting END, 0) AS pending_count,
+             -- Less any already in a run that has not printed, which printing_count counts.
+             coalesce(p.pending_count,
+                      CASE WHEN aw.sample_id IS NOT NULL THEN greatest(w.waiting - coalesce(lp.printing_count, 0), 0) END,
+                      0) AS pending_count,
              coalesce(lp.printing_count, 0) AS printing_count,
              coalesce(lp.printed_count, 0) AS printed_count, lp.printed_at,
              st.sample_id IS NOT NULL AS settled,

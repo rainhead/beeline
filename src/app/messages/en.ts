@@ -960,8 +960,8 @@ export const en = {
       "One sample is what one bottle or pooled set of bottles holds, from the day the traps were set to the day they were collected. " +
       "Its labels print once the specimens are pinned and counted.",
     notSaved: "Nothing was saved. Correct the fields marked below and save again.",
-    /** Shown to staff entering a sample whose dates are from a season that has settled: saving releases its labels. */
-    releasesLabelsNew: "These dates are from a season that has settled. Saving this sample releases its labels: once the nightly update has worked out its county and state from its coordinates, the next print run labels its bees that have no label yet.",
+    /** Shown to staff on the form for a new sample, from the start, since its dates are blank until typed: saving releases its labels if they are from a settled season. */
+    releasesLabelsNew: "If these dates are from a season that has settled, saving this sample releases its labels: once the nightly update has worked out its county and state from its coordinates, the next print run labels its bees that have no label yet.",
     /** Shown to staff editing one: only a new specimen count releases the labels, and a save that leaves the count alone does not. */
     releasesLabelsEdit: "These dates are from a season that has settled. Saving a new specimen count releases its labels: once the nightly update has worked out its county and state from its coordinates, the next print run labels this sample's bees that have no label yet. Changing the coordinates, county, state or country sends it back to wait for that update.",
     trapCollectorNote: "has trap samples",

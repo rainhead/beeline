@@ -1503,7 +1503,9 @@ export function createApp({
         collectorNames={await collectorChoices(conn!)}
         action={action}
         sampleId={sampleId}
-        releasesLabels={c.get("admin") && (await dateIsSettled(form.date_start))}
+        // A new sample's form shows staff the note from the start, worded for either season,
+        // since its dates are blank until they type them; an edit shows it on settled dates.
+        releasesLabels={c.get("admin") && (sampleId === undefined || (await dateIsSettled(form.date_start)))}
       />,
     );
   const recordTrapChange = (c: Context<AppEnv>, sampleId: number, made: { created?: boolean } = {}) =>

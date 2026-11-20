@@ -6,7 +6,9 @@ first instance is the person change log (beeline-o22) · second is the sample
 change log (beeline-ewl, 2026-08-30 — see the addendum below) · the sample
 snapshot carries ids since cutover (beeline-7r0g, 2026-11-13 — second addendum) ·
 so does every sample entry, and a sample's history is read by its id
-(beeline-zytd, 2026-11-14 — third addendum)
+(beeline-zytd, 2026-11-14 — third addendum) · the event change log is a table,
+written by whoever makes the change (beeline-2zej.1.1, 2026-11-19 — fourth
+addendum)
 
 ## Context
 
@@ -310,3 +312,21 @@ The addendum above left the log as it was: entries filed and read by collector, 
 - **This release is not rolled back past.** An older release skips rows of twelve cells as unreadable and reads the rest by reference, so it can show a sample the older entries of another one that has since been renumbered away, and its own passes file ten-cell rows that this reader would then take for entries from before ids.
 
 Left as they were: samples that share collector, number and date are still recorded as nothing (beeline-7eru), though with ids on entries they can now be recorded, which replaces the plan to follow them by observation; and a sample whose collector no reference names is still not recorded.
+
+## Addendum: the event change log is a table, written by whoever makes the change (2026-11-19)
+
+**A word first.** Since 2026-11-19 an *event* in Beeline is the calendar thing: a field day, a talk, a deadline ([CONTEXT.md](../../CONTEXT.md), Event). An entry in a change log is a *change*. This ADR's title, and the tables `person_registration_event` and `person_mailing_event` (`schema/014`), keep the older word, and are the only places that do.
+
+The event change log (`event_change`, beeline-2zej.1.1) is the first change log built as a table, which this ADR expected once the store stopped being rebuilt. It departs from the Decision above in one way, on purpose.
+
+- **The person and sample logs work out each entry.** A pass compares the store with what the log last said, because many writers change those rows (promotion, the nightly, the screens) and no writer can be trusted to remember the log.
+- **An event has one writer.** The form and the API both call one function. That function writes the event's row and its change in one transaction, so nothing can change an event without leaving a change, and a test holds the row and the log in agreement.
+- **Only the person making the change knows the reason.** "Moved because of smoke" cannot be worked out by comparing two states. A change to an event therefore carries a reason, with its author, its time and its source (the form or the API).
+
+The shape is one row per changed field, with the old value and the new value as text. The event's row holds the current values, because an event has an identity and a page of its own; the latest-row-is-the-answer shape of `person_registration_event` suits a fact about a person and not a thing that is itself listed and linked. A change to an event's place, online link or registration is logged under that name, since those live in tables beside the event.
+
+**Creating an event is not a change.** The event's row says who created it and when.
+
+**This does not decide how the person and sample logs move to tables.** They have many writers, so their method stays the comparison above; only where the entries are kept would change. That design is still beeline-bla's.
+
+What this gives up: a change made to an event's row by anything other than that one function leaves no trace, where the comparison would have caught it on the next pass. The guard is the test, and that nothing else writes the table.

@@ -79,6 +79,7 @@ determine-grid button.remove { min-height: 0; padding: 0 var(--space-1); backgro
 @keyframes determine-flash { from { background: var(--md-sys-color-tertiary-container); } }
 .determine-grid .name-cell { background: none; border: 1px dashed transparent; color: inherit; padding: var(--space-1); min-height: 0; text-align: left; width: 100%; border-radius: var(--radius-sm); }
 .determine-grid .name-cell:hover:not([disabled]) { border-color: var(--md-sys-color-outline); background: none; }
+.determine-toolbar .determine-hint { margin: 0; }
 .determine-numbers .determine-hint { flex-basis: 100%; margin: 0; }
 .determine-bycatch { white-space: nowrap; }
 .determine-bycatch input { width: auto; flex: none; margin: 0; }

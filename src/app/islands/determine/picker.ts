@@ -8,6 +8,7 @@
  */
 import { html, LitElement, nothing } from "lit";
 import type { ComboboxOption } from "../combobox-model.js";
+import { isOnlyFieldNumbers } from "../../../determination-numbers.js";
 import { mergeNames, searchTaxa, type EcdysisName, type PickerTaxon } from "./taxon-search.js";
 import "../combobox.js";
 import { messagesFor } from "../../messages/index.js";
@@ -78,6 +79,7 @@ export class DetermineTaxonPicker extends LitElement {
     placeholder: {},
     label: {},
     autofocus: { type: Boolean },
+    numbers: { type: Boolean },
     disabled: { type: Boolean },
     bycatch: { state: true },
     taxa: { state: true },
@@ -85,6 +87,12 @@ export class DetermineTaxonPicker extends LitElement {
   declare placeholder: string;
   declare label: string;
   declare autofocus: boolean;
+  /**
+   * Set on the bar's picker only: a field number typed or pasted into the box
+   * is not a name, so it is cleared and sent out as a `number` event, carrying
+   * the text, for the page to treat as it treats its own number box.
+   */
+  declare numbers: boolean;
   declare disabled: boolean;
   declare bycatch: boolean;
   declare taxa: PickerTaxon[];
@@ -111,6 +119,7 @@ export class DetermineTaxonPicker extends LitElement {
     this.placeholder = m.determine.picker.placeholder;
     this.label = "";
     this.autofocus = false;
+    this.numbers = false;
     this.disabled = false;
     this.bycatch = widened;
     this.taxa = [];
@@ -120,8 +129,41 @@ export class DetermineTaxonPicker extends LitElement {
     return this; // light DOM, by convention for all islands
   }
 
+  /**
+   * Hand a field number in the box to the page. Listening while the event is
+   * still travelling down to the box keeps the combobox from seeing the
+   * Enter, which it would otherwise spend on an option or on nothing.
+   */
+  readonly #numberKey = (e: KeyboardEvent) => {
+    if (!this.numbers || e.key !== "Enter" || !(e.target instanceof HTMLInputElement)) return;
+    const text = e.target.value.trim();
+    if (!isOnlyFieldNumbers(text)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.#sendNumber(e.target, text);
+  };
+
+  /** A pasted number goes at once, as it does in the page's own number box. */
+  readonly #numberPaste = (e: ClipboardEvent) => {
+    if (!this.numbers || !(e.target instanceof HTMLInputElement)) return;
+    const text = (e.clipboardData?.getData("text") ?? "").trim();
+    if (!isOnlyFieldNumbers(text)) return;
+    e.preventDefault();
+    this.#sendNumber(e.target, text);
+  };
+
+  #sendNumber(input: HTMLInputElement, text: string) {
+    // The combobox keeps its own copy of what is typed and reads it back on
+    // an input event, so emptying the box means saying so that way too.
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    this.dispatchEvent(new CustomEvent<string>("number", { detail: text, bubbles: true }));
+  }
+
   override connectedCallback() {
     super.connectedCallback();
+    this.addEventListener("keydown", this.#numberKey, true);
+    this.addEventListener("paste", this.#numberPaste, true);
     live.add(this);
     this.bycatch = widened;
     loadTaxa().then((t) => (this.taxa = t)).catch(() => undefined);
@@ -129,6 +171,8 @@ export class DetermineTaxonPicker extends LitElement {
 
   override disconnectedCallback() {
     live.delete(this);
+    this.removeEventListener("keydown", this.#numberKey, true);
+    this.removeEventListener("paste", this.#numberPaste, true);
     clearTimeout(this.#askTimer);
     super.disconnectedCallback();
   }

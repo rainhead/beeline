@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NumberIndex, numberTokens, pastedList, MAX_RANGE } from "../src/determination-numbers.js";
+import { isOnlyFieldNumbers, NumberIndex, numberTokens, pastedList, MAX_RANGE } from "../src/determination-numbers.js";
 
 // Shaped like one collector's numbers on the dev store: eight-digit numbers
 // from 2025 on, seven-digit ones before, and two numbers sharing the tail
@@ -167,5 +167,19 @@ describe("what a problem says, for a dropped digit at the start of a range", asy
     expect(problemText(eightOnly.resolve("2600101-2600105").problem!)).toBe(
       "2600101 has 7 digits. Is one missing? Your newest have 8, like 26001021.",
     );
+  });
+});
+
+describe("telling a field number from a name in a name box (beeline-sz38)", () => {
+  it("takes digits, tails, lists and ranges, with the separators the number boxes accept", () => {
+    for (const text of ["26019685", "685", "26019685-697", "9685 – 697", "1, 2; 3", "26019685\n26019686"]) {
+      expect(isOnlyFieldNumbers(text), text).toBe(true);
+    }
+  });
+
+  it("leaves names, empty text and bare separators alone", () => {
+    for (const text of ["", "  ", "Bombus", "Osmia lignaria", "-", ",", "Bombus 12", "26019685x"]) {
+      expect(isOnlyFieldNumbers(text), text).toBe(false);
+    }
   });
 });

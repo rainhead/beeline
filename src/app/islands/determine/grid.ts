@@ -343,6 +343,41 @@ class DetermineGrid extends LitElement {
     void this.#write(rows, patch);
   }
 
+  /**
+   * Put the cursor back in the number box: the Go to field number box By
+   * collection year, the Add field numbers box By field number. Done after
+   * the bar's own controls, because a barcode scanner types digits and then
+   * Enter: with the cursor left on a button, the digits are lost and the
+   * Enter presses the button, which clears the sex just set on every ticked
+   * row or undoes the last naming (Karla Salp, 2026-11-20, beeline-sz38).
+   * After the render, so that the status text is already written for a
+   * screen reader. Nothing happens if the box is not drawn or is turned off.
+   * Never used for a row's own cells: closing a row's name box returns focus
+   * to that row's name button, for people working by keyboard.
+   */
+  #focusNumberBox() {
+    void this.updateComplete.then(() => {
+      const box = this.querySelector<HTMLInputElement>(this.#batch ? "#determine-add" : ".determine-jump input");
+      if (box && !box.disabled) box.focus({ preventScroll: true });
+    });
+  }
+
+  /**
+   * A field number that reached the bar's name box goes where the page's own
+   * number box would send it: By collection year it finds the specimen, in
+   * another year if need be (#jump); By field number it adds it to the list
+   * (#addNumbers). The text is passed through that box so both behave exactly
+   * as if it had been typed there.
+   */
+  #numberFromBar(text: string) {
+    const box = this.querySelector<HTMLInputElement>(this.#batch ? "#determine-add" : ".determine-jump input");
+    if (!box || box.disabled) return;
+    box.value = text;
+    if (this.#batch) void this.#addNumbers(box);
+    else this.#jump(box);
+    this.#focusNumberBox();
+  }
+
   #undoBulk() {
     if (!this.lastBulk) return;
     void this.#send(this.lastBulk.before);
@@ -699,16 +734,21 @@ class DetermineGrid extends LitElement {
     const off = n === 0 || this.data.readOnly;
     return html`<div class="determine-bulk" ?data-empty=${n === 0}>
       <span class="count">${n === 0 ? b.none : html`<strong>${b.ticked(n)}</strong>`}</span>
-      <determine-taxon-picker placeholder=${b.namePlaceholder(n)} label=${b.nameLabel} ?disabled=${off}
+      <determine-taxon-picker numbers placeholder=${b.namePlaceholder(n)} label=${b.nameLabel} ?disabled=${off}
         @pick=${(e: CustomEvent<PickerTaxon>) => {
           this.taxa.set(e.detail.id, e.detail);
           this.#bulk(namePatch(e.detail), b.named(n, e.detail.name));
-        }}></determine-taxon-picker>
-      ${this.#sexControl(social ? first!.animalId : null, same, (sex, caste) => this.#bulk({ sex, caste }, b.sexSet(n)), b.sexLabel, off)}
+          this.#focusNumberBox();
+        }}
+        @number=${(e: CustomEvent<string>) => this.#numberFromBar(e.detail)}></determine-taxon-picker>
+      ${this.#sexControl(social ? first!.animalId : null, same, (sex, caste) => {
+        this.#bulk({ sex, caste }, b.sexSet(n));
+        this.#focusNumberBox();
+      }, b.sexLabel, off)}
       <span class="done">
         <span class="meta" role="status">${this.lastBulk?.text ?? ""}</span>
         ${this.lastBulk
-          ? html`<button type="button" class="outlined small" @click=${() => this.#undoBulk()}>${b.undo}</button>`
+          ? html`<button type="button" class="outlined small" @click=${() => { this.#undoBulk(); this.#focusNumberBox(); }}>${b.undo}</button>`
           : nothing}
       </span>
       ${this.#batch
@@ -753,7 +793,7 @@ class DetermineGrid extends LitElement {
     }
     return html`<div class="determine-toolbar">
       <label class="determine-jump">${d.jump.label}
-        <input type="text" inputmode="numeric" autocomplete="off" placeholder=${d.jump.placeholder}
+        <input type="text" inputmode="numeric" autocomplete="off" aria-describedby="determine-jump-hint"
           @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.#jump(e.target as HTMLInputElement); }}
           @paste=${(e: ClipboardEvent) => {
             // Here a paste is the whole question, so it goes at once.
@@ -763,6 +803,7 @@ class DetermineGrid extends LitElement {
             this.#jump(input);
           }} />
       </label>
+      <span id="determine-jump-hint" class="meta determine-hint">${d.jump.hint}</span>
     </div>`;
   }
 

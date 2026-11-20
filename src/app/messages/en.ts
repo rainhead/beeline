@@ -1696,7 +1696,8 @@ export const en = {
     },
     jump: {
       label: "Go to field number",
-      placeholder: "26019685, or its last few digits",
+      /** Beside the box, not grey text inside it: grey text reads as a value already typed. */
+      hint: "For example 26019685, or its last few digits.",
       /** Said once the row is found and selected: the row also flashes, which a screen reader cannot see. */
       found: (fieldNumber: string) => `Selected ${fieldNumber}.`,
       /** Said while the box looks for a number in the other years, before the page moves there. */

@@ -1,6 +1,7 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
 import { determineHref } from "./determine.js";
+import { ecdysisRecordUrl } from "../ecdysis-link.js";
 import type { SpecimenLabelRow, SpecimenReprint } from "../print-runs.js";
 import type { PrintRunState } from "../../model.js";
 import type { SampleChange } from "../../sample-change.js";
@@ -1515,6 +1516,30 @@ export function SpecimenPage({
           admin={admin}
         />
       </Card>
+
+      {/* The number Ecdysis reported, as a link to its record where it gave
+          one (beeline-8dx9.11). No card for a specimen Ecdysis has not
+          reported: there is nothing to say about it. */}
+      {specimen.catalog_number !== null && (
+        <Card>
+          <h2>{c.ecdysis.heading}</h2>
+          <DetailList
+            items={[
+              {
+                term: c.ecdysis.catalogNumber,
+                value:
+                  ecdysisRecordUrl(specimen.ecdysis_record_id) === null ? (
+                    <span class="mono">{specimen.catalog_number}</span>
+                  ) : (
+                    <a class="mono" href={ecdysisRecordUrl(specimen.ecdysis_record_id)!}>
+                      {specimen.catalog_number}
+                    </a>
+                  ),
+              },
+            ]}
+          />
+        </Card>
+      )}
 
       {/* What became of the pin, where a staff inventory has said
           (specimen_disposition, beeline-fud5), or what the old Beeline's

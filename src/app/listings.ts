@@ -6,6 +6,7 @@ import type { CsvTiming } from "./request-timing.js";
 import { PROGRAM_MEMBERSHIP, type AreaKind, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
 import { labelName } from "../person-name.js";
 import { orcidUrl } from "../orcid.js";
+import { ECDYSIS_COLLECTIONS } from "../fetch-ecdysis.js";
 import { plantRelationship } from "../trap-method.js";
 import { xlsxWriter, type XlsxWriterOptions } from "./xlsx.js";
 
@@ -191,6 +192,51 @@ export function inRankBand(det: DeterminationState, rankColumn: string) {
 export type LabelFilter = "any" | "waiting" | "printed";
 export const LABEL_FILTERS = ["any", "waiting", "printed"] as const;
 
+/**
+ * Whether Ecdysis holds the specimen (beeline-8dx9.11, Peter, 2026-11-20).
+ * "in" is a specimen with a catalog number Ecdysis reported
+ * (specimen_catalog_number) and "not" one without. "expected" is the part of
+ * "not" that Ecdysis should hold by now: the specimen has a label on paper,
+ * its program has a collection in ECDYSIS_COLLECTIONS, it is not marked
+ * missing, and Ecdysis already holds a specimen of the same program collected
+ * in the same year, which shows that year's upload has happened. "In Ecdysis"
+ * means in what Beeline last read from it, which for Washington is dataset 44
+ * and not the whole museum collection. On samples each means the sample has a
+ * specimen that is so.
+ */
+export type EcdysisFilter = "any" | "in" | "not" | "expected";
+export const ECDYSIS_FILTERS = ["any", "in", "not", "expected"] as const;
+
+/**
+ * The part of a specimen listing's query that asks about Ecdysis, for the
+ * specimen aliased `spec`, its sample `samp` and its program's code
+ * `programCode`. The programs and years Ecdysis already holds are one
+ * uncorrelated subquery, a few pairs read once and hashed by the planner, so
+ * no row costs a scan. A specimen's program is the one its sample's atlas
+ * names (sample_atlas), as the listing's scope reads it.
+ */
+function ecdysisPredicate(choice: Exclude<EcdysisFilter, "any">, spec: string, samp: string, programCode: string): RawBuilder<boolean> {
+  const sp = sql.raw(spec);
+  const s = sql.raw(samp);
+  const program = sql.raw(programCode);
+  const absent = sql`NOT EXISTS (SELECT 1 FROM specimen_catalog_number ec WHERE ec.specimen_id = ${sp}.entity_id)`;
+  if (choice === "in") return sql<boolean>`EXISTS (SELECT 1 FROM specimen_catalog_number ec WHERE ec.specimen_id = ${sp}.entity_id)`;
+  if (choice === "not") return sql<boolean>`${absent}`;
+  const programs = sql.join(ECDYSIS_COLLECTIONS.map((c) => sql`${c.program}`));
+  return sql<boolean>`${absent}
+    AND ${sp}.field_number IS NOT NULL
+    AND ${program} IN (${programs})
+    AND NOT EXISTS (SELECT 1 FROM specimen_disposition ed WHERE ed.specimen_id = ${sp}.entity_id AND ed.disposition = 'missing')
+    AND (${program}, CAST(extract(year FROM ${s}.date_start) AS INTEGER)) IN (
+      SELECT ep.code, ess.season
+      FROM specimen_catalog_number ec2
+      JOIN specimen esp ON esp.entity_id = ec2.specimen_id
+      JOIN sample_season ess ON ess.sample_id = esp.sample_id
+      JOIN sample_atlas esa ON esa.sample_id = esp.sample_id
+      JOIN program ep ON ep.entity_id = esa.atlas_id
+      WHERE ep.code IN (${programs}))`;
+}
+
 /** How the sample was collected: netted, or the contents of a trap. */
 export type KindFilter = "any" | SampleKind;
 export const KIND_FILTERS = ["any", "net", "trap"] as const;
@@ -309,6 +355,8 @@ export interface ListingQuery {
   year: number | null;
   /** Whether the labels are on paper yet (LabelFilter). */
   labels: LabelFilter;
+  /** Whether Ecdysis holds the specimen (EcdysisFilter); on samples, a specimen of the sample. */
+  ecdysis: EcdysisFilter;
   /** Net or trap; on specimens, the kind of the sample each came from. */
   kind: KindFilter;
   qc: QcStatus;
@@ -336,6 +384,7 @@ export const EMPTY_QUERY: ListingQuery = {
   det: "any",
   year: null,
   labels: "any",
+  ecdysis: "any",
   kind: "any",
   qc: "any",
   flag: "",
@@ -383,6 +432,7 @@ export function parseListingQuery(
   const det = params.get("det") ?? "";
   const year = params.get("year") ?? "";
   const labels = params.get("labels") ?? "";
+  const ecdysis = params.get("ecdysis") ?? "";
   const kind = params.get("kind") ?? "";
   const sortParam = params.get("sort") ?? "";
   const sort = (SORT_KEYS as readonly string[]).includes(sortParam) ? (sortParam as SortKey) : DEFAULT_SORT;
@@ -403,6 +453,7 @@ export function parseListingQuery(
     det: (DETERMINATION_STATES as readonly string[]).includes(det) ? (det as DeterminationState) : "any",
     year: /^\d{4}$/.test(year) && Number(year) >= 1900 ? Number(year) : null,
     labels: (LABEL_FILTERS as readonly string[]).includes(labels) ? (labels as LabelFilter) : "any",
+    ecdysis: (ECDYSIS_FILTERS as readonly string[]).includes(ecdysis) ? (ecdysis as EcdysisFilter) : "any",
     kind: (KIND_FILTERS as readonly string[]).includes(kind) ? (kind as KindFilter) : "any",
     sort,
     dir: dirParam === "asc" || dirParam === "desc" ? dirParam : defaultDirection(sort),
@@ -448,6 +499,7 @@ export function listingParams(query: ListingQuery, overrides: Partial<ListingQue
   if (merged.det !== "any") params.set("det", merged.det);
   if (merged.year !== null) params.set("year", String(merged.year));
   if (merged.labels !== "any") params.set("labels", merged.labels);
+  if (merged.ecdysis !== "any") params.set("ecdysis", merged.ecdysis);
   if (merged.kind !== "any") params.set("kind", merged.kind);
   if (merged.qc !== "any") params.set("qc", merged.qc);
   if (merged.flag !== "") params.set("flag", merged.flag);
@@ -481,6 +533,7 @@ export const isFiltered = (q: ListingQuery) =>
   q.det !== "any" ||
   q.year !== null ||
   q.labels !== "any" ||
+  q.ecdysis !== "any" ||
   q.kind !== "any" ||
   q.qc !== "any" ||
   q.flag !== "";
@@ -1489,6 +1542,10 @@ async function filteredSamples(
                         WHERE op.sample_id = s.entity_id AND op.specimen_number <= s.specimen_count) >= s.specimen_count`,
     );
   }
+  if (query.ecdysis !== "any") {
+    const asked = ecdysisPredicate(query.ecdysis, "xsp", "s", "a.code");
+    base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM specimen xsp WHERE xsp.sample_id = s.entity_id AND ${asked})`);
+  }
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
   if (query.flag !== "") base = base.where(flaggedWith(query.flag));
@@ -1719,6 +1776,7 @@ async function filteredSpecimens(
   } else if (query.labels === "printed") {
     base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM specimen_on_paper op WHERE op.specimen_id = sp.entity_id)`);
   }
+  if (query.ecdysis !== "any") base = base.where(ecdysisPredicate(query.ecdysis, "sp", "s", "a.code"));
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
   // By the sample's flags, as the severity filter above narrows specimens: a

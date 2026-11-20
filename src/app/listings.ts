@@ -645,6 +645,8 @@ export interface SpecimenRow {
   host_current_name: string | null;
   host_family: string | null;
   host_common_name: string | null;
+  /** The animal the determination of record names; null for a specimen nobody has determined. */
+  animal_id: number | null;
   taxon_rank: string | null;
   scientific_name: string | null;
   authorship: string | null;
@@ -1775,6 +1777,7 @@ export async function listSpecimens(
         "s.host_rank",
         "s.host_inat_taxon_id",
         "hnt.inat_taxon_id as host_name_taxon_id",
+        "an.entity_id as animal_id",
         "an.rank as taxon_rank",
         "an.scientific_name",
         "an.authorship",

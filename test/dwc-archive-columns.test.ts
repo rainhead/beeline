@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { strFromU8, unzipSync } from "fflate";
-import { classificationsOf, metaXml, specimenArchiveStream, type ArchivePage } from "../src/app/dwc-archive.js";
+import { classificationsByAnimal, metaXml, specimenArchiveStream, type ArchivePage, type Classification } from "../src/app/dwc-archive.js";
 import { createKysely } from "../src/db.js";
 import { SAMPLE_CSV_HEADER, SPECIMEN_CSV_HEADER, sampleCsvRow, specimenCsvRow, type SampleRow, type SpecimenRow } from "../src/app/listings.js";
 import { createMemoryDb, insertCleanSample } from "./helpers.js";
@@ -38,6 +38,7 @@ const specimen = (over: Partial<SpecimenRow> = {}): SpecimenRow =>
     sex: null,
     caste: null,
     determination_id: null,
+    animal_id: null,
     is_expert: null,
     determiner: null,
     determiner_orcid: null,
@@ -58,13 +59,13 @@ const page = (rows: SpecimenRow[]): ArchivePage => ({
   total: rows.length,
   collectors: new Map(),
   identifications: [],
-  classifications: new Map(),
 });
 
 /** The archive's core and extension as a table of cells, from rows handed to the stream as one page. */
-async function archiveOf(rows: SpecimenRow[], opts: { catalogPrefix?: string | null; classifications?: ArchivePage["classifications"] } = {}) {
-  const stream = specimenArchiveStream(async () => ({ ...page(rows), classifications: opts.classifications ?? new Map() }), {
+async function archiveOf(rows: SpecimenRow[], opts: { catalogPrefix?: string | null; classifications?: Map<number, Classification> } = {}) {
+  const stream = specimenArchiveStream(async () => page(rows), {
     catalogPrefix: opts.catalogPrefix ?? null,
+    classifications: opts.classifications,
   });
   const files = Object.fromEntries(
     Object.entries(unzipSync(new Uint8Array(await new Response(stream).arrayBuffer()))).map(([n, d]) => [n, strFromU8(d)]),
@@ -193,44 +194,28 @@ describe("the higher classification", () => {
     return { db, conn };
   }
 
-  it("walks up from the determination of record, subgenus included where the tree has one", async () => {
+  it("is built for every animal from the tree alone, subgenus included where the tree has one", async () => {
     const { db, conn } = await tree();
-    const sample = await insertCleanSample(conn, { sample_number: "'S-1'", specimen_count: "4" });
-    await conn.run(
-      `INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sample}, 1, 'F1'), (${sample}, 2, 'F2'), (${sample}, 3, 'F3'), (${sample}, 4, 'F4')`,
-    );
-    const determine = (field: string, name: string) =>
-      conn.run(
-        `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name)
-         SELECT sp.entity_id, an.entity_id, true, 'legacy_import', 'T'
-         FROM specimen sp, animal an WHERE sp.field_number = '${field}' AND an.scientific_name = '${name}'`,
-      );
-    await determine("F1", "Osmia integra");
-    await determine("F2", "Osmia lignaria");
-    await determine("F3", "Bembix");
-    const ids = (await conn.runAndReadAll(`SELECT entity_id, field_number FROM specimen ORDER BY field_number`)).getRows();
-    const byField = Object.fromEntries(ids.map(([id, f]) => [String(f), Number(id)]));
-    const found = await classificationsOf(db, Object.values(byField));
-    const of = (f: string) => found.get(byField[f]!);
+    const map = await classificationsByAnimal(db);
+    const idOf = async (name: string) =>
+      Number((await conn.runAndReadAll(`SELECT entity_id FROM animal WHERE scientific_name = '${name}'`)).getRows()[0]![0]);
+    const of = async (name: string) => map.get(await idOf(name));
+    const top = { kingdom: "Animalia", phylum: "Arthropoda", class: "Insecta", order: "Hymenoptera" };
 
-    expect(of("F1")).toEqual({
-      kingdom: "Animalia", phylum: "Arthropoda", class: "Insecta", order: "Hymenoptera",
-      family: "Megachilidae", genus: "Osmia", subgenus: "Osmia (Acanthosmioides)",
-    });
+    expect(await of("Osmia integra")).toEqual({ ...top, family: "Megachilidae", genus: "Osmia", subgenus: "Osmia (Acanthosmioides)" });
     // No subgenus in this species' ancestry, so none is written.
-    expect(of("F2")).toEqual({
-      kingdom: "Animalia", phylum: "Arthropoda", class: "Insecta", order: "Hymenoptera", family: "Megachilidae", genus: "Osmia",
-    });
-    // A name at genus rank is its own genus, and has no family in the tree.
-    expect(of("F3")).toEqual({ kingdom: "Animalia", phylum: "Arthropoda", class: "Insecta", order: "Hymenoptera", genus: "Bembix" });
-    // Nobody has identified F4.
-    expect(found.has(byField["F4"]!)).toBe(false);
-    expect(await classificationsOf(db, [])).toEqual(new Map());
+    expect(await of("Osmia lignaria")).toEqual({ ...top, family: "Megachilidae", genus: "Osmia" });
+    // A name at genus rank is its own genus, and sits under the order with no family.
+    expect(await of("Bembix")).toEqual({ ...top, genus: "Bembix" });
+    // A node is its own rank, and the root has only itself.
+    expect(await of("Megachilidae")).toEqual({ ...top, family: "Megachilidae" });
+    expect(await of("Animalia")).toEqual({ kingdom: "Animalia" });
+    expect(map.size).toBe(10);
   });
 
   it("is written on the occurrence row under Darwin Core's terms, and empty where there is none", async () => {
-    const classifications = new Map([[7, { kingdom: "Animalia", order: "Hymenoptera", family: "Apidae", genus: "Bombus" }]]);
-    const a = await archiveOf([specimen(), specimen({ specimen_id: 8 })], { classifications });
+    const classifications = new Map([[99, { kingdom: "Animalia", order: "Hymenoptera", family: "Apidae", genus: "Bombus" }]]);
+    const a = await archiveOf([specimen({ animal_id: 99 }), specimen({ specimen_id: 8 })], { classifications });
     for (const term of ["kingdom", "phylum", "class", "order", "family", "genus", "subgenus"]) {
       expect(a.files["meta.xml"]).toContain(`<field index="${a.header.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
     }

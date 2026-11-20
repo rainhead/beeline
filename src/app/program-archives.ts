@@ -14,7 +14,7 @@ import {
   type LicenseId,
   type ProgramGovernance,
 } from "../program-governance.js";
-import { classificationsOf, identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
+import { classificationsByAnimal, identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
 import { ECDYSIS_COLLECTIONS } from "../fetch-ecdysis.js";
 import { checklistArchive, programChecklist } from "./dwc-checklist.js";
 import { EMPTY_QUERY, hostNamesOnce, listSpecimens, OUTSIDE, STAFF_READER } from "./listings.js";
@@ -164,6 +164,8 @@ export async function writeProgramArchives(
   const governance = await readProgramGovernance(opts.governance);
   const counts = await countsByYear(db);
   const step = opts.step ?? ((_label, fn) => fn());
+  // Once for the run: a classification belongs to the animal, and every archive reads the same tree.
+  const classifications = await classificationsByAnimal(db);
   const entries: ArchiveEntry[] = [];
   const checklists: ChecklistEntry[] = [];
   const allYears: AllYearsEntry[] = [];
@@ -177,10 +179,9 @@ export async function writeProgramArchives(
           const page = await listSpecimens(db, { ...EMPTY_QUERY, scope }, 0, STAFF_READER, {
             limit, offset, withTotal: false, year, hostNames: await hostNames(),
           });
-          const ids = page.rows.map((r) => r.specimen_id);
-          return { ...page, identifications: await identificationsOf(db, ids), classifications: await classificationsOf(db, ids) };
+          return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
         },
-        { license: license === null ? null : LICENSES[license].url, catalogPrefix },
+        { license: license === null ? null : LICENSES[license].url, catalogPrefix, classifications },
       ),
     );
   };

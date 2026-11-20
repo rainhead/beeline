@@ -73,6 +73,9 @@ const CSV_AT = new Map<string, number>(SPECIMEN_CSV_HEADER.map((c, i) => [c, i])
  * - `catalogNumber` is the one Ecdysis reported; failing that, for a program
  *   with a catalog prefix, the prefix and the label number; failing that,
  *   empty. A specimen with no label number gets no made-up catalog number.
+ *   The fallback is the archive's guess at the number the museum will assign
+ *   when it takes the record; it is not a fact. `specimen_catalog_number`
+ *   still holds only what Ecdysis reported, and nothing here writes to it.
  */
 export function archiveRow(r: SpecimenRow, page: Page<SpecimenRow>, ctx: { catalogPrefix: string | null; classification: Classification | undefined }): unknown[] {
   const csv = specimenCsvRow(r, page);
@@ -277,30 +280,29 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
 }
 
 /**
- * The higher classification of each specimen's determination of record, from
- * the animal tree: the ranks `CLASSIFICATION_RANKS` names that sit at or above
- * the determined animal, found by walking up `animal.parent_id`. One query for
- * every specimen asked about, not one each. A specimen nobody has determined
- * is absent from the answer.
+ * The higher classification of every animal in the tree, by animal id: the
+ * ranks `CLASSIFICATION_RANKS` names that sit at or above it, found by walking
+ * up `animal.parent_id`. A classification belongs to the animal and not to the
+ * specimen, so it is built once for a whole run of archives from the tree alone
+ * (a few thousand nodes) and each specimen's is looked up by the animal its
+ * determination of record names. Asking per page of specimens instead scanned
+ * every determination 190 times a night (beeline-8dx9.8). An animal with
+ * no ancestor at a rank has none written for it.
  */
-export async function classificationsOf(db: Kysely<Database>, specimenIds: number[]): Promise<Map<number, Classification>> {
-  const found = new Map<number, Classification>();
-  if (specimenIds.length === 0) return found;
-  const result = await sql<{ specimen_id: number | bigint; rank: ClassificationRank; scientific_name: string }>`
-    WITH RECURSIVE walk(specimen_id, rank, scientific_name, parent_id) AS (
-      SELECT d.specimen_id, an.rank, an.scientific_name, an.parent_id
-      FROM determination_of_record d
-      JOIN animal an ON an.entity_id = d.animal_id
-      WHERE d.specimen_id IN (${sql.join(specimenIds)})
+export async function classificationsByAnimal(db: Kysely<Database>): Promise<Map<number, Classification>> {
+  const result = await sql<{ animal_id: number | bigint; rank: ClassificationRank; scientific_name: string }>`
+    WITH RECURSIVE walk(animal_id, rank, scientific_name, parent_id) AS (
+      SELECT entity_id, rank, scientific_name, parent_id FROM animal
       UNION ALL
-      SELECT w.specimen_id, up.rank, up.scientific_name, up.parent_id
+      SELECT w.animal_id, up.rank, up.scientific_name, up.parent_id
       FROM walk w
       JOIN animal up ON up.entity_id = w.parent_id
     )
-    SELECT specimen_id, rank, scientific_name FROM walk
+    SELECT animal_id, rank, scientific_name FROM walk
     WHERE rank IN (${sql.join([...CLASSIFICATION_RANKS])})`.execute(db);
+  const found = new Map<number, Classification>();
   for (const r of result.rows) {
-    const id = Number(r.specimen_id);
+    const id = Number(r.animal_id);
     found.set(id, { ...found.get(id), [r.rank]: r.scientific_name });
   }
   return found;
@@ -361,8 +363,6 @@ ${fields(IDENTIFICATION_TERMS.map(([, term]) => term))}
 /** A page of specimens with every determination of each. */
 export interface ArchivePage extends Page<SpecimenRow> {
   identifications: IdentificationRow[];
-  /** By specimen id: the higher classification of each specimen that has a determination. */
-  classifications: Map<number, Classification>;
 }
 
 /**
@@ -376,10 +376,11 @@ export interface ArchivePage extends Page<SpecimenRow> {
  */
 export function specimenArchiveStream(
   fetch: (limit: number, offset: number) => Promise<ArchivePage>,
-  opts: { license?: string | null; timing?: CsvTiming; catalogPrefix?: string | null } = {},
+  opts: { license?: string | null; timing?: CsvTiming; catalogPrefix?: string | null; classifications?: Map<number, Classification> } = {},
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const catalogPrefix = opts.catalogPrefix ?? null;
+  const classifications = opts.classifications ?? new Map<number, Classification>();
   const out: Uint8Array[] = [];
   const zip = new Zip((err, chunk) => {
     if (err) throw err;
@@ -409,7 +410,7 @@ export function specimenArchiveStream(
       },
       page: (page) => {
         core.push(encoder.encode(page.rows
-            .map((r) => tabLine([r.specimen_id, ...archiveRow(r, page, { catalogPrefix, classification: page.classifications.get(r.specimen_id) })]))
+            .map((r) => tabLine([r.specimen_id, ...archiveRow(r, page, { catalogPrefix, classification: r.animal_id === null ? undefined : classifications.get(r.animal_id) })]))
             .join("")));
         identifications.push(encoder.encode(page.identifications.map((r) => tabLine(identificationRow(r))).join("")));
         return take();

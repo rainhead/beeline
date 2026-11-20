@@ -26,6 +26,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [Delegation](delegation.md) — `src/app/acting.ts`
 - [Registrations, from Ideal Logic](ideal-logic.md) — `src/ideal-logic.ts`, `src/registrations.ts`, `src/link-register-emails.ts`, `schema/014`, `schema/104`
 - [Membership](membership.md)
+- [Events](events.md) — `schema/075_events.sql`, `schema/176_view_event_kind_unlisted.sql`, `src/event.ts`
 - [Programs](programs.md) — `src/app/programs.ts`, `src/app/views/programs.tsx`
 - [ORCID](orcid.md) — `schema/103`
 - [Addressing a person, and admin](addressing-a-person-and-admin.md)

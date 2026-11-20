@@ -129,6 +129,12 @@ export interface SampleUnitDifference {
    * job asks the correction itself.
    */
   refusal: string | null;
+  /**
+   * Every column of the kind with what Beeline said when the file was downloaded and what the file says, the ones the
+   * file does not have included (a point written back with an uncertainty the file never carried must still be what
+   * Beeline holds): what the job compares with the sample right before the change.
+   */
+  compare: Array<{ column: string; was: string; fileSays: string; differs: boolean }>;
   /** For a collectors change: whether the first collector changes, how many labels on paper print the old list, and what staff are warned of. */
   collectors?: CollectorsPreview;
   /** The kind of change was ticked, so applying makes it. Not part of the digest: a tick is the person's own answer. */
@@ -615,7 +621,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
     const { results: cellResults, full } = evaluateRow(cells, known!.cells);
     const touched = (c: string) => cellResults.get(c)!.differs || cellResults.get(c)!.problem !== null;
     /** The units whose change can be queued, before the corrections' refusals are predicted for the row as a whole. */
-    const queued: Array<Pick<SampleUnitDifference, "unit" | "cells" | "change" | "metres">> = [];
+    const queued: Array<Pick<SampleUnitDifference, "unit" | "cells" | "change" | "metres" | "compare">> = [];
     for (const unit of SAMPLES_UNITS) {
       const own = UNIT_COLUMNS[unit].filter((c) => columns.has(c));
       const touchedCells = own.filter(touched);
@@ -664,6 +670,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         unit,
         cells: own.map((c) => ({ column: c, was: cellResults.get(c)!.nowText, fileSays: cellResults.get(c)!.fileText, value: cellResults.get(c)!.value, differs: cellResults.get(c)!.differs })),
         change,
+        compare: UNIT_COLUMNS[unit].map((c) => ({ column: c, was: full.get(c)!.nowText, fileSays: full.get(c)!.fileText, differs: cellResults.get(c)?.differs === true })),
         metres: unit === "coordinates" ? pointMoves(full) : null,
       });
     }

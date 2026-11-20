@@ -123,7 +123,7 @@ export async function claimUpload(
       const base = { row: r.row, unit: d.unit, sampleId: r.sampleId, number: r.sampleNumber };
       if (!d.chosen) inserts.push({ ...base, outcome: "skipped", payload: null, detail: m.uploads.changes.notChosen });
       else {
-        const queued: QueuedUnit = { change: d.change, cells: d.cells.map((c) => ({ column: c.column, was: c.was, fileSays: c.fileSays, differs: c.differs })) };
+        const queued: QueuedUnit = { change: d.change, cells: d.compare };
         inserts.push({ ...base, outcome: "pending", payload: JSON.stringify(queued), detail: null });
       }
     }
@@ -176,12 +176,18 @@ export interface OutcomeRow {
   queued: boolean;
   /** The sample was made and has since been deleted (`sample_deletion`). */
   deleted: boolean;
+  /** Whether the sample the change is to is in a season still active or one that has settled, as every count is split. */
+  season: "active" | "settled" | "unplaced";
 }
 
 /** What applying did to each row of an upload so far, in file order. */
 export async function readOutcomes(db: Kysely<Database>, uploadId: number): Promise<OutcomeRow[]> {
   const found = await sql<OutcomeRow>`
     SELECT o.row_number, o.unit, o.outcome, o.sample_id, o.sample_number, o.detail, CASE WHEN o.unit = 'row' THEN NULL ELSE o.payload END AS payload, o.payload IS NOT NULL AS queued,
+           CASE WHEN o.sample_id IS NULL THEN 'unplaced'
+                WHEN EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = o.sample_id) THEN 'settled'
+                WHEN EXISTS (SELECT 1 FROM sample s WHERE s.entity_id = o.sample_id) THEN 'active'
+                ELSE 'unplaced' END AS season,
            (o.outcome = 'created'
             AND NOT EXISTS (SELECT 1 FROM sample s WHERE s.entity_id = o.sample_id)
             AND EXISTS (SELECT 1 FROM sample_deletion d WHERE d.sample_id = o.sample_id)) AS deleted
@@ -215,15 +221,29 @@ export async function clearStopped(db: Kysely<Database>, uploadId: number): Prom
   return Number(changed.numUpdatedRows) === 1;
 }
 
-/** The upload is being undone: its rows still waiting are left alone, so that nothing more is created, and a stop is cleared, since there is nothing left to try again. */
+/**
+ * The upload is being undone: its rows still waiting are left alone, so that nothing more is created, and a stop is
+ * cleared, since there is nothing left to try again. In one transaction and in that order, so the job cannot pick the
+ * upload up between the stop being cleared and its rows being settled. A change that stopped as recorded in the
+ * corrections file and not applied keeps that in its note: the file holds a change the store never got.
+ */
 export async function settleUndone(db: Kysely<Database>, uploadId: number): Promise<void> {
-  await db.updateTable("upload_applied").set({ stopped_at: null, stopped_row: null }).where("upload_id", "=", uploadId).execute();
-  await db
-    .updateTable("upload_sample_outcome")
-    .set({ outcome: "skipped", detail: sql<string>`CASE WHEN unit = 'row' THEN 'The upload was undone, so this row was not created.' ELSE 'The upload was undone, so this change was not made.' END`, recorded_at: new Date().toISOString() })
-    .where("upload_id", "=", uploadId)
-    .where("outcome", "=", "pending")
-    .execute();
+  const w = en.uploads.changes;
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable("upload_sample_outcome")
+      .set({
+        outcome: "skipped",
+        detail: sql<string>`CASE WHEN unit = 'row' THEN 'The upload was undone, so this row was not created.'
+          WHEN detail = ${w.notAppliedPending} THEN ${`The upload was undone, so this change was not made. ${w.notAppliedUndone}`}
+          ELSE 'The upload was undone, so this change was not made.' END`,
+        recorded_at: new Date().toISOString(),
+      })
+      .where("upload_id", "=", uploadId)
+      .where("outcome", "=", "pending")
+      .execute();
+    await trx.updateTable("upload_applied").set({ stopped_at: null, stopped_row: null }).where("upload_id", "=", uploadId).execute();
+  });
 }
 
 export interface ApplyDeps {
@@ -331,7 +351,7 @@ class LookalikeFound extends Error {
 }
 
 /** What one row's work came to, in units: a new row is one. */
-type Counts = Partial<Record<"created" | "refused" | "skipped" | "applied" | "unchanged" | "stopped", number>>;
+type Counts = Partial<Record<"created" | "refused" | "skipped" | "applied" | "unchanged" | "stopped" | "notApplied", number>>;
 
 /** Make one trap sample from a queued row, or say why not. */
 async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "created"; id: number } | { outcome: "refused" | "skipped" }> {
@@ -438,7 +458,7 @@ async function changeRow(deps: ApplyDeps, p: Pending): Promise<Counts> {
   const refuseRow = async (detail: string) => {
     for (const u of pending) {
       await settle(deps.db, { upload_id: p.upload_id, row_number: p.row_number, unit: u.unit }, "refused", detail);
-      count("refused");
+      count("notApplied");
     }
   };
   const sampleId = p.sample_id;
@@ -463,12 +483,14 @@ async function changeRow(deps: ApplyDeps, p: Pending): Promise<Counts> {
     syncJobRunning: deps.syncJobRunning ?? (() => false),
   };
   const settled = new Map(all.filter((u) => u.outcome !== "pending").map((u) => [u.unit, u.outcome]));
+  // The point was saved in an earlier run, and its place was not worked out then.
+  let pointDeferred = all.find((u) => u.unit === "coordinates")?.detail === w.pointDeferred;
   for (const u of pending) {
     const key = { upload_id: p.upload_id, row_number: p.row_number, unit: u.unit };
     const refuse = async (detail: string) => {
       await settle(deps.db, key, "refused", detail);
       settled.set(u.unit, "refused");
-      count("refused");
+      count("notApplied");
     };
     const queued = readQueuedUnit(u.payload);
     if ("unreadable" in queued) {
@@ -485,6 +507,13 @@ async function changeRow(deps: ApplyDeps, p: Pending): Promise<Counts> {
         continue;
       }
       const differs = queued.cells.find((c) => (now.cells.get(c.column) ?? "") !== c.was);
+      // Already as the file says (the correction committed and its outcome was lost, or staff made the same change by hand): nothing to do.
+      if (differs !== undefined && queued.cells.every((c) => (now.cells.get(c.column) ?? "").toLowerCase() === c.fileSays.toLowerCase())) {
+        await settle(deps.db, key, "unchanged", null);
+        settled.set(u.unit, "unchanged");
+        count("unchanged");
+        continue;
+      }
       if (differs !== undefined) {
         // A change that stopped as recorded and not applied, and then found the sample changed: the file holds an event the store never got.
         const earlier = u.detail === w.notAppliedPending ? ` ${w.notAppliedRefused}` : "";
@@ -492,7 +521,7 @@ async function changeRow(deps: ApplyDeps, p: Pending): Promise<Counts> {
         continue;
       }
     }
-    const result = await applyUnit({ corrective, messages: m, today: deps.today?.() ?? oregonToday() }, { sampleId, note: historyReason(p.upload_id), actor, settled }, queued.change);
+    const result = await applyUnit({ corrective, messages: m, today: deps.today?.() ?? oregonToday() }, { sampleId, note: historyReason(p.upload_id), actor, settled, pointDeferred }, queued.change);
     if (result.outcome === "stop") {
       // For a sample with old records, the corrections file holds the change and the store does not.
       if (result.why === "not_applied") await noteOn(deps.db, key, (await fromOldRecords(deps.db, sampleId)) ? w.notAppliedPending : w.notAppliedNothingKept);
@@ -501,7 +530,8 @@ async function changeRow(deps: ApplyDeps, p: Pending): Promise<Counts> {
     // Settled as made before anything that follows it, so a follow-up that fails cannot leave a change half done.
     await settle(deps.db, key, result.outcome, "detail" in result ? (result.detail ?? null) : null);
     settled.set(u.unit, result.outcome);
-    count(result.outcome);
+    if (result.outcome === "applied" && u.unit === "coordinates") pointDeferred = result.deferred === true;
+    count(result.outcome === "refused" ? "notApplied" : result.outcome);
     if (result.outcome === "applied" && result.followUp !== undefined) {
       const said = await result.followUp();
       if (said !== null) await noteOn(deps.db, key, [result.detail, said].filter((x) => x !== undefined && x !== "").join(" "));
@@ -530,6 +560,8 @@ export interface ApplyResult {
    */
   applied?: number;
   unchanged?: number;
+  /** Changes to existing samples a correction refused or the job found changed since the download, counted apart from the new rows refused (`refused`). */
+  notApplied?: number;
 }
 
 /**
@@ -580,7 +612,8 @@ export async function applyPending(deps: ApplyDeps): Promise<ApplyResult> {
 /** What the job says it did, for the run's detail. */
 export const describeApply = (r: ApplyResult) => {
   const changed = (r.applied ?? 0) + (r.unchanged ?? 0);
-  return r.created + r.refused + r.skipped + r.stopped + changed === 0
+  const notApplied = r.notApplied ?? 0;
+  return r.created + r.refused + r.skipped + r.stopped + changed + notApplied === 0
     ? "nothing was waiting"
-    : `${r.created} trap sample(s) created, ${changed > 0 ? `${r.applied ?? 0} change(s) applied, ${r.unchanged ?? 0} already as the file says, ` : ""}${r.refused} row(s) refused, ${r.skipped} left alone`;
+    : `${r.created} trap sample(s) created, ${changed + notApplied > 0 ? `${r.applied ?? 0} change(s) applied, ${r.unchanged ?? 0} already as the file says, ${notApplied} change(s) not applied, ` : ""}${r.refused} row(s) refused, ${r.skipped} left alone`;
 };

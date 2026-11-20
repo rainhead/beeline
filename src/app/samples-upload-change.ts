@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { numberTaken, trapCountOf, trapEffort } from "../trap-sample.js";
+import { seriesTrapNumberTaken, trapCountOf, trapEffort } from "../trap-sample.js";
 import { refusalSentence, type AnyFailure } from "./api-corrections.js";
 import { localityReasonFor, specimenCountProblemFor, trapCountProblemFor } from "./correction-reasons.js";
 import { NO_POINT_TO_TAKE_AWAY } from "./locality-override.js";
@@ -210,7 +210,7 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
         else if (change.startDiffers && facts.hasObservation) refusal = problems.start_observation;
         else if (facts.entered && change.protocol.trim() === "") refusal = problems.method_required;
         else if (await inRun()) refusal = say("in_print_run", unit);
-        else if (!facts.entered && kind === "net" && kindAfterMethod(kind, facts.entered, change) === "trap" && (await numberTaken(conn, facts.number, facts.id))) {
+        else if (!facts.entered && kind === "net" && kindAfterMethod(kind, facts.entered, change) === "trap" && (await seriesTrapNumberTaken(conn, facts.number, facts.id))) {
           refusal = messages.record.sample.methodEdit.numberTaken(facts.number);
         }
         if (refusal === null) {
@@ -273,6 +273,8 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
 export type UnitResult =
   | {
       outcome: "applied";
+      /** The point was saved but the county, state and country that follow it were not worked out. */
+      deferred?: boolean;
       /** What the correction said besides saving, for the note (the collectors' warnings). */
       detail?: string;
       /** Work that follows the change once it is recorded as made. It never stops the run: it returns a sentence for the change's note, or null. */
@@ -297,6 +299,8 @@ export interface UnitContext {
   actor: Actor;
   /** What the units of this row that are settled came to, by unit: the area waits on the point. */
   settled: ReadonlyMap<string, string>;
+  /** The point was applied but its county, state and country are not derived yet (`setCoordinates` said it was not settled). */
+  pointDeferred: boolean;
 }
 
 /** A correction's answer as the outcome of a change. */
@@ -322,7 +326,7 @@ async function rewriteEffort(env: ApplyEnv, ctx: UnitContext, change: Extract<Un
     const count = trapCountOf(effort);
     if (count === null || effort !== trapEffort(count, change.wasProtocol) || change.effortBecomes === null) return null;
     const again = await setTrapCount(deps, ctx.actor, ctx.sampleId, { count: String(count), note: ctx.note, problemFor: trapCountProblemFor(m) });
-    if (again.ok) return m.uploads.changes.effortRewritten(change.effortBecomes);
+    if (again.ok) return m.uploads.changes.effortRewritten(again.effort ?? change.effortBecomes);
     return m.uploads.changes.effortNotRewritten(again.refusal === "busy" ? m.uploads.changes.effortBusy : again.refusal === "invalid" ? again.problem : refusalFor(m, again, "trap_count"));
   } catch {
     return m.uploads.changes.effortNotRewritten(m.uploads.changes.unexpected);
@@ -363,16 +367,18 @@ export async function applyUnit(env: ApplyEnv, ctx: UnitContext, change: UnitCha
       // What the real call said: who is now first and how many labels on paper print the old list.
       return done.outcome === "applied" && result.ok && result.warnings.length > 0 ? { outcome: "applied", detail: result.warnings.join(" ") } : done;
     }
-    case "coordinates":
-      return fromCorrection(
-        env,
-        "coordinates",
-        await setCoordinates(deps, ctx.actor, id, { latitude: change.latitude, longitude: change.longitude, uncertainty: change.uncertainty, remove: change.remove, note: ctx.note }),
-      );
+    case "coordinates": {
+      const result = await setCoordinates(deps, ctx.actor, id, { latitude: change.latitude, longitude: change.longitude, uncertainty: change.uncertainty, remove: change.remove, note: ctx.note });
+      const done = fromCorrection(env, "coordinates", result);
+      // Saved, but the derivation of the county, state and country was deferred (a gazetteer busy, a point in no county): the area waits on it.
+      return done.outcome === "applied" && result.ok && !result.settled ? { outcome: "applied", deferred: true, detail: m.uploads.changes.pointDeferred } : done;
+    }
     case "area": {
       if (ctx.settled.get("coordinates") === "applied") {
         // The new point decides the place (the nightly writes it from the point, and the correction would be written over),
         // so the file's is not applied: it is compared with what the point gave, and any difference is said.
+        // The point's own place is not worked out yet: there is nothing to compare the file's with.
+        if (ctx.pointDeferred) return { outcome: "skipped", detail: m.uploads.changes.areaFollowsDeferred };
         const now = await deps.db.selectFrom("sample").where("entity_id", "=", id).select(["country", "state_province", "county"]).executeTakeFirst();
         if (now === undefined) return { outcome: "refused", detail: m.uploads.changes.sampleGone };
         const same = (a: string | null, b: string) => (a ?? "").trim().toUpperCase() === b.trim().toUpperCase();
@@ -396,8 +402,35 @@ export function readQueuedUnit(payload: string | null): QueuedUnit | { unreadabl
     return { unreadable: `not JSON: ${(err as Error).message}` };
   }
   const q = parsed as Partial<QueuedUnit> | null;
-  const change = q?.change as { unit?: unknown } | undefined;
+  const change = q?.change as Record<string, unknown> | undefined;
   if (typeof change !== "object" || change === null || !(APPLY_ORDER as readonly unknown[]).includes(change.unit)) return { unreadable: "no change" };
+  // The fields each kind of change is written from, so that one missing them is refused and not met as an error halfway.
+  const text = (...keys: string[]) => keys.every((k) => typeof change[k] === "string");
+  const ok =
+    change.unit === "method_dates"
+      ? text("protocol", "start", "end", "wasProtocol") &&
+        typeof change.single === "boolean" &&
+        typeof change.protocolDiffers === "boolean" &&
+        typeof change.startDiffers === "boolean" &&
+        typeof change.bases === "object" &&
+        change.bases !== null &&
+        ["protocol", "start", "end"].every((k) => typeof (change.bases as Record<string, unknown>)[k] === "string") &&
+        (change.effortBecomes === null || typeof change.effortBecomes === "string")
+      : change.unit === "trap_count" || change.unit === "specimen_count"
+        ? text("count")
+        : change.unit === "collectors"
+          ? Array.isArray(change.ids) && change.ids.length > 0 && change.ids.every((i) => Number.isInteger(i))
+          : change.unit === "coordinates"
+            ? text("latitude", "longitude", "uncertainty") && typeof change.remove === "boolean"
+            : change.unit === "area"
+              ? typeof change.values === "object" &&
+                change.values !== null &&
+                Object.values(change.values).every((v) => typeof v === "string") &&
+                typeof change.file === "object" &&
+                change.file !== null &&
+                ["country", "state_province", "county"].every((k) => typeof (change.file as Record<string, unknown>)[k] === "string")
+              : text("locality");
+  if (!ok) return { unreadable: `the ${String(change.unit)} change is missing what it is written from` };
   if (!Array.isArray(q?.cells) || !q.cells.every((c) => typeof c?.column === "string" && typeof c.was === "string" && typeof c.fileSays === "string")) return { unreadable: "no cells" };
   return q as QueuedUnit;
 }

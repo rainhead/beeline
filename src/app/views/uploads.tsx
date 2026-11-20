@@ -184,10 +184,11 @@ export function UploadPreview({
       if (o.pending > 0) lines.push(p.samplesApplying(o.total - o.pending, o.total));
       if (o.created > 0) lines.push(p.samplesCreated(o.created, o.deleted));
       if (o.notCreated > 0) lines.push(p.samplesNotCreated(o.notCreated));
-      if (o.changes.applied > 0) lines.push(p.samplesChangedCount(o.changes.samples, o.changes.applied));
-      if (o.changes.unchanged > 0) lines.push(p.changesUnchanged(o.changes.unchanged));
-      if (o.changes.notApplied > 0) lines.push(p.changesNotApplied(o.changes.notApplied));
-      if (o.changes.notChosen > 0) lines.push(p.changesNotChosen(o.changes.notChosen));
+      const c = o.changes;
+      if (total(c.applied) > 0) lines.push(p.samplesChangedCount(total(c.samples), total(c.applied), split(c.samples)));
+      if (total(c.unchanged) > 0) lines.push(p.changesUnchanged(total(c.unchanged), split(c.unchanged)));
+      if (total(c.notApplied) > 0) lines.push(p.changesNotApplied(total(c.notApplied), split(c.notApplied)));
+      if (total(c.notChosen) > 0) lines.push(p.changesNotChosen(total(c.notChosen), split(c.notChosen)));
       // Once applied, the page counts only what applying did; what the file says of its other rows is in its notes.
       lines.push(p.samplesOthersInNotes);
     }
@@ -269,7 +270,7 @@ export function UploadPreview({
                       {h.likeRow !== null ? p.heldRowOfFile(h.likeRow, h.likeNumber) : <a href={`/samples/${h.likeId}`}>{h.likeNumber}</a>}
                     </td>
                     <td>
-                      <input type="checkbox" name="anyway" value={String(h.row)} aria-label={p.heldAnyway(h.row)} />
+                      <input type="checkbox" name="anyway" value={String(h.row)} checked={h.ticked} aria-label={p.heldAnyway(h.row)} />
                     </td>
                   </tr>
                 ))}
@@ -315,7 +316,7 @@ export function UploadPreview({
               {p.obasLine(samplesSummary.obas.rows, samplesSummary.obas.lowest, samplesSummary.obas.highest, samplesSummary.obas.blank, samplesSummary.obas.from, samplesSummary.obas.to)}
               <br />
               <label>
-                <input type="checkbox" name="obas" value="1" /> {p.obasBox}
+                <input type="checkbox" name="obas" value="1" checked={samplesSummary.obas.checked} /> {p.obasBox}
               </label>
             </p>
           )}

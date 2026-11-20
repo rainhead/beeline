@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
 import { recordSampleChanges, type SampleChangeSource } from "../sample-change.js";
-import { loadTrapSample, mayEditTrapSample, numberTaken, setTrapSampleLocality, trapEffort } from "../trap-sample.js";
+import { loadTrapSample, mayEditTrapSample, seriesTrapNumberTaken, setTrapSampleLocality, trapEffort } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
 import {
@@ -772,9 +772,9 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
       const blankEnd = form.dateEnd.trim() === "";
       const stays = form.keepTrap === true && blankEnd && (entered || now.kind === "trap");
       const dateEnd = stays ? (form.dateStart?.trim() || liveStart) : form.dateEnd;
-      // A net sample given an end day becomes a trap sample, and a trap sample's number is the program's, one for each.
+      // A net sample given an end day becomes a trap sample, and a series number (OBAS-00011) is one for each trap sample; a plain number is the collector's, and shared.
       const writer = deps.printWriter ?? deps.conn;
-      if (!entered && now.kind !== "trap" && dateEnd.trim() !== "" && writer !== undefined && (await numberTaken(writer, now.sample_number, sampleId))) {
+      if (!entered && now.kind !== "trap" && dateEnd.trim() !== "" && writer !== undefined && (await seriesTrapNumberTaken(writer, now.sample_number, sampleId))) {
         return { ok: false, refusal: "number_taken", number: now.sample_number };
       }
       const saved = await setSampleMethod(db, deps.correctionsPath, sampleId, {

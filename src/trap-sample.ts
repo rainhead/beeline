@@ -202,6 +202,24 @@ export function seriesNumberProblem(sampleNumber: string): string | null {
 export const isSeriesNumber = (sampleNumber: string): boolean => /^[A-Za-z]+-/.test(sampleNumber);
 
 /**
+ * Whether another trap sample has this number, judged only for a number in a series (letters, a hyphen and what
+ * follows; the program's own compared folded, so `OBAS 00011` is `OBAS-00011`). A plain number ("1") is the
+ * collector's for the day and is held by many trap samples of the old Beeline, so it is never a clash. For a net sample
+ * that an end day would make a trap sample (the method correction).
+ */
+export async function seriesTrapNumberTaken(conn: DuckDBConnection, sampleNumber: string, sampleId: number): Promise<boolean> {
+  if (isProgramSeries(sampleNumber)) {
+    const found = await rows<{ entity_id: number }>(
+      conn,
+      `SELECT entity_id FROM sample WHERE kind = 'trap' AND entity_id <> $2 AND ${FOLDED_NUMBER} = $1 LIMIT 1`,
+      [foldNumber(sampleNumber), sampleId],
+    );
+    return found.length > 0;
+  }
+  return isSeriesNumber(sampleNumber) && numberTaken(conn, sampleNumber, sampleId);
+}
+
+/**
  * The sample, of any kind, that has this number, if the number is a series number. A series number is the program's
  * and unique, though the old Beeline holds some trap bottles as net samples, and a net sample's own plain numbers
  * ("3") are the collector's for the day and shared, so only a series number is judged. The program's own series is

@@ -1158,7 +1158,7 @@ describe("smaller guards of the apply", () => {
     await apply(f, location, { digest });
     // A queued new row made into a change of an existing sample whose payload is not what the job writes from.
     await f.conn.run(`UPDATE upload_sample_outcome SET unit = 'collectors', sample_id = ${f.ids.sampleA}, payload = 'not json'`);
-    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, notApplied: 1 });
     expect(String((await outcomes(f))[0]![3])).toContain("cannot be read");
     expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011'`)).toEqual([[0n]]);
   });

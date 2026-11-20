@@ -54,6 +54,8 @@ export interface HeldRow {
   likeNumber: string;
   /** The look-alike is an earlier row of this same file, not a sample in Beeline. */
   likeRow: number | null;
+  /** "Create anyway" was ticked on the page this was made from, and is shown ticked again when the page is shown after a refusal. */
+  ticked: boolean;
 }
 
 /** What applying did, counted over what it queued. */
@@ -68,7 +70,7 @@ export interface OutcomeSummary {
   /** New rows refused or left alone: not created. */
   notCreated: number;
   /** Changes to existing samples: how many samples had one made, how many changes were made, were already as the file says, were not applied, and were not chosen. */
-  changes: { samples: number; applied: number; unchanged: number; notApplied: number; notChosen: number };
+  changes: { samples: SeasonSplit; applied: SeasonSplit; unchanged: SeasonSplit; notApplied: SeasonSplit; notChosen: SeasonSplit };
 }
 
 /** What applying would do to existing samples, for the page before the file is applied. */
@@ -91,6 +93,8 @@ export interface ObasSummary {
   /** The lowest and highest numbers the file gives, if it gives any. */
   lowest: string | null;
   highest: string | null;
+  /** The box was ticked, and is shown ticked again when the page is shown after a refusal. */
+  checked: boolean;
   /** Rows with no number, which are given the next numbers in the series, from this one as it stands. */
   blank: number;
   from: string | null;
@@ -240,8 +244,11 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
         return n.unitUnchanged(label(o.unit));
       case "pending":
         return o.detail === null ? n.waiting : `${n.waiting} ${o.detail}`;
-      default:
-        return n.unitNotApplied(label(o.unit), o.detail ?? "");
+      default: {
+        // Somebody who is not staff is not shown what Beeline holds now (a location may be withheld from them): only that it changed.
+        const changedSince = redact && o.outcome === "refused" && (o.detail ?? "").startsWith(m.uploads.changes.changedSinceStart);
+        return n.unitNotApplied(label(o.unit), changedSince ? m.uploads.changes.changedSinceBare : (o.detail ?? ""));
+      }
     }
   };
   for (const { row } of upload.rows) {
@@ -300,8 +307,8 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
     outcomes.length > 0
       ? []
       : open.flatMap((r) =>
-          r.problems.length === 0 && r.create?.lookalike != null && !r.create.anyway
-            ? [{ row: r.row, sampleNumber: r.create.form.sample_number, likeId: r.create.lookalike.sampleId, likeNumber: r.create.lookalike.sampleNumber, likeRow: r.create.lookalike.fileRow ?? null }]
+          r.problems.length === 0 && r.create?.lookalike != null
+            ? [{ row: r.row, sampleNumber: r.create.form.sample_number, likeId: r.create.lookalike.sampleId, likeNumber: r.create.lookalike.sampleNumber, likeRow: r.create.lookalike.fileRow ?? null, ticked: r.create.anyway }]
             : [],
         );
   // The series' numbers waiting for confirmation, over the rows that are still to be made.
@@ -311,7 +318,7 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
   const obas: ObasSummary | null =
     done.size > 0 || seriesRows.length === 0
       ? null
-      : { rows: seriesRows.length, lowest: given[0] ?? null, highest: given.at(-1) ?? null, blank: plan.numbering.blank, from: plan.numbering.from, to: plan.numbering.to };
+      : { rows: seriesRows.length, checked: seriesRows.every((r) => r.create!.obasChecked), lowest: given[0] ?? null, highest: given.at(-1) ?? null, blank: plan.numbering.blank, from: plan.numbering.from, to: plan.numbering.to };
   const labelsReady = done.size > 0 ? 0 : toMake.filter((r) => r.season === "active" && Number(r.create!.form.specimen_count) > 0).length;
   const total = (x: SeasonSplit) => x.active + x.settled + x.unplaced;
   const changes: ChangesPreview | null =
@@ -341,7 +348,13 @@ function summaryOfOutcomes(m: Messages, outcomes: readonly OutcomeRow[]): Outcom
   const rows = outcomes.filter((o) => o.unit === "row");
   const units = outcomes.filter((o) => o.unit !== "row");
   const count = (list: readonly OutcomeRow[], outcome: OutcomeRow["outcome"]) => list.filter((o) => o.outcome === outcome).length;
-  const notChosen = units.filter((o) => o.outcome === "skipped" && o.detail === m.uploads.changes.notChosen).length;
+  const isNotChosen = (o: OutcomeRow) => o.outcome === "skipped" && o.detail === m.uploads.changes.notChosen;
+  const split = (list: readonly OutcomeRow[]): SeasonSplit => {
+    const by: SeasonSplit = { active: 0, settled: 0, unplaced: 0 };
+    for (const o of list) by[o.season]++;
+    return by;
+  };
+  const onePerRow = (list: readonly OutcomeRow[]) => [...new Map(list.map((o) => [o.row_number, o])).values()];
   return {
     // What was queued for the job: the claim keeps a payload for it, and for nothing it settled itself.
     total: outcomes.filter((o) => o.queued).length,
@@ -350,11 +363,12 @@ function summaryOfOutcomes(m: Messages, outcomes: readonly OutcomeRow[]): Outcom
     deleted: outcomes.filter((o) => o.deleted).length,
     notCreated: count(rows, "refused") + count(rows, "skipped"),
     changes: {
-      samples: new Set(units.filter((o) => o.outcome === "applied").map((o) => o.row_number)).size,
-      applied: count(units, "applied"),
-      unchanged: count(units, "unchanged"),
-      notApplied: count(units, "refused") + count(units, "skipped") - notChosen,
-      notChosen,
+      // Each split by the season of the sample the change is to.
+      samples: split(onePerRow(units.filter((o) => o.outcome === "applied"))),
+      applied: split(units.filter((o) => o.outcome === "applied")),
+      unchanged: split(units.filter((o) => o.outcome === "unchanged")),
+      notApplied: split(units.filter((o) => (o.outcome === "refused" || o.outcome === "skipped") && !isNotChosen(o))),
+      notChosen: split(units.filter(isNotChosen)),
     },
   };
 }

@@ -1269,7 +1269,7 @@ export const en = {
         inPrintRun:
           "Labels for this sample are in a print run that has not printed yet, which holds the method and dates it froze. Wait for the run to print or cancel it, then make the correction.",
         numberTaken: (number: string) =>
-          `Giving this net sample an end day makes it a trap sample, and trap sample ${number} is already in Beeline: a trap sample's number is the program's, one for each. Correct one of the two numbers first.`,
+          `Giving this net sample an end day makes it a trap sample, and trap sample ${number} is already in Beeline: a series number is one for each trap sample. Correct one of the two numbers first.`,
         conflict: "Someone changed this sample's method or dates after you opened the form. Reload the page to see what they saved, then make your correction again.",
       },
       /** Staff correcting how many traps a trap sample had, from a second pencil on the Method row (beeline-kgyd.4.1). */
@@ -2489,11 +2489,11 @@ export const en = {
       mayNotLine: (count: number, split: string) => `${n(count)} ${count === 1 ? "change may not be applied" : "changes may not be applied"}${split}: see the notes in your file. They are tried all the same, and the notes say what happened.`,
       firstCollectorLine: (count: number, split: string, reprint: number) =>
         `${n(count)} ${count === 1 ? "sample would get a different first collector" : "samples would get a different first collector"}${split}, whose number and labels are then theirs.${reprint > 0 ? ` ${n(reprint)} ${reprint === 1 ? "label" : "labels"} on paper print the old collectors and would need a reprint.` : ""}`,
-      samplesChangedCount: (samples: number, units: number) =>
-        `Changed ${n(samples)} existing ${samples === 1 ? "sample" : "samples"}, ${n(units)} ${units === 1 ? "change" : "changes"} in all.`,
-      changesNotApplied: (count: number) => `${n(count)} ${count === 1 ? "change was" : "changes were"} not applied: see the notes in the file.`,
-      changesNotChosen: (count: number) => `${n(count)} ${count === 1 ? "change was" : "changes were"} not ticked, so left as they are: see the notes in the file.`,
-      changesUnchanged: (count: number) => `${n(count)} ${count === 1 ? "change was" : "changes were"} already as the file says.`,
+      samplesChangedCount: (samples: number, units: number, split = "") =>
+        `Changed ${n(samples)} existing ${samples === 1 ? "sample" : "samples"}${split}, ${n(units)} ${units === 1 ? "change" : "changes"} in all.`,
+      changesNotApplied: (count: number, split = "") => `${n(count)} ${count === 1 ? "change was" : "changes were"} not applied${split}: see the notes in the file.`,
+      changesNotChosen: (count: number, split = "") => `${n(count)} ${count === 1 ? "change was" : "changes were"} not ticked${split}, so left as they are: see the notes in the file.`,
+      changesUnchanged: (count: number, split = "") => `${n(count)} ${count === 1 ? "change was" : "changes were"} already as the file says${split}.`,
       samplesApplying: (done: number, total: number) => `Applying: ${n(done)} of ${n(total)} ${total === 1 ? "step" : "steps"} done, a step being a new trap sample or one kind of change to an existing sample.`,
       samplesApplied: (when: string, by: string) => `Applied on ${when} by ${by}.`,
       samplesQueued: (when: string, by: string) => `Queued on ${when} by ${by}, and being applied: the counts below say how far it has got.`,
@@ -2555,6 +2555,7 @@ export const en = {
     /** What applying says of a change it did not make, as a sentence in a note. */
     changes: {
       /** Compared with what Beeline holds right before the change is made. */
+      changedSinceStart: "This changed in Beeline after the file was downloaded, so it was not made:",
       changedSince: (column: string, now: string) => `This changed in Beeline after the file was downloaded, so it was not made: ${column} is now ${now === "" ? "blank" : `"${now}"`}. Download a new file and make the change again.`,
       /** A stop with the change recorded in the corrections file and not in the store. */
       notAppliedPending:
@@ -2565,6 +2566,11 @@ export const en = {
       effortRewritten: (text: string) => `The effort text became ${text}.`,
       effortNotRewritten: (why: string) => `The method changed, but the effort text was not rewritten: ${why}`,
       unexpected: "something went wrong, and was reported.",
+      pointDeferred: "The point is saved, but the country, state and county that follow it are not worked out yet.",
+      areaFollowsDeferred: "Not changed on its own: the country, state and county follow the point that was just set, and will follow it when it is worked out.",
+      notAppliedUndone: "The corrections file still holds this change, which the store never got. Tell staff, who can check the file.",
+      /** What a change refused as changed in Beeline says to somebody who is not staff, with no value of Beeline's in it. */
+      changedSinceBare: "This changed in Beeline after the file was downloaded, so it was not made. Download a new file and make the change again.",
       effortBusy: "another write got there first, so it was left as it was.",
       localityPrinted: "This sample was entered in Beeline and its labels are printed or about to be, so its locality can no longer be changed from here, by staff or anyone.",
       conflict: "This sample changed while the change was being worked out, so nothing was done. Download a new file and make the change again.",

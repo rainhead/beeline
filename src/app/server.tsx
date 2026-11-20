@@ -2782,7 +2782,7 @@ export function createApp({
       if ((await db.selectFrom("upload_applied").select("upload_id").where("upload_id", "=", row.entity_id).executeTakeFirst()) !== undefined) {
         return c.redirect(uploadHref(row.entity_id), 303);
       }
-      return c.html(await (await previewPage(c, row, kept, await uploadOutcome(c, row, kept), false, notice)).text(), 409);
+      return c.html(await (await previewPage(c, row, kept, await uploadOutcome(c, row, kept, { createAnyway: anyway, obasChecked, kinds }), false, notice)).text(), 409);
     };
     const outcome = await uploadOutcome(c, row, kept, { createAnyway: anyway, obasChecked, kinds });
     if (outcome.kind !== "samples" || outcome.plan === null) return errorResponse(c, "notFound", { message: m.uploads.page.notFound });

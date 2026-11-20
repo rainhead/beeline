@@ -329,3 +329,31 @@ So the files Beeline writes for a person to upload are:
 
 For the meeting or for Joel: whether Ecdysis's operators will add "visits flowers of"
 to the relationship list, since `hasHost` reads as a parasite's host in GloBI.
+
+## The upload files Beeline will write (proposed build, 2026-11-20)
+
+Joel's two files are specified column by column in
+[ecdysis-upload-files.md](ecdysis-upload-files.md). Beeline's versions differ from his
+where his are wrong or where a test showed a better form:
+
+| Matter | Joel's file | Beeline's file |
+|---|---|---|
+| Rows | every row of old Beeline's export | only specimens Ecdysis has not reported, and only when last night's read of Ecdysis succeeded |
+| `fieldNumber` | sample dot specimen, as a number, so 1.10 reads 1.1 (2,257 rows share a value with another specimen) | the sample's number; `recordNumber` holds sample dot specimen as text |
+| `associatedTaxa` | `host`, species only; 5,942 genus-only hosts dropped | `visits flowers of`, with the host at whatever rank Beeline holds |
+| Association's `objectID` | the observation's UUID, which Beeline does not store | left out: the export then gives the observation's URL as the related resource, which GloBI recognises |
+| Association's subject | catalog number and an occurrenceID pasted in from a download | catalog number alone, so one round of uploads, with no download between |
+| Relationship | `hasHost`, chosen on the page | the same, until Ecdysis offers "visits flowers of" |
+| Format | an OpenDocument sheet | CSV in UTF-8 |
+
+Still done by a person, until the work in beeline-8dx9.2: rewriting a locality as the
+park or refuge the point is in, "near" a town, and the municipality. Beeline's Areas
+can name the refuge or park; it holds no town boundaries. The first version writes the
+label's locality in both `locality` and `verbatimCoordinates`.
+
+What this changes in Part 3: Washington's records sit in WSU's collection, whose
+identifiers Symbiota generates, and an uploaded occurrenceID is ignored there. Changing
+that setting would affect every WSU record. So for Washington the occurrenceID stays
+the one Ecdysis gives, which Beeline reads back; minting applies where Beeline is the
+publisher (Oregon through the IPT) and where a collection is the atlas's own (British
+Columbia, if it agrees).

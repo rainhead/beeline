@@ -3,9 +3,9 @@
 -- blocking rules, so printable = a positive count and no blocking finding on
 -- the sample, a finding about one of its specimens included. A print run freezes printable samples into
 -- specimens.
--- Taxon-obscured records with true coordinates print only where their atlas
--- has said they may (atlas_taxon_obscured_printing, schema/010); elsewhere
--- qc_rule_taxon_obscured_awaiting_atlas blocks them like any other finding.
+-- A taxon-obscured record whose true coordinates Beeline holds prints like any
+-- other: how a rare plant's location is handled is a question for export, not
+-- for printing (Peter, 2026-11-20; docs/questions.md).
 
 -- Which samples a blocking finding lands on. Every finding names its sample
 -- (sample_qc_finding, schema/130), so this is one key

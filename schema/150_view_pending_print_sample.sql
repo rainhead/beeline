@@ -36,8 +36,8 @@ COMMENT ON VIEW sample_awaiting_place IS 'Settled samples staff have released fo
 -- when samples arrive unprinted — minted from iNaturalist, in-app trap entry
 -- — or when a count is raised above what was already frozen; the legacy
 -- import writes one specimen per historical row, so it contributes none.
--- Membership follows printable_sample, so the waiver clause and the
--- per-atlas geoprivacy policy reach this view without the app knowing. A
+-- Membership follows printable_sample, so the waiver clause and any
+-- later rule reach this view without the app knowing. A
 -- run with no atlas freezes the subset print_scope_sample names (schema/155).
 -- A settled sample (schema/102) is pending only once staff have released it
 -- (sample_print_release, schema/102; Peter, 2026-11-19): trap bottles are

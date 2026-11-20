@@ -117,7 +117,6 @@ export const QC_RULE_NAMES = [
   "missing_required_field",
   "missing_recommended_field",
   "obscured_no_true_coordinates",
-  "taxon_obscured_awaiting_atlas",
   "locality_format",
   "place_unabbreviated",
   "place_unrecognised",

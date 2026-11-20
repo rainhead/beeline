@@ -587,7 +587,7 @@ CREATE TABLE qc_waiver (
 );
 ```
 
-**Printability** (view, over *samples*): all label-required fields present ∧ no blocking finding without a live waiver ∧ obscured samples have a `sample_true_location` row (and, once atlases answer the geoprivacy question, that atlas's policy permits printing it for taxon-obscured records) ∧ `specimen_count > 0`. A print run freezes printable samples into specimens.
+**Printability** (view, over *samples*): all label-required fields present ∧ no blocking finding without a live waiver ∧ obscured samples have a `sample_true_location` row (a taxon-obscured sample with one prints like any other; Peter, 2026-11-20) ∧ `specimen_count > 0`. A print run freezes printable samples into specimens.
 
 ## Corrections
 

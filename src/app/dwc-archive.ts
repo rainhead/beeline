@@ -102,9 +102,10 @@ import type { Database, DeterminationQualifier } from "../model.js";
  *
  * It is for operations and for validating against GBIF's and Symbiota's
  * readers, and the page says not to upload it anywhere: what each program
- * publishes is undecided — the dataset metadata, and each atlas's answer
- * on taxon-obscured coordinates (beeline-1kb.7.1). Which
- * volunteer determinations go downstream is the atlas staff's call after
+ * publishes is undecided — the dataset metadata, the identifiers and the
+ * embargo. The archives carry true coordinates, a rare host plant's included,
+ * as every export does until an atlas says otherwise (Peter, 2026-11-20).
+ * Which volunteer determinations go downstream is the atlas staff's call after
  * downloading (beeline-pyr), so every determination is in the file.
  *
  * - `occurrence.txt`, the core: one row per specimen behind an `id`, in the

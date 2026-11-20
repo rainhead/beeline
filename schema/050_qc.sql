@@ -26,7 +26,6 @@ INSERT INTO qc_rule (name, severity) VALUES
   ('missing_required_field', 'blocking'),
   ('missing_recommended_field', 'warning'),
   ('obscured_no_true_coordinates', 'blocking'),
-  ('taxon_obscured_awaiting_atlas', 'blocking'),
   ('locality_format', 'blocking'),
   ('place_unabbreviated', 'blocking'),
   ('place_unrecognised', 'warning'),
@@ -100,11 +99,9 @@ COMMENT ON COLUMN sample_print_release_event.person_id IS 'The person who decide
 COMMENT ON COLUMN sample_print_release_event.decided_at IS 'When the decision was written, UTC.';
 COMMENT ON COLUMN sample_print_release_event.reason IS 'What staff said, or null when they said nothing.';
 
--- Waiving these would print something false, or override a decision that is
--- an atlas's rather than a judgement about one sample (Peter, 2026-10-25):
--- a shifted point printed as the true one, a taxon-obscured point an atlas
--- has not agreed to reveal, a label with a blank in it. A hold is lifted, not
--- waived. Listed as data so sample_qc_finding refuses a waiver on these even
+-- Waiving these would print something false, or print a label with a gap
+-- (Peter, 2026-10-25): a shifted point printed as the true one, a label with
+-- a blank in it. A hold is lifted, not waived. Listed as data so sample_qc_finding refuses a waiver on these even
 -- if a row for one reaches sample_qc_waiver.
 CREATE TABLE qc_rule_unwaivable (
   name TEXT PRIMARY KEY REFERENCES qc_rule(name)
@@ -112,7 +109,6 @@ CREATE TABLE qc_rule_unwaivable (
 COMMENT ON TABLE qc_rule_unwaivable IS 'The blocking rules no waiver can set aside (beeline-1kb.9): sample_qc_finding ignores a waiver on any of these.';
 INSERT INTO qc_rule_unwaivable (name) VALUES
   ('obscured_no_true_coordinates'),
-  ('taxon_obscured_awaiting_atlas'),
   ('missing_required_field'),
   ('staff_hold');
 

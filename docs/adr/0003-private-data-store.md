@@ -141,7 +141,8 @@ redaction belongs there (roadmap phase 7), not in the store.
 
 This says nothing about **revelation**: whether an atlas may show
 taxon-obscured coordinates on a label, in the app, or in an export remains
-per-atlas, open, and a go-live blocker ([questions](../questions.md)). Holding
+per-atlas, open, and a go-live blocker ([questions](../questions.md)); see the
+amendment of 2026-11-20 below. Holding
 the data is what keeps either answer implementable.
 
 ### Retention is per class, not per store
@@ -174,3 +175,20 @@ Sharing a store does not mean sharing a lifecycle:
 - A future **data catalog / handling policy** document (tracked as a bead)
   will enumerate every column's class and retention; this ADR records the
   storage architecture it will lean on.
+
+### Amendment, 2026-11-20: true coordinates everywhere until an atlas says otherwise
+
+Peter decided at the taxonomists' meeting that how to handle the coordinates
+of a rare host plant is a question for export, and must not stop a sample's
+labels printing. He then decided that labels and every export carry true
+coordinates "until someone tells me differently". Oregon's answer of
+2026-10-21 ([gh-13](https://github.com/rainhead/beeline/issues/13#issuecomment-6327141377))
+agrees with this.
+
+So the revelation question above is no longer a go-live blocker: no atlas is
+being waited on, and the rule that held a rare plant's samples back until its
+atlas answered is gone (beeline-pnag). The Consequences section's promise of
+an export that redacts taxon-obscured coordinates is not built, and nothing
+is redacted anywhere. An atlas that wants a rare plant's location held back in
+what leaves the program can say so, and that would be built as part of its
+privacy policy (beeline-rp33) or a list of sensitive host plants.

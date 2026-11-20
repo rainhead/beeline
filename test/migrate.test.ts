@@ -189,6 +189,11 @@ describe("removing the Oklahoma Bee Atlas (0071)", () => {
   test("runs on a store whose samples, members and leads name it", async () => {
     // The shape the migration was written for: the program row, Oklahoma's
     // region pointing at it, and every kind of row that references it.
+    // 0113 dropped this table, so the store built from today's schema lacks
+    // it; put it back, as 0071 found it.
+    await conn.run(`CREATE TABLE atlas_taxon_obscured_printing (
+      atlas_id INTEGER PRIMARY KEY REFERENCES program(entity_id),
+      decided_by TEXT NOT NULL, decided_on DATE NOT NULL, source TEXT NOT NULL)`);
     await conn.run("INSERT INTO program (code, name) VALUES ('OK', 'Oklahoma Bee Atlas')");
     await conn.run(
       "UPDATE atlas_region SET atlas_id = (SELECT entity_id FROM program WHERE code = 'OK') WHERE state_province = 'OK'",
@@ -216,6 +221,37 @@ describe("removing the Oklahoma Bee Atlas (0071)", () => {
       await rows(conn, "SELECT p.code FROM person_membership m JOIN program p ON p.entity_id = m.program_id"),
     ).toEqual([["MM"]]);
     expect(await rows(conn, "SELECT count(*) FROM program_lead")).toEqual([[0n]]);
+    expect(await schemaDrift(conn)).toEqual([]);
+  });
+});
+
+describe("removing the rare host plant rule (0113, 0114)", () => {
+  test("runs on a store that still has the rule, its answers and a waiver on it", async () => {
+    // Put back what the schema no longer has: the table of atlases' answers,
+    // the rule's rows and its view, and a union that reads the view.
+    await conn.run(`CREATE TABLE atlas_taxon_obscured_printing (
+      atlas_id INTEGER PRIMARY KEY REFERENCES program(entity_id),
+      decided_by TEXT NOT NULL, decided_on DATE NOT NULL, source TEXT NOT NULL)`);
+    await conn.run(`INSERT INTO atlas_taxon_obscured_printing
+                    SELECT entity_id, 'Arthur Schrenk', DATE '2026-10-21', 'https://example.org' FROM program WHERE code = 'OBA'`);
+    await conn.run("INSERT INTO qc_rule (name, severity) VALUES ('taxon_obscured_awaiting_atlas', 'blocking')");
+    await conn.run("INSERT INTO qc_rule_unwaivable (name) VALUES ('taxon_obscured_awaiting_atlas')");
+    await conn.run(`CREATE VIEW qc_rule_taxon_obscured_awaiting_atlas AS
+      SELECT s.entity_id AS sample_id, CAST(NULL AS INTEGER) AS specimen_id,
+             'taxon_obscured_awaiting_atlas' AS rule_name, 'x' AS details
+      FROM sample s WHERE s.taxon_geoprivacy IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM atlas_taxon_obscured_printing)`);
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const sampleId = await insertCleanSample(conn, { taxon_geoprivacy: "'obscured'" });
+    await conn.run(`INSERT INTO sample_promotion_finding (sample_id, rule_name, details)
+                    VALUES (${sampleId}, 'taxon_obscured_awaiting_atlas', 'x')`);
+
+    const names = ["0113-a-rare-host-plant-does-not-stop-printing.sql", "0114-the-rare-host-plant-rule-is-gone.sql"];
+    for (const name of names) await copyFile(join(MIGRATIONS_DIR, name), join(dir, name));
+    expect(await migrate(conn, { dir })).toEqual(names);
+
+    expect(await rows(conn, "SELECT count(*) FROM qc_rule WHERE name = 'taxon_obscured_awaiting_atlas'")).toEqual([[0n]]);
+    expect(await rows(conn, "SELECT count(*) FROM sample_promotion_finding")).toEqual([[0n]]);
     expect(await schemaDrift(conn)).toEqual([]);
   });
 });

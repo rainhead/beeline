@@ -895,7 +895,6 @@ export const en = {
         missing_required_field: "missing field",
         missing_recommended_field: "no county",
         obscured_no_true_coordinates: "hidden location",
-        taxon_obscured_awaiting_atlas: "rare host plant",
         locality_format: "locality",
         place_unabbreviated: "place abbreviation",
         place_unrecognised: "unknown state",
@@ -2741,7 +2740,7 @@ export const en = {
     archivesIntro:
       "Each program's specimens collected in a calendar year, as a Darwin Core archive: the specimen columns, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got. Each program also has an archive of every year together, which states a licence only when all its years share one, and a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
     archivesCaution:
-      "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
+      "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including those of rare host plants, which every export carries until an atlas says otherwise.",
     archivesMissing:
       "Not written yet. They appear after the next nightly run, or after running the dwc-archives job on Jobs.",
     archiveNone: (code: string) =>
@@ -3751,8 +3750,6 @@ export const en = {
       "A recommended field is empty. Adding it improves the record, but does not block printing.",
     obscured_no_true_coordinates:
       "The coordinates are obscured by iNaturalist geoprivacy and Beeline does not hold the true coordinates. Join the project with trusted coordinate access, or clear the geoprivacy setting on the observation.",
-    taxon_obscured_awaiting_atlas:
-      "iNaturalist obscures where the plant on this observation grows due to its conservation status. A label carries the true location, and Beeline prints it only where approved by the regional bee atlas. Approval is not yet in place for this area, so labels will not print for now. No action is required.",
     locality_format:
       "The locality must be short (18 characters or fewer), without commas or double quotes, and more than a county name: it is printed on a 3pt label beside the county. Example: Corvallis rather than Corvallis, OR.",
     place_unabbreviated:

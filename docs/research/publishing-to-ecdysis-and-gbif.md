@@ -1,0 +1,217 @@
+# Publishing to Ecdysis and GBIF: a plan
+
+Written 2026-11-20 (Peter, with Claude), before the taxonomist meeting of that day. This
+is a plan, not a record of what is built. Each part says whether it is **decided**,
+**proposed** (waiting for Peter or the meeting), or **waiting on a test**. The work is
+tracked under the epic beeline-8dx9.
+
+## The two routes
+
+A specimen record leaves Beeline for GBIF by one of two routes, and the two need
+different files.
+
+| Route | Programs | Who reads Beeline's file | Where identifications are entered |
+|---|---|---|---|
+| Ecdysis | Washington (WSDA_, dataset 44), British Columbia (BCBA_, collection 196) | Symbiota's archive import, run on a schedule by whoever runs Ecdysis | Ecdysis and Beeline, both |
+| OSAC's IPT | Oregon | GBIF's Integrated Publishing Toolkit, which OSAC runs | Beeline, and taxonomists' own sheets |
+
+Which route New Mexico, Idaho and the other programs take is not known.
+
+Today both routes are worked by hand. Joel Gardner rewrites the old Beeline's export in
+a spreadsheet and uploads it to Ecdysis; Lincoln Best chooses which Oregon rows to
+upload. Each hand also filters: for the embargo, for which volunteer identifications go
+out, and for records that should not go at all. A file that flows on a schedule has no
+such hand, so each filter has to become a rule in Beeline before the schedule starts.
+
+## The files
+
+There are three outputs, and the plan keeps them apart.
+
+1. **The staff download** (the specimens CSV and Excel file on `/specimens`). For people.
+   It carries the columns that let an edited copy be loaded back. Unchanged by this
+   plan, except where a column function it shares with the archives changes (the datum).
+2. **The program archive** (`src/app/dwc-archive.ts`, written nightly per program and
+   year, and one of every year together). It becomes the file a program publishes
+   through an IPT. Oregon is its first reader.
+3. **The harvest archive**, new: one per Ecdysis collection, served at a URL that
+   Ecdysis fetches. It carries only what Ecdysis should take from Beeline.
+
+The two archives are built from the same row and the same column functions, each with
+its own list of columns. Today `SPECIMEN_DWC_COLUMNS` in `src/app/listings.ts` serves
+the download and the archive at once; the archives get their own lists so that a change
+for Ecdysis does not move a column in a file people load back.
+
+## Part 1: sex and caste belong to an identification (decided)
+
+Peter, 2026-11-20. So:
+
+- `identification.txt` declares its sex and caste columns (`dwc:sex`, `dwc:caste`)
+  instead of writing them undeclared.
+- The occurrence row of both archives writes `dwc:caste` from the determination of
+  record, beside `sex`. The comment in `dwc-archive.ts` saying caste has no term is out
+  of date: Darwin Core has had `caste` since 2023.
+- Whether Symbiota reads either from an identification is in the test (question A8).
+  If it reads them only from the occurrence, the harvest writes the determination of
+  record's there, and they are fields Beeline sends with the identification, not
+  separately owned ones.
+
+## Part 2: the numbers follow Darwin Core (decided 2026-11-18, archives only)
+
+| Term | Today | Planned |
+|---|---|---|
+| `fieldNumber` | the label number | the sample's number |
+| `recordNumber` | absent | the specimen within the sample, as Joel writes it (`sample.specimen`) |
+| `catalogNumber` | what Ecdysis reported, else empty | what Ecdysis reported; else the collection's prefix and the label number, for a program with a prefix |
+
+This applies to the two archives. The staff download keeps `fieldNumber` as the label
+number for now, because the loader of edited downloads and the API read that column;
+changing those is a separate decision.
+
+Not settled: the prefixes for Washington and New Mexico are unconfirmed as something
+Beeline assigns (beeline-gu0l). The harvest needs `WSDA_` whatever that decision is,
+because Ecdysis's existing records are matched on it. Twelve old catalog numbers are
+longer than Symbiota's 32 characters (beeline-hicv) and one repeats (beeline-1kb.14);
+the harvest leaves those specimens out and lists them, until they are repaired.
+
+## Part 3: every published specimen has one permanent occurrenceID (proposed)
+
+This is the plan in beeline-8dx9.4, which waits for Peter's review. It reverses ADR
+0008's second amendment, so it needs a third.
+
+1. **Keep the identifier a specimen was already published under.** Read it from
+   Ecdysis (Washington: the record's UUID, 46,090 of 46,090 measured) and from OSAC for
+   Oregon (beeline-1kb.22), and store it. This is beeline-9ut.8, in progress. British
+   Columbia's published identifiers are only catalog numbers; what to do with those is
+   Peter's question to BC.
+2. **Mint one for every other printed specimen**, once, as a UUID, when its field
+   number is frozen at the print run. A specimen already printed with none gets one in
+   a single repair. These rows cannot be undone, so the repair gets an independent
+   review and a check against a copy of production first.
+3. **The archive's row id becomes the occurrenceID.** Symbiota matches a re-upload on
+   the row id by default, so this makes its match an occurrenceID match. Records Joel
+   already uploaded have some other row id, so the first harvest matches them on
+   catalog number (test B1).
+
+What every taxonomist and collection manager needs to hear: the occurrenceID is the
+record's name everywhere, for good. Nobody replaces one, drops one, or lets a re-upload
+mint another. In Ecdysis this depends on one collection setting (the GUID source),
+which decides whether the identifier Beeline sends is kept and published.
+
+## Part 4: the harvest archive (waiting on the test, and on the meeting)
+
+### What it carries
+
+Fields Beeline owns, which a harvest may overwrite in Ecdysis:
+
+- the identifiers of Part 2 and Part 3;
+- the collecting data: date, collectors, locality, coordinates, elevation, method;
+- the host plant, as `associatedTaxa` and as an association to the iNaturalist
+  observation (beeline-8dx9.3). The relationship is "visits flowers of", which GloBI
+  reads as a flower visit; "host", which Joel writes, GloBI reads as a parasite's host;
+- the disposition and the occurrence remarks;
+- the fixed values Joel writes (beeline-8dx9.1): the country and state spelled out,
+  life stage adult, preparations pinned, individual count 1;
+- the end of a date range in the column Symbiota reads it from (test C1).
+
+Fields it does not carry: anything Ecdysis's users maintain that Beeline does not hold,
+such as storage location and loans.
+
+### Identifications
+
+Peter, 2026-11-20: identifications are entered in both systems. Parataxonomists will
+enter theirs in Beeline, and for an atlas such as Idaho it is too great a burden for
+those to pass through a taxonomist's spreadsheet first.
+
+- **Every determination goes to Ecdysis as history**, volunteers' included (proposed).
+- **Which one is current follows Beeline's rule**: the newest expert determination,
+  else the newest volunteer one. A parataxonomist's determination is an expert's.
+- **Open, for the meeting:** whether a volunteer's determination is ever the current
+  one in Ecdysis, or the record stays undetermined there until an expert names it.
+- **Each harvest follows a fresh read of Ecdysis.** A taxonomist's new identification
+  in Ecdysis has to reach Beeline before Beeline next says which is current, or the
+  harvest could put an older name back. The nightly job runs the read first and writes
+  the harvest archive only if the read succeeded.
+- A taxonomist sees a parataxonomist's determination in both places (Peter).
+
+Two things in Beeline's own rule matter more once it decides the current name in
+Ecdysis, and should be said at the meeting:
+
+- "Newest" is by when Beeline recorded the determination, not by the date the
+  determiner gave (`schema/110`). Symbiota shows `dateIdentified`. The two can
+  disagree: an old determination loaded late outranks a newer one loaded earlier.
+- Repeated identifications with the same name, determiner and no date collapsed in
+  Symbiota's import in October, and left 1,077 specimens with no current name
+  (beeline-1o27). The harvest must send each identification so that it stays distinct
+  (test A6).
+
+### Rules that replace the hand filters
+
+Each of these must exist before a collection's harvest URL does.
+
+| Filter today | Rule needed | State |
+|---|---|---|
+| Coordinates of a record whose taxon is obscured | A setting per program: send true coordinates, send obscured ones, or leave the record out | Unanswered by the atlases (beeline-1kb.7.1). Until a program answers, its harvest leaves these records out. |
+| The publication embargo | A grant over records with an end date; an embargoed record is left out | Not modelled (beeline-bqvp) |
+| A label that never met a bee | Send with its disposition, or leave out | For the meeting. Proposed: send, with the disposition, because the record must exist in Ecdysis for an expert to identify it. |
+
+### How Ecdysis fetches it
+
+Symbiota fetches an archive from a URL with no headers, so the URL carries a long
+random secret per collection. It is fetched from cron on the portal, so whoever runs
+Ecdysis has to schedule it. Washington's records are part of WSU's collection, which
+other specimens share, so the collection must be live-managed with matching on catalog
+number: a snapshot harvest would replace the whole collection. A harvest does not add
+new records to dataset 44, which is how Beeline finds Washington's records today, so
+Beeline should read the collection by catalog prefix instead.
+
+## Part 5: the program archive, for an IPT (proposed)
+
+From the checks against GBIF's own reader in October (beeline-ob9q, beeline-t54r):
+
+- `geodeticDatum` is `WGS84` for every point, in place of `unknown` for imported ones.
+  GBIF rejects `unknown` and assumes WGS84; the points came from iNaturalist or a phone.
+- The higher classification (kingdom to family, and genus) is written from Beeline's
+  own tree, so GBIF can place a genus or a rank it does not use.
+- Repeated undated identifications are merged, as in Part 4.
+- A specimen nobody has identified has no name. To decide: leave it out of a published
+  archive, or publish it under a higher name. Proposed: leave it out, since an
+  unidentified record on GBIF tells nobody anything.
+- No `eml.xml`: the IPT writes its own.
+- One dataset per program that grows, which is the archive of every year together.
+
+Three things only Lincoln Best can say: how a file reaches OSAC's IPT today, whether
+the IPT can fetch one from a URL, and whether Oregon's earlier yearly datasets on GBIF
+will be retired (their 35,725 records are also in the cumulative one).
+
+## Part 6: a collector marks their own specimen as lost (proposed, beeline-n9yl)
+
+The collector is the first to know. `specimen_disposition` already holds `missing` and
+a remark, written today only from a staff inventory. To design: the reasons offered
+(lost, destroyed, never existed because the count was wrong), whether the collector can
+undo it, and how it appears to staff. It follows the rule that every change is an
+event that can be seen.
+
+## Part 7: parataxonomists (proposed, beeline-2g1c)
+
+A badge on the person. No rule separates a parataxonomist's determination from a
+taxonomist's: both are expert. To find out before designing: how a determination
+entered in Beeline by an expert is marked as an expert's today, since CONTEXT.md still
+lists as open whether experts determine in Beeline at all.
+
+## Order of work
+
+| Step | What | Waits on |
+|---|---|---|
+| 1 | Part 1 (sex and caste), Part 5's datum and classification, the archives' own column lists | nothing |
+| 2 | Part 2 (numbers) | nothing for the archives |
+| 3 | Part 3 (occurrenceID): store the published ones, then mint | Peter's review; ADR 0008 amendment |
+| 4 | Part 6 and Part 7 | a short design each |
+| 5 | Part 4 (the harvest archive), without a URL | the Symbiota test; step 3 |
+| 6 | The rules that replace the hand filters, then a URL for one collection | the meeting; Joel and Ecdysis's operators |
+
+## The Symbiota test
+
+Running 2026-11-20 against a local Symbiota (commit 4491b791c) with invented records.
+Its questions are lettered A (identifications meeting existing ones), B (matching and
+identifiers) and C (dates, associations, disposition, fetching from a URL). Results
+will be added here, and Part 4 revised to fit them.

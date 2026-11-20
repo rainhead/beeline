@@ -372,7 +372,8 @@ class DetermineGrid extends LitElement {
   #numberFromBar(text: string) {
     const box = this.querySelector<HTMLInputElement>(this.#batch ? "#determine-add" : ".determine-jump input");
     if (!box || box.disabled) return;
-    box.value = text;
+    // A text box drops line breaks and would run a pasted column together.
+    box.value = pastedList(text);
     if (this.#batch) void this.#addNumbers(box);
     else this.#jump(box);
     this.#focusNumberBox();
@@ -806,7 +807,11 @@ class DetermineGrid extends LitElement {
               this.#jump(input);
             }} />
           <button type="button" aria-label=${d.jump.label}
-            @click=${(e: Event) => this.#jump((e.currentTarget as HTMLElement).parentElement!.querySelector("input")!)}>
+            @click=${(e: Event) => {
+              this.#jump((e.currentTarget as HTMLElement).parentElement!.querySelector("input")!);
+              // The cursor must not stay on the button: a scan's Enter would press it again.
+              this.#focusNumberBox();
+            }}>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"
               ><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
           </button>

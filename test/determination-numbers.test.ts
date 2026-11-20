@@ -170,6 +170,16 @@ describe("what a problem says, for a dropped digit at the start of a range", asy
   });
 });
 
+describe("a column pasted into the bar's name box (beeline-sz38)", () => {
+  it("is a field number text, and pastedList leaves a single scanned number as it was", () => {
+    const column = "26019685\n26019686";
+    expect(isOnlyFieldNumbers(column)).toBe(true);
+    expect(pastedList(column)).toBe("26019685, 26019686");
+    expect(pastedList("26019685")).toBe("26019685");
+    expect(pastedList("9685-697")).toBe("9685-697");
+  });
+});
+
 describe("telling a field number from a name in a name box (beeline-sz38)", () => {
   it("takes digits, tails, lists and ranges, with the separators the number boxes accept", () => {
     for (const text of ["26019685", "685", "26019685-697", "9685 – 697", "1, 2; 3", "26019685\n26019686"]) {

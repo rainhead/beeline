@@ -53,7 +53,7 @@ async function withoutEvents(conn: DuckDBConnection): Promise<void> {
 describe("migration 0112: the event tables", () => {
   it("leaves a deployed store as the schema makes it, comments and constraints included", async () => {
     const { conn } = await createMemoryDb();
-    const built = { columns: await columns(conn), comments: await comments(conn), view: await view(conn), constraints: await constraints(conn) };
+    const built = { columns: await columns(conn), comments: await comments(conn), view: await view(conn), constraints: await constraints(conn), kinds: await rows(conn, "SELECT code, name FROM event_kind ORDER BY code") };
     expect(built.columns.length).toBeGreaterThan(30);
 
     await withoutEvents(conn);
@@ -65,10 +65,21 @@ describe("migration 0112: the event tables", () => {
     expect(await view(conn)).toEqual(built.view);
     expect(await constraints(conn)).toEqual(built.constraints);
     expect(await schemaDrift(conn)).toEqual([]);
-    expect(await rows(conn, "SELECT count(*) FROM event_kind")).toEqual([[9n]]);
+    expect(await rows(conn, "SELECT code, name FROM event_kind ORDER BY code")).toEqual(built.kinds);
+    expect(built.kinds).toEqual([
+      ["conference", "Conference"],
+      ["course", "Course"],
+      ["deadline", "Deadline"],
+      ["field day", "Field day"],
+      ["meeting", "Meeting"],
+      ["microscope session", "Microscope session"],
+      ["other", "Other"],
+      ["outreach", "Outreach"],
+      ["talk", "Talk"],
+    ]);
   });
 
-  it("gives the migrated store the three CHECKs, so it refuses what a fresh build refuses", async () => {
+  it("gives the migrated store the CHECKs, so it refuses what a fresh build refuses", async () => {
     const { conn } = await createMemoryDb();
     await withoutEvents(conn);
     await migrate(conn, { dir: await onlyThisMigration() });
@@ -77,6 +88,8 @@ describe("migration 0112: the event tables", () => {
     const e = { programId: mm, kind: "deadline", collecting: false, name: "Due", dateStart: currentSeasonDate(10, 30) };
     await expect(createEvent(conn, { ...e, dateEnd: currentSeasonDate(10, 1) }, person)).rejects.toThrow(/CHECK constraint/);
     await expect(createEvent(conn, { ...e, timeStart: "09:00" }, person)).rejects.toThrow(/CHECK constraint/);
+    await expect(createEvent(conn, { ...e, place: { name: "A park", latitude: 91, longitude: 0 } }, person)).rejects.toThrow(/CHECK constraint/);
+    await expect(conn.run(`INSERT INTO event (program_id, kind, collecting, name, date_start, date_end, created_by) VALUES (${mm}, 'talk', false, '', DATE '${currentSeasonDate(6, 1)}', DATE '${currentSeasonDate(6, 1)}', ${person})`)).rejects.toThrow(/CHECK constraint/);
     await expect(createEvent(conn, { ...e, timeEnd: "09:00" }, person)).rejects.toThrow(/CHECK constraint/);
     await expect(createEvent(conn, { ...e, place: { name: "A park", latitude: 44 } }, person)).rejects.toThrow(/CHECK constraint/);
     await createEvent(conn, e, person);

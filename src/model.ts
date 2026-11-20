@@ -1969,7 +1969,7 @@ export interface EventTable {
   details: string | null;
   date_start: string;
   date_end: string;
-  /** Wall clock in time_zone, 'HH:MM:SS'. Null exactly when time_zone is. */
+  /** Wall clock in time_zone, 'HH:MM:SS'. A time needs a zone; a zone may stand without a time. */
   time_start: string | null;
   time_end: string | null;
   time_zone: string | null;
@@ -2004,9 +2004,13 @@ export interface EventRegistrationTable {
 
 /** One row per field changed after an event was created; append-only. */
 export interface EventChangeTable {
+  /** Shared by the rows of one request; drawn from entity_id_seq, so it orders changes. With field, the key. */
+  change_id: number;
   event_id: number;
   changed_at: Date | string;
-  author_id: number;
+  /** Null: made outside Beeline and loaded afterwards, by someone not known. */
+  author_id: number | null;
+  /** form, api or load (src/event.ts); plain text, no CHECK. */
   source: string;
   field: string;
   old_value: string | null;

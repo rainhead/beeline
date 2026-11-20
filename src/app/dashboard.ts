@@ -126,9 +126,11 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              -- (sample_awaiting_place, schema/150) is not pending yet, but its
              -- labels are on their way, so the page counts them as waiting.
              s.specimen_count,
-             -- Less any already in a run that has not printed, which printing_count counts.
+             -- Counted as pending_print_sample counts: the places up to the count that no
+             -- individuated specimen holds, so a label in a run, a reprint included, is not
+             -- taken off twice.
              coalesce(p.pending_count,
-                      CASE WHEN aw.sample_id IS NOT NULL THEN greatest(w.waiting - coalesce(lp.printing_count, 0), 0) END,
+                      CASE WHEN aw.sample_id IS NOT NULL THEN greatest(s.specimen_count - coalesce(held.n, 0), 0) END,
                       0) AS pending_count,
              coalesce(lp.printing_count, 0) AS printing_count,
              coalesce(lp.printed_count, 0) AS printed_count, lp.printed_at,
@@ -145,7 +147,14 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       LEFT JOIN sample_locality_override lo ON lo.sample_id = s.entity_id
       LEFT JOIN pending_print_sample p ON p.sample_id = s.entity_id
       LEFT JOIN sample_awaiting_place aw ON aw.sample_id = s.entity_id
-      LEFT JOIN sample_labels_waiting w ON w.sample_id = s.entity_id
+      LEFT JOIN (
+        SELECT i.sample_id, count(*) AS n
+        FROM individuated_specimen i
+        JOIN sample_awaiting_place a ON a.sample_id = i.sample_id
+        JOIN sample h ON h.entity_id = i.sample_id
+        WHERE i.specimen_number <= h.specimen_count
+        GROUP BY i.sample_id
+      ) held ON held.sample_id = s.entity_id
       LEFT JOIN sample_label_in_progress lp ON lp.sample_id = s.entity_id
       LEFT JOIN settled_unreleased_sample st ON st.sample_id = s.entity_id
       WHERE ${mine("s.entity_id")}

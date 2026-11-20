@@ -10,7 +10,7 @@ import {
   PrintRunRefused,
   PrintRunTransitionError,
 } from "../src/print-run.js";
-import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, SETTLED_SEASON } from "./helpers.js";
 
 // A run prepared in the 2026 season: the year floor is 26000001, and the
 // fixtures below carry no imported numbers, so that is where minting starts.
@@ -128,7 +128,7 @@ describe("preparing a run", () => {
     // observations the old system never recorded, and each read as labels
     // waiting.
     const open = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "1" });
-    const settled = { collector_id: String(ash), date_start: "DATE '2024-07-14'", date_end: "DATE '2024-07-14'" };
+    const settled = { collector_id: String(ash), date_start: `DATE '${SETTLED_SEASON}-07-14'`, date_end: `DATE '${SETTLED_SEASON}-07-14'` };
     await insertCleanSample(conn, { ...settled, sample_number: "'2'", specimen_count: "3" });
     const raised = await insertCleanSample(conn, { ...settled, sample_number: "'3'", specimen_count: "1" });
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${raised}, 1, '2400001')`);
@@ -145,16 +145,16 @@ describe("preparing a run", () => {
       sample_number: "'2'",
       specimen_count: "3",
       inat_observation_id: "7001",
-      date_start: "DATE '2024-07-14'",
-      date_end: "DATE '2024-07-14'",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
     });
     const released = await insertCleanSample(conn, {
       collector_id: String(ash),
       sample_number: "'3'",
       kind: "'trap'",
       specimen_count: "2",
-      date_start: "DATE '2024-07-14'",
-      date_end: "DATE '2024-07-14'",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
     });
     await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${released}, 'release')`);
     expect(await rows(conn, "SELECT sample_id, pending_count FROM pending_print_sample")).toEqual([[released, 2]]);
@@ -171,8 +171,8 @@ describe("preparing a run", () => {
       collector_id: String(ash),
       kind: "'trap'",
       specimen_count: "2",
-      date_start: "DATE '2024-07-14'",
-      date_end: "DATE '2024-07-14'",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
     });
     const event = (action: string) => conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${sample}, '${action}')`);
     const standing = async () => (await rows(conn, "SELECT sample_id FROM pending_print_sample")).length;

@@ -476,7 +476,9 @@ describe("QC findings and printability", () => {
       sample_number: "'2'", state_province: "'WA'", taxon_geoprivacy: "'obscured'", atlas_id: atlas("WaBA"),
     });
     const outside = await insertCleanSample(conn, { sample_number: "'3'", state_province: "'NV'", taxon_geoprivacy: "'obscured'" });
-    for (const id of [oregon, washington, outside]) {
+    // The observer's own geoprivacy, with a true point, is no finding either.
+    const chosen = await insertCleanSample(conn, { sample_number: "'5'", geoprivacy: "'obscured'", atlas_id: atlas("WaBA") });
+    for (const id of [oregon, washington, outside, chosen]) {
       expect(await findings(id)).toEqual([]);
       expect(await isPrintable(id)).toBe(true);
     }

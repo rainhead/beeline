@@ -226,32 +226,91 @@ describe("removing the Oklahoma Bee Atlas (0071)", () => {
 });
 
 describe("removing the rare host plant rule (0113, 0114)", () => {
-  test("runs on a store that still has the rule, its answers and a waiver on it", async () => {
-    // Put back what the schema no longer has: the table of atlases' answers,
-    // the rule's rows and its view, and a union that reads the view.
+  const RULE = "taxon_obscured_awaiting_atlas";
+  const viewSql = async (c: DuckDBConnection, name: string) =>
+    rows(c, `SELECT sql FROM duckdb_views() WHERE view_name = '${name}' AND NOT internal`);
+  const comments = async (c: DuckDBConnection) => [
+    await rows(c, "SELECT comment FROM duckdb_columns() WHERE table_name = 'sample' AND column_name = 'taxon_geoprivacy'"),
+    await rows(c, "SELECT comment FROM duckdb_tables() WHERE table_name = 'sample_location'"),
+    await rows(c, "SELECT comment FROM duckdb_views() WHERE view_name = 'printable_reprint'"),
+  ];
+
+  test("takes the rule, its table, its stored rows and its comments out of a store that has them", async () => {
+    const { conn: fresh } = await createMemoryDb();
+
+    // Put back what the schema no longer has: the table of atlases' answers
+    // (Oregon's row only), the rule's rows, its view as schema/120 had it, the
+    // union that reads the view, and the comments 0113 rewrites.
     await conn.run(`CREATE TABLE atlas_taxon_obscured_printing (
       atlas_id INTEGER PRIMARY KEY REFERENCES program(entity_id),
       decided_by TEXT NOT NULL, decided_on DATE NOT NULL, source TEXT NOT NULL)`);
     await conn.run(`INSERT INTO atlas_taxon_obscured_printing
                     SELECT entity_id, 'Arthur Schrenk', DATE '2026-10-21', 'https://example.org' FROM program WHERE code = 'OBA'`);
-    await conn.run("INSERT INTO qc_rule (name, severity) VALUES ('taxon_obscured_awaiting_atlas', 'blocking')");
-    await conn.run("INSERT INTO qc_rule_unwaivable (name) VALUES ('taxon_obscured_awaiting_atlas')");
+    await conn.run(`INSERT INTO qc_rule (name, severity) VALUES ('${RULE}', 'blocking')`);
+    await conn.run(`INSERT INTO qc_rule_unwaivable (name) VALUES ('${RULE}')`);
     await conn.run(`CREATE VIEW qc_rule_taxon_obscured_awaiting_atlas AS
-      SELECT s.entity_id AS sample_id, CAST(NULL AS INTEGER) AS specimen_id,
-             'taxon_obscured_awaiting_atlas' AS rule_name, 'x' AS details
-      FROM sample s WHERE s.taxon_geoprivacy IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM atlas_taxon_obscured_printing)`);
+      SELECT s.entity_id AS sample_id,
+             CAST(NULL AS INTEGER) AS specimen_id,
+             'taxon_obscured_awaiting_atlas' AS rule_name,
+             concat('taxon_geoprivacy=', s.taxon_geoprivacy, ', atlas=', coalesce(a.code, 'none')) AS details
+      FROM sample s
+      JOIN sample_location loc ON loc.sample_id = s.entity_id
+      LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
+      LEFT JOIN program a ON a.entity_id = sa.atlas_id
+      WHERE s.taxon_geoprivacy IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM atlas_taxon_obscured_printing ok WHERE ok.atlas_id = sa.atlas_id)`);
+    await conn.run(`CREATE OR REPLACE VIEW qc_finding AS
+SELECT sample_id, specimen_id, rule_name, details,
+       CAST(NULL AS TEXT) AS detail_taxon_name,
+       CAST(NULL AS TEXT) AS detail_taxon_rank
+FROM (
+  SELECT * FROM qc_rule_missing_required_field
+  UNION ALL SELECT * FROM qc_rule_missing_recommended_field
+  UNION ALL SELECT * FROM qc_rule_obscured_no_true_coordinates
+  UNION ALL SELECT * FROM qc_rule_taxon_obscured_awaiting_atlas
+  UNION ALL SELECT * FROM qc_rule_locality_format
+  UNION ALL SELECT * FROM qc_rule_place_unabbreviated
+  UNION ALL SELECT * FROM qc_rule_place_unrecognised
+  UNION ALL SELECT * FROM qc_rule_coordinate_uncertainty
+  UNION ALL SELECT * FROM qc_rule_coordinate_out_of_region
+  UNION ALL SELECT * FROM qc_rule_sample_number
+  UNION ALL SELECT * FROM qc_rule_count_mismatch
+  UNION ALL SELECT * FROM qc_rule_count_below_printed
+  UNION ALL SELECT * FROM qc_rule_observation_missing_upstream
+  UNION ALL SELECT * FROM qc_rule_staff_hold
+  -- Stored ingestion-time findings join the derived ones (schema/050).
+  UNION ALL SELECT sample_id, CAST(NULL AS INTEGER) AS specimen_id, rule_name, details
+  FROM sample_promotion_finding
+) prose
+UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host;`);
+    await conn.run("COMMENT ON COLUMN sample.taxon_geoprivacy IS 'old'");
+    await conn.run("COMMENT ON TABLE sample_location IS 'old'");
+    await conn.run("COMMENT ON VIEW printable_reprint IS 'old'");
+
     await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    // A taxon-obscured sample with a true point, in no atlas: the old view finds it.
     const sampleId = await insertCleanSample(conn, { taxon_geoprivacy: "'obscured'" });
-    await conn.run(`INSERT INTO sample_promotion_finding (sample_id, rule_name, details)
-                    VALUES (${sampleId}, 'taxon_obscured_awaiting_atlas', 'x')`);
+    await conn.run(`INSERT INTO sample_promotion_finding (sample_id, rule_name, details) VALUES (${sampleId}, '${RULE}', 'x')`);
+    await conn.run(`INSERT INTO sample_qc_waiver (sample_id, rule_name, finding, reason, in_force)
+                    VALUES (${sampleId}, '${RULE}', 'x', 'because', true)`);
+    expect(await rows(conn, `SELECT count(*) FROM qc_finding WHERE rule_name = '${RULE}'`)).toEqual([[2n]]);
+    expect(await rows(conn, "SELECT count(*) FROM sample_qc_waiver")).toEqual([[1n]]);
+    expect(await rows(conn, "SELECT count(*) FROM sample_promotion_finding")).toEqual([[1n]]);
 
     const names = ["0113-a-rare-host-plant-does-not-stop-printing.sql", "0114-the-rare-host-plant-rule-is-gone.sql"];
     for (const name of names) await copyFile(join(MIGRATIONS_DIR, name), join(dir, name));
     expect(await migrate(conn, { dir })).toEqual(names);
 
-    expect(await rows(conn, "SELECT count(*) FROM qc_rule WHERE name = 'taxon_obscured_awaiting_atlas'")).toEqual([[0n]]);
-    expect(await rows(conn, "SELECT count(*) FROM sample_promotion_finding")).toEqual([[0n]]);
+    expect(
+      await rows(conn, `SELECT table_name FROM information_schema.tables
+                        WHERE table_name IN ('atlas_taxon_obscured_printing', 'qc_rule_taxon_obscured_awaiting_atlas')`),
+    ).toEqual([]);
+    for (const table of ["qc_rule", "qc_rule_unwaivable", "sample_qc_waiver", "sample_promotion_finding"]) {
+      const column = table === "qc_rule" || table === "qc_rule_unwaivable" ? "name" : "rule_name";
+      expect(await rows(conn, `SELECT count(*) FROM ${table} WHERE ${column} = '${RULE}'`)).toEqual([[0n]]);
+    }
+    expect(await viewSql(conn, "qc_finding")).toEqual(await viewSql(fresh, "qc_finding"));
+    expect(await comments(conn)).toEqual(await comments(fresh));
     expect(await schemaDrift(conn)).toEqual([]);
   });
 });

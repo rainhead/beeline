@@ -188,7 +188,9 @@ agrees with this.
 So the revelation question above is no longer a go-live blocker: no atlas is
 being waited on, and the rule that held a rare plant's samples back until its
 atlas answered is gone (beeline-pnag). The Consequences section's promise of
-an export that redacts taxon-obscured coordinates is not built, and nothing
-is redacted anywhere. An atlas that wants a rare plant's location held back in
+an export that redacts taxon-obscured coordinates is not built. Labels, and
+what staff download and send on, carry true coordinates, and no atlas's rule
+withholds them; what another volunteer sees is unchanged (`withheld()` in
+`src/app/listings.ts`, Peter, 2026-10-23). An atlas that wants a rare plant's location held back in
 what leaves the program can say so, and that would be built as part of its
 privacy policy (beeline-rp33) or a list of sensitive host plants.

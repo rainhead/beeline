@@ -320,7 +320,18 @@ So the files Beeline writes for a person to upload are:
 
 - **A specimen file of new records only**: specimens whose catalog number Ecdysis has
   not reported. Beeline knows which those are from its nightly read of Ecdysis, and
-  must refuse to write the file when that read is stale.
+  must refuse to write the file when that read is stale. Two conditions make "new"
+  hold:
+  - "Reported" means the catalog number appears anywhere in what Beeline read from
+    Ecdysis, including an Ecdysis record that Beeline could not match to exactly one
+    specimen. Such a record is counted by the load but stored against no specimen, so
+    a test on the specimen's stored catalog number alone would call it new.
+  - A file is new only on the day it is written. If a person uploads it a second
+    time, after an expert has identified a record it created, the upload replaces
+    that identification with "undetermined". So each file is dated and offered once:
+    the page that offers it says so, a file is not offered again after the next read
+    of Ecdysis shows its records there, and the instructions to the uploader say to
+    discard a file older than a day. Nothing in Symbiota can enforce this.
 - **An associations file** for the same specimens.
 - **Corrections to records already in Ecdysis are not sent by upload.** They are made
   in Ecdysis by a person, from a list Beeline writes (the 43 specimens with obscured

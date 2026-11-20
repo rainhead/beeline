@@ -792,17 +792,26 @@ class DetermineGrid extends LitElement {
       </div>`;
     }
     return html`<div class="determine-toolbar">
-      <label class="determine-jump">${d.jump.label}
-        <input type="text" inputmode="numeric" autocomplete="off" aria-describedby="determine-jump-hint"
-          @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.#jump(e.target as HTMLInputElement); }}
-          @paste=${(e: ClipboardEvent) => {
-            // Here a paste is the whole question, so it goes at once.
-            e.preventDefault();
-            const input = e.target as HTMLInputElement;
-            input.value = (e.clipboardData?.getData("text") ?? "").trim();
-            this.#jump(input);
-          }} />
-      </label>
+      <div class="determine-jump">
+        <label for="determine-jump-input">${d.jump.label}</label>
+        <!-- The listings' search box (.search in components.css): a rounded input with its magnifying-glass button, so this reads as the place to find a specimen and not as the bar's name box below. The button does what Enter does. -->
+        <div class="search">
+          <input id="determine-jump-input" type="text" inputmode="numeric" autocomplete="off" aria-describedby="determine-jump-hint"
+            @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.#jump(e.target as HTMLInputElement); }}
+            @paste=${(e: ClipboardEvent) => {
+              // Here a paste is the whole question, so it goes at once.
+              e.preventDefault();
+              const input = e.target as HTMLInputElement;
+              input.value = (e.clipboardData?.getData("text") ?? "").trim();
+              this.#jump(input);
+            }} />
+          <button type="button" aria-label=${d.jump.label}
+            @click=${(e: Event) => this.#jump((e.currentTarget as HTMLElement).parentElement!.querySelector("input")!)}>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"
+              ><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
+          </button>
+        </div>
+      </div>
       <span id="determine-jump-hint" class="meta determine-hint">${d.jump.hint}</span>
     </div>`;
   }

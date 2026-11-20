@@ -38,7 +38,7 @@ export interface EventRegistrationInput {
 
 export interface NewEvent {
   programId: number;
-  /** An event_kind code. Not checked here: the view event_kind_unlisted says whether it is listed. */
+  /** An event_kind code. A code that event_kind does not list is refused. */
   kind: string;
   collecting: boolean;
   name: string;
@@ -51,7 +51,7 @@ export interface NewEvent {
   /** `HH:MM` or `HH:MM:SS`, on the wall clock in timeZone. */
   timeStart?: string | null;
   timeEnd?: string | null;
-  /** An IANA zone name. Required with timeStart, and only then. */
+  /** An IANA zone name. Required with timeStart, and allowed without it. */
   timeZone?: string | null;
   place?: EventPlaceInput | null;
   onlineUrl?: string | null;

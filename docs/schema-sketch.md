@@ -234,14 +234,15 @@ CREATE TABLE event (
   date_end    DATE NOT NULL,                     -- four days in West Central Idaho are one event
   time_start  TIME,                              -- on each day of the event, not only the first
   time_end    TIME,
-  time_zone   TEXT,                              -- 'America/Los_Angeles'; NULL when no time is given
+  time_zone   TEXT,                              -- 'America/Los_Angeles'. A time needs one; a zone
+                                                 -- alone says which zone a deadline's day ends in
 
   cancelled_at TIMESTAMP,                        -- NULL = not cancelled
   created_by  INTEGER NOT NULL REFERENCES person(id),
   created_at  TIMESTAMP NOT NULL,
   -- These three are here from the first day, because a CHECK can never be added later.
   CHECK (date_end >= date_start),
-  CHECK ((time_start IS NULL) = (time_zone IS NULL)),
+  CHECK (time_start IS NULL OR time_zone IS NOT NULL),
   CHECK (time_end IS NULL OR time_start IS NOT NULL)
 );
 
@@ -261,7 +262,9 @@ CREATE TABLE event_place (       -- the general location, which everyone signed 
   latitude   DOUBLE,                             -- of the place as a whole. Never a meeting
                                                  -- point: Beeline holds none (see above)
   longitude  DOUBLE,
-  CHECK ((latitude IS NULL) = (longitude IS NULL))
+  CHECK ((latitude IS NULL) = (longitude IS NULL)),
+  CHECK (latitude BETWEEN -90 AND 90),
+  CHECK (longitude BETWEEN -180 AND 180)
 );
 CREATE TABLE event_site (        -- a site the program returns to
   event_id INTEGER PRIMARY KEY REFERENCES event(id),
@@ -285,15 +288,20 @@ CREATE TABLE event_registration (
 -- Six of 2026's 107 events were cancelled and five were moved. Each is a change that
 -- says who made it and when, and the event's page shows it: "moved from 12 June". The
 -- event row holds the current values. Append-only, the shape of the sample change log.
+-- Built on 2026-11-19 as schema/075_events.sql, which is now the authority for event,
+-- its kinds, place, online link, registration and this log (docs/architecture/events.md).
 CREATE TABLE event_change (
+  change_id  INTEGER NOT NULL,                   -- one per request, shared by its fields; the
+                                                 -- log is read in this order
   event_id   INTEGER NOT NULL REFERENCES event(id),
   changed_at TIMESTAMP NOT NULL,
-  author_id  INTEGER NOT NULL REFERENCES person(id),
-  source     TEXT NOT NULL,                      -- the form, the API, a field submission
+  author_id  INTEGER REFERENCES person(id),      -- NULL = made outside Beeline and loaded
+  source     TEXT NOT NULL,                      -- 'form', 'api' or 'load'
   field      TEXT NOT NULL,                      -- 'date_start', 'place', 'cancelled_at'
   old_value  TEXT,
   new_value  TEXT,
-  reason     TEXT
+  reason     TEXT,
+  PRIMARY KEY (change_id, field)
 );
 
 -- Who was there. For a training whose attendance counts towards certification, the

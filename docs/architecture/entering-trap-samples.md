@@ -14,7 +14,7 @@ Until November 2026 every sample came from iNaturalist or the old Beeline. Trap 
 
 **Editing** is the same form, at `/samples/:id/trap`, until the sample's labels are printed or frozen into a print run, since the run already holds their text. After that a correction is a staff matter: staff change its method and dates from the Method row's pencil on the sample page ([Editing and corrections](editing-and-corrections.md), beeline-0wbq).
 
-**Creating them in bulk** is applying a samples file ([Loading an edited download](loading-an-edited-download.md#applying-the-new-rows-beeline-kgyd410)): the job calls `createTrapSample`, which takes an optional step to run in its transaction so the upload's record stands or falls with the sample. It passes no `staff` release, whoever applied the file: a sample made from a file waits for staff to release it from its page, because a file of old bottles may include ones already labelled (beeline-3vs.3).
+**Creating them in bulk** is applying a samples file ([Loading an edited download](loading-an-edited-download.md#applying-the-new-rows-beeline-kgyd410)): the job calls `createTrapSample`, which takes an optional step to run in its transaction so the upload's record stands or falls with the sample. It passes no `staff` release, whoever applied the file. A sample made from a file in an active season prints without one, so an upload does not keep its labels back. One from a settled season waits for staff to release it from its page, because a file of old bottles may include ones already labelled (beeline-3vs.3).
 
 ## Deleting a trap sample
 

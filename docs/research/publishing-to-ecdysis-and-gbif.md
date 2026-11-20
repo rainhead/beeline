@@ -73,10 +73,10 @@ because Ecdysis's existing records are matched on it. Twelve old catalog numbers
 longer than Symbiota's 32 characters (beeline-hicv) and one repeats (beeline-1kb.14);
 the harvest leaves those specimens out and lists them, until they are repaired.
 
-## Part 3: every published specimen has one permanent occurrenceID (proposed)
+## Part 3: every published specimen has one permanent occurrenceID (decided)
 
-This is the plan in beeline-8dx9.4, which waits for Peter's review. It reverses ADR
-0008's second amendment, so it needs a third.
+Peter approved this on 2026-11-20. It is the plan in beeline-8dx9.4. It reverses ADR
+0008's second amendment, so it needs a third, written and reviewed before any code.
 
 1. **Keep the identifier a specimen was already published under.** Read it from
    Ecdysis (Washington: the record's UUID, 46,090 of 46,090 measured) and from OSAC for
@@ -136,9 +136,15 @@ those to pass through a taxonomist's spreadsheet first.
 Two things in Beeline's own rule matter more once it decides the current name in
 Ecdysis, and should be said at the meeting:
 
-- "Newest" is by when Beeline recorded the determination, not by the date the
-  determiner gave (`schema/110`). Symbiota shows `dateIdentified`. The two can
-  disagree: an old determination loaded late outranks a newer one loaded earlier.
+- "Newest" changes meaning (Peter, 2026-11-20): by the date the determiner gave, and
+  then by when Beeline recorded the determination. Today `determination_of_record`
+  (`schema/110`) orders by the recorded time alone, so an old determination loaded
+  late outranks a newer one loaded earlier, and Symbiota, which shows
+  `dateIdentified`, would disagree with Beeline. To settle in the design: where a
+  determination with no date stands against one with a date. Proposed: an undated one
+  counts as made on the day it arrived. This changes the name of record for some
+  specimens, so it is measured on a copy of production, split by season, before it
+  is built (beeline-8dx9.9).
 - Repeated identifications with the same name, determiner and no date collapsed in
   Symbiota's import in October, and left 1,077 specimens with no current name
   (beeline-1o27). The harvest must send each identification so that it stays distinct
@@ -174,8 +180,9 @@ From the checks against GBIF's own reader in October (beeline-ob9q, beeline-t54r
   own tree, so GBIF can place a genus or a rank it does not use.
 - Repeated undated identifications are merged, as in Part 4.
 - A specimen nobody has identified has no name. To decide: leave it out of a published
-  archive, or publish it under a higher name. Proposed: leave it out, since an
-  unidentified record on GBIF tells nobody anything.
+  archive, or publish it under a higher name. Decided (Peter, 2026-11-20): leave it
+  out. The harvest to Ecdysis is different: there the record must exist before an
+  expert can name it.
 - No `eml.xml`: the IPT writes its own.
 - One dataset per program that grows, which is the archive of every year together.
 
@@ -204,7 +211,8 @@ lists as open whether experts determine in Beeline at all.
 |---|---|---|
 | 1 | Part 1 (sex and caste), Part 5's datum and classification, the archives' own column lists | nothing |
 | 2 | Part 2 (numbers) | nothing for the archives |
-| 3 | Part 3 (occurrenceID): store the published ones, then mint | Peter's review; ADR 0008 amendment |
+| 3 | Part 3 (occurrenceID): store the published ones, then mint | the ADR 0008 amendment and its review |
+| 3a | The determination of record goes by the determiner's date, then the date of arrival | a measurement on a copy of production |
 | 4 | Part 6 and Part 7 | a short design each |
 | 5 | Part 4 (the harvest archive), without a URL | the Symbiota test; step 3 |
 | 6 | The rules that replace the hand filters, then a URL for one collection | the meeting; Joel and Ecdysis's operators |

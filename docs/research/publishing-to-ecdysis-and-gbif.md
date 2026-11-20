@@ -136,8 +136,11 @@ those to pass through a taxonomist's spreadsheet first.
 Two things in Beeline's own rule matter more once it decides the current name in
 Ecdysis, and should be said at the meeting:
 
-- "Newest" keeps its meaning (Peter, 2026-11-20, after a measurement): the latest to
-  arrive in Beeline, as `determination_of_record` (`schema/110`) orders them. Peter
+- "Newest" keeps its meaning (Peter, 2026-11-20, after a measurement): the latest by
+  the time Beeline recorded it, as `determination_of_record` (`schema/110`) orders
+  them. That is the time it arrived, except for an identification Ecdysis has since
+  replaced, which is recorded at the time Ecdysis entered it, so that it ranks behind
+  the one Ecdysis calls current. Peter
   first asked for the determiner's date and then the arrival, but on production's
   data both readings of that made names worse: 393 to 3,102 specimens would go from a
   species to a coarser name, because most determinations have no date, nearly all

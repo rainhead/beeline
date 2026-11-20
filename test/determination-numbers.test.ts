@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOnlyFieldNumbers, NumberIndex, numberTokens, pastedList, MAX_RANGE } from "../src/determination-numbers.js";
+import { appendNumbers, isOnlyFieldNumbers, NumberIndex, numberTokens, pastedList, MAX_RANGE } from "../src/determination-numbers.js";
 
 // Shaped like one collector's numbers on the dev store: eight-digit numbers
 // from 2025 on, seven-digit ones before, and two numbers sharing the tail
@@ -177,6 +177,16 @@ describe("a column pasted into the bar's name box (beeline-sz38)", () => {
     expect(pastedList(column)).toBe("26019685, 26019686");
     expect(pastedList("26019685")).toBe("26019685");
     expect(pastedList("9685-697")).toBe("9685-697");
+  });
+});
+
+describe("adding a number to what a box already holds (beeline-sz38)", () => {
+  it("separates with a comma and a space, and never doubles a separator", () => {
+    expect(appendNumbers("", "26000102")).toBe("26000102");
+    expect(appendNumbers("26000101", "26000102")).toBe("26000101, 26000102");
+    expect(appendNumbers("26000101, ", "26000102")).toBe("26000101, 26000102");
+    expect(appendNumbers("26000101;", "26000102")).toBe("26000101; 26000102");
+    expect(appendNumbers("26000101  ", "26000102")).toBe("26000101, 26000102");
   });
 });
 

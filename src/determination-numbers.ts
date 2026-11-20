@@ -72,6 +72,17 @@ export function numberTokens(raw: string): string[] {
  */
 export const isOnlyFieldNumbers = (text: string): boolean => /^[\d\s,;\-–—]*\d[\d\s,;\-–—]*$/.test(text);
 
+/**
+ * Add a number to what a box already holds, separated as its own entries
+ * are: a comma and a space, not doubled when the text already ends with a
+ * comma or semicolon. Empty text is replaced.
+ */
+export function appendNumbers(existing: string, added: string): string {
+  const kept = existing.trimEnd();
+  if (kept === "") return added;
+  return /[,;]$/.test(kept) ? `${kept} ${added}` : `${kept}, ${added}`;
+}
+
 /** A column copied from a spreadsheet, as one line a text field can hold. */
 export const pastedList = (text: string): string =>
   text

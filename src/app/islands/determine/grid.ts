@@ -16,7 +16,7 @@ import { html, LitElement, nothing, type TemplateResult } from "lit";
 import type { EntryRow, EntryValue, Located } from "../../determine.js";
 import type { DeterminePageData } from "../../views/determine.js";
 import { messagesFor } from "../../messages/index.js";
-import { NumberIndex, pastedList, type NumberProblem } from "../../../determination-numbers.js";
+import { appendNumbers, NumberIndex, pastedList, type NumberProblem } from "../../../determination-numbers.js";
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
@@ -373,7 +373,10 @@ class DetermineGrid extends LitElement {
     const box = this.querySelector<HTMLInputElement>(this.#batch ? "#determine-add" : ".determine-jump input");
     if (!box || box.disabled) return;
     // A text box drops line breaks and would run a pasted column together.
-    box.value = pastedList(text);
+    // By field number the box takes a list, so what was typed there and not
+    // yet added stays; By collection year it takes one number, so it is replaced.
+    const numbers = pastedList(text);
+    box.value = this.#batch ? appendNumbers(box.value, numbers) : numbers;
     if (this.#batch) void this.#addNumbers(box);
     else this.#jump(box);
     this.#focusNumberBox();

@@ -217,9 +217,71 @@ lists as open whether experts determine in Beeline at all.
 | 5 | Part 4 (the harvest archive), without a URL | the Symbiota test; step 3 |
 | 6 | The rules that replace the hand filters, then a URL for one collection | the meeting; Joel and Ecdysis's operators |
 
-## The Symbiota test
+## What the Symbiota test found (2026-11-20)
 
-Running 2026-11-20 against a local Symbiota (commit 4491b791c) with invented records.
-Its questions are lettered A (identifications meeting existing ones), B (matching and
-identifiers) and C (dates, associations, disposition, fetching from a URL). Results
-will be added here, and Part 4 revised to fit them.
+Run against a local Symbiota (commit 4491b791c, MariaDB) with invented records, through
+its real upload pages. The full tables, with the source lines, are in
+[symbiota-import-test-2026-11-20.md](symbiota-import-test-2026-11-20.md). Five results
+contradict Part 3 and Part 4 as written above, which have not been revised yet: the
+revision is a design choice for Peter (see "Choices the test forces").
+
+1. **An archive import overwrites the whole record.** For a record it matches, Symbiota
+   writes every column, and a column the archive lacks, or leaves blank, becomes empty.
+   An archive holding only an id and a catalog number emptied about thirty fields. So
+   "send only the fields Beeline owns" does not exist as an option: whatever the
+   archive leaves out is erased, including anything Ecdysis's users entered.
+2. **The record's name always comes from the archive's occurrence row.** Symbiota
+   compares no dates. If the row carries a name, that name replaces the record's; if it
+   carries none, the record's name is emptied. An archive written before Beeline has
+   read a taxonomist's new identification puts the older name back (measured).
+3. **The import never clears the old current flag.** After an incoming current
+   identification, both the old and the new are marked current. Only Symbiota's own
+   editor clears the old one.
+4. **A live-managed collection matches on catalog number only.** The archive's row id
+   is not stored on a matched record and is never used to match in such a collection,
+   so making the row id the occurrenceID gains nothing there. Without catalog-number
+   matching switched on, the import made a second record.
+5. **The archive import builds no associations.** The host plant and the iNaturalist
+   observation go in through a separate admin page ("Import extended data"), matched by
+   catalog number, which is what Joel does by hand. Symbiota's own export then writes
+   them in a `resourceRelationships` file, with the relationship as it was loaded.
+
+Results that fit the plan:
+
+- With the collection's GUID source set to occurrenceID, an incoming occurrenceID is
+  stored and published, and an existing one is kept when the archive sends none. An
+  incoming one that differs replaces it, so Beeline must send the published one.
+- Identifications stay distinct if they differ in date or determiner. Two with the
+  same name and determiner and no date collapse to the first in the file, whatever
+  their flags. A source identifier on each identification makes a re-import update it
+  in place.
+- A volunteer's identification sent as not current, to a record with no other, leaves
+  the record with no name and only a determination history.
+- An unchanged re-import changes nothing and bumps no modified date.
+- An end date survives in a column named `eventDate2`.
+- Sex is read from the occurrence row only. Symbiota has no caste column.
+- A scheduled fetch from a URL works unattended. Its switches (match on catalog
+  number, load identifications) are arguments to the cron command, not part of the
+  saved profile, and the defaults make duplicate records. It exits 0 when the fetch
+  fails.
+
+## Choices the test forces
+
+Because an import overwrites the whole record, an automated harvest and people editing
+the same records in Ecdysis cannot both be safe. The ways out:
+
+- **A. Beeline is the only place these records are edited.** The harvest carries the
+  whole record. Identifications made in Ecdysis stop, or are tolerated only between
+  Beeline's read and the next harvest. This is the simplest and the least like today.
+- **B. The harvest echoes back what Beeline last read from Ecdysis** for every field it
+  does not own, and for the current name. An edit made in Ecdysis after Beeline's read
+  and before the harvest is lost; the window is the time between the two nightly
+  steps.
+- **C. The harvest only creates records**, and changes to existing ones go by another
+  route (a person, or Symbiota's API, which was not tested). Whether Symbiota can be
+  told to skip records it matches was not tested either.
+- **D. Stay with a person uploading**, and have Beeline write the exact files Joel
+  uploads, so his work becomes two uploads with no spreadsheet editing.
+
+D is available now and removes most of Joel's labour. B is the smallest step to a
+schedule but its loss window needs Ecdysis's users to accept it.

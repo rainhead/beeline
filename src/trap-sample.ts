@@ -219,30 +219,60 @@ export async function seriesTrapNumberTaken(conn: DuckDBConnection, sampleNumber
   return isSeriesNumber(sampleNumber) && numberTaken(conn, sampleNumber, sampleId);
 }
 
+/** A sample that holds a series number. */
+export interface SeriesHolder {
+  sampleId: number;
+  kind: string;
+}
+
 /**
- * The sample, of any kind, that has this number, if the number is a series number. A series number is the program's
- * and unique, though the old Beeline holds some trap bottles as net samples, and a net sample's own plain numbers
- * ("3") are the collector's for the day and shared, so only a series number is judged. The program's own series is
- * compared on the folded form, so a sample written `OBAS 00700` holds `OBAS-00700`. The trap form's own check counts
- * trap samples only; the upload path asks this as well.
+ * Who holds each of some series numbers, read at once. The one place the question is answered, so that a preview of a
+ * file of a thousand rows (one read for the file) and the job's check under the print runs' lock (one number) cannot
+ * judge differently. A series number is the program's and unique, though the old Beeline holds some trap bottles as
+ * net samples, and a net sample's own plain numbers ("3") are the collector's for the day and shared, so only a series
+ * number is judged. The program's own series is compared on the folded form (`foldNumber`), so a sample written
+ * `OBAS 00700` holds `OBAS-00700`, and the lowest sampleId holds a number that several have. With `allProgramSeries`
+ * every holder of a number in the program's series is read, for a caller that will ask about numbers it cannot name
+ * yet (the next numbers after the highest).
  */
-export async function seriesNumberHolder(conn: DuckDBConnection, sampleNumber: string): Promise<{ sampleId: number; kind: string } | null> {
-  const found = isProgramSeries(sampleNumber)
-    ? await rows<{ entity_id: number; kind: string }>(
-        conn,
-        `SELECT entity_id, kind FROM sample
-         WHERE ${MAYBE_PROGRAM_SERIES} AND ${FOLDED_NUMBER} = $1
-         ORDER BY entity_id LIMIT 1`,
-        [foldNumber(sampleNumber)],
-      )
-    : isSeriesNumber(sampleNumber)
-      ? await rows<{ entity_id: number; kind: string }>(conn, `SELECT entity_id, kind FROM sample WHERE sample_number = $1 ORDER BY entity_id LIMIT 1`, [sampleNumber])
-      : [];
-  return found[0] === undefined ? null : { sampleId: found[0].entity_id, kind: found[0].kind };
+export async function readSeriesHolders(
+  conn: DuckDBConnection,
+  sampleNumbers: readonly string[],
+  { allProgramSeries = false }: { allProgramSeries?: boolean } = {},
+): Promise<(sampleNumber: string) => SeriesHolder | null> {
+  const folded = new Map<string, SeriesHolder>();
+  const exact = new Map<string, SeriesHolder>();
+  const program = [...new Set(sampleNumbers.filter(isProgramSeries).map(foldNumber))];
+  if (allProgramSeries || program.length > 0) {
+    const found = await rows<{ entity_id: number; kind: string; f: string }>(
+      conn,
+      allProgramSeries
+        ? `SELECT entity_id, kind, ${FOLDED_NUMBER} AS f FROM sample WHERE ${MAYBE_PROGRAM_SERIES} ORDER BY entity_id`
+        : `SELECT entity_id, kind, f FROM (SELECT entity_id, kind, ${FOLDED_NUMBER} AS f FROM sample WHERE ${MAYBE_PROGRAM_SERIES})
+           WHERE f IN (SELECT unnest(from_json($1::JSON, '["VARCHAR"]'))) ORDER BY entity_id`,
+      allProgramSeries ? [] : [JSON.stringify(program)],
+    );
+    for (const r of found) if (!folded.has(r.f)) folded.set(r.f, { sampleId: r.entity_id, kind: r.kind });
+  }
+  const others = [...new Set(sampleNumbers.filter((n) => !isProgramSeries(n) && isSeriesNumber(n)))];
+  if (others.length > 0) {
+    const found = await rows<{ entity_id: number; kind: string; sample_number: string }>(
+      conn,
+      `SELECT entity_id, kind, sample_number FROM sample WHERE sample_number IN (SELECT unnest(from_json($1::JSON, '["VARCHAR"]'))) ORDER BY entity_id`,
+      [JSON.stringify(others)],
+    );
+    for (const r of found) if (!exact.has(r.sample_number)) exact.set(r.sample_number, { sampleId: r.entity_id, kind: r.kind });
+  }
+  return (sampleNumber) => (isProgramSeries(sampleNumber) ? folded.get(foldNumber(sampleNumber)) : isSeriesNumber(sampleNumber) ? exact.get(sampleNumber) : undefined) ?? null;
+}
+
+/** The sample, of any kind, that has this number, if the number is a series number (readSeriesHolders, for one number). The trap form's own check counts trap samples only; the upload path asks this as well. */
+export async function seriesNumberHolder(conn: DuckDBConnection, sampleNumber: string): Promise<SeriesHolder | null> {
+  return (await readSeriesHolders(conn, [sampleNumber]))(sampleNumber);
 }
 
 /** What a series number that another sample already has is told, with how to compare the row with that sample. */
-export const seriesNumberHeldProblem = (sampleNumber: string, holder: { sampleId: number; kind: string }) =>
+export const seriesNumberHeldProblem = (sampleNumber: string, holder: SeriesHolder) =>
   `${sampleNumber} is already a ${holder.kind} sample in Beeline, sampleId ${holder.sampleId}. To change that sample instead, edit its row in a fresh download, which carries its sampleId, sampleVersion and fieldNumber; otherwise give the new sample another number.`;
 
 /** How near a new sample's point must be to an existing sample's, in metres, for the two to look like one sample. */
@@ -314,6 +344,43 @@ export async function findLookalikes(
   return found.map((r) => ({ sampleId: r.entity_id, sampleNumber: r.sample_number }));
 }
 
+/** A sample in the store as the look-alike rule sees it: its single first collector, its days and its point. */
+export interface LookalikeCandidate extends LookalikeFacts {
+  sampleId: number;
+  sampleNumber: string;
+}
+
+/**
+ * Every sample that could look like a new one of these first collectors: those whose one collector at position 1 is
+ * one of them (a sample with two at position 1 has no first collector, as `sample_primary_collector` has it) and that
+ * have a point, by collector. Read once for a file; `lookalikesAmong` then judges each row with no further query.
+ */
+export async function readLookalikeCandidates(conn: DuckDBConnection, collectorIds: readonly number[]): Promise<Map<number, LookalikeCandidate[]>> {
+  const byCollector = new Map<number, LookalikeCandidate[]>();
+  if (collectorIds.length === 0) return byCollector;
+  const found = await rows<{ entity_id: number; sample_number: string; person_id: number; date_start: string; date_end: string; latitude: number; longitude: number }>(
+    conn,
+    `SELECT s.entity_id, s.sample_number, c.person_id, CAST(s.date_start AS VARCHAR) AS date_start, CAST(s.date_end AS VARCHAR) AS date_end, l.latitude, l.longitude
+     FROM sample_collector c
+     JOIN sample s ON s.entity_id = c.sample_id
+     JOIN sample_location l ON l.sample_id = s.entity_id
+     WHERE c.person_id IN (SELECT unnest(from_json($1::JSON, '["INTEGER"]'))) AND c.position = 1
+       AND (SELECT count(*) FROM sample_collector c2 WHERE c2.sample_id = s.entity_id AND c2.position = 1) = 1
+     ORDER BY s.entity_id`,
+    [JSON.stringify([...new Set(collectorIds)])],
+  );
+  for (const r of found) {
+    const own = byCollector.get(r.person_id) ?? byCollector.set(r.person_id, []).get(r.person_id)!;
+    own.push({ sampleId: r.entity_id, sampleNumber: r.sample_number, firstCollectorId: r.person_id, dateStart: r.date_start, dateEnd: r.date_end, latitude: Number(r.latitude), longitude: Number(r.longitude) });
+  }
+  return byCollector;
+}
+
+/** What `findLookalikes` answers, from candidates already read: the same rule (`lookAlike`), in order of sampleId. `excluding.sampleId` is as there; a look-alike the upload itself made is the job's to leave out, and is not asked here. */
+export function lookalikesAmong(candidates: ReadonlyMap<number, readonly LookalikeCandidate[]>, sample: LookalikeFacts, excluding: { sampleId?: number } = {}): Lookalike[] {
+  return (candidates.get(sample.firstCollectorId) ?? []).filter((c) => c.sampleId !== excluding.sampleId && lookAlike(c, sample)).map((c) => ({ sampleId: c.sampleId, sampleNumber: c.sampleNumber }));
+}
+
 /**
  * Whether another trap sample has this number. Unique among trap samples
  * only (Peter, 2026-11-04): an OBAS- number is the program's, while a net
@@ -329,6 +396,13 @@ export async function numberTaken(conn: DuckDBConnection, sampleNumber: string, 
     [sampleNumber, sampleId],
   );
   return taken.length > 0;
+}
+
+/** Which of these numbers a trap sample has, read at once: `numberTaken` for a new sample, for many. */
+export async function readTrapNumbers(conn: DuckDBConnection, sampleNumbers: readonly string[]): Promise<ReadonlySet<string>> {
+  if (sampleNumbers.length === 0) return new Set();
+  const found = await rows<{ sample_number: string }>(conn, `SELECT DISTINCT sample_number FROM sample WHERE kind = 'trap' AND sample_number IN (SELECT unnest(from_json($1::JSON, '["VARCHAR"]')))`, [JSON.stringify([...new Set(sampleNumbers)])]);
+  return new Set(found.map((r) => r.sample_number));
 }
 
 export const numberTakenProblem = (sampleNumber: string) => `Trap sample ${sampleNumber} is already in Beeline.`;
@@ -361,17 +435,20 @@ export async function checkTrapSample(
   {
     staff = false,
     people,
+    taken,
   }: {
     staff?: boolean;
     /** Everyone Beeline knows (readPeople, src/collector-match.ts), read once by a caller that checks many forms. */
     people?: readonly MatchedCollector[];
+    /** Whether a trap sample has this number, answered by a caller that has read the numbers of many forms at once (readTrapNumbers). */
+    taken?: (sampleNumber: string) => boolean;
   } = {},
 ): Promise<{ sample: TrapSample } | { problems: FieldProblems }> {
   const problems: FieldProblems = {};
   const sampleNumber = form.sample_number.trim();
   if (sampleNumber === "") problems.sample_number = "A sample number is needed.";
   else {
-    if (await numberTaken(conn, sampleNumber, sampleId)) problems.sample_number = numberTakenProblem(sampleNumber);
+    if (taken !== undefined ? taken(sampleNumber) : await numberTaken(conn, sampleNumber, sampleId)) problems.sample_number = numberTakenProblem(sampleNumber);
   }
 
   // Named as every list of collectors is named (src/collector-match.ts).

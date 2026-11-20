@@ -6,7 +6,7 @@ import { oregonToday } from "../oregon-today.js";
 import { en } from "./messages/en.js";
 import type { Messages } from "./messages/index.js";
 import { distanceMetres, effortBecomes, predictRefusals, type AreaValues, type ChangeUnit, type CollectorsPreview, type SampleFacts, type UnitChange } from "./samples-upload-change.js";
-import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, findLookalikes, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, seriesNumberHeldProblem, seriesNumberHolder, seriesNumberProblem, type Lookalike, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
+import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, lookalikesAmong, readLookalikeCandidates, readSeriesHolders, readTrapNumbers, seriesNumberHeldProblem, seriesNumberProblem, type Lookalike, type LookalikeCandidate, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import {
@@ -504,6 +504,17 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
     return { results, full };
   };
 
+  // What the store says of the file's new rows, asked once for the file and not once per row: who holds each series
+  // number, which trap numbers are taken, and (as each first collector is met) their samples a new one could look like.
+  const fileNumbers = rows.flatMap(({ cells }, i) => (idOf[i]!.given === "" ? [text(cells, "fieldNumber")] : [])).filter((n) => n !== "");
+  const holderOf = await readSeriesHolders(conn, fileNumbers);
+  const trapNumbers = await readTrapNumbers(conn, fileNumbers);
+  const candidates = new Map<number, LookalikeCandidate[]>();
+  const candidatesOf = async (collectorId: number) => {
+    if (!candidates.has(collectorId)) for (const [id, own] of await readLookalikeCandidates(conn, [collectorId])) candidates.set(id, own);
+    if (!candidates.has(collectorId)) candidates.set(collectorId, []);
+    return candidates;
+  };
   const newNumbers = new Map<string, number[]>();
   /** What each new row's look-alikes are judged by, for the comparison of the file's rows with each other once it is known which will be made. */
   const factsOf = new Map<SampleRowResult, LookalikeFacts>();
@@ -547,7 +558,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
       // The program's own numbers have a shape (written exactly, in any spelling that folds to it), and a series number that any other sample has, of any kind, cannot be used again.
       if (numberCell.problem === null && fileNumber !== "") {
         const shape = seriesNumberProblem(fileNumber);
-        const holder = shape === null ? await seriesNumberHolder(conn, fileNumber) : null;
+        const holder = shape === null ? holderOf(fileNumber) : null;
         const wrong = shape ?? (holder === null ? null : seriesNumberHeldProblem(fileNumber, holder));
         if (wrong !== null) {
           flagged.add("fieldNumber");
@@ -577,7 +588,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         county: full.get("county")!.fileText,
         locality: full.get("locality")!.fileText,
       };
-      const checked = await checkTrapSample(conn, form, null, { staff: true, people });
+      const checked = await checkTrapSample(conn, form, null, { staff: true, people, taken: (n) => trapNumbers.has(n) });
       if ("problems" in checked) {
         for (const [field, sentence] of Object.entries(checked.problems) as Array<[keyof TrapSampleForm, string]>) {
           if (FORM_COLUMNS[field].some((c) => flagged.has(c))) continue;
@@ -589,7 +600,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         const sample = checked.sample;
         const [first] = sample.collector_ids;
         const facts: LookalikeFacts = { firstCollectorId: first!, dateStart: sample.date_start, dateEnd: sample.date_end, latitude: sample.latitude, longitude: sample.longitude };
-        const [found] = await findLookalikes(conn, facts);
+        const [found] = lookalikesAmong(await candidatesOf(first!), facts);
         // Someone who is not staff may not see where every sample is: they are told the row is held, and not which sample.
         const lookalike: Lookalike | null = found !== undefined && options.reader !== undefined && !options.reader.staff ? { sampleId: 0, sampleNumber: "" } : (found ?? null);
         factsOf.set(result, facts);
@@ -701,12 +712,13 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   if (blanks.length > 0) {
     const explicit = new Set(results.filter((r) => r.kind === "new" && r.sampleNumber !== null && r.sampleNumber !== "" && isProgramSeries(r.sampleNumber)).map((r) => foldNumber(r.sampleNumber!)));
     let next = (await highestSeriesNumber(conn)) + 1;
+    const programHolderOf = await readSeriesHolders(conn, [], { allProgramSeries: true });
     for (const r of blanks) {
       let given: string | null = null;
       while (next <= 99_999) {
         const candidate = `OBAS-${String(next).padStart(5, "0")}`;
         next++;
-        if (!explicit.has(foldNumber(candidate)) && (await seriesNumberHolder(conn, candidate)) === null) {
+        if (!explicit.has(foldNumber(candidate)) && programHolderOf(candidate) === null) {
           given = candidate;
           break;
         }

@@ -177,8 +177,9 @@ WHERE s.state_province IS NOT NULL
 -- only while they still have the specimens, and for older records the bees
 -- have often long since left their possession. Blocking those would demand a
 -- correction nobody is able to make. So records predating the change keep
--- 250 m where that is so: once printed, or once their season has settled
--- (sample_coordinate_limit, below, which says why the line moved there).
+-- 250 m where that is so: once printed, or once their season has settled and
+-- staff have not released them for printing (sample_coordinate_limit, below,
+-- which says why the line moved there).
 --
 -- Judged on date_end: a trap line that ran across the boundary is held to
 -- the limit in force when it was emptied.
@@ -198,12 +199,16 @@ COMMENT ON VIEW coordinate_precision_rule IS 'One row: the coordinate uncertaint
 -- collector can still tighten the pin and a label with a 180 m circle would
 -- also go out with no elevation (elevation_derivation_limit). So 250 m stays
 -- only for a sample that has printed, whose label is on a pin already, and
--- for one from a settled season, which never prints and whose collector has
--- mostly long since handed the bees over. Of the unprinted samples in the
--- 100-250 m band on that morning's backup, 4 were in active seasons (3 of
--- them, 10 labels, in that day's run) and 38 settled.
+-- for one from a settled season that staff have not released, which never
+-- prints and whose collector has mostly long since handed the bees over. A
+-- released settled sample will print, so it is held to 100 m like an active
+-- one (beeline-3vs.7, settled_unreleased_sample, schema/102).
 --
--- Printed and settled are LEFT JOINs that found nothing, where they were NOT
+-- Of the unprinted samples in the 100-250 m band on the morning of
+-- 2026-11-04, 4 were in active seasons (3 of them, 10 labels, in that day's
+-- run) and 38 settled.
+--
+-- Printed and settled-unreleased are LEFT JOINs that found nothing, where they were NOT
 -- EXISTS inside the CASE. It is one of three shapes changed together so that
 -- a sample page, asking for one sample's findings, does not work out which
 -- of all 70,000 samples have printed (beeline-poon; the others are in
@@ -220,8 +225,8 @@ SELECT s.entity_id AS sample_id,
 FROM sample s
 CROSS JOIN coordinate_precision_rule r
 LEFT JOIN printed_sample p ON p.sample_id = s.entity_id
-LEFT JOIN settled_sample st ON st.sample_id = s.entity_id;
-COMMENT ON VIEW sample_coordinate_limit IS 'Per sample: the coordinate uncertainty above which it cannot be printed. 100 m, except 250 m for a sample collected before 2 September 2026 that has printed or is in a settled season.';
+LEFT JOIN settled_unreleased_sample st ON st.sample_id = s.entity_id;
+COMMENT ON VIEW sample_coordinate_limit IS 'Per sample: the coordinate uncertainty above which it cannot be printed. 100 m, except 250 m for a sample collected before 2 September 2026 that has printed or is in a settled season and not released for printing.';
 
 CREATE VIEW qc_rule_coordinate_uncertainty AS
 SELECT loc.sample_id,

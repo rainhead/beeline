@@ -379,6 +379,9 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
   // The outcome is written in the sample's own transaction, so a crash cannot leave a sample that no row names. Under the
   // print runs' lock a look-alike is looked for (not the samples this same upload has made: its rows were held against
   // each other in the preview), so a trap form entry committed meanwhile is caught.
+  // No `staff` option, so no print release is written, whoever applied the file. A sample from an active season prints
+  // without one; a sample from a settled season entered through a file waits for staff to release it from its own
+  // page, because a file of old bottles may include ones already labelled (beeline-3vs.3).
   const made = await createTrapSample(
     deps.printWriter,
     sample,

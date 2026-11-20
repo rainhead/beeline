@@ -167,6 +167,28 @@ export interface SampleDetail {
   printed: boolean;
   /** Built from the old Beeline's records, which a staff correction of its method names (beeline-p8y1). */
   from_old_records: boolean;
+  /** From a settled season (schema/102): its labels print only once staff have released it. */
+  settled: boolean;
+  /** Staff's latest release or withdrawal for this sample (sample_print_release_event, beeline-3vs.7): which, by whom, when and why. Null when there never was one. */
+  print_release: PrintRelease | null;
+  /**
+   * How many labels the next print run would print for this sample if it were
+   * released: its count less the specimens already individuated, as
+   * pending_print_sample counts them. Worked out only for a sample with no
+   * standing release, in any season, whose page offers staff the release when
+   * it is above 0; 0 for any other.
+   */
+  labels_to_print: number;
+  /** Whether the sample has a point (sample_location), withheld from the reader or not. */
+  has_point: boolean;
+  /** Whether its county, state and country follow its point once it prints: a staff point, or an observation or an entry in Beeline with no label on paper. */
+  follows_point_when_released: boolean;
+  /**
+   * A released settled sample that follows its point and waits for the
+   * nightly's county stamp (sample_awaiting_place, schema/150): its labels
+   * print after it.
+   */
+  awaiting_place: boolean;
   /**
    * A locality staff set over the observation's (beeline-649), with its
    * provenance: who, why, and — where the observation has since moved to a
@@ -217,6 +239,14 @@ export interface SampleDetail {
   place_disagreement: PlaceDisagreement | null;
   /** Everyone who collected it, in recordedBy order (beeline-77j). */
   collectors: RecordCollector[];
+}
+
+export interface PrintRelease {
+  action: "release" | "withdraw";
+  /** The person's name; null when it was written by a staff login that is no person. */
+  by: string | null;
+  at: Date;
+  reason: string | null;
 }
 
 export interface LocalitySuggestion {
@@ -588,6 +618,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
     place_disagreement: hidden ? null : await placeDisagreement(db, Number(row.sample_id)),
     printed: Boolean(row.printed),
     from_old_records: await fromOldRecords(db, Number(row.sample_id)),
+    ...(await printReleaseOf(db, Number(row.sample_id), Number(row.specimen_count))),
     sample_id: Number(row.sample_id),
     specimen_count: Number(row.specimen_count),
     ...(hidden
@@ -615,6 +646,60 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
     mine: Boolean(row.mine),
     location_withheld: hidden,
     collectors: await collectorsOfSample(db, Number(row.sample_id)),
+  };
+}
+
+/**
+ * Whether the sample is from a settled season, staff's latest release or
+ * withdrawal for it, whether a release is waiting for the county stamp, and,
+ * only where the page may offer the release, how many labels the next run
+ * would print. One row by primary key, and the count only for a sample with
+ * no standing release, in any season.
+ */
+async function printReleaseOf(
+  db: Kysely<Database>,
+  sampleId: number,
+  specimenCount: number,
+): Promise<{
+  settled: boolean;
+  print_release: PrintRelease | null;
+  labels_to_print: number;
+  awaiting_place: boolean;
+  has_point: boolean;
+  follows_point_when_released: boolean;
+}> {
+  const state = await sql<{ settled: boolean; released: boolean; awaiting: boolean; has_point: boolean; follows: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id) AS settled,
+           EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = s.entity_id) AS released,
+           EXISTS (SELECT 1 FROM sample_awaiting_place w WHERE w.sample_id = s.entity_id) AS awaiting,
+           EXISTS (SELECT 1 FROM sample_location l WHERE l.sample_id = s.entity_id) AS has_point,
+           (EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = s.entity_id)
+            OR ((s.inat_observation_id IS NOT NULL OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
+                AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id))) AS follows
+    FROM sample s WHERE s.entity_id = ${sampleId}`.execute(db);
+  const latest = await sql<{ action: "release" | "withdraw"; at: Date; reason: string | null; by: string | null }>`
+    SELECT e.action, e.decided_at AS at, e.reason, p.display_name AS by
+    FROM sample_print_release_event e LEFT JOIN person p ON p.entity_id = e.person_id
+    WHERE e.sample_id = ${sampleId}
+    ORDER BY e.entity_id DESC LIMIT 1`.execute(db);
+  const settled = Boolean(state.rows[0]?.settled);
+  const released = Boolean(state.rows[0]?.released);
+  const row = latest.rows[0];
+  const release: PrintRelease | null = row === undefined ? null : { action: row.action, by: row.by, at: row.at, reason: row.reason };
+  let toPrint = 0;
+  if (!released && specimenCount > 0) {
+    const held = await sql<{ n: number }>`
+      SELECT CAST(count(*) AS INTEGER) AS n FROM individuated_specimen i
+      WHERE i.sample_id = ${sampleId} AND i.specimen_number <= ${specimenCount}`.execute(db);
+    toPrint = Math.max(0, specimenCount - Number(held.rows[0]?.n ?? 0));
+  }
+  return {
+    settled,
+    print_release: release,
+    labels_to_print: toPrint,
+    awaiting_place: settled && Boolean(state.rows[0]?.awaiting),
+    has_point: Boolean(state.rows[0]?.has_point),
+    follows_point_when_released: Boolean(state.rows[0]?.follows),
   };
 }
 

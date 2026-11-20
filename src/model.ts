@@ -1373,6 +1373,43 @@ export interface SampleHoldTable {
   held_by: number | null;
 }
 
+/** A staff decision that a settled season's sample may print, or may not (beeline-3vs.7): a row of its own, kept as written. */
+export interface SamplePrintReleaseEventTable {
+  entity_id: Generated<number>;
+  sample_id: number;
+  action: "release" | "withdraw";
+  person_id: number | null;
+  /** Defaults to the time of writing. */
+  decided_at: Generated<Date>;
+  reason: string | null;
+}
+
+/** What the county stamp has looked at, for a settled sample staff released (schema/038, beeline-3vs.7). */
+export interface SamplePlaceStampedTable {
+  sample_id: number;
+  latitude: number;
+  longitude: number;
+  stamped_at: Generated<Date>;
+}
+
+/** Samples whose latest release or withdrawal is a release (schema/102). */
+export interface SamplePrintReleaseView {
+  sample_id: number;
+  released_by: number | null;
+  released_at: Date;
+  reason: string | null;
+}
+
+/** Samples whose county, state and country follow their point (schema/150). */
+export interface SampleFollowsPointView {
+  sample_id: number;
+}
+
+/** Released settled samples waiting for the county stamp (schema/150). */
+export interface SampleAwaitingPlaceView {
+  sample_id: number;
+}
+
 /** The blocking rules no waiver can set aside (beeline-1kb.9). */
 export interface QcRuleUnwaivableTable {
   name: string;
@@ -1756,6 +1793,11 @@ export interface SettledSampleView {
   sample_id: number;
 }
 
+/** Settled samples staff have not released for printing: the ones that never print (beeline-3vs.7). */
+export interface SettledUnreleasedSampleView {
+  sample_id: number;
+}
+
 /** Samples carrying a blocking finding, by either route it can arrive on. */
 export interface BlockingSampleView {
   sample_id: number;
@@ -1963,6 +2005,11 @@ export interface Database {
   qc_rule: QcRuleTable;
   sample_promotion_finding: SamplePromotionFindingTable;
   sample_hold: SampleHoldTable;
+  sample_print_release_event: SamplePrintReleaseEventTable;
+  sample_place_stamped: SamplePlaceStampedTable;
+  sample_print_release: SamplePrintReleaseView;
+  sample_follows_point: SampleFollowsPointView;
+  sample_awaiting_place: SampleAwaitingPlaceView;
   qc_rule_unwaivable: QcRuleUnwaivableTable;
   sample_qc_waiver: SampleQcWaiverTable;
   sample_legacy_observation: SampleLegacyObservationTable;
@@ -1976,6 +2023,7 @@ export interface Database {
   blocking_sample: BlockingSampleView;
   season: SeasonView;
   settled_sample: SettledSampleView;
+  settled_unreleased_sample: SettledUnreleasedSampleView;
   animal_rank: AnimalRankTable;
   determination_misplaced_qualifier: DeterminationMisplacedQualifierView;
   expert_identification: ExpertIdentificationView;

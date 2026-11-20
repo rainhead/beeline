@@ -862,6 +862,66 @@ function StaffHold({ m, staff, hold }: { m: Messages; staff: StaffQc; hold: Reco
   );
 }
 
+/**
+ * Staff releasing a settled season's sample for printing, or withdrawing the
+ * release (beeline-3vs.7). The release is offered only where it would change
+ * something: a sample, of any season, with no release and bees that have no
+ * label on paper, and whose count does not follow its observation. Where one stands, the page says who wrote it and when, and offers to
+ * withdraw it.
+ */
+function PrintRelease({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.printRelease;
+  const action = `/samples/${sample.sample_id}/release-labels`;
+  const latest = sample.print_release;
+  if (latest !== null && latest.action === "release") {
+    // One sentence, for what the sample is waiting for now. An active season's sample prints by the usual rules, so it says nothing.
+    const releasedSentence = !sample.settled
+      ? null
+      : !sample.has_point
+        ? t.awaitingCoordinates
+        : sample.awaiting_place
+          ? t.awaitingPlace
+          : t.releasedHint;
+    return (
+      <>
+        <Meta block>
+          {t.released(latest.by, m.format.day(latest.at))}
+          {latest.reason !== null && <> {t.because(latest.reason)}</>}
+          {releasedSentence !== null && <> {releasedSentence}</>}
+        </Meta>
+        <Meta block>{t.withdrawHint}</Meta>
+        <form method="post" action={action}>
+          <input type="hidden" name="withdraw" value="1" />
+          <Button variant="outlined">{t.withdraw}</Button>
+        </form>
+      </>
+    );
+  }
+  // A withdrawal is still said, with who and when, above the offer to release again.
+  const withdrawn =
+    latest === null ? null : (
+      <Meta block>
+        {t.withdrawn(latest.by, m.format.day(latest.at))}
+        {latest.reason !== null && <> {t.because(latest.reason)}</>}
+      </Meta>
+    );
+  // A count that follows its observation is not staff's to vouch for (releaseLabels refuses it).
+  const follows = sample.inat_observation_id !== null && !sample.printed;
+  if (sample.labels_to_print === 0 || follows) return withdrawn;
+  return (
+    <>
+      {withdrawn}
+      <Meta block>{t.hint(sample.labels_to_print, sample.settled, sample.follows_point_when_released)}</Meta>
+      <form method="post" action={action} class="form-column">
+        <TextField id="release-note" name="note" label={t.note} />
+        <p class="row">
+          <Button variant="outlined">{t.release}</Button>
+        </p>
+      </form>
+    </>
+  );
+}
+
 /** The fix-it action: upstream where there is an observation, here where
  * there is not — and only for someone who actually collected it. */
 function SampleActions({ m, sample, trapEditHref, deleteHref }: { m: Messages; sample: SampleDetail; trapEditHref?: string; deleteHref?: string }) {
@@ -1075,6 +1135,7 @@ export function SamplePage({
           personLinks={admin}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} deleteHref={deleteHref} />
+        {admin && <PrintRelease m={m} sample={sample} />}
       </Card>
       <Card>
         <WhereCollected

@@ -270,6 +270,9 @@ export const SAMPLE_PUBLISHED: Publish<SampleDetail> = {
   host_current_name: true, host_family: true, host_common_name: true,
   host_standing: false, host_current_rank: false, host_split_within_name: false, host_split_within_rank: false,
   host_common_name_source: false,
+  // The release for printing (beeline-3vs.7) is what the page's staff form reads; it is not published, and the
+  // answer of the release-labels correction is how a program learns of it.
+  settled: false, print_release: false, labels_to_print: false, awaiting_place: false, has_point: false, follows_point_when_released: false,
 };
 export const SPECIMEN_PUBLISHED: Publish<Omit<SpecimenDetail, "sample">> = {
   specimen_id: true, specimen_number: true, field_number: true, disposition: true, remarks: true, remarks_by: true, remarks_on: true,

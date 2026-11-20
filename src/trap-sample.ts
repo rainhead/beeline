@@ -463,18 +463,42 @@ async function writeParts(conn: DuckDBConnection, id: number, s: TrapSample, wit
 }
 
 /**
+ * Staff releasing a sample for printing as they save it (beeline-3vs.7): the
+ * release is a row of its own, written in the save's own transaction unless
+ * one already stands. It is written in an active season too, where it changes
+ * nothing yet, so that a count staff set still prints if the sample is not
+ * printed before its season settles on 1 March (Peter, 2026-11-19: a count
+ * staff set prints whatever its season). `personId` is the staff member, who
+ * may be no person (null).
+ */
+export interface StaffRelease {
+  personId: number | null;
+}
+
+async function releaseByStaff(conn: DuckDBConnection, sampleId: number, by: StaffRelease): Promise<void> {
+  await conn.run(
+    `INSERT INTO sample_print_release_event (sample_id, action, person_id)
+     SELECT s.entity_id, 'release', $2 FROM sample s
+     WHERE s.entity_id = $1 AND NOT EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = s.entity_id)`,
+    [sampleId, by.personId] as never,
+  );
+}
+
+/**
  * Write a new trap sample; its id. Behind the print runs' lock, on the print connection. `within` is run, with the
  * new id and its number, in the same transaction as the sample, so that whatever it writes stands or falls with the
  * sample: the apply-uploads job records the row's outcome there, so a crash cannot leave a sample that no upload row
  * names. With `anyKind` a series number that any other sample has, of any kind,
- * counts as taken (the upload path; the trap form counts trap samples only).
+ * counts as taken (the upload path; the trap form counts trap samples only). With `staff`, staff entered it and
+ * the release is written with it, in the same transaction and in any season: staff entering a sample is staff
+ * saying its bees need labels. The upload path never passes `staff` (see src/app/samples-upload-apply.ts).
  */
 export function createTrapSample(
   conn: DuckDBConnection,
   s: TrapSample,
   enteredBy: number | null,
   within?: (id: number, sampleNumber: string) => Promise<void>,
-  options: { anyKind?: boolean } = {},
+  options: { anyKind?: boolean; staff?: StaffRelease } = {},
 ): Promise<number | "taken"> {
   return withPrintRunLock(async () => {
     const number = s.sample_number;
@@ -491,6 +515,7 @@ export function createTrapSample(
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);
       await writeParts(conn, id, s);
       await within?.(id, number);
+      if (options.staff !== undefined) await releaseByStaff(conn, id, options.staff);
       return id;
     });
   });
@@ -515,6 +540,8 @@ export const DELETED_WITH_SAMPLE = [
   "sample_locality_override",
   "sample_location",
   "sample_location_override",
+  "sample_place_stamped",
+  "sample_print_release_event",
   "sample_qc_waiver",
 ] as const;
 
@@ -639,15 +666,22 @@ export async function loadTrapSample(conn: DuckDBConnection, id: number): Promis
  * Rewrite an entered sample from its form. Refused once its labels are on
  * paper or frozen into a run, since the run already holds the label text.
  */
-export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSample): Promise<"saved" | "printed" | "taken"> {
+export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSample, staff?: StaffRelease): Promise<"saved" | "printed" | "taken"> {
   return withPrintRunLock(async () => {
     const current = await loadTrapSample(conn, id);
     if (current === null || !current.editable) return "printed";
     if (await numberTaken(conn, s.sample_number, id)) return "taken";
     return inTransaction(conn, async () => {
+      // Staff changing a settled season's count release it, read here, inside the
+      // lock and the transaction, against the count the save is replacing.
+      const before = (await rows<{ specimen_count: number | null }>(conn, `SELECT specimen_count FROM sample WHERE entity_id = $1`, [id]))[0]?.specimen_count;
       // The satellites are replaced rather than updated: none is referenced,
       // and the sample row itself keeps its id (beeline-6e9).
       await conn.run(`DELETE FROM sample_collector WHERE sample_id = $1`, [id] as never);
+      // The save rewrites the place and the point, so the nightly's stamp has
+      // not looked at what is there now (sample_place_stamped, schema/038): a
+      // released sample waits for it again before it prints.
+      await conn.run(`DELETE FROM sample_place_stamped WHERE sample_id = $1`, [id] as never);
       // A point staff set from the sample's page goes with the location the
       // form is rewriting, whose point is the new one (beeline-kgyd.4.2).
       await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [id] as never);
@@ -662,6 +696,7 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
       // An atlas a person assigned stands; otherwise it follows the state.
       const assigned = await rows<{ n: number }>(conn, `SELECT count(*)::INTEGER AS n FROM sample_atlas WHERE sample_id = $1`, [id]);
       await writeParts(conn, id, s, (assigned[0]?.n ?? 0) === 0);
+      if (staff !== undefined && before !== s.specimen_count) await releaseByStaff(conn, id, staff);
       return "saved" as const;
     });
   });

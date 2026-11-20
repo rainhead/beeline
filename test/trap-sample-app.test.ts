@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { InatClient } from "../src/app/auth.js";
+import { en } from "../src/app/messages/en.js";
 import { createApp } from "../src/app/server.js";
+import { deriveAreas } from "../src/derive-area.js";
 import { createKysely } from "../src/db.js";
 import { duckdbReader } from "../src/person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
-import { createMemoryDb, CURRENT_SEASON, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildTestGazetteer, createMemoryDb, CURRENT_SEASON, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 
 /**
  * Entering and editing a trap sample through the app (beeline-3vs.2): who
@@ -35,6 +40,12 @@ async function trapApp() {
   await insertCleanSample(conn, { kind: "'trap'", sample_number: "'OBAS-00600'", collector_id: String(people.otherTrapper) });
   const db = createKysely(instance);
   const paths = await scratchPaths();
+  // What the nightly does: find the areas against a gazetteer and stamp each sample's place from its point.
+  const gazetteerPath = join(await mkdtemp(join(tmpdir(), "trap-sample-gazetteer-")), "gazetteer.duckdb");
+  const stamp = async () => {
+    await buildTestGazetteer(gazetteerPath, "build-trap");
+    await deriveAreas(conn, gazetteerPath, { stampCounties: true });
+  };
   const as = (who: keyof typeof people) => {
     const app = createApp({
       ...paths,
@@ -48,7 +59,7 @@ async function trapApp() {
     const post = (path: string, body: URLSearchParams) => app.request(path, { method: "POST", headers: { origin: ORIGIN }, body });
     return { app, post };
   };
-  return { conn, as, paths };
+  return { conn, as, paths, stamp };
 }
 
 const entry = (over: Record<string, string> = {}) => {
@@ -108,6 +119,72 @@ describe("entering a trap sample", () => {
     expect(await (await as("staffer").app.request(location)).text()).not.toContain(`action="/samples/${id}/locality"`);
     // Somebody who may not enter trap samples is not offered the edit.
     expect(await (await as("netter").app.request(location)).text()).not.toContain(`/samples/${id}/trap`);
+  });
+
+  const old = { date_start: `${SETTLED_SEASON}-06-16`, date_end: `${SETTLED_SEASON}-07-12`, specimen_count: "4", latitude: "44.50", longitude: "-123.60" };
+  const idOf = (res: Response) => Number(res.headers.get("location")!.split("/")[2]);
+
+  it("releases a settled season's sample when staff enter it, which prints once the nightly has placed it, and not when a trapper does", async () => {
+    const { as, conn, stamp } = await trapApp();
+    const byStaff = idOf(await as("staffer").post("/trap-samples/new", entry({ ...old })));
+    const byTrapper = idOf(await as("trapper").post("/trap-samples/new", entry({ ...old, sample_number: "OBAS-00659" })));
+    // An active season's sample prints without one, but staff entering it write one all the
+    // same, so it still prints if it settles on 1 March before a run takes it.
+    const active = idOf(await as("staffer").post("/trap-samples/new", entry({ sample_number: "OBAS-00661", specimen_count: "4" })));
+    expect(await rows(conn, `SELECT sample_id, action FROM sample_print_release_event ORDER BY sample_id`)).toEqual([
+      [byStaff, "release"],
+      [active, "release"],
+    ]);
+    // The entered sample follows its point for county and state, so it waits for the nightly's stamp.
+    const pendingIds = async () =>
+      (await rows(conn, `SELECT sample_id FROM pending_print_sample WHERE sample_id IN (${byStaff}, ${byTrapper}, ${active})`)).map(([id]) => id as number).sort((x, y) => x - y);
+    expect(await pendingIds()).toEqual([active]);
+    expect(await rows(conn, `SELECT county FROM sample WHERE entity_id = ${byStaff}`)).toEqual([["Malheur"]]);
+    // The nightly finds the areas and stamps: the point is in Benton County, and the sample prints.
+    await stamp();
+    expect(await rows(conn, `SELECT county FROM sample WHERE entity_id IN (${byStaff}, ${byTrapper}) ORDER BY entity_id`)).toEqual([["Benton"], ["Malheur"]]);
+    expect(await pendingIds()).toEqual([byStaff, active].sort((x, y) => x - y));
+  });
+
+  it("shows staff a note on the form that saving a settled season's sample releases its labels, an edit's note only about a new count, and shows it to nobody else", async () => {
+    const { as } = await trapApp();
+    const entering = en.trapSample.releasesLabelsNew;
+    // The blank form shows staff the note from the start, before any dates are typed,
+    // since a first save that succeeds goes straight to the sample.
+    const blank = async (who: "staffer" | "trapper") => (await as(who).app.request("/trap-samples/new")).text();
+    expect(await blank("staffer")).toContain(entering);
+    expect(await blank("trapper")).not.toContain(entering);
+    // A save with no latitude comes back to the form, still with the note, whatever its season.
+    const posted = async (who: "staffer" | "trapper", over: Record<string, string>) =>
+      (await as(who).post("/trap-samples/new", entry({ ...over, latitude: "" }))).text();
+    expect(await posted("staffer", old)).toContain(entering);
+    expect(await posted("staffer", { date_start: `${CURRENT_SEASON}-06-16` })).toContain(entering);
+    expect(await posted("trapper", old)).not.toContain(entering);
+    // The edit form promises a release only for a new count, never for any save.
+    const id = idOf(await as("trapper").post("/trap-samples/new", entry({ ...old, sample_number: "OBAS-00662" })));
+    const editing = en.trapSample.releasesLabelsEdit.replaceAll("'", "&#39;");
+    const form = async (who: "staffer" | "trapper") => (await as(who).app.request(`/samples/${id}/trap`)).text();
+    expect(await form("staffer")).toContain(editing);
+    expect(await form("staffer")).not.toContain(entering);
+    expect(await form("trapper")).not.toContain(editing);
+  });
+
+  it("releases a settled season's sample when staff change its count on the form, and not when they leave it", async () => {
+    const { as, conn } = await trapApp();
+    const staff = as("staffer");
+    const events = async (id: number) => rows(conn, `SELECT count(*) FROM sample_print_release_event WHERE sample_id = ${id}`);
+    // Entered by a trapper: held back until staff say otherwise.
+    const id = idOf(await as("trapper").post("/trap-samples/new", entry({ ...old })));
+    expect(await events(id)).toEqual([[0n]]);
+    // A staff save that leaves the count alone writes nothing, whatever else it changes.
+    expect((await staff.post(`/samples/${id}/trap`, entry({ ...old, locality: "Elsewhere" }))).status).toBe(302);
+    expect(await events(id)).toEqual([[0n]]);
+    expect((await staff.post(`/samples/${id}/trap`, entry({ ...old, specimen_count: "9" }))).status).toBe(302);
+    expect(await events(id)).toEqual([[1n]]);
+    // A trapper editing their own sample's count releases nothing.
+    const other = idOf(await as("trapper").post("/trap-samples/new", entry({ ...old, sample_number: "OBAS-00660" })));
+    expect((await as("trapper").post(`/samples/${other}/trap`, entry({ ...old, sample_number: "OBAS-00660", specimen_count: "9" }))).status).toBe(302);
+    expect(await events(other)).toEqual([[0n]]);
   });
 
   it("refuses a save with what was wrong, keeping what was typed", async () => {

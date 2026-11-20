@@ -77,6 +77,29 @@ CREATE TABLE sample_hold (
 COMMENT ON TABLE sample_hold IS 'A sample staff are holding back from printing (beeline-plu). Re-derived at the end of observation promotion from data/sample-overlay.csv, the durable record. qc_rule_staff_hold (schema/120) makes each row a blocking finding, with the reason as its details: the note is for the collector, who may have something to fix, and for the printer, who needs to know why the sample is not in the run.';
 COMMENT ON COLUMN sample_hold.held_by IS 'Whoever placed it, resolved from the overlay row''s author login through inat_account at apply time; null where the login no longer resolves.';
 
+-- A sample from a settled season prints only once staff have released it
+-- (beeline-3vs.7). It sits here, beside sample_hold, as the other staff
+-- decision about whether a sample prints: a hold stops an active sample, a
+-- release lets a settled one through. Releases and withdrawals are rows of
+-- their own and are never changed or deleted, so the record of who decided
+-- what, and when, stays whole. The view of the samples whose latest event is a
+-- release is sample_print_release (schema/102), and what reads it is there too
+-- (settled_unreleased_sample).
+CREATE TABLE sample_print_release_event (
+  entity_id INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  sample_id INTEGER NOT NULL REFERENCES sample(entity_id),
+  action    TEXT NOT NULL CHECK (action IN ('release', 'withdraw')),
+  person_id INTEGER REFERENCES person(entity_id),
+  decided_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+  reason    TEXT
+);
+COMMENT ON TABLE sample_print_release_event IS 'One staff decision that a sample from a settled season may print its labels (a release), or may not any more (a withdrawal), as a row of its own that is never changed (beeline-3vs.7). A sample''s standing is its latest event, the one written last: the highest entity_id, which comes from a sequence (sample_print_release, schema/102). It matters only once the season has settled: an active season''s samples print without one. Written straight to the store, with no overlay file, because production is never promoted again (ADR 0006), so a development store rebuilt from the old records loses it. No sample with a standing release follows an observation''s count, which promotion would otherwise put back (it does so for a sample that has an observation and no label on paper): setSpecimenCount and releaseLabels refuse such a sample, a sample entered in Beeline has no observation, and minting links no observation to an entered or released sample (sample_mint_free_link, schema/108). Not a record of what printed: printed_sample is.';
+COMMENT ON COLUMN sample_print_release_event.entity_id IS 'A draw from entity_id_seq, not an identity anyone refers to: the order the rows were written in, which makes a sample''s latest event the one with the highest, as minted_field_number.entity_id does for a specimen''s latest number (ADR 0008 §6); decided_at is for people and is not compared.';
+COMMENT ON COLUMN sample_print_release_event.action IS 'A release lets the sample print once its season has settled; a withdrawal takes that back. Withdrawing is refused while the sample''s labels are in a print run that has not printed (releaseLabels, src/app/sample-corrections.ts).';
+COMMENT ON COLUMN sample_print_release_event.person_id IS 'The person who decided it; null for a staff login that is no person, as sample_hold.held_by and sample_entry.entered_by are.';
+COMMENT ON COLUMN sample_print_release_event.decided_at IS 'When the decision was written, UTC.';
+COMMENT ON COLUMN sample_print_release_event.reason IS 'What staff said, or null when they said nothing.';
+
 -- Waiving these would print something false, or override a decision that is
 -- an atlas's rather than a judgement about one sample (Peter, 2026-10-25):
 -- a shifted point printed as the true one, a taxon-obscured point an atlas

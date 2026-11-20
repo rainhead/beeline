@@ -152,7 +152,14 @@ export async function currentLocationOf(conn: DuckDBConnection, sampleId: number
 
 /** Write a point onto sample_location, keeping or inserting the row. */
 async function writeLocation(conn: DuckDBConnection, sampleId: number, p: OverlayPoint, source: string): Promise<void> {
-  const exists = (await rows(conn, `SELECT 1 FROM sample_location WHERE sample_id = $1`, [sampleId])).length > 0;
+  const existing = await rows(conn, `SELECT latitude, longitude FROM sample_location WHERE sample_id = $1`, [sampleId]);
+  const exists = existing.length > 0;
+  // A point that moves has not been looked at by the nightly's county stamp
+  // (sample_place_stamped, schema/038): a released sample waits for it again.
+  // A replay of the same point, as every promotion does, leaves the record.
+  if (exists && (Number(existing[0]![0]) !== p.latitude || Number(existing[0]![1]) !== p.longitude)) {
+    await conn.run(`DELETE FROM sample_place_stamped WHERE sample_id = $1`, [sampleId] as never);
+  }
   if (exists) {
     // The elevation is left where it is: sample_elevation_stale notices the
     // move and the derive job re-reads it (schema/170, beeline-x5c).
@@ -266,6 +273,7 @@ export async function applyStaffPoint(
       if (printed) return;
       const b = base[0]!;
       if (b[0] === null) {
+        await conn.run(`DELETE FROM sample_place_stamped WHERE sample_id = $1`, [sampleId] as never);
         await conn.run(`DELETE FROM sample_location WHERE sample_id = $1`, [sampleId] as never);
       } else {
         await writeLocation(

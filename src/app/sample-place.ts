@@ -161,6 +161,14 @@ export async function heldByUnprintedRun(db: Kysely<Database>, sampleId: number)
   return Boolean(found.rows[0]?.e);
 }
 
+/**
+ * The nightly's stamp has not looked at a place that was just rewritten
+ * (sample_place_stamped, schema/038), so a released sample waits for it again.
+ */
+async function forgetPlaceStamp(trx: Kysely<Database>, sampleId: number): Promise<void> {
+  await sql`DELETE FROM sample_place_stamped WHERE sample_id = ${sampleId}`.execute(trx);
+}
+
 async function atlasOf(db: Kysely<Database>, sampleId: number): Promise<string | null> {
   const found = await sql<{ code: string | null }>`
     SELECT p.code FROM sample_atlas sa LEFT JOIN program p ON p.entity_id = sa.atlas_id WHERE sa.sample_id = ${sampleId}`.execute(db);
@@ -211,12 +219,14 @@ export function setStaffPlace(db: Kysely<Database>, correctionsPath: string, sam
           correctionsPath,
           sample,
           { values, bases: {}, note: input.note, author: input.author },
+          // applySampleEdit forgets the stamp record, as it does for any edit of the place.
           { inTransaction: async (trx) => (regionChanged ? reassignAtlas(trx, sampleId) : undefined) },
         );
         // fromOldRecords found the records the plan reads, so neither can happen; said rather than assumed.
         if (written.outcome !== "saved") return { outcome: "unchanged" };
       } else {
         await db.transaction().execute(async (trx) => {
+          await forgetPlaceStamp(trx, sampleId);
           await trx
             .updateTable("sample")
             .set(Object.fromEntries(changed.map((f) => [f, next[f]])))

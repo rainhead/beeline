@@ -78,6 +78,14 @@ export interface ScopeOption {
 export interface ScopeCounts {
   program: { samples: number; labels: number; reprints: number };
   atlases: ScopeOption[];
+  /**
+   * Released samples with labels still to print that wait for the nightly's
+   * county stamp to work out their county and state (sample_awaiting_place,
+   * schema/150), whatever their scope. If the nightly's areas step cannot run
+   * (the gazetteer is missing or out of date), these wait for ever, and this
+   * count is where that shows.
+   */
+  awaiting_place: number;
 }
 
 export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
@@ -106,7 +114,16 @@ export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
     LEFT JOIN pending_print_sample p ON p.sample_id = sa.sample_id
     GROUP BY a.entity_id, a.code, ab.abbreviation, a.name, ap.atlas_id
     ORDER BY a.entity_id`.execute(db);
+  // Only those with bees still to label: a released sample with every label already
+  // individuated has nothing to wait for. Counted as pending_print_sample counts a sample's labels.
+  const awaiting = await sql<{ n: number }>`
+    SELECT CAST(count(*) AS INTEGER) AS n
+    FROM sample_awaiting_place w
+    JOIN sample s ON s.entity_id = w.sample_id
+    WHERE s.specimen_count > coalesce((SELECT count(*) FROM individuated_specimen i
+                                       WHERE i.sample_id = s.entity_id AND i.specimen_number <= s.specimen_count), 0)`.execute(db);
   return {
+    awaiting_place: Number(awaiting.rows[0]?.n ?? 0),
     program: {
       samples: Number(program.samples),
       labels: Number(program.labels ?? 0),
@@ -257,8 +274,12 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
   if (row === undefined) return null;
   // A hold placed after the freeze does not change the run: it is named
   // here and the printer decides whether to cancel and prepare again, which
-  // leaves the held sample out (Peter, 2026-10-25). A past season's labels
-  // print with the run regardless, so they are not named.
+  // leaves the held sample out (Peter, 2026-10-25). Every sample is named
+  // but one from a settled season that staff have not released for printing
+  // (settled_unreleased_sample): its labels print with the run regardless. It
+  // used to be every sample of the current season, which left out a hold on
+  // last season's samples in January and February, when that season is still
+  // active.
   const held =
     row.state === "prepared" || row.state === "approved"
       ? (
@@ -270,10 +291,8 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
             JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
             JOIN person p ON p.entity_id = pc.person_id
             JOIN sample_hold h ON h.sample_id = s.entity_id
-            JOIN sample_season ss ON ss.sample_id = s.entity_id
-            CROSS JOIN season
             WHERE pl.print_run_id = ${printRunId}
-              AND ss.season >= season.current_season
+              AND NOT EXISTS (SELECT 1 FROM settled_unreleased_sample u WHERE u.sample_id = s.entity_id)
             ORDER BY s.sample_number, s.entity_id`.execute(db)
         ).rows.map((h) => ({ ...h, sample_id: Number(h.sample_id) }))
       : [];

@@ -1,6 +1,6 @@
 import type { Messages } from "../messages/index.js";
 import { TRAP_METHODS, type FieldProblems, type TrapSampleForm } from "../../trap-sample.js";
-import { Button, Callout, Field, PageHeader, TextField } from "./components/index.js";
+import { Button, Callout, Field, Meta, PageHeader, TextField } from "./components/index.js";
 import { Combobox } from "./components/combobox.js";
 
 /** How many collector boxes the form offers: the old records name at most three. */
@@ -19,6 +19,7 @@ export function TrapSampleFormPage({
   collectorNames,
   action,
   sampleId,
+  releasesLabels = false,
 }: {
   m: Messages;
   form: TrapSampleForm;
@@ -27,6 +28,8 @@ export function TrapSampleFormPage({
   action: string;
   /** The sample being edited; absent when entering a new one. */
   sampleId?: number;
+  /** Staff saving a sample from a settled season: the save releases its labels for printing (beeline-3vs.7). */
+  releasesLabels?: boolean;
 }) {
   const t = m.trapSample;
   const problem = (field: keyof TrapSampleForm) =>
@@ -73,6 +76,7 @@ export function TrapSampleFormPage({
         <TextField id="trap-state_province" name="state_province" label={t.fields.stateProvince} value={form.state_province} hint={problem("state_province") ?? t.hints.stateProvince} />
         <TextField id="trap-county" name="county" label={t.fields.county} value={form.county} hint={t.hints.county} />
         <TextField id="trap-locality" name="locality" label={t.fields.locality} value={form.locality} hint={t.hints.locality} />
+        {releasesLabels && <Meta block>{sampleId === undefined ? t.releasesLabelsNew : t.releasesLabelsEdit}</Meta>}
         <p class="row">
           <Button>{sampleId === undefined ? t.create : t.save}</Button>
           <a href={sampleId === undefined ? "/samples" : `/samples/${sampleId}`}>{t.cancel}</a>

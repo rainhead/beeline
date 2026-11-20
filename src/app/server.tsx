@@ -190,6 +190,7 @@ import {
   readerFor,
   recordTrapChange as recordTrapSampleChange,
   setCoordinates,
+  releaseLabels,
   setMethod,
   setTrapCount,
   setPlace,
@@ -1483,6 +1484,14 @@ export function createApp({
     }
     return null;
   };
+  // Whether a typed date is in a settled season (schema/102), for the note staff are shown.
+  const dateIsSettled = async (day: string): Promise<boolean> => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+    const found = await sql<{ settled: boolean }>`SELECT CAST(${day} AS DATE) < active_since AS settled FROM season`.execute(db).catch(() => null);
+    return found?.rows[0]?.settled === true;
+  };
+  // Staff saving a trap sample release a settled season's labels with it (src/trap-sample.ts), as setSpecimenCount does.
+  const staffRelease = (c: Context<AppEnv>) => (c.get("admin") ? { personId: c.get("session").personId } : undefined);
   const trapPage = async (c: Context<AppEnv>, title: string, form: TrapSampleForm, problems: FieldProblems, action: string, sampleId?: number) =>
     page(
       c,
@@ -1494,6 +1503,9 @@ export function createApp({
         collectorNames={await collectorChoices(conn!)}
         action={action}
         sampleId={sampleId}
+        // A new sample's form shows staff the note from the start, worded for either season,
+        // since its dates are blank until they type them; an edit shows it on settled dates.
+        releasesLabels={c.get("admin") && (sampleId === undefined || (await dateIsSettled(form.date_start)))}
       />,
     );
   const recordTrapChange = (c: Context<AppEnv>, sampleId: number, made: { created?: boolean } = {}) =>
@@ -1529,7 +1541,7 @@ export function createApp({
     if ("problems" in checked) {
       return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, checked.problems, "/trap-samples/new"), 400);
     }
-    const id = await createTrapSample(printWriter!, checked.sample, c.get("session").personId);
+    const id = await createTrapSample(printWriter!, checked.sample, c.get("session").personId, undefined, { staff: staffRelease(c) });
     // Somebody else saved this number since the form was checked.
     if (id === "taken") {
       const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
@@ -1574,7 +1586,7 @@ export function createApp({
     // place editor writes a trap sample's locality too, and without a turn
     // here one author's history entry could record the other's value.
     const updated = await onSample(id, async () => {
-      const outcome = await updateTrapSample(printWriter!, id, checked.sample);
+      const outcome = await updateTrapSample(printWriter!, id, checked.sample, staffRelease(c));
       if (outcome !== "printed" && outcome !== "taken") await recordTrapChange(c, id);
       return outcome;
     });
@@ -1847,6 +1859,35 @@ export function createApp({
         return c.text(m.record.sample.staffCoordinates.busy, 409);
       case "invalid":
         return c.text(result.problem, 400);
+      default:
+        return unreachable(result);
+    }
+  });
+
+  // Staff release a settled season's sample for printing, or take the release
+  // back (beeline-3vs.7); the page sends `withdraw` for the second.
+  app.post("/samples/:id/release-labels", async (c) => {
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const result = await releaseLabels(corrective, actorOf(c), id, async () => {
+      const body = await c.req.parseBody();
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+      return { note: field("note"), withdraw: field("withdraw") !== "" };
+    });
+    if (result.ok) return c.redirect(sampleHref(id));
+    switch (result.refusal) {
+      case "impersonating":
+        return c.text(m.errors.readOnlyImpersonating, 403);
+      case "not_admin":
+        return c.text("Admins only.", 403);
+      case "not_found":
+        return errorResponse(c, "notFound");
+      case "busy":
+        return c.text(m.record.sample.printRelease.busy, 409);
+      case "labels_in_run":
+        return c.text(m.record.sample.printRelease.labelsInRun, 409);
+      case "count_follows_observation":
+        return c.text(m.record.sample.printRelease.countFollowsObservation, 409);
       default:
         return unreachable(result);
     }

@@ -11,6 +11,7 @@ import {
   actorFor,
   editSample,
   holdSample,
+  releaseLabels,
   setCollectors,
   setCoordinates,
   setPlace,
@@ -28,6 +29,8 @@ import {
   type EditSampleInput,
   type EditSampleResult,
   type QcDecisionCorrectionResult,
+  type ReleaseLabelsInput,
+  type ReleaseLabelsResult,
   type SamplePlaceResult,
   type SetPlaceResult,
   type SpecimenCountResult,
@@ -132,6 +135,18 @@ const REFUSALS = {
     error: "conflict",
     message: "The sample's collectors changed while this request was being worked out. Nothing was done. Read the sample again and send the list you mean.",
   },
+  count_follows_observation: {
+    status: 409,
+    error: "count_follows_observation",
+    message:
+      "This sample's specimen count comes from its iNaturalist observation, and a past season's count copied from iNaturalist is not printed. Nothing was done.",
+  },
+  labels_in_run: {
+    status: 409,
+    error: "labels_in_run",
+    message:
+      "This sample's labels are in a print run that has not printed, which would keep them. Cancel the run first, or let it print. Nothing was done.",
+  },
   unavailable: { status: 503, error: "unavailable", message: "This Beeline cannot make this correction." },
 } as const satisfies Record<string, { status: ContentfulStatusCode; error: string; message: string }>;
 
@@ -147,6 +162,7 @@ export type AnyFailure = Extract<
   | CollectorsCorrectionResult
   | TrapCountResult
   | SpecimenCountResult
+  | ReleaseLabelsResult
   | TakeObservationLocationCorrectionResult
   | QcDecisionCorrectionResult,
   { ok: false }
@@ -180,6 +196,8 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "number_taken":
     case "observation_tied":
     case "conflict":
+    case "count_follows_observation":
+    case "labels_in_run":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
       return apiError(c, r.status, r.error, r.message);
@@ -547,7 +565,17 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     { count: "text_or_number", note: "string" },
     ["count"],
     setSpecimenCount,
-    (r) => ({ outcome: r.outcome, specimen_count: r.specimen_count, pending: r.pending }),
+    (r) => ({ outcome: r.outcome, specimen_count: r.specimen_count, pending: r.pending, released: r.released, awaiting_place: r.awaiting_place }),
+  );
+
+  // Staff release a settled season's sample for printing, or withdraw the release (beeline-3vs.7).
+  endpoint(
+    "release-labels",
+    (b): ReleaseLabelsInput => ({ note: (b.note as string | undefined) ?? "", withdraw: b.withdraw === true }),
+    { note: "string", withdraw: "boolean" },
+    [],
+    releaseLabels,
+    (r) => ({ outcome: r.outcome, pending: r.pending, released: r.released, awaiting_place: r.awaiting_place }),
   );
 
   endpoint(

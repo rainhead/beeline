@@ -9,7 +9,7 @@ import {
   updateTrapSample,
   type TrapSampleForm,
 } from "../src/trap-sample.js";
-import { createMemoryDb, CURRENT_SEASON, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, CURRENT_SEASON, insertCleanSample, rows, SETTLED_SEASON } from "./helpers.js";
 
 let conn: DuckDBConnection;
 
@@ -91,6 +91,68 @@ describe("entering and editing", () => {
     expect(await rows(conn, `SELECT a.code FROM sample_atlas sa JOIN program a ON a.entity_id = sa.atlas_id WHERE sa.sample_id = ${id}`)).toEqual([["OBA"]]);
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_entry WHERE sample_id = ${id}`)).toEqual([[1]]);
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_primary_collector_invalid`)).toEqual([[0]]);
+  });
+
+  it("writes a release when staff enter a sample, in any season, and not when a trapper does", async () => {
+    const staff = await personId("Dan O'Loughlin");
+    const settled = { date_start: `${SETTLED_SEASON}-06-01`, date_end: `${SETTLED_SEASON}-06-20` };
+    const make = async (number: string, dates: Record<string, string>, by?: { personId: number }) => {
+      const checked = await checkTrapSample(conn, form({ sample_number: number, ...dates }));
+      if (!("sample" in checked)) throw new Error("unexpected problems");
+      return (await createTrapSample(conn, checked.sample, staff, undefined, { staff: by })) as number;
+    };
+    const byStaff = await make("OBAS-20301", settled, { personId: staff });
+    const byTrapper = await make("OBAS-20302", settled);
+    // An active season's sample prints without a release, but one is written for it all
+    // the same, so it still prints if it settles on 1 March before a run takes it.
+    const active = await make("OBAS-20303", { date_start: `${CURRENT_SEASON}-06-01`, date_end: `${CURRENT_SEASON}-06-20` }, { personId: staff });
+    expect(await rows(conn, `SELECT sample_id, action, person_id FROM sample_print_release_event ORDER BY sample_id`)).toEqual([
+      [byStaff, "release", staff],
+      [active, "release", staff],
+    ]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_print_release WHERE sample_id = ${byTrapper}`)).toEqual([[0n]]);
+  });
+
+  it("releases a settled season's sample when staff change its count in an edit, and only then", async () => {
+    const staff = await personId("Dan O'Loughlin");
+    const settled = { date_start: `${SETTLED_SEASON}-06-01`, date_end: `${SETTLED_SEASON}-06-20` };
+    const checked = await checkTrapSample(conn, form({ sample_number: "OBAS-20311", specimen_count: "4", ...settled }));
+    if (!("sample" in checked)) throw new Error("unexpected problems");
+    const id = (await createTrapSample(conn, checked.sample, staff)) as number;
+    const edit = async (over: Record<string, string>, by?: { personId: number }) => {
+      const again = await checkTrapSample(conn, form({ sample_number: "OBAS-20311", specimen_count: "4", ...settled, ...over }), id);
+      if (!("sample" in again)) throw new Error("unexpected problems");
+      return updateTrapSample(conn, id, again.sample, by);
+    };
+    const events = async () => rows(conn, `SELECT count(*) FROM sample_print_release_event WHERE sample_id = ${id}`);
+    // A save that leaves the count alone releases nothing, staff or not; a trapper changing it releases nothing.
+    expect(await edit({ locality: "Elsewhere" }, { personId: staff })).toBe("saved");
+    expect(await edit({ specimen_count: "6" })).toBe("saved");
+    expect(await events()).toEqual([[0n]]);
+    // Staff changing it release the sample, once.
+    expect(await edit({ specimen_count: "9" }, { personId: staff })).toBe("saved");
+    expect(await events()).toEqual([[1n]]);
+    expect(await edit({ specimen_count: "10" }, { personId: staff })).toBe("saved");
+    expect(await events()).toEqual([[1n]]);
+  });
+
+  it("forgets that the nightly's stamp looked at a released sample when a save rewrites its place", async () => {
+    const staff = await personId("Dan O'Loughlin");
+    const settled = { date_start: `${SETTLED_SEASON}-06-01`, date_end: `${SETTLED_SEASON}-06-20` };
+    const first = await checkTrapSample(conn, form({ sample_number: "OBAS-20321", specimen_count: "4", ...settled }));
+    if (!("sample" in first)) throw new Error("unexpected problems");
+    const id = (await createTrapSample(conn, first.sample, staff, undefined, { staff: { personId: staff } })) as number;
+    const pending = async () => rows(conn, `SELECT sample_id FROM pending_print_sample WHERE sample_id = ${id}`);
+    // The nightly looked at it at its present point after the release: it is pending.
+    await conn.run(`INSERT INTO sample_place_stamped (sample_id, latitude, longitude, stamped_at)
+                    SELECT sample_id, latitude, longitude, current_timestamp + INTERVAL 1 MINUTE FROM sample_location WHERE sample_id = ${id}`);
+    expect(await pending()).toEqual([[id]]);
+    // Retyping the county leaves the point where it was, so the stamp's record would still match it.
+    const again = await checkTrapSample(conn, form({ sample_number: "OBAS-20321", specimen_count: "4", county: "Harney", ...settled }), id);
+    if (!("sample" in again)) throw new Error("unexpected problems");
+    expect(await updateTrapSample(conn, id, again.sample)).toBe("saved");
+    expect(await rows(conn, `SELECT count(*) FROM sample_place_stamped WHERE sample_id = ${id}`)).toEqual([[0n]]);
+    expect(await pending()).toEqual([]);
   });
 
   it("refuses the second of two saves that were both checked before either was written", async () => {

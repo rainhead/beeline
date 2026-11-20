@@ -72,6 +72,23 @@ COMMENT ON COLUMN sample_area_derivation.state_province IS 'What the point says 
 COMMENT ON COLUMN sample_area_derivation.county_inside IS 'TRUE where the point lies inside that county''s outline; FALSE where it lies outside every county and took the nearest within 1 km, on the shore (COUNTY_SHORE_M), which near a land border can be across it. NULL where there is no county.';
 COMMENT ON COLUMN sample_area_derivation.county_inside_100m IS 'TRUE where the point is at least 100 m inside that county: a square 200 m across, centred on it, lies wholly inside the outline. FALSE nearer the edge, and on the shore. 100 m is the program''s allowance for GPS error, so a point nearer may be in the next county or state; sample_place_disagreement leaves those out. The square''s corners reach about 141 m.';
 
+-- What the county stamp (src/derive-area.ts) has looked at: for a settled
+-- sample staff released for printing, that the stamp found the sample following
+-- its point and left its county, state and country as its point says, at the
+-- point and the time given (beeline-3vs.7). pending_print_sample waits for it
+-- (schema/150, sample_awaiting_place). The county's name is the gazetteer's and
+-- is not in the store, so "the place agrees with the point" cannot be read
+-- from the store alone; this row is how the store knows the stamp has run.
+CREATE TABLE sample_place_stamped (
+  sample_id  INTEGER PRIMARY KEY REFERENCES sample(entity_id),
+  latitude   DOUBLE NOT NULL,
+  longitude  DOUBLE NOT NULL,
+  stamped_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+);
+COMMENT ON TABLE sample_place_stamped IS 'Samples the county stamp has looked at, at which point and when: written only for a settled sample staff released for printing, whose place follows its point, once its point has been tested against the gazetteer (sample_area_derivation) and the stamp has run. Where the point lies in no single county there is nothing to stamp and the row says only that the stamp had the chance. sample_awaiting_place (schema/150) reads it.';
+COMMENT ON COLUMN sample_place_stamped.latitude IS 'With longitude: the point the sample had when the stamp looked; a row is evidence only while the sample is still there.';
+COMMENT ON COLUMN sample_place_stamped.stamped_at IS 'When the stamp looked, UTC; compared with when the release was written.';
+
 -- No foreign key to area: DuckDB updates a referenced row as a delete and an
 -- insert, and refuses the delete, so one would stop a new gazetteer build from
 -- ever refreshing an area's name or outline. The derive step writes an area

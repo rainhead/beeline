@@ -955,6 +955,39 @@ describe("deleting from an explicit list", () => {
     expect(en.trapSample.delete.refused.has_other_records).toBeTruthy();
   });
 
+  it("deletes a released sample's release events and place stamp with it, through the delete and through the undo", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1), newRow(2, { decimalLatitude: "44.2" })]);
+    await apply(f, location, { digest });
+    await applyPending(deps(f));
+    const ids = ((await rows(f.conn, `SELECT entity_id FROM sample WHERE sample_number IN ('OBAS-00011', 'OBAS-00012') ORDER BY sample_number`)) as Array<[number]>).map((r) => r[0]);
+    for (const id of ids) {
+      await f.conn.run(`INSERT INTO sample_print_release_event (sample_id, action, person_id) VALUES (${id}, 'release', ${f.staffer})`);
+      await f.conn.run(`INSERT INTO sample_print_release_event (sample_id, action, person_id) VALUES (${id}, 'withdraw', ${f.staffer})`);
+      await f.conn.run(`INSERT INTO sample_print_release_event (sample_id, action, person_id) VALUES (${id}, 'release', ${f.staffer})`);
+      await f.conn.run(`INSERT INTO sample_place_stamped (sample_id, latitude, longitude) VALUES (${id}, 44.5, -123.2)`);
+    }
+    const left = (id: number) =>
+      rows(f.conn, `SELECT (SELECT count(*) FROM sample_print_release_event WHERE sample_id = ${id}), (SELECT count(*) FROM sample_place_stamped WHERE sample_id = ${id}), (SELECT count(*) FROM sample WHERE entity_id = ${id})`);
+    expect(await left(ids[0]!)).toEqual([[3n, 1n, 1n]]);
+    // The single delete.
+    expect(await deleteTrapSample(f.conn, ids[0]!, f.staffer)).toEqual({ deleted: "OBAS-00011" });
+    expect(await left(ids[0]!)).toEqual([[0n, 0n, 0n]]);
+    // The undo of the upload, which deletes what is left.
+    const done = await f.app.request(`${location}/delete-samples`, { method: "POST", headers: { origin: ORIGIN }, body: new FormData() });
+    expect(done.status).toBe(200);
+    expect(await left(ids[1]!)).toEqual([[0n, 0n, 0n]]);
+  });
+
+  it("writes no release for a settled-season sample an upload by staff made: staff release it from its page", async () => {
+    const f = await uploadFixture();
+    const { location, digest } = await offered(f, [newRow(1, { eventDate: `${SETTLED_SEASON}-07-10` })]);
+    await apply(f, location, { digest });
+    expect(await applyPending(deps(f))).toMatchObject({ created: 1 });
+    expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011' AND date_start < (SELECT active_since FROM season)`)).toEqual([[1n]]);
+    expect(await rows(f.conn, `SELECT count(*) FROM sample_print_release_event`)).toEqual([[0n]]);
+  });
+
   it("offers the Delete button for a deletion cut short, which has no entry mark", async () => {
     const f = await uploadFixture();
     const { location, digest } = await offered(f, [newRow(1)]);

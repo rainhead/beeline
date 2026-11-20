@@ -113,7 +113,8 @@ COMMENT ON VIEW pending_reprint IS 'Reprint requests waiting for a run: neither 
 -- staff hold, a field the label cannot be printed without, an obscured point
 -- with no true one behind it, or a taxon-obscured point its atlas has not
 -- said may print. Nothing from a settled season is excluded, unlike
--- pending_print_sample: a person asked for this label. And a reprint needs a
+-- pending_print_sample, which leaves out a settled sample staff have not
+-- released: a person asked for this label. And a reprint needs a
 -- number to print: a request is refused for a specimen without one, so this
 -- only matters if its number is taken away after it was asked for.
 CREATE VIEW printable_reprint AS
@@ -241,8 +242,9 @@ COMMENT ON VIEW printed_label_out_of_date IS 'Labels in a run not yet printed (a
 -- ask whether the sample can print, so a sample held back by a flag is here,
 -- which is the question staff ask of it: what still needs labels, and (with
 -- the Flags filter) what is stopping it. A specimen in a run that has not
--- printed is still waiting. Settled samples are left out, as they are from
--- printing: nothing from a settled season prints, so none of it is waiting.
+-- printed is still waiting. A settled sample is left out unless staff have
+-- released it, as it is from printing (schema/102, sample_print_release): what
+-- never prints is not waiting.
 -- Specimens numbered above the count do not count against it, as in
 -- pending_print_sample (qc_rule_count_below_printed names them).
 CREATE VIEW sample_labels_waiting AS
@@ -257,5 +259,5 @@ LEFT JOIN (
   GROUP BY o.sample_id
 ) paper ON paper.sample_id = s.entity_id
 WHERE s.specimen_count > coalesce(paper.n, 0)
-  AND NOT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id);
-COMMENT ON VIEW sample_labels_waiting IS 'Samples in an active season with specimens whose labels are not on paper yet, and how many: printable or held back by a flag, and including specimens in a run that has not printed. The listings'' "waiting on labels" filter (beeline-3v33).';
+  AND NOT EXISTS (SELECT 1 FROM settled_unreleased_sample st WHERE st.sample_id = s.entity_id);
+COMMENT ON VIEW sample_labels_waiting IS 'Samples in an active season, or a settled one staff have released for printing, with specimens whose labels are not on paper yet, and how many: printable or held back by a flag, and including specimens in a run that has not printed. The listings'' "waiting on labels" filter (beeline-3v33).';

@@ -490,11 +490,14 @@ ${places ? `    UNION ALL
  *
  * - one still to print: it has an observation or was entered in Beeline (the
  *   rest are the old system's records, whose place is what the record or a
- *   staff correction says, ADR 0004), it is from an active season, and no
- *   label for it has printed. A printed sample's place is what its labels
+ *   staff correction says, ADR 0004), it is from an active season or a
+ *   settled one staff have released for printing (sample_print_release), and
+ *   no label for it has printed. A printed sample's place is what its labels
  *   say, as a printed locality is (CONTEXT.md, Upstream); a settled sample
- *   with no print recorded was most likely printed before Beeline kept the
- *   record, and will not print again (Peter, 2026-10-27).
+ *   that staff have not released, with no print recorded, was most likely
+ *   printed before Beeline kept the record, and will not print again (Peter,
+ *   2026-10-27). Releasing one is a plain write; it is not pending until this
+ *   stamp has looked at it (sample_place_stamped, below).
  * - or one whose point staff set (sample_location_override, beeline-942),
  *   printed or settled. A person said that is where the bees were caught, so
  *   a place that disagrees is the record contradicting itself, and on a
@@ -529,17 +532,16 @@ ${places ? `    UNION ALL
 /**
  * Whether a sample's county, state and country follow its point, as SQL over
  * a `sample` row named `s`: the first half of stampCounties' condition above
- * (a staff point, or a sample still to print with an observation or entered
- * in Beeline). One definition for the stamp and for the staff correction of
- * the place (src/app/sample-place.ts), which refuses a sample the stamp would
- * write over.
+ * (a staff point, or a sample still to print, in an active season or released
+ * from a settled one, with an observation or entered in Beeline). It is the
+ * view `sample_follows_point` (schema/150), so there is one definition for
+ * the stamp, for the staff correction of the place (src/app/sample-place.ts),
+ * which refuses a sample the stamp would write over, and for
+ * `sample_awaiting_place`, which holds a released sample out of printing until
+ * the stamp has looked at it.
  */
 export function followsPointSql(s: string): string {
-  return `(EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = ${s}.entity_id)
-              OR ((${s}.inat_observation_id IS NOT NULL
-                   OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = ${s}.entity_id))
-                  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = ${s}.entity_id)
-                  AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = ${s}.entity_id)))`;
+  return `EXISTS (SELECT 1 FROM sample_follows_point fp WHERE fp.sample_id = ${s}.entity_id)`;
 }
 
 interface StampResult {
@@ -621,6 +623,30 @@ async function stampCountiesUnlocked(conn: Conn, G: string, sampleIds?: readonly
   await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id)
                   SELECT u.sample_id, u.should_be FROM sample_atlas_unfilled u
                   WHERE u.sample_id IN (SELECT sample_id FROM county_stamp WHERE state_changed)`);
+  // Say that the stamp has looked, for a settled sample staff released for
+  // printing that follows its point (sample_place_stamped, schema/038): it is
+  // not pending until then, so no label carries a place typed before the point
+  // was read (sample_awaiting_place, schema/150). Only where the sample's point
+  // has been tested, so what the stamp read is the point it has now; a point in
+  // no single county has nothing to stamp, and the row says the stamp had its
+  // chance. A sample frozen into a run that has not printed is left out, as the
+  // stamp leaves it, and is not pending anyway.
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE place_looked_at AS
+    SELECT s.entity_id AS sample_id, l.latitude, l.longitude
+    FROM sample s
+    JOIN settled_sample st ON st.sample_id = s.entity_id
+    JOIN sample_print_release r ON r.sample_id = s.entity_id
+    JOIN sample_location l ON l.sample_id = s.entity_id
+    JOIN sample_area_derivation d ON d.sample_id = s.entity_id
+      AND abs(d.latitude - l.latitude) <= 5e-5 AND abs(d.longitude - l.longitude) <= 5e-5
+    WHERE ${followsPointSql("s")}
+      AND NOT EXISTS (SELECT 1 FROM sample_label_in_progress lp
+                      WHERE lp.sample_id = s.entity_id AND lp.printing_count > 0)
+      ${only}`);
+  await conn.run(`DELETE FROM sample_place_stamped WHERE sample_id IN (SELECT sample_id FROM place_looked_at)`);
+  await conn.run(`INSERT INTO sample_place_stamped (sample_id, latitude, longitude)
+                  SELECT sample_id, latitude, longitude FROM place_looked_at`);
   const stamped = await rows<{ sample_id: number }>(conn, `SELECT sample_id FROM county_stamp ORDER BY sample_id`);
   // Of the samples asked about by id, those whose place still is not the
   // place of a county their point lies inside: frozen into a run, in no

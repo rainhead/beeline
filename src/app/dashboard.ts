@@ -21,7 +21,7 @@ import { DASHBOARD_RULES, type CoCollectors, type DashboardRow, type Finding, ty
 export interface Dashboard {
   rows: DashboardRow[];
   withOthers: CoCollectors;
-  /** This person's flagged samples from settled seasons, kept off the table and counted (beeline-2c3.24). */
+  /** This person's flagged samples from settled seasons that staff have not released for printing, kept off the table and counted (beeline-2c3.24). */
   settledFlagged: number;
   /**
    * The last day of the settled seasons, ISO — what the listing's "collected
@@ -109,9 +109,12 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
   const mine = (col: string) =>
     sql`EXISTS (SELECT 1 FROM sample_collector mine WHERE mine.sample_id = ${sql.ref(col)} AND mine.person_id = ${personId})`;
   const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas, seasons, identifications] = await Promise.all([
-    // Every sample of theirs from an active season, or a settled one whose
+    // Every sample of theirs from an active season, a settled one staff have
+    // released for printing (sample_print_release; its labels are on their
+    // way, so it is asked about like an active one), or a settled one whose
     // labels a run already holds; which of them the page shows is decided
     // below, against the findings. Labels are the one other question.
+    // `settled` here is a settled season's sample that was not released.
     sql<RawSampleRow>`
       SELECT s.entity_id AS sample_id, s.inat_observation_id, ${observationGone} AS observation_gone,
              s.sample_number, s.date_start,
@@ -119,7 +122,16 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              loc.latitude, loc.longitude, loc.coordinate_uncertainty_m,
              s.geoprivacy, s.taxon_geoprivacy,
              s.host_name_as_observed AS host_name, s.host_rank, s.host_inat_taxon_id AS host_taxon_id,
-             s.specimen_count, coalesce(p.pending_count, 0) AS pending_count,
+             -- A released settled sample waiting for the nightly to place it
+             -- (sample_awaiting_place, schema/150) is not pending yet, but its
+             -- labels are on their way, so the page counts them as waiting.
+             s.specimen_count,
+             -- Counted as pending_print_sample counts: the places up to the count that no
+             -- individuated specimen holds, so a label in a run, a reprint included, is not
+             -- taken off twice.
+             coalesce(p.pending_count,
+                      CASE WHEN aw.sample_id IS NOT NULL THEN greatest(s.specimen_count - coalesce(held.n, 0), 0) END,
+                      0) AS pending_count,
              coalesce(lp.printing_count, 0) AS printing_count,
              coalesce(lp.printed_count, 0) AS printed_count, lp.printed_at,
              st.sample_id IS NOT NULL AS settled,
@@ -134,18 +146,29 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       LEFT JOIN printed_sample ps ON ps.sample_id = s.entity_id
       LEFT JOIN sample_locality_override lo ON lo.sample_id = s.entity_id
       LEFT JOIN pending_print_sample p ON p.sample_id = s.entity_id
+      LEFT JOIN sample_awaiting_place aw ON aw.sample_id = s.entity_id
+      LEFT JOIN (
+        SELECT i.sample_id, count(*) AS n
+        FROM individuated_specimen i
+        JOIN sample_awaiting_place a ON a.sample_id = i.sample_id
+        JOIN sample h ON h.entity_id = i.sample_id
+        WHERE i.specimen_number <= h.specimen_count
+        GROUP BY i.sample_id
+      ) held ON held.sample_id = s.entity_id
       LEFT JOIN sample_label_in_progress lp ON lp.sample_id = s.entity_id
-      LEFT JOIN settled_sample st ON st.sample_id = s.entity_id
+      LEFT JOIN settled_unreleased_sample st ON st.sample_id = s.entity_id
       WHERE ${mine("s.entity_id")}
         AND (st.sample_id IS NULL OR lp.sample_id IS NOT NULL)
       ORDER BY s.date_start DESC, length(s.sample_number) DESC, s.sample_number DESC, s.entity_id`.execute(db),
     // The findings the page shows, on every sample of theirs, settled or not:
-    // a settled sample's are counted rather than shown (beeline-2c3.24). Read
+    // an unreleased settled sample's are counted rather than shown
+    // (beeline-2c3.24); a released one's are shown, since a flag on it blocks
+    // labels its collector is waiting for. Read
     // from sample_qc_finding, not qc_finding, as the listings and
     // printability do (beeline-2c3.29): it leaves out what staff have waived.
     sql<Finding & { sample_id: number; settled: boolean }>`
       SELECT f.sample_id, f.rule_name, f.details, f.detail_taxon_name, f.detail_taxon_rank, r.severity,
-             EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = f.sample_id) AS settled
+             EXISTS (SELECT 1 FROM settled_unreleased_sample st WHERE st.sample_id = f.sample_id) AS settled
       FROM sample_qc_finding f
       JOIN qc_rule r ON r.name = f.rule_name
       WHERE f.rule_name IN (${ruleList})
@@ -270,7 +293,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
   const settledFlaggedIds = new Set<number>();
   for (const f of findings.rows) {
     const id = Number(f.sample_id);
-    // A settled sample asks nothing: its flags are counted, not shown.
+    // A settled sample staff have not released asks nothing: its flags are counted, not shown.
     if (f.settled) {
       settledFlaggedIds.add(id);
       continue;
@@ -296,10 +319,12 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     const findingsHere = s.settled ? [] : (findingsBySample.get(sampleId) ?? []);
     // On the page when a rule the page shows fires on it, or when labels are
     // waiting for it, frozen into a run included: the labels are still on
-    // their way until the run is mailed (schema/155). A settled sample stays
-    // only while a run holds its labels; it is never pending, since nothing
-    // from a settled season is printed (schema/102), but a run prepared
-    // before its season settled still goes out.
+    // their way until the run is mailed (schema/155). A settled sample that was
+    // not released stays only while a run holds its labels; it is never
+    // pending (schema/102), but a run prepared before its season settled
+    // still goes out. A released one shows its flags like an active one, and
+    // its labels count as waiting from the release, including while it waits
+    // for the nightly to place it, before it is pending (pending_count above).
     if (findingsHere.length === 0 && pending === 0 && printing === 0 && printed === 0) continue;
     rows.push({
       sample_id: sampleId,

@@ -14,10 +14,10 @@ import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js"
 import { readSampleOverlay, type SampleOverlayRow } from "../src/sample-overlay.js";
 import { en } from "../src/app/messages/en.js";
 import type { Database } from "../src/model.js";
-import { approveRun, markPrinted, prepareRun } from "../src/print-run.js";
+import { approveRun, cancelRun, markPrinted, prepareRun } from "../src/print-run.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { canonicalJson } from "../src/sync-inat.js";
-import { buildTestGazetteer, createMemoryDb, currentSeasonDate, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { buildTestGazetteer, createMemoryDb, currentSeasonDate, insertCleanSample, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 import { promotedStore } from "./promoted-store.js";
 
 /**
@@ -1337,9 +1337,9 @@ describe("a trap sample's specimen count", () => {
     const path = `/samples/${trap}/specimen-count`;
     const saved = await w.send(w.keys.sam, path, { count: 5, note: "recount", reference: "ticket 2" });
     expect(saved.status).toBe(200);
-    expect(await json(saved)).toEqual({ sample_id: trap, outcome: "saved", specimen_count: 5, pending: 5 });
+    expect(await json(saved)).toEqual({ sample_id: trap, outcome: "saved", specimen_count: 5, pending: 5, released: true, awaiting_place: false });
     expect(await count()).toBe(5);
-    expect(await json(await w.send(w.keys.sam, path, { count: "5" }))).toMatchObject({ outcome: "unchanged", specimen_count: 5 });
+    expect(await json(await w.send(w.keys.sam, path, { count: "5" }))).toMatchObject({ outcome: "unchanged", specimen_count: 5, released: false });
     expect((await w.send(w.keys.sam, path, { count: "x" })).status).toBe(422);
     expect((await w.send(w.keys.sam, path, {})).status).toBe(400);
     expect((await w.send(w.keys.sam, `/samples/${w.linked}/specimen-count`, { count: 2 })).status).toBe(422);
@@ -1347,5 +1347,65 @@ describe("a trap sample's specimen count", () => {
     expect((await w.send(w.keys.samEdit, path, { count: 2 })).status).toBe(403);
     expect((await w.send(w.keys.aliceRead, path, { count: 2 })).status).toBe(403);
     expect(await count()).toBe(5);
+  });
+});
+
+describe("releasing a settled season's sample for printing", () => {
+  it("releases and withdraws for a staff key, and refuses the rest", async () => {
+    const w = await world();
+    const settled = await insertCleanSample(w.conn, {
+      collector_id: String(w.people.alice),
+      sample_number: "'T-9'",
+      kind: "'trap'",
+      protocol: "'vane trap'",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+    });
+    const releases = async () => rows(w.conn, `SELECT reason FROM sample_print_release WHERE sample_id = ${settled}`);
+    const path = `/samples/${settled}/release-labels`;
+    const saved = await w.send(w.keys.sam, path, { note: "bottle is unlabelled", reference: "ticket 3" });
+    expect(saved.status).toBe(200);
+    expect(await json(saved)).toEqual({ sample_id: settled, outcome: "saved", pending: 3, released: true, awaiting_place: false });
+    expect(await releases()).toEqual([["bottle is unlabelled"]]);
+    expect(await json(await w.send(w.keys.sam, path, {}))).toMatchObject({ outcome: "unchanged", released: false });
+    // Once its labels are frozen into a run that has not printed, a withdrawal is refused and changes nothing.
+    await prepareRun(w.conn, { atlasId: null, personId: w.people.sam, now: new Date("2026-09-21T16:00:00Z") });
+    const inRun = await w.send(w.keys.sam, path, { withdraw: true });
+    expect([inRun.status, (await json(inRun)).error]).toEqual([409, "labels_in_run"]);
+    expect(await releases()).toEqual([["bottle is unlabelled"]]);
+    await cancelRun(w.conn, Number(((await rows(w.conn, `SELECT max(entity_id) FROM print_run`)) as [[number]])[0][0]), { personId: w.people.sam });
+    expect(await json(await w.send(w.keys.sam, path, { withdraw: true }))).toEqual({ sample_id: settled, outcome: "removed", pending: 0, released: false, awaiting_place: false });
+    expect(await releases()).toEqual([]);
+    // Withdrawing a sample with no release says so, even while its labels are in a run.
+    await w.conn.run(`UPDATE sample SET specimen_count = 1 WHERE entity_id = ${settled}`);
+    await w.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${settled}, 'release')`);
+    await prepareRun(w.conn, { atlasId: null, personId: w.people.sam, now: new Date("2026-09-22T16:00:00Z") });
+    await w.conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${settled}, 'withdraw')`);
+    expect(await json(await w.send(w.keys.sam, path, { withdraw: true }))).toMatchObject({ outcome: "unchanged" });
+    // A release is allowed in any season, an active one included.
+    const active = await insertCleanSample(w.conn, {
+      collector_id: String(w.people.alice),
+      sample_number: "'T-11'",
+      kind: "'trap'",
+      protocol: "'vane trap'",
+    });
+    expect(await json(await w.send(w.keys.sam, `/samples/${active}/release-labels`, {}))).toMatchObject({ outcome: "saved", released: true });
+    // One whose count follows an observation is refused whatever its season.
+    const activeFollows = await w.send(w.keys.sam, `/samples/${w.linked}/release-labels`, {});
+    expect([activeFollows.status, (await json(activeFollows)).error]).toEqual([409, "count_follows_observation"]);
+    const following = await insertCleanSample(w.conn, {
+      sample_number: "'T-10'",
+      kind: "'trap'",
+      inat_observation_id: "778899",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+    });
+    const follows = await w.send(w.keys.sam, `/samples/${following}/release-labels`, {});
+    expect([follows.status, (await json(follows)).error]).toEqual([409, "count_follows_observation"]);
+    expect((await w.send(w.keys.alice, path, {})).status).toBe(403);
+    expect((await w.send(w.keys.samEdit, path, {})).status).toBe(403);
+    expect((await w.send(w.keys.aliceRead, path, {})).status).toBe(403);
+    expect((await w.send(w.keys.sam, `/samples/999999/release-labels`, {})).status).toBe(404);
+    expect(await releases()).toEqual([]);
   });
 });

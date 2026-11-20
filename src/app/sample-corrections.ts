@@ -943,6 +943,28 @@ export function setCollectors(
   });
 }
 
+/**
+ * Write a release of a sample for printing, unless one stands
+ * (beeline-3vs.7): a row of its own in `sample_print_release_event`, with who,
+ * when and the reason staff gave, if any. Written for any sample with no
+ * standing release (never released, or its release was withdrawn), in an
+ * active season too, where it changes nothing yet: a count staff set prints
+ * whatever its season (Peter, 2026-11-19), so it must still print if the
+ * sample settles on 1 March before a run takes it. A release already standing
+ * writes nothing; says whether a row was written. In the transaction of
+ * whatever made it.
+ */
+async function writeRelease(db: Kysely<Database>, sampleId: number, actor: Actor, reason: string): Promise<boolean> {
+  const why = reason.trim() === "" ? null : reason.trim();
+  const written = await sql<{ entity_id: number }>`
+    INSERT INTO sample_print_release_event (sample_id, action, person_id, reason)
+    SELECT s.entity_id, 'release', ${actor.signedInPersonId}, CAST(${why} AS TEXT)
+    FROM sample s
+    WHERE s.entity_id = ${sampleId} AND NOT EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = s.entity_id)
+    RETURNING entity_id`.execute(db);
+  return written.rows.length > 0;
+}
+
 export interface SpecimenCountInput {
   /** The number of specimens, a whole number of 0 or more as text or a number. */
   count: string | number;
@@ -956,8 +978,12 @@ export type SpecimenCountResult =
       ok: true;
       outcome: Exclude<Outcome, "removed">;
       specimen_count: number;
-      /** How many labels the next print run would print for this sample; 0 when it has none waiting, as for a settled season's sample, which never prints. */
+      /** How many labels the next print run would print for this sample. 0 can mean the sample is not released (a settled season's sample prints only once released), is released and waiting for the nightly to place it (`awaiting_place`), or is held back by a flag. */
       pending: number;
+      /** A release was written by this request (the count changed on a sample with no standing release). */
+      released: boolean;
+      /** The sample is released and waits for the nightly update to work out its county and state before it prints. */
+      awaiting_place: boolean;
     }
   | Common
   | StaffOnly
@@ -975,6 +1001,17 @@ export type SpecimenCountResult =
  * would put the observation's count back (ingest/mint-samples.sql): any
  * sample with an observation, until its labels are on paper. Staff
  * only, and refused while impersonating.
+ *
+ * A count that changes also releases the sample for printing
+ * (sample_print_release_event, schema/050; beeline-3vs.7), in any season:
+ * staff setting a count is staff saying its bees need labels, a settled
+ * season's sample prints only once released, and an active one may settle
+ * before a run takes it. The count and the release event are
+ * written in one transaction. A count equal to the one it has changes nothing
+ * and releases nothing; the release is its own act (`releaseLabels`). A
+ * released sample that follows its point is not pending until the nightly has
+ * placed it (sample_awaiting_place, schema/150), so there is no place to stamp
+ * here.
  *
  * It is written straight to the sample and recorded in its history, with no
  * overlay file: production is never promoted again (ADR 0006), and a
@@ -996,7 +1033,11 @@ export function setSpecimenCount(deps: CorrectionDeps, actor: Actor, sampleId: n
     if (!/^(0|[1-9]\d{0,5})$/.test(given)) return invalid(form.problemFor("count"));
     if (sample.kind !== "trap") return invalid(form.problemFor("net"));
     const count = Number(given);
-    return withPrintRunLock(async (): Promise<SpecimenCountResult> => {
+    // The promotion lock first, then the print runs' lock: promotion can free-link an
+    // observation onto the sample (and so make its count follow the observation) between
+    // reading whether the count follows one and writing the new count, and the stamp inside
+    // a promotion takes the print runs' lock, so the other order could deadlock.
+    return withPromotionLock(() => withPrintRunLock(async (): Promise<SpecimenCountResult> => {
       const found = await sql<{ specimen_count: number | null; follows: boolean; highest: number | null }>`
         SELECT s.specimen_count,
                (s.inat_observation_id IS NOT NULL
@@ -1011,21 +1052,163 @@ export function setSpecimenCount(deps: CorrectionDeps, actor: Actor, sampleId: n
       if (now.follows) return invalid(form.problemFor("follows"));
       const highest = now.highest === null ? 0 : Number(now.highest);
       if (count < highest) return invalid(form.problemFor("numbered", highest));
-      const pendingNow = async (): Promise<number> => {
-        const waiting = await sql<{ pending_count: number }>`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${sampleId}`.execute(deps.db);
-        return waiting.rows[0] === undefined ? 0 : Number(waiting.rows[0].pending_count);
-      };
-      if (now.specimen_count === count) return { ok: true, outcome: "unchanged", specimen_count: count, pending: await pendingNow() };
+      const answer = async (outcome: "saved" | "unchanged", released: boolean): Promise<SpecimenCountResult> => ({
+        ok: true,
+        outcome,
+        specimen_count: count,
+        pending: await pendingNow(deps.db, sampleId),
+        released,
+        awaiting_place: await awaitingPlace(deps.db, sampleId),
+      });
+      if (now.specimen_count === count) return answer("unchanged", false);
+      let released = false;
       try {
-        await deps.db.updateTable("sample").set({ specimen_count: count }).where("entity_id", "=", sampleId).execute();
+        await deps.db.transaction().execute(async (trx) => {
+          await trx.updateTable("sample").set({ specimen_count: count }).where("entity_id", "=", sampleId).execute();
+          released = await writeRelease(trx, sampleId, actor, form.note);
+        });
       } catch (err) {
         // Nothing is recorded anywhere else, so a conflict means nothing was done: say so, and let the caller send it again.
         if (isWriteConflict(err)) return refused("busy");
         throw err;
       }
       await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "specimen count change");
-      return { ok: true, outcome: "saved", specimen_count: count, pending: await pendingNow() };
+      return answer("saved", released);
+    }));
+  });
+}
+
+/** How many labels the next print run would print for a sample: 0 when it is not released, is released and waiting for the nightly to place it, or is held back by a flag. */
+async function pendingNow(db: Kysely<Database>, sampleId: number): Promise<number> {
+  const waiting = await sql<{ pending_count: number }>`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${sampleId}`.execute(db);
+  return waiting.rows[0] === undefined ? 0 : Number(waiting.rows[0].pending_count);
+}
+
+/** Whether the sample is released and waiting for the nightly's county stamp (sample_awaiting_place, schema/150). */
+async function awaitingPlace(db: Kysely<Database>, sampleId: number): Promise<boolean> {
+  const found = await sql<{ w: boolean }>`SELECT EXISTS (SELECT 1 FROM sample_awaiting_place w WHERE w.sample_id = ${sampleId}) AS w`.execute(db);
+  return Boolean(found.rows[0]?.w);
+}
+
+export interface ReleaseLabelsInput {
+  /** Why staff released it, or withdrew the release; free text, may be blank. */
+  note: string;
+  /** Take the release away instead of writing one. */
+  withdraw?: boolean;
+}
+
+export type ReleaseLabelsResult =
+  | {
+      ok: true;
+      outcome: "saved" | "removed" | "unchanged";
+      /** How many labels the next print run would print for this sample; 0 while it waits to be placed (`awaiting_place`), is not released, or is held back by a flag. */
+      pending: number;
+      /** A release was written by this request. */
+      released: boolean;
+      /** The sample is released and waits for the nightly update to work out its county and state before it prints. */
+      awaiting_place: boolean;
+    }
+  | Common
+  | StaffOnly
+  | Refused<"busy" | "count_follows_observation" | "labels_in_run">;
+
+/**
+ * Staff say that a sample from a settled season may print its labels, or take
+ * that back (beeline-3vs.7, `sample_print_release_event`, schema/050). Trap
+ * bottles are pinned years after they were collected, and a settled season's
+ * sample prints only once released; changing a trap sample's count, or entering
+ * one, releases it as well (`setSpecimenCount`, the trap form), and this is the
+ * explicit act for the rest. Staff only, refused while impersonating. It does
+ * not refuse while the nightly or the weekly sweep runs, as a staff point does:
+ * a release is one new row that no job rewrites, and the API already refuses
+ * every correction while one runs.
+ *
+ * A release is allowed in any season: in January and February last season is
+ * still active, and staff may release a sample ahead of 1 March, when it
+ * would otherwise stop printing. Releasing one whose count still follows its
+ * iNaturalist observation (an observation, and no label on paper, the
+ * condition `setSpecimenCount` refuses as `follows`) is refused: a settled
+ * season's count copied from iNaturalist does not print (Peter, 2026-11-19),
+ * and staff cannot correct that count, so there is nothing for them to vouch
+ * for. Releasing a sample already released, and withdrawing one that is not,
+ * write nothing and answer `unchanged`.
+ *
+ * A release is checked and written behind the promotion lock, because
+ * observation promotion can free-link an observation onto the sample between
+ * the two, which would make its count follow iNaturalist's. Locks are taken
+ * in one order everywhere: the sample's turn in the queue, then the promotion
+ * lock, then the print runs' lock (a promotion's county stamp takes the last).
+ *
+ * A release is a plain write. A released sample whose county, state and country
+ * follow its point is not pending until the nightly's county stamp has placed
+ * it (sample_awaiting_place, schema/150); one that does not follow its point
+ * is pending at once. A sample released from the 250 m allowance is held to
+ * 100 m like an active one.
+ *
+ * Withdrawing is allowed at any time but while the sample's labels are in a
+ * print run that has not printed, which would keep them (`labels_in_run`):
+ * cancel the run first, or let it print. The check and the write are behind
+ * the print runs' lock, so a run cannot be prepared between them. Nothing else
+ * in this function takes that lock, so there is no re-entrancy to guard.
+ *
+ * The sample's history tracks no field that a release changes, so it is not a
+ * history entry of its own.
+ */
+export function releaseLabels(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<ReleaseLabelsInput>): Promise<ReleaseLabelsResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const found = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select("entity_id").executeTakeFirst();
+    if (found === undefined) return refused("not_found");
+    return { ready: null };
+  };
+  return correct(sampleId, input, gates, async (_, form): Promise<ReleaseLabelsResult> => {
+    const note = form.note.trim();
+    const why = note === "" ? null : note;
+    const answer = async (outcome: "saved" | "removed" | "unchanged"): Promise<ReleaseLabelsResult> => ({
+      ok: true,
+      outcome,
+      pending: await pendingNow(deps.db, sampleId),
+      released: outcome === "saved",
+      awaiting_place: await awaitingPlace(deps.db, sampleId),
     });
+    try {
+      if (form.withdraw === true) {
+        const withdrawn = await withPrintRunLock(async (): Promise<"in_run" | "withdrawn" | "none"> => {
+          // No standing release: nothing to withdraw, whatever run holds the labels.
+          const standing = await sql<{ n: number }>`
+            SELECT count(*)::INTEGER AS n FROM sample_print_release r WHERE r.sample_id = ${sampleId}`.execute(deps.db);
+          if (Number(standing.rows[0]?.n ?? 0) === 0) return "none";
+          const inRun = await sql<{ n: number | null }>`
+            SELECT (SELECT lp.printing_count FROM sample_label_in_progress lp WHERE lp.sample_id = ${sampleId}) AS n`.execute(deps.db);
+          if (Number(inRun.rows[0]?.n ?? 0) > 0) return "in_run";
+          const written = await sql<{ entity_id: number }>`
+            INSERT INTO sample_print_release_event (sample_id, action, person_id, reason)
+            SELECT r.sample_id, 'withdraw', ${actor.signedInPersonId}, CAST(${why} AS TEXT)
+            FROM sample_print_release r WHERE r.sample_id = ${sampleId}
+            RETURNING entity_id`.execute(deps.db);
+          return written.rows.length > 0 ? "withdrawn" : "none";
+        });
+        if (withdrawn === "in_run") return refused("labels_in_run");
+        return answer(withdrawn === "withdrawn" ? "removed" : "unchanged");
+      }
+      // Under the promotion lock, so no promotion can link an observation between the check and the write.
+      const written = await withPromotionLock(async (): Promise<"follows" | "written" | "stands"> => {
+        const state = await sql<{ follows: boolean }>`
+          SELECT (SELECT s.inat_observation_id IS NOT NULL
+                         AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+                  FROM sample s WHERE s.entity_id = ${sampleId}) AS follows`.execute(deps.db);
+        if (state.rows[0]?.follows === true) return "follows";
+        return (await writeRelease(deps.db, sampleId, actor, note)) ? "written" : "stands";
+      });
+      if (written === "follows") return refused("count_follows_observation");
+      if (written === "stands") return answer("unchanged");
+    } catch (err) {
+      // Nothing is recorded anywhere else, so a conflict means nothing was done: say so, and let the caller send it again.
+      if (isWriteConflict(err)) return refused("busy");
+      throw err;
+    }
+    return answer("saved");
   });
 }
 

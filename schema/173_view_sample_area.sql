@@ -58,7 +58,7 @@ SELECT s.entity_id AS sample_id,
        d.country AS point_country, d.state_province AS point_state_province,
        d.county_inside, d.county_inside_100m,
        EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id) AS printed,
-       EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = s.entity_id) AS settled
+       EXISTS (SELECT 1 FROM settled_unreleased_sample ss WHERE ss.sample_id = s.entity_id) AS settled
 FROM sample_area_derivation d
 JOIN sample_location l ON l.sample_id = d.sample_id
 JOIN sample s ON s.entity_id = d.sample_id
@@ -67,4 +67,4 @@ WHERE abs(d.latitude - l.latitude) <= 5e-5
   AND d.state_province IS NOT NULL
   AND (d.county_inside_100m OR NOT d.county_inside)
   AND (s.state_province IS DISTINCT FROM d.state_province OR s.country IS DISTINCT FROM d.country);
-COMMENT ON VIEW sample_place_disagreement IS 'Samples whose recorded state or province, or country, is not the one their point says (sample_area_derivation), leaving out points within 100 m of their county''s edge. county_inside is FALSE where the point is in no county and took the nearest on the shore. printed and settled say why the county stamp left two of the kinds it leaves alone; read counts split by season.';
+COMMENT ON VIEW sample_place_disagreement IS 'Samples whose recorded state or province, or country, is not the one their point says (sample_area_derivation), leaving out points within 100 m of their county''s edge. county_inside is FALSE where the point is in no county and took the nearest on the shore. printed says a label is on paper, and settled says the sample is from a settled season that staff have not released for printing: the two kinds of sample the county stamp leaves alone for that reason; read counts split by season.';

@@ -54,8 +54,9 @@ WHERE elevation_m IS NOT NULL
 -- effective date the two coincide and no such record exists. It survives only among the
 -- grandfathered ones, which keep 250 m for printing and are still refused an
 -- elevation between 100 m and 250 m — since 2026-11-04 only printed samples
--- and settled ones, because an unprinted sample in an active season is held
--- to 100 m whenever it was collected (schema/120, sample_coordinate_limit).
+-- and settled ones not released for printing, because an unprinted sample
+-- that will print is held to 100 m whenever it was collected (schema/120,
+-- sample_coordinate_limit).
 --
 -- The numbers agreeing is a coincidence of two arguments reaching the same
 -- place, not one threshold read twice: this one is about vertical relief, the

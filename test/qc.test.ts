@@ -328,6 +328,26 @@ describe("QC findings and printability", () => {
       }
     });
 
+    test("a settled sample staff released for printing is held to 100 m, while an unreleased one keeps 250 m", async () => {
+      const [released, unreleased, releasedAndPrinted] = await Promise.all(
+        ["released", "unreleased", "printed"].map((name) =>
+          insertCleanSample(
+            conn,
+            { date_start: settledBefore, date_end: settledBefore, sample_number: `'${name}'` },
+            { coordinate_uncertainty_m: "160" },
+          ),
+        ),
+      );
+      await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${released}, 'release'), (${releasedAndPrinted}, 'release')`);
+      // A label on a pin already: its collector cannot tighten it, released or not.
+      await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${releasedAndPrinted}, 1, '2600160')`);
+      expect(await rows(conn, `SELECT uncertainty_m FROM sample_coordinate_limit WHERE sample_id = ${released}`)).toEqual([[100]]);
+      expect(await rows(conn, `SELECT uncertainty_m FROM sample_coordinate_limit WHERE sample_id = ${unreleased}`)).toEqual([[250]]);
+      expect(await rows(conn, `SELECT uncertainty_m FROM sample_coordinate_limit WHERE sample_id = ${releasedAndPrinted}`)).toEqual([[250]]);
+      expect(await findings(released!)).toEqual([{ rule: "coordinate_uncertainty", details: "160 m > 100 m" }]);
+      expect(await findings(unreleased!)).toEqual([]);
+    });
+
     test("the same 160 m blocks a record collected on the day it changed", async () => {
       const id = await insertCleanSample(
         conn,

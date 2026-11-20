@@ -77,6 +77,7 @@ export function PrintRuns({
     <>
       <PageHeader title={p.heading} lede={p.intro} />
       {nothingPrepared && <Callout>{p.prepare.nothingToPrepare}</Callout>}
+      {scope.awaiting_place > 0 && <Callout>{p.prepare.awaitingPlace(scope.awaiting_place)}</Callout>}
 
       <Card>
         <h2>{p.prepare.heading}</h2>

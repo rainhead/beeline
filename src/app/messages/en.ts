@@ -838,7 +838,7 @@ export const en = {
       ecdysisNot: "Not in Ecdysis",
       ecdysisExpected: "Expected in Ecdysis, not there",
       ecdysisHint:
-        "In what Beeline last read from Ecdysis. For Washington that is the Washington Bee Atlas dataset, not the whole collection. Expected means it has a label, is not marked missing, and Ecdysis already holds bees of its program from the same year.",
+        "In what Beeline last read from Ecdysis. For Washington that is the Washington Bee Atlas dataset, not the whole collection. Expected means it has a printed label, is not marked missing, and Ecdysis already holds bees of its program from the same year.",
       /** Beside a sample's specimen count. */
       labelsWaitingCount: (count: number) => `${n(count)} waiting on labels`,
       method: "Method",

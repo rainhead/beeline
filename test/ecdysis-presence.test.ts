@@ -4,6 +4,7 @@ import { createApp } from "../src/app/server.js";
 import { en } from "../src/app/messages/en.js";
 import { listingHref, parseListingQuery, EMPTY_QUERY } from "../src/app/listings.js";
 import { ecdysisRecordUrl } from "../src/app/ecdysis-link.js";
+import { prepareRun } from "../src/print-run.js";
 import { createKysely } from "../src/db.js";
 import { readXlsxHere } from "../src/app/xlsx-reader.js";
 import { CURRENT_SEASON, SETTLED_SEASON, createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
@@ -33,7 +34,7 @@ async function setup() {
   /** A sample of the program, collected in the year, with one specimen carrying the field number (none: no label). */
   const specimen = async (field: string | null, code: string | null, year: number, extra: Record<string, string> = {}) => {
     const sample = await insertCleanSample(conn, {
-      sample_number: `'S-${field ?? "none"}'`,
+      sample_number: `'S-${field ?? "C-IMPORTED"}'`,
       specimen_count: "1",
       date_start: day(year),
       date_end: day(year),
@@ -57,7 +58,8 @@ async function setup() {
   // The one expected there, and one more of the same kind to prove a count.
   await specimen("B-EXPECTED", "WaBA", CURRENT_SEASON);
   // Each of the other conditions alone.
-  await specimen(null, "WaBA", CURRENT_SEASON); // no label
+  // Imported before field numbering: no number, and its label is on paper all the same.
+  await specimen(null, "WaBA", CURRENT_SEASON);
   await specimen("D-NO-COLLECTION", "OBA", CURRENT_SEASON); // a program Ecdysis has no collection for
   const missing = await specimen("E-MISSING", "WaBA", CURRENT_SEASON);
   await conn.run(
@@ -71,6 +73,19 @@ async function setup() {
   // A catalog row without a record id still counts as being in Ecdysis, and gets no link.
   const noRecord = await specimen("I-IN-NO-RECORD", "WaBA", CURRENT_SEASON);
   await inEcdysis(noRecord.id, null);
+
+  // A sample whose specimens a prepared run has numbered but not printed: they have field numbers and no label on paper.
+  await insertCleanSample(conn, {
+    sample_number: "'S-J-PREPARED'",
+    specimen_count: "1",
+    date_start: day(CURRENT_SEASON),
+    date_end: day(CURRENT_SEASON),
+    atlas_id: program("WaBA"),
+  });
+  const run = await prepareRun(conn, { atlasId: null, personId: staff });
+  expect(run?.labels).toBe(1);
+  const [[numbered]] = (await rows(conn, `SELECT field_number FROM specimen WHERE sample_id = (SELECT entity_id FROM sample WHERE sample_number = 'S-J-PREPARED')`)) as [[string]];
+  expect(numbered).not.toBeNull();
 
   const app = createApp({
     ...(await scratchPaths()),
@@ -94,9 +109,8 @@ async function setup() {
 }
 
 /** The field numbers a listing page names, among the ones this test made. */
-const named = (page: string) => ["A-IN", "B-EXPECTED", "C-LABELED", "D-NO-COLLECTION", "E-MISSING", "F-YEAR-NOT-UPLOADED", "G-NO-PROGRAM", "H-BC-NOT-UPLOADED", "I-IN-NO-RECORD"].filter((n) => page.includes(n));
-
-const EVERYTHING = ["A-IN", "B-EXPECTED", "D-NO-COLLECTION", "E-MISSING", "F-YEAR-NOT-UPLOADED", "G-NO-PROGRAM", "H-BC-NOT-UPLOADED", "I-IN-NO-RECORD"];
+const EVERYTHING = ["A-IN", "B-EXPECTED", "C-IMPORTED", "J-PREPARED", "D-NO-COLLECTION", "E-MISSING", "F-YEAR-NOT-UPLOADED", "G-NO-PROGRAM", "H-BC-NOT-UPLOADED", "I-IN-NO-RECORD"];
+const named = (page: string) => EVERYTHING.filter((n) => page.includes(n));
 
 describe("the Ecdysis filter on the Specimens listing", () => {
   it("in Ecdysis: the specimens with a catalog number from Ecdysis, with or without a record id", async () => {
@@ -113,10 +127,10 @@ describe("the Ecdysis filter on the Specimens listing", () => {
     );
   });
 
-  it("expected but not there: a label, a program with a collection, not missing, and that year already uploaded", async () => {
+  it("expected but not there: a label on paper, a program with a collection, not missing, and that year already uploaded", async () => {
     const { get } = await setup();
     const page = await get("/specimens?scope=all&ecdysis=expected");
-    expect(named(page)).toEqual(["B-EXPECTED"]);
+    expect(named(page)).toEqual(["B-EXPECTED", "C-IMPORTED"]);
     expect(page).toContain(`${f.ecdysis}: ${f.ecdysisExpected}`);
   });
 
@@ -129,18 +143,26 @@ describe("the Ecdysis filter on the Specimens listing", () => {
   it("each condition on its own leaves a specimen out of 'expected'", async () => {
     const { get, conn, ids } = await setup();
     const expected = async () => named(await get("/specimens?scope=all&ecdysis=expected")).sort();
-    expect(await expected()).toEqual(["B-EXPECTED"]);
+    expect(await expected()).toEqual(["B-EXPECTED", "C-IMPORTED"]);
     // Each of the other specimens fails exactly one condition, so undoing that one makes it expected.
     await conn.run(`DELETE FROM specimen_disposition WHERE specimen_id = ${ids.missing}`);
-    expect(await expected()).toEqual(["B-EXPECTED", "E-MISSING"]);
-    await conn.run(`UPDATE specimen SET field_number = 'C-LABELED' WHERE field_number IS NULL`);
-    expect(await expected()).toEqual(["B-EXPECTED", "C-LABELED", "E-MISSING"]);
+    expect(await expected()).toEqual(["B-EXPECTED", "C-IMPORTED", "E-MISSING"]);
+    // The run that numbered J's specimen prints: now the label is on paper.
+    await conn.run(`UPDATE print_run SET approved_at = current_timestamp, approved_by = (SELECT min(entity_id) FROM person), printed_at = current_timestamp, printed_by = (SELECT min(entity_id) FROM person)`);
+    expect(await expected()).toEqual(["B-EXPECTED", "C-IMPORTED", "E-MISSING", "J-PREPARED"]);
+  });
+
+  it("a number from a run not yet printed is not a label on paper, and an imported specimen without a number is", async () => {
+    const { get } = await setup();
+    const page = await get("/specimens?scope=all&ecdysis=expected");
+    expect(page).not.toContain("J-PREPARED"); // has a field number, no label on paper
+    expect(page).toContain("C-IMPORTED"); // no field number, label on paper
   });
 
   it("a program's year counts once Ecdysis holds a specimen of that program from that year, and not before", async () => {
     const { get, conn } = await setup();
     const expected = async () => named(await get("/specimens?scope=all&ecdysis=expected")).sort();
-    expect(await expected()).toEqual(["B-EXPECTED"]);
+    expect(await expected()).toEqual(["B-EXPECTED", "C-IMPORTED"]);
     // Ecdysis now holds one of Washington's from the settled year, so F is expected too.
     const [[sample]] = (await rows(conn, `SELECT sample_id FROM specimen WHERE field_number = 'F-YEAR-NOT-UPLOADED'`)) as [[number]];
     const [[other]] = (await rows(
@@ -148,7 +170,7 @@ describe("the Ecdysis filter on the Specimens listing", () => {
       `INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sample}, 2, 'F-OTHER') RETURNING entity_id`,
     )) as [[number]];
     await conn.run(`INSERT INTO specimen_catalog_number (specimen_id, catalog_number, occurrence_id) VALUES (${other}, 'WSDA_F', 'f-uuid')`);
-    expect(await expected()).toEqual(["B-EXPECTED", "F-YEAR-NOT-UPLOADED"]);
+    expect(await expected()).toEqual(["B-EXPECTED", "C-IMPORTED", "F-YEAR-NOT-UPLOADED"]);
   });
 
   it("combines with another filter", async () => {
@@ -187,9 +209,9 @@ describe("the Ecdysis filter on the Specimens listing", () => {
 
   it("applies to the download of the listing", async () => {
     const { download } = await setup();
-    expect(await download("scope=all&ecdysis=expected")).toEqual(["B-EXPECTED"]);
+    expect(await download("scope=all&ecdysis=expected")).toEqual(["", "B-EXPECTED"]); // C-IMPORTED has no field number
     expect(await download("scope=all&ecdysis=in")).toEqual(["A-IN", "I-IN-NO-RECORD"]);
-    expect(await download("scope=all&ecdysis=not")).toHaveLength(EVERYTHING.length - 2 + 1); // and the unlabeled one, whose cell is empty
+    expect(await download("scope=all&ecdysis=not")).toHaveLength(8); // ten specimens, two of them in Ecdysis
   });
 
   it("on samples, finds the samples that have such a specimen", async () => {

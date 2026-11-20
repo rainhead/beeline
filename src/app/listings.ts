@@ -196,7 +196,7 @@ export const LABEL_FILTERS = ["any", "waiting", "printed"] as const;
  * Whether Ecdysis holds the specimen (beeline-8dx9.11, Peter, 2026-11-20).
  * "in" is a specimen with a catalog number Ecdysis reported
  * (specimen_catalog_number) and "not" one without. "expected" is the part of
- * "not" that Ecdysis should hold by now: the specimen has a label on paper,
+ * "not" that Ecdysis should hold by now: the specimen's label is on paper (specimen_on_paper, as the labels filter reads it: a number from a run not yet printed does not count, and an imported specimen printed before numbering does),
  * its program has a collection in ECDYSIS_COLLECTIONS, it is not marked
  * missing, and Ecdysis already holds a specimen of the same program collected
  * in the same year, which shows that year's upload has happened. "In Ecdysis"
@@ -224,7 +224,7 @@ function ecdysisPredicate(choice: Exclude<EcdysisFilter, "any">, spec: string, s
   if (choice === "not") return sql<boolean>`${absent}`;
   const programs = sql.join(ECDYSIS_COLLECTIONS.map((c) => sql`${c.program}`));
   return sql<boolean>`${absent}
-    AND ${sp}.field_number IS NOT NULL
+    AND EXISTS (SELECT 1 FROM specimen_on_paper op WHERE op.specimen_id = ${sp}.entity_id)
     AND ${program} IN (${programs})
     AND NOT EXISTS (SELECT 1 FROM specimen_disposition ed WHERE ed.specimen_id = ${sp}.entity_id AND ed.disposition = 'missing')
     AND (${program}, CAST(extract(year FROM ${s}.date_start) AS INTEGER)) IN (

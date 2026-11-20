@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { openDuckDb } from "./db.js";
 import { LEGACY_EXPORT_COLUMNS, writeLegacyExport } from "./legacy-export.js";
 import { OUTCOMES, readRulings, RECORD_COLUMN, type Ruling } from "./legacy-export-rulings.js";
+import { PROGRAM_CTES, regionProgramSql, SPECIMEN_PROGRAM_SELECT } from "./legacy-program.js";
 
 /**
  * How far the legacy-format export is from what the legacy system itself
@@ -24,11 +25,13 @@ import { OUTCOMES, readRulings, RECORD_COLUMN, type Ruling } from "./legacy-expo
  * each side, since a number the legacy file holds twice cannot be matched
  * honestly to either row. For every matched pair, each of the 63 columns is
  * compared as text, and each difference is given a kind (a blank filled,
- * Roman numerals, a country code, …; VALUE_KINDS) and split by season as
- * every check in this repo is (CLAUDE.md): the active seasons against the
- * settled ones, on the record's own collecting date (its first day), using
- * the store's own line (`season.active_since`). A number only one side holds is a difference
- * about the whole record, kinded by why. The rulings
+ * Roman numerals, a country code, …; VALUE_KINDS). Each record is counted
+ * twice over: by season, as every check in this repo is (CLAUDE.md: the active
+ * seasons against the settled ones, on the record's own collecting date, its
+ * first day, using the store's own line `season.active_since`), for this
+ * module's own report; and by program (src/legacy-program.ts), which is what
+ * the staff pages built on it read (beeline-z0pi). A number only one side
+ * holds is a difference about the whole record, kinded by why. The rulings
  * (`ingest/legacy-export-rulings.csv`) then say which differences are
  * explained; what is left is the report.
  */
@@ -96,6 +99,8 @@ export interface ExportComparison {
   /** The staged pull compared against: its row count and a hash of its rows. */
   reference: { rows: number; fingerprint: string };
   matched: { active: number; settled: number };
+  /** The same pairs by program (src/legacy-program.ts); programs with none are absent. */
+  matchedByProgram: Record<string, number>;
   onlyExported: number;
   onlyLegacy: number;
   /** Numbers held more than once on either side, left out of the match. */
@@ -269,6 +274,17 @@ export async function compareLegacyExport(
     ),
   );
   const legacyValue = (c: string) => (stagedColumns.has(c) ? `coalesce(l."${c}", '')` : "''");
+  // The program of every staged record, and of every specimen by field number
+  // (src/legacy-program.ts): a pair is in the program of its specimen, and a
+  // pair no specimen has a field number for in that of its staged record.
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE cmp_legacy_program AS
+    WITH ${PROGRAM_CTES}
+    SELECT * FROM legacy_program`);
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE cmp_specimen_program AS
+    WITH ${PROGRAM_CTES}
+    ${SPECIMEN_PROGRAM_SELECT}`);
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_pairs AS
     WITH e AS (SELECT * FROM cmp_export WHERE "fieldNumber" IN (
@@ -277,13 +293,19 @@ export async function compareLegacyExport(
                SELECT "fieldNumber" FROM legacy_occurrence WHERE nullif("fieldNumber", '') IS NOT NULL
                GROUP BY 1 HAVING count(*) = 1))
     SELECT ${LEGACY_EXPORT_COLUMNS.map((c) => `coalesce(e."${c}", '') AS "e_${c}", ${legacyValue(c)} AS "l_${c}"`).join(", ")},
-           ${seasonDate("e")} >= (SELECT active_since FROM season) AS active_season
-    FROM e JOIN l ON l."fieldNumber" = e."fieldNumber"`);
+           ${seasonDate("e")} >= (SELECT active_since FROM season) AS active_season,
+           coalesce(sp.program, lp.program) AS program
+    FROM e JOIN l ON l."fieldNumber" = e."fieldNumber"
+    LEFT JOIN cmp_specimen_program sp ON sp.field_number = e."fieldNumber"
+    LEFT JOIN cmp_legacy_program lp ON lp._id = l._id`);
   const one = async (sql: string) => Number(((await (await conn.run(sql)).getRows()) as [[bigint]])[0]![0]);
   const exported = await one("SELECT count(*) FROM cmp_export");
   const legacy = await one("SELECT count(*) FROM legacy_occurrence");
   const active = await one("SELECT count(*) FROM cmp_pairs WHERE active_season");
   const settled = await one("SELECT count(*) FROM cmp_pairs WHERE NOT coalesce(active_season, false)");
+  const matchedByProgram = Object.fromEntries(
+    ((await (await conn.run(`SELECT program, count(*) FROM cmp_pairs GROUP BY 1`)).getRows()) as [string, bigint][]).map(([p, n]) => [p, Number(n)]),
+  );
   const onlyExported = await one(`SELECT count(*) FROM cmp_export e WHERE NOT EXISTS
                                     (SELECT 1 FROM legacy_occurrence l WHERE l."fieldNumber" = e."fieldNumber")`);
   const onlyLegacy = await one(`SELECT count(*) FROM legacy_occurrence l WHERE nullif(l."fieldNumber", '') IS NOT NULL
@@ -376,6 +398,7 @@ export async function compareLegacyExport(
     legacy,
     reference: { rows: legacy, fingerprint },
     matched: { active, settled },
+    matchedByProgram,
     onlyExported,
     onlyLegacy,
     duplicated,
@@ -858,12 +881,12 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
 async function buildDifferences(conn: DuckDBConnection): Promise<void> {
   const perColumn = LEGACY_EXPORT_COLUMNS.map(
     (c) => `SELECT "e_fieldNumber" AS field_number, ${sqlString(c)} AS "column", "e_${c}" AS exported, "l_${c}" AS legacy,
-                   coalesce(active_season, false) AS active_season
+                   coalesce(active_season, false) AS active_season, program
             FROM cmp_pairs WHERE "e_${c}" <> "l_${c}"`,
   ).join("\nUNION ALL\n");
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_value_difference AS
-    SELECT field_number, "column", exported, legacy, active_season, ${DIFFERENCE_KIND_SQL} AS kind
+    SELECT field_number, "column", exported, legacy, active_season, program, ${DIFFERENCE_KIND_SQL} AS kind
     FROM (${perColumn})`);
   await kindFromStore(conn);
 
@@ -877,8 +900,10 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
   const activeSince = `(SELECT active_since FROM season)`;
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_only_legacy AS
-    SELECT l._id, l."fieldNumber" AS field_number, coalesce(${seasonDate("l")} >= ${activeSince}, false) AS active_season
+    SELECT l._id, l."fieldNumber" AS field_number, coalesce(${seasonDate("l")} >= ${activeSince}, false) AS active_season,
+           lp.program
     FROM legacy_occurrence l
+    JOIN cmp_legacy_program lp ON lp._id = l._id
     WHERE nullif(l."fieldNumber", '') IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM cmp_export e WHERE e."fieldNumber" = l."fieldNumber")`);
   const finding = promoted > 0
@@ -894,13 +919,16 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_difference AS
     SELECT row_number() OVER (ORDER BY field_number, "column") AS difference_id, * FROM (
-      SELECT field_number, "column", exported, legacy, active_season, kind FROM cmp_value_difference
+      SELECT field_number, "column", exported, legacy, active_season, program, kind FROM cmp_value_difference
       UNION ALL
-      SELECT o.field_number, '${RECORD_COLUMN}', '', 'present', o.active_season, ${why}
+      SELECT o.field_number, '${RECORD_COLUMN}', '', 'present', o.active_season, o.program, ${why}
       FROM cmp_only_legacy o
       UNION ALL
       SELECT e."fieldNumber", '${RECORD_COLUMN}', 'present', '',
              coalesce(${seasonDate("e")} >= ${activeSince}, false),
+             -- A specimen new Beeline made has its sample; a row in a hand-made file, only the state it writes.
+             coalesce((SELECT sp.program FROM cmp_specimen_program sp WHERE sp.field_number = e."fieldNumber"),
+                      ${regionProgramSql('e."stateProvince"')}),
              ${mintedKind}
       FROM cmp_export e
       WHERE nullif(e."fieldNumber", '') IS NOT NULL

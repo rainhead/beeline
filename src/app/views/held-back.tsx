@@ -7,9 +7,10 @@ import { Absent, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./c
  * src/app/held-back.ts). Admin-gated like /exports, which links here: the
  * records carry collectors' names and observations.
  *
- * Counts first, split into the active and settled seasons by the year each
- * record wrote, then a row per record. Records holding nothing but a field
- * number are one line: a row each would say nothing.
+ * Counts first, a column for each program that has records, then each
+ * program's records under a heading of its own, in field-number order.
+ * Records holding nothing but a field number are one line: a row each would
+ * say nothing.
  */
 export function HeldBackPage({ m, heldBack }: { m: Messages; heldBack: HeldBack | null }) {
   const h = m.heldBack;
@@ -26,13 +27,13 @@ export function HeldBackPage({ m, heldBack }: { m: Messages; heldBack: HeldBack 
             <LinkButton href="/exports/held-back.csv">{h.download}</LinkButton> <Meta>{h.downloadNote}</Meta>
           </p>
           <h2>{h.reasonsHeading}</h2>
-          <DataTable columns={[h.colReason, h.colActive(heldBack.activeSince), h.colSettled, h.colNoYear]}>
+          <DataTable columns={[h.colReason, ...heldBack.programs]}>
             {heldBack.reasons.map((r) => (
               <tr>
                 <td>{h.reason[r.rule]}</td>
-                <td>{m.format.number(r.active)}</td>
-                <td>{m.format.number(r.settled)}</td>
-                <td>{m.format.number(r.noYear)}</td>
+                {heldBack.programs.map((p) => (
+                  <td>{m.format.number(r.records[p] ?? 0)}</td>
+                ))}
               </tr>
             ))}
           </DataTable>
@@ -44,13 +45,20 @@ export function HeldBackPage({ m, heldBack }: { m: Messages; heldBack: HeldBack 
             <>
               <h2>{h.recordsHeading}</h2>
               <Meta block>{h.dateNote}</Meta>
-              <DataTable
-                columns={[h.colFieldNumber, h.colCollector, h.colSample, h.colSpecimen, h.colDate, h.colIdentification, h.colWhy, h.colObservation]}
-              >
-                {heldBack.records.map((r) => (
-                  <Row m={m} record={r} />
-                ))}
-              </DataTable>
+              {heldBack.programs.map((program) => (
+                <section>
+                  <h3>{program}</h3>
+                  <DataTable
+                    columns={[h.colFieldNumber, h.colCollector, h.colSample, h.colSpecimen, h.colDate, h.colIdentification, h.colWhy, h.colObservation]}
+                  >
+                    {heldBack.records
+                      .filter((r) => r.program === program)
+                      .map((r) => (
+                        <Row m={m} record={r} />
+                      ))}
+                  </DataTable>
+                </section>
+              ))}
             </>
           )}
         </>

@@ -181,10 +181,13 @@ describe("writing the changes", () => {
     summary = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), dir);
   });
 
-  test("counts the records on each line by season, with a record to look at and what changed on it", () => {
+  test("counts the records on each line by program, with a record to look at and what changed on it", () => {
     const sex = summary.lines.find((l) => l.line === "newer_expert_sex")!;
-    expect(sex.active + sex.settled).toBe(1);
-    expect(sex.outcomes).toEqual([{ outcome: "expected", active: 0, settled: 1 }]);
+    expect(Object.values(sex.records).reduce((t, x) => t + x, 0)).toBe(1);
+    expect(sex.outcomes).toEqual([{ outcome: "expected", records: sex.records }]);
+    // The summary names the programs it counts.
+    expect(summary.programs.length).toBeGreaterThan(0);
+    expect(Object.keys(sex.records).every((p) => summary.programs.includes(p))).toBe(true);
     const [example] = sex.examples;
     expect(example).toMatchObject({ fieldNumber: "25000005", values: [{ column: "sex", kind: "newer_determination", old: "male", new: "female" }] });
     expect(example!.specimenId).toEqual(expect.any(Number));
@@ -216,7 +219,7 @@ describe("writing the changes", () => {
 
   test("offers no download for specimens old Beeline never had", async () => {
     // Synthetic: the fixture numbers nothing in new Beeline, so the line is added to its summary.
-    const numbered = { line: "numbered_here", active: 2, settled: 0, values: 2, outcomes: [{ outcome: "expected", active: 2, settled: 0 }], examples: [], file: null, bytes: null };
+    const numbered = { line: "numbered_here", records: { OBA: 2 }, values: 2, outcomes: [{ outcome: "expected", records: { OBA: 2 } }], examples: [], file: null, bytes: null };
     const page = String(await LegacyChangesPage({ m: en as never, summary: { ...summary, lines: [...summary.lines, numbered] } }));
     const article = page.slice(page.indexOf(`<article id="numbered_here"`), page.indexOf("</article>", page.indexOf(`<article id="numbered_here"`)));
     expect(article).toContain("Numbered by new Beeline");
@@ -225,7 +228,7 @@ describe("writing the changes", () => {
 
   test("lists each line's outcomes commonest first", () => {
     for (const l of summary.lines) {
-      const sizes = l.outcomes.map((o) => o.active + o.settled);
+      const sizes = l.outcomes.map((o) => Object.values(o.records).reduce((t, x) => t + x, 0));
       expect(sizes, l.line).toEqual([...sizes].sort((a, b) => b - a));
     }
   });
@@ -244,9 +247,9 @@ describe("writing the changes", () => {
     const bytes = await readFile(join(dir, sex.file!));
     expect(bytes.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
     const [header, ...rows] = bytes.subarray(3).toString("utf8").trim().split("\n");
-    expect(header).toBe("field_number,season,column,old_beeline,new_beeline,what_new_beeline_did,outcome");
+    expect(header).toBe("field_number,program,column,old_beeline,new_beeline,what_new_beeline_did,outcome");
     expect(rows).toHaveLength(sex.values);
-    expect(rows[0]).toBe("25000005,settled,sex,male,female,Sex or caste from a newer expert identification,Not a fault in either");
+    expect(rows[0]).toBe("25000005,WABA,sex,male,female,Sex or caste from a newer expert identification,Not a fault in either");
     expect(sex.bytes).toBe((await stat(join(dir, sex.file!))).size);
     expect(await readChangesSummary(exportsDir)).toEqual(summary);
     // The older night's folder, which no summary named, is gone; the folder it did not write is not.
@@ -325,6 +328,20 @@ describe("writing the changes", () => {
   });
 });
 
+describe("a summary written before the counts were by program", () => {
+  // After a deploy the page reads the previous night's file until the job runs again.
+  test("is read as none, so the page says it is not worked out yet", async () => {
+    const exportsDir = await mkdtemp(join(tmpdir(), "legacy-changes-old-"));
+    await mkdir(changesDir(exportsDir), { recursive: true });
+    await writeFile(
+      join(changesDir(exportsDir), "summary.json"),
+      JSON.stringify({ writtenAt: "2026-11-19T12:00:00.000Z", activeSince: "2025-03-01", matched: { active: 1, settled: 2 }, generation: "x", lines: [{ line: "unexplained", active: 1, settled: 0, values: 1, outcomes: [], examples: [], file: null, bytes: null }] }),
+    );
+    expect(await readChangesSummary(exportsDir)).toBeNull();
+    expect(String(await LegacyChangesPage({ m: en as never, summary: await readChangesSummary(exportsDir) }))).toContain(en.legacyChanges.missing);
+  });
+});
+
 describe("the legacy-changes job", () => {
   test("refuses to run before there is an export, then writes the summary from it", async () => {
     const { buildJobs } = await import("../src/app/jobs/registry.js");
@@ -345,7 +362,7 @@ describe("the legacy-changes job", () => {
     expect(await last()).toMatchObject({ outcome: "failed", detail: expect.stringMatching(/run legacy-export first/) });
     await writeLegacyExport(conn, legacyExportPath(dir));
     await runJob({ db, conn }, job);
-    expect(await last()).toMatchObject({ outcome: "succeeded", detail: expect.stringMatching(/differing values on \d+ lines; records \(active \/ settled\) not yet explained \d+ \/ \d+, unsorted 0 \/ 0/) });
-    expect((await readChangesSummary(dir))?.matched.settled).toBeGreaterThan(0);
+    expect(await last()).toMatchObject({ outcome: "succeeded", detail: expect.stringMatching(/differing values on \d+ lines; records not yet explained \d+( \(.*?\))?, unsorted 0/) });
+    expect(Object.values((await readChangesSummary(dir))!.matched).reduce((t, x) => t + x, 0)).toBeGreaterThan(0);
   });
 });

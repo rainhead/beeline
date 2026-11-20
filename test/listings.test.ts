@@ -1633,12 +1633,15 @@ describe("Darwin Core archives, by program and year", () => {
 
     // OBA's two specimens, and nothing of Washington's. Neither has a
     // museum's catalog number yet, so that column is empty (gh-98).
-    const field = header!.indexOf("fieldNumber");
-    expect(occurrences.map((r) => r[field]).sort()).toEqual(["OBA00001", "OBA00002"]);
+    // The archive's fieldNumber is the sample's number and recordNumber the specimen within it; the label
+    // numbers (OBA00001) are in neither, and in the staff download only.
+    const field = header!.indexOf("recordNumber");
+    expect(occurrences.map((r) => r[header!.indexOf("fieldNumber")])).toEqual(["A-1", "A-1"]);
+    expect(occurrences.map((r) => r[field]).sort()).toEqual(["A-1.1", "A-1.2"]);
     expect(occurrences.map((r) => r[header!.indexOf("catalogNumber")])).toEqual(["", ""]);
     // Nor an occurrenceID: Beeline mints none (ADR 0008, second amendment).
     expect(occurrences.map((r) => r[header!.indexOf("occurrenceID")])).toEqual(["", ""]);
-    const oba1 = occurrences.find((r) => r[field] === "OBA00001")!;
+    const oba1 = occurrences.find((r) => r[field] === "A-1.1")!;
     expect(oba1[header!.indexOf("scientificName")]).toBe("Bombus vosnesenskii");
 
     // Both determinations of OBA00001, oldest first, joined by the core's id;
@@ -1661,7 +1664,46 @@ describe("Darwin Core archives, by program and year", () => {
     );
     // Each determination keeps its own sex, which the core holds only for the record.
     expect(identifications.map((r) => r[col("sex")])).toEqual(["", "female"]);
-    expect(meta).not.toContain("terms/caste");
+    // Sex and caste are declared on the identification, where each determination keeps its own.
+    expect(meta).toContain(`<field index="${col("sex")}" term="http://rs.tdwg.org/dwc/terms/sex"/>`);
+    expect(meta).toContain(`<field index="${col("caste")}" term="http://rs.tdwg.org/dwc/terms/caste"/>`);
+    expect(identHeader!.slice(-1)).toEqual(["identifiedByExpert"]);
+  });
+
+  it("numbers specimens by Darwin Core, and writes the caste and the classification from the store", async () => {
+    const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
+    const { app, db, conn } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
+    await conn.run(`UPDATE determination SET caste = 'worker' WHERE verbatim_identification = 'Bombus cf. vosnesenskii'`);
+    // Ecdysis has reported a number for one Oregon specimen, and for no other specimen.
+    await conn.run(
+      `INSERT INTO specimen_catalog_number (specimen_id, catalog_number)
+       SELECT entity_id, 'MUSEUM_1' FROM specimen WHERE field_number = 'OBA00001'`,
+    );
+    await writeProgramArchives(db, fx.dir, { governance: fx.governance });
+    const read = async (file: string) => {
+      const files = unpack(new Uint8Array(await (await app.request(`/exports/dwca/${file}`)).arrayBuffer()));
+      const [header, ...rows] = table(files["occurrence.txt"]!);
+      return { header: header!, rows, meta: files["meta.xml"]! };
+    };
+
+    // Washington's program has a catalog prefix, so a specimen without a catalog number gets it and the label number.
+    const waba = await read(`WaBA-${CURRENT_SEASON}.zip`);
+    const w = (name: string) => waba.rows[0]![waba.header.indexOf(name)];
+    expect([w("fieldNumber"), w("recordNumber"), w("catalogNumber")]).toEqual(["B-1", "B-1.1", "WSDA_WABA0001"]);
+    expect([w("genus"), w("scientificName")]).toEqual(["Andrena", "Andrena"]);
+    // Oregon has no prefix, so only the number Ecdysis reported is written.
+    const oba = await read("OBA-2026.zip");
+    const catalogOf = (recordNumber: string) =>
+      oba.rows.find((r) => r[oba.header.indexOf("recordNumber")] === recordNumber)![oba.header.indexOf("catalogNumber")];
+    expect([catalogOf("A-1.1"), catalogOf("A-1.2")]).toEqual(["MUSEUM_1", ""]);
+
+    const first = oba.rows.find((r) => r[oba.header.indexOf("recordNumber")] === "A-1.1")!;
+    const cell = (name: string) => first[oba.header.indexOf(name)];
+    expect([cell("caste"), cell("family"), cell("genus"), cell("scientificName")]).toEqual(["worker", "Apidae", "Bombus", "Bombus vosnesenskii"]);
+    // The specimen nobody has identified has no classification, and keeps its numbers.
+    const second = oba.rows.find((r) => r[oba.header.indexOf("recordNumber")] === "A-1.2")!;
+    expect(["family", "genus", "kingdom", "caste"].map((n) => second[oba.header.indexOf(n)])).toEqual(["", "", "", ""]);
+    expect(oba.meta).toContain(`<field index="${oba.header.indexOf("caste")}" term="http://rs.tdwg.org/dwc/terms/caste"/>`);
   });
 
   it("writes a year with no licence or privacy policy for review, and says what publishing it lacks", async () => {
@@ -1714,7 +1756,7 @@ describe("Darwin Core archives, by program and year", () => {
     expect(manifest.entries.filter((e) => e.program === "OBA").map((e) => [e.year, e.specimens])).toEqual([[2026, 3]]);
     const files = unpack(new Uint8Array(await (await app.request("/exports/dwca/OBA-2026.zip")).arrayBuffer()));
     const [header, ...occurrences] = table(files["occurrence.txt"]!);
-    expect(occurrences.map((r) => r[header!.indexOf("fieldNumber")]).sort()).toEqual(["OBA00001", "OBA00002", "OBA00003"]);
+    expect(occurrences.map((r) => r[header!.indexOf("recordNumber")]).sort()).toEqual(["A-1.1", "A-1.2", "A-3.1"]);
   });
 
   it("removes an archive whose year no longer has specimens, and never serves a file the manifest does not name", async () => {
@@ -1853,7 +1895,7 @@ describe("Darwin Core archives, by program and year", () => {
     expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-all-years-dwca.zip"`);
     const files = unpack(new Uint8Array(await res.arrayBuffer()));
     const [header, ...occurrences] = table(files["occurrence.txt"]!);
-    expect(occurrences.map((r) => r[header!.indexOf("fieldNumber")]).sort()).toEqual(["OBA00001", "OBA00002", "OBA00009"]);
+    expect(occurrences.map((r) => r[header!.indexOf("recordNumber")]).sort()).toEqual(["A-1.1", "A-1.2", "A-9.1"]);
     expect(files["meta.xml"]).toContain("http://creativecommons.org/licenses/by-nc/4.0/legalcode");
     // Every identification of every year's specimens.
     expect(table(files["identification.txt"]!).length).toBeGreaterThan(1);
@@ -1916,7 +1958,7 @@ describe("Darwin Core archives, by program and year", () => {
     });
     const stream = specimenArchiveStream(async (_limit, offset) => {
       const rows = pages[offset === 0 ? 0 : 1]!;
-      return { rows, total: 0, collectors: new Map(), identifications: rows.map((r) => ident(r.specimen_id)) };
+      return { rows, total: 0, collectors: new Map(), identifications: rows.map((r) => ident(r.specimen_id)), classifications: new Map() };
     });
     const files = unpack(new Uint8Array(await new Response(stream).arrayBuffer()));
     expect(table(files["occurrence.txt"]!)).toHaveLength(1 + CSV_PAGE_SIZE + 1);

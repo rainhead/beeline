@@ -35,8 +35,9 @@ import { orderPrograms, PROGRAM_CTES, PROGRAM_ORDER_SQL } from "../legacy-progra
  * repair's own remarks only; the repair ran once and its wording is fixed.
  *
  * Each record has the program it belongs to (src/legacy-program.ts), which is
- * how the page counts and lists them: staff want to know whether an issue
- * affects their own program, not which year it falls in (Peter, 2026-11-20).
+ * how the page counts and lists them, not by season: the page describes old
+ * Beeline's records as they stood at cutover, when no season was in progress,
+ * so an active/settled split says nothing (Peter, 2026-11-20).
  *
  * These are views and tables promotion creates, not the schema's, so a
  * store without old-Beeline staging (a fresh development store, or a test)

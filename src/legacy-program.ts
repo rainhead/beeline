@@ -1,9 +1,10 @@
 /**
  * Which program an old-Beeline record belongs to, for the two staff pages that
  * describe those records (/exports/held-back and /exports/changes,
- * beeline-z0pi). The reader's question there is whether an issue affects their
- * program, so the pages count by program and not by season (Peter,
- * 2026-11-20).
+ * beeline-z0pi). The pages describe those records as they stood at
+ * cutover, when no season was in progress, so they count by program and not by
+ * season: "these features pertain only to cutover. The current season is not
+ * 'in progress', so it is not special" (Peter, 2026-11-20).
  *
  * A record new Beeline carried over belongs to the atlas its sample files
  * under (`sample_atlas`); a second record the repair tied to a specimen, to

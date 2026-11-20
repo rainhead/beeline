@@ -2481,7 +2481,7 @@ export const en = {
         area: "country, state and county",
         place: "locality",
       } as Record<string, string>,
-      changeKind: (label: string, samples: number, split: string) => `${label} (${n(samples)} ${samples === 1 ? "sample" : "samples"}${split})`,
+      changeKind: (label: string, samples: number, split: string) => `${label}: ${n(samples)} ${samples === 1 ? "sample" : "samples"}${split}`,
       changeCoordinatesNote:
         "Coordinates are not ticked at first: a file that was not made from a fresh download often differs in the last digits of many points, and a point set here replaces iNaturalist's for good.",
       pointsLine: (moving: number, far: number, largest: string, movingSplit = "", farSplit = "") =>

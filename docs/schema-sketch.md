@@ -17,11 +17,16 @@ erDiagram
     person ||--o| mailing_address : "has"
     program ||--o| program_region : "an atlas is a program with a region"
     program ||--o{ sample : "atlas: the region it fell in (derived)"
-    program ||--o{ collecting_event : "holds; a sample is collected for a program through its event"
+    program ||--o{ event : "holds; a sample is collected for a program through its event"
+    program ||--o{ site : "returns to"
+    site ||--o{ event : "held at"
     protocol ||--o{ sample : "taken by"
-    collecting_event ||--o{ sample_event : "the day's samples"
-    collecting_event ||--o{ event_photo : "protocol or social"
-    collecting_event ||--o{ event_note : "what had no home on a sample"
+    event ||--o{ event_change : "moved, cancelled, corrected"
+    event ||--o{ sample_event : "the samples collected at it"
+    event ||--o| event_conditions : "weather and habitat"
+    event ||--o{ event_flora : "plants in bloom"
+    event ||--o{ event_photo : "protocol or social"
+    event ||--o{ event_note : "what had no home on a sample"
     person ||--o{ sample : "collects"
     sample ||--o{ specimen : "individuated at print"
     sample ||--o| sample_true_location : "trusted coordinates"
@@ -103,9 +108,39 @@ CREATE TABLE program_region (
 -- with "atlas or the program itself" read off whether that program has a region.
 ```
 
-## Programs, protocols and collecting events
+## Programs, protocols and events
 
-Sketched 2026-09-24 from the BLM conversations ([CONTEXT.md](../CONTEXT.md): Collecting event, Outing, Protocol, Programs and governance; [questions.md](questions.md), BLM surveys). Minimal on purpose: it says how the three concepts relate to each other and to `sample`, and no more. Weather, habitat and the plot's floral list are on Olivia's Kobo form and are not sketched until the form has been seen.
+Sketched 2026-09-24 from the BLM conversations ([CONTEXT.md](../CONTEXT.md): Event, Collecting event, Outing, Protocol, Site, Programs and governance; [questions.md](questions.md), BLM surveys). The events part was redrawn on 2026-11-19 (Peter) so that one table serves both the program calendar (beeline-2zej.1) and the collecting event (beeline-85m.2). It was checked against two sets of real cases: Olivia's plot day ([research/blm-protocol-notes.md](research/blm-protocol-notes.md)) and the 107 events the 2026 communiques listed.
+
+An event has two sides, and either may be missing:
+
+- **The announcement** is what a calendar needs: whose event it is, what kind, when, where, and how to register. A Zoom talk has only this side.
+- **The report** is what was recorded during the event or after it: who was there, the weather, the plants in bloom, photos, notes, and the samples. A BLM plot day may have only this side: nothing in Olivia's protocol has a plot day entered before it happens, and its weather limits mean the day is often chosen that morning, so its event is created when the first field submission arrives.
+
+In this section an **event** is always the calendar thing. A recorded change to a row (ADR 0007, and the first commitment above) is called a **change**, never an event (Peter, 2026-11-19).
+
+### What DuckDB decides
+
+Production is migrated and never rebuilt (ADR 0006), and three things DuckDB refuses shape these tables. Each is recorded where it first cost something: `schema/030_samples_specimens.sql`, `migrations/0030-print-runs.sql` and ADR 0006.
+
+- **A column that refers to another table cannot be updated on a row that other tables refer to.** Every event is referred to by its changes, samples, photos and notes. So an event's site and protocol are rows in tables beside it (`event_site`, `event_protocol`), as a sample's atlas is. Two sites found to be one can then be merged, which could not be done with a `site_id` column on `event`. An event's program is the exception: it stays on the event and is fixed when the event is created.
+- **A migration cannot add a column with a constraint, and cannot add or change a CHECK.** A list of kinds will grow: `area.kind` has been rebuilt three times for a new value, and rebuilding `event` would mean rebuilding every table that refers to it. So `kind` is plain text, checked against the `event_kind` lookup by a view that a test holds empty. The CHECKs that are safe are on the table from the first day.
+- **A table that refers to another cannot have a column dropped or renamed.** `site` refers to `program`, so its columns are permanent once built. That is why it waits for a real field submission.
+
+The sketch writes `id` as the rest of this document does. Built, `event` and `site` are entities with an `entity_id` from the one sequence (ADR 0002).
+
+### Open before building
+
+Raised by a review of this sketch on 2026-11-19. None is decided.
+
+- **An event's program does two jobs.** It says whose calendar the event is on, and `sample_program` takes a sample's program from its event ahead of its atlas. A collecting day for the whole program, held in Oregon, would make its samples Master Melittology's and not the Oregon Bee Atlas's, and licences and archives follow the program. Nothing breaks until samples attach to events. One answer: an event of the catch-all program never overrides a sample's atlas.
+- **The shape of `event_change`.** ADR 0007 expects a change log to become a table after cutover, but its method computes each entry by comparing the store with what the log last said. `event_change` is written by whoever makes the change, beside a row that holds the current values. `person_registration_event` (`schema/014`) already takes a third shape. The choice wants an addendum to the ADR, and an answer to whether creating an event is itself a change.
+- **Loading past events.** A change needs an author and a time, so 2026's cancellations and moves cannot be loaded as they happened. A loader also needs a key of its own for each event, so that running it twice does not make each event twice.
+- **Where the grant to announce for a program lives.** It is the first permission that belongs to a program. Every existing grant is set through the person overlay and shows in the person change log.
+- **Who sees an online link, and a meeting point that may be somebody's home.**
+- **A plot day found by program, site and date is only as sound as the match of the site.** A collector types the site's name freehand, and two people's GPS points on one hectare can be 100 m apart. A miss makes a second event, not an error, so this needs a view of likely duplicates and a way to merge them. Three cases have no rule yet: a ten-minute collection that is its own submission, a submission whose date is corrected afterwards, and a submission for a day whose event was cancelled.
+
+Not sketched: days when several people collected at one place without any announcement. On last night's copy of production, 168 place-days in the 2026 season had three or more collectors, and about 117 of them matched no listed event (beeline-85m.2). Peter set these aside on 2026-11-19; the likely feature is making an event's report easy to write after the day.
 
 `program` and `program_region` are defined under People and programs above; this section adds what hangs off them.
 
@@ -120,7 +155,7 @@ SELECT s.id AS sample_id,
        coalesce(e.program_id, sa.atlas_id, (SELECT id FROM program WHERE code = 'MM')) AS program_id
 FROM sample s
 LEFT JOIN sample_event se ON se.sample_id = s.id
-LEFT JOIN collecting_event e ON e.id = se.event_id
+LEFT JOIN event e ON e.id = se.event_id
 LEFT JOIN sample_atlas sa ON sa.sample_id = s.id;   -- built (schema/010); atlas_id is a program with a region
 
 -- How a sample was taken: shared reference data, like animal_rank, never free text and
@@ -144,39 +179,154 @@ CREATE TABLE protocol (
   label_host       BOOLEAN,                -- the host prints on the label
   label_time       BOOLEAN                 -- the collection time prints on the label
 );
--- sample gains: protocol_id INTEGER REFERENCES protocol(id), time_start TIME, time_end TIME.
+-- sample gains time_start TIME and time_end TIME, and a sample_protocol table beside it
+-- (sample_id, protocol_id), since a migration cannot add a column with a reference.
 -- The legacy protocol strings ("6 Vane Traps") map onto protocol rows by curation and
 -- stay verbatim beside them; they never constrain the table.
 
--- A program's day at a place. Named, usually scheduled, created before, during or after
--- the day. The name is a label and never a key; identity is the program, the place and
--- the dates. An outing (one person's road trip) is deliberately not here.
-CREATE TABLE collecting_event (
-  id          INTEGER PRIMARY KEY,
-  program_id  INTEGER NOT NULL REFERENCES program(id),
-  kind        TEXT NOT NULL CHECK (kind IN ('collecting', 'training')),
-  name        TEXT NOT NULL,                     -- 'Cottonwood Canyon, 12 Jun 2027'
-  protocol_id INTEGER REFERENCES protocol(id),   -- an event-grain protocol, or NULL
-  property    TEXT,                              -- 'Cottonwood Canyon State Park'
-  site_code   TEXT,                              -- 'EMPP1': opaque, not unique (CONTEXT: Site code)
-  latitude    DOUBLE,
-  longitude   DOUBLE,
-  date_start  DATE NOT NULL,
-  date_end    DATE NOT NULL,
-  created_by  INTEGER NOT NULL REFERENCES person(id),
-  created_at  TIMESTAMP NOT NULL
+-- A place a program returns to: a BLM plot, which is a permanent hectare that is never
+-- moved and is visited several times a year, and probably the spot a trap is serviced
+-- at over a season. It is what ties this June's visit to last June's. A site is
+-- identified by where it is; its name is what the people who work there call it,
+-- recorded as written, never parsed and not unique (CONTEXT: Site code).
+-- PROVISIONAL: nobody enters a site ahead of time. A row is made when a field
+-- submission first names one, so the columns wait on a real export from the field tool,
+-- and so does the rule for "the same site again" (her protocol says both 300 m and 500 m).
+CREATE TABLE site (
+  id         INTEGER PRIMARY KEY,
+  program_id INTEGER NOT NULL REFERENCES program(id),   -- whose people set it up
+  name       TEXT NOT NULL,                             -- 'EMPP1'
+  latitude   DOUBLE NOT NULL,                           -- its centre
+  longitude  DOUBLE NOT NULL
 );
+
+-- One table for everything a program puts on its calendar and everything it reports on
+-- afterwards. Created before, during or after its dates. The name is a label and never
+-- a key. An event at a site is identified by the program, the site and the dates, which
+-- is how the second collector's submission for a plot day finds the first one's event.
+-- An outing (one person's road trip) is deliberately not here.
+CREATE TABLE event (
+  id          INTEGER PRIMARY KEY,
+  program_id  INTEGER NOT NULL REFERENCES program(id),  -- an atlas, or MM for the whole program
+  kind        TEXT NOT NULL,                     -- an event_kind code. No CHECK and no foreign
+                                                 -- key: see "What DuckDB decides" below.
+  collecting  BOOLEAN NOT NULL,                  -- held to collect bees, whether or not any
+                                                 -- are caught. Separate from kind:
+                                                 -- 12 of 2026's field days were also trainings.
+                                                 -- Only a collecting event takes samples.
+  name        TEXT NOT NULL,                     -- 'Cottonwood Canyon, 12 Jun 2027'
+  series      TEXT,                              -- 'Catch a Buzz': each session is its own row
+  details     TEXT,                              -- plain text
+
+  -- When. A wall-clock appointment, not an instant, so not a UTC TIMESTAMP: a local date
+  -- range, an optional local time, and the IANA zone the time is in.
+  date_start  DATE NOT NULL,
+  date_end    DATE NOT NULL,                     -- four days in West Central Idaho are one event
+  time_start  TIME,                              -- on each day of the event, not only the first
+  time_end    TIME,
+  time_zone   TEXT,                              -- 'America/Los_Angeles'; NULL when no time is given
+
+  cancelled_at TIMESTAMP,                        -- NULL = not cancelled
+  created_by  INTEGER NOT NULL REFERENCES person(id),
+  created_at  TIMESTAMP NOT NULL,
+  -- These three are here from the first day, because a CHECK can never be added later.
+  CHECK (date_end >= date_start),
+  CHECK ((time_start IS NULL) = (time_zone IS NULL)),
+  CHECK (time_end IS NULL OR time_start IS NOT NULL)
+);
+
+-- The kinds an event may have. A lookup the event's kind is checked against by a view
+-- of events whose kind is not listed, which a test holds empty.
+CREATE TABLE event_kind (
+  code TEXT PRIMARY KEY,   -- 'field day', 'microscope session', 'talk', 'meeting', 'course',
+  name TEXT NOT NULL       -- 'conference', 'outreach', 'deadline', 'other'
+);
+
+-- Where and how, each in a table beside the event that nothing refers to, so every
+-- column stays writable and each can be built when its step arrives. No row = none:
+-- a deadline has no place, a field day has no online link.
+CREATE TABLE event_place (       -- a place that is only named
+  event_id   INTEGER PRIMARY KEY REFERENCES event(id),
+  name       TEXT NOT NULL,                      -- 'Cottonwood Canyon State Park'
+  latitude   DOUBLE,                             -- where to meet
+  longitude  DOUBLE,
+  CHECK ((latitude IS NULL) = (longitude IS NULL))
+);
+CREATE TABLE event_site (        -- a site the program returns to
+  event_id INTEGER PRIMARY KEY REFERENCES event(id),
+  site_id  INTEGER NOT NULL REFERENCES site(id)
+);
+CREATE TABLE event_protocol (    -- an event-grain protocol: the plot day
+  event_id    INTEGER PRIMARY KEY REFERENCES event(id),
+  protocol_id INTEGER NOT NULL REFERENCES protocol(id)
+);
+CREATE TABLE event_online (
+  event_id INTEGER PRIMARY KEY REFERENCES event(id),
+  url      TEXT NOT NULL
+);
+-- Registration stays where it is today (Ideal Logic, Google Forms, WSDA's page).
+CREATE TABLE event_registration (
+  event_id    INTEGER PRIMARY KEY REFERENCES event(id),
+  url         TEXT NOT NULL,
+  register_by DATE
+);
+
+-- Six of 2026's 107 events were cancelled and five were moved. Each is a change that
+-- says who made it and when, and the event's page shows it: "moved from 12 June". The
+-- event row holds the current values. Append-only, the shape of the sample change log.
+CREATE TABLE event_change (
+  event_id   INTEGER NOT NULL REFERENCES event(id),
+  changed_at TIMESTAMP NOT NULL,
+  author_id  INTEGER NOT NULL REFERENCES person(id),
+  source     TEXT NOT NULL,                      -- the form, the API, a field submission
+  field      TEXT NOT NULL,                      -- 'date_start', 'place', 'cancelled_at'
+  old_value  TEXT,
+  new_value  TEXT,
+  reason     TEXT
+);
+
+-- Who was there. For a training whose attendance counts towards certification, the
+-- record stays in Ideal Logic and Beeline does not copy it.
 CREATE TABLE event_attendance (
-  event_id  INTEGER NOT NULL REFERENCES collecting_event(id),
+  event_id  INTEGER NOT NULL REFERENCES event(id),
   person_id INTEGER NOT NULL REFERENCES person(id),
   PRIMARY KEY (event_id, person_id)
 );
 
 -- A sample belongs to at most one event; no row = none, as with sample_atlas. A legacy
 -- sample joins an event a person creates for it; none is minted from the legacy records.
+-- Olivia's timed session (a 45-minute net session whose bees go into one vial per plant)
+-- gets no table: its vials are samples that share a start time and collectors.
 CREATE TABLE sample_event (
   sample_id INTEGER PRIMARY KEY REFERENCES sample(id),
-  event_id  INTEGER NOT NULL REFERENCES collecting_event(id)
+  event_id  INTEGER NOT NULL REFERENCES event(id)
+);
+
+-- What a plot day's protocol requires of the report, beside the event because a talk
+-- has no weather. PROVISIONAL: the columns follow her paper plot form (protocol
+-- pp. 149-153) and are settled when a real field submission has been seen.
+CREATE TABLE event_conditions (
+  event_id          INTEGER PRIMARY KEY REFERENCES event(id),
+  habitat           TEXT,       -- grassland, sagebrush, riparian-wetland, pinyon-juniper, ...
+  habitat_condition TEXT,
+  temperature_start     DOUBLE, -- four readings on her form; unit to settle (°F on paper)
+  temperature_end       DOUBLE,
+  temperature_morning   DOUBLE,
+  temperature_afternoon DOUBLE,
+  cloud_cover       TEXT,       -- full sun, 1/4, 1/2, 3/4, overcast
+  precipitation     TEXT,
+  wind_morning      DOUBLE,     -- mph on paper
+  wind_afternoon    DOUBLE,
+  weather_notes     TEXT
+);
+
+-- Every plant in bloom in the plot, with how many. The field tool sends one string,
+-- "Genus species abundance; ...", which is split on arrival and kept as written.
+CREATE TABLE event_flora (
+  event_id        INTEGER NOT NULL REFERENCES event(id),
+  name_as_written TEXT NOT NULL,                 -- 'Asteraceae #1 - photo' is allowed
+  plant_taxon_id  BIGINT,                        -- resolved later, or NULL
+  abundance       TEXT                           -- her log scale: exact under 20, tens, hundreds, '1000+'
 );
 
 -- Photos and notes hold what has no home on a sample. The bytes live in an object store
@@ -184,7 +334,7 @@ CREATE TABLE sample_event (
 -- carries the rare-plant question; a social photo carries faces.
 CREATE TABLE event_photo (
   id         INTEGER PRIMARY KEY,
-  event_id   INTEGER NOT NULL REFERENCES collecting_event(id),
+  event_id   INTEGER NOT NULL REFERENCES event(id),
   kind       TEXT NOT NULL CHECK (kind IN ('protocol', 'social')),
   object_key TEXT NOT NULL,
   taken_at   TIMESTAMP,
@@ -193,25 +343,32 @@ CREATE TABLE event_photo (
 );
 CREATE TABLE event_note (
   id        INTEGER PRIMARY KEY,
-  event_id  INTEGER NOT NULL REFERENCES collecting_event(id),
+  event_id  INTEGER NOT NULL REFERENCES event(id),
   author_id INTEGER NOT NULL REFERENCES person(id),
   noted_at  TIMESTAMP NOT NULL,
   body      TEXT NOT NULL                        -- access, phenology, what was learned
 );
+-- An event has one report however many days it ran: the notes, photos, attendance and
+-- samples all hang off the one row. Parent events (Darwin Core's shape) are left out
+-- until somebody wants a report for each day of a longer event as well.
 -- Later, maybe: event_track (event_id, person_id, object_key) for a GPS track, the one
 -- thing an outing holds that a sample cannot. Belongs to whoever walked it.
 ```
 
 ### Worked example: a BLM plot day
 
-Two people survey plot `EMPP1` on 2027-06-12, pan traps out 08:45 to 14:45 and two net sessions between. The event is created the evening before from the Kobo form's schedule; the samples arrive with the day's submissions and are edited in Beeline from then on.
+Two people survey plot `EMPP1` on 2027-06-12, pan traps out 08:45 to 14:45 and two net sessions between. Nothing is entered beforehand. Each collector sends one submission for the day. The first to arrive creates the event, and the site too if this is the plot's first visit; the second finds that event by program, site and date and joins it. Everything is edited in Beeline from then on.
 
 | Table | Row |
 | --- | --- |
 | `program` | `BLM`, "BLM bee surveys", governor: Olivia |
 | `protocol` | `plot-day` (grain event); `pan-6h` (sample, pan trap, 360 min, times recorded, zero is a record); `net-10min` (sample, net, 10 min, times recorded, host per sample, zero is a record, host and time on the label) |
-| `collecting_event` | program `BLM`, kind collecting, "EMPP1, 12 Jun 2027", protocol `plot-day`, site code `EMPP1`, 2027-06-12 to 2027-06-12 |
+| `site` | program `BLM`, name `EMPP1`, the plot's centre; already there if the plot was visited in May |
+| `event` | program `BLM`, kind field day, collecting, "EMPP1, 12 Jun 2027", 2027-06-12 to 2027-06-12, no time |
+| `event_site`, `event_protocol` | site `EMPP1`; protocol `plot-day`. No place, online link or registration, so no rows for those |
 | `event_attendance` | Olivia; a contractor |
+| `event_conditions` | sagebrush; 68 °F at the start, 84 °F at the end; 1/4 cloud; no precipitation; wind 4 mph in the morning, 9 mph in the afternoon |
+| `event_flora` | *Penstemon* sp., 40; *Eriogonum* sp., 200; *Cleome serrulata*, 12 |
 | `sample` × 4 | one pan-trap sample, `pan-6h`, 08:45–14:45, 61 specimens; three net samples, `net-10min`, one vial per plant, 09:20 *Penstemon*, 09:35 *Eriogonum* (0 specimens, still a record), 13:10 *Cleome* |
 | `sample_event` × 4 | all four on the one event, which is what makes them BLM samples |
 | `sample_atlas` × 4 | `NM`, derived from where the plot is — not written by anything here |
@@ -226,14 +383,28 @@ A Washington Bee Atlas collecting day at a state park on 2024-05-18, recorded in
 
 | Table | Row |
 | --- | --- |
-| `collecting_event` | program `WaBA`, kind collecting, "Cottonwood Canyon, 18 May 2024", no protocol, property "Cottonwood Canyon State Park", created 2027-03-02 by the coordinator |
+| `event` | program `WaBA`, kind field day, collecting, "Cottonwood Canyon, 18 May 2024", created 2027-03-02 by the coordinator |
+| `event_place` | "Cottonwood Canyon State Park". No site and no protocol |
 | `event_attendance` | the six people whose samples are attached, plus two who collected nothing |
 | `sample_event` | eleven legacy samples from that date and place, attached by hand; their `sample_number`s are untouched and still run per collector per day |
 | `sample_program` (view) | `WaBA`, through the event; before the event existed it was `WaBA` through the atlas they fell in, so attaching them changed nothing here. A legacy sample outside every atlas resolves to the catch-all |
 | `event_photo` | one social photo |
 | `event_note` | "Balsamroot past peak by mid-May here; a week earlier next year." |
 
-A training event is the same row with kind `training`, attendance, and no samples.
+A field training is the same row with `collecting` false, and no samples.
+
+### Worked example: the calendar, from the 2026 communiques
+
+Four of the 107 events the communiques listed between January and October 2026. None has a report.
+
+| Event | Row |
+| --- | --- |
+| A monthly talk | program `MM`, kind talk, not collecting, "Catch a Buzz", series "Catch a Buzz", 2026-11-10, 18:00 `America/Los_Angeles`, an online link. Each month's session is its own row; nothing stores a rule for repeating. |
+| A microscope training | program `WaBA`, kind microscope session, not collecting, 2026-11-13, place name "WSU Vancouver", a registration link to WSDA's events page, register by 2026-11-08 |
+| A deadline | program `MM`, kind deadline, "Master Level proposals due", 2026-10-30, no time and no place |
+| A field day that moved | program `OBA`, kind field day, collecting, its new date on the row; one `event_change` with field `date_start`, the old and new dates, who moved it and why. A cancelled event keeps its row, with `cancelled_at` set and one `event_change`. |
+
+Of the 107, 44 were for the whole program and so belong to `MM`; 31 were online; 29 were collecting, 12 of those also trainings.
 
 ## Curated taxonomy
 

@@ -1270,6 +1270,10 @@ export const en = {
           method_required: "A trap sample entered in Beeline needs its method, as its own form does.",
         },
         noOldRecords: "Old Beeline holds no records of this sample and it was not entered in Beeline, so it cannot be corrected here.",
+        inPrintRun:
+          "Labels for this sample are in a print run that has not printed yet, which holds the method and dates it froze. Wait for the run to print or cancel it, then make the correction.",
+        numberTaken: (number: string) =>
+          `Giving this net sample an end day makes it a trap sample, and trap sample ${number} is already in Beeline: a series number is one for each trap sample. Correct one of the two numbers first.`,
         conflict: "Someone changed this sample's method or dates after you opened the form. Reload the page to see what they saved, then make your correction again.",
       },
       /** Staff correcting how many traps a trap sample had, from a second pencil on the Method row (beeline-kgyd.4.1). */
@@ -2497,7 +2501,7 @@ export const en = {
       heldRowOfFile: (row: number, number: string) => `Row ${n(row)} of this file${number === "" ? "" : ` (${number})`}`,
       heldAnyway: (row: number) => `Create row ${n(row)} anyway`,
       heldRule:
-        "Looks like means the same first collector, collecting days that overlap, and a point within 100 metres, whether of a sample Beeline has or of an earlier row of this file. If the row is meant for that sample, put its sampleId in the file to compare it with that sample (changes to existing samples are not applied yet).",
+        "Looks like means the same first collector, collecting days that overlap, and a point within 100 metres, whether of a sample Beeline has or of an earlier row of this file. If the row is meant for that sample, edit that sample's row in a fresh download instead, which carries its sampleId, sampleVersion and fieldNumber.",
       samplesCantUse: (count: number, split: string) => `${n(count)} ${count === 1 ? "row" : "rows"} can't be used: see the notes in your file${split}.`,
       samplesDiffer: (count: number, split: string) => `${n(count)} existing ${count === 1 ? "sample differs" : "samples differ"} from what Beeline has${split}.`,
       samplesSame: (count: number, split: string) => `${n(count)} ${count === 1 ? "is" : "are"} the same as Beeline has${split}.`,
@@ -2505,10 +2509,37 @@ export const en = {
         `Beeline doesn't know these collectors, or can't tell which person is meant: ${names}. Add them on the Unclaimed or People page, or name them by their id, and upload the file again.`,
       samplesUnknownCollector: (name: string, rows: number) => `${name} (${n(rows)} ${rows === 1 ? "row" : "rows"})`,
       samplesNothingChanged:
-        "Nothing has been changed yet. Applying this file makes its new trap samples. Changes to existing samples aren't applied yet.",
+        "Nothing has been changed yet. Applying this file makes its new trap samples and makes the changes to existing samples that are ticked below.",
       samplesApply: "Apply",
-      samplesApplyNote: "Beeline makes the new trap samples one at a time, in the order of the file. You can leave this page: it carries on, and the page shows how far it has got.",
-      samplesApplying: (done: number, total: number) => `Applying: ${n(done)} of ${n(total)} ${total === 1 ? "row" : "rows"} done.`,
+      samplesApplyNote:
+        "Beeline works through the file one row at a time, in its order: it makes new trap samples, and changes an existing sample one kind of change at a time, each through the same correction the sample's page uses, credited to you with a note naming this upload. You can leave this page: it carries on, and the page shows how far it has got.",
+      /** What existing samples would change, and which kinds staff choose to apply. */
+      changesHeading: "Changes to existing samples",
+      changesLine: (samples: number, split: string) => `${n(samples)} existing ${samples === 1 ? "sample has" : "samples have"} a change to apply${split}.`,
+      changesChoose: "Tick the kinds of change to apply. A change that is not ticked is left as it is and listed in the notes.",
+      changeKinds: {
+        method_dates: "method and dates",
+        trap_count: "trap count",
+        specimen_count: "specimen count",
+        collectors: "collectors",
+        coordinates: "coordinates",
+        area: "country, state and county",
+        place: "locality",
+      } as Record<string, string>,
+      changeKind: (label: string, samples: number, split: string) => `${label}: ${n(samples)} ${samples === 1 ? "sample" : "samples"}${split}`,
+      changeCoordinatesNote:
+        "Coordinates are not ticked at first: a file that was not made from a fresh download often differs in the last digits of many points, and a point set here replaces iNaturalist's for good.",
+      pointsLine: (moving: number, far: number, largest: string, movingSplit = "", farSplit = "") =>
+        `${n(moving)} ${moving === 1 ? "point would move" : "points would move"}${movingSplit}, ${n(far)} by more than 100 metres${farSplit}. The largest move is ${largest}.`,
+      mayNotLine: (count: number, split: string) => `${n(count)} ${count === 1 ? "change may not be applied" : "changes may not be applied"}${split}: see the notes in your file. They are tried all the same, and the notes say what happened.`,
+      firstCollectorLine: (count: number, split: string, reprint: number) =>
+        `${n(count)} ${count === 1 ? "sample would get a different first collector" : "samples would get a different first collector"}${split}, whose number and labels are then theirs.${reprint > 0 ? ` ${n(reprint)} ${reprint === 1 ? "label" : "labels"} on paper print the old collectors and would need a reprint.` : ""}`,
+      samplesChangedCount: (samples: number, units: number, split = "") =>
+        `Changed ${n(samples)} existing ${samples === 1 ? "sample" : "samples"}${split}, ${n(units)} ${units === 1 ? "change" : "changes"} in all.`,
+      changesNotApplied: (count: number, split = "") => `${n(count)} ${count === 1 ? "change was" : "changes were"} not applied${split}: see the notes in the file.`,
+      changesNotChosen: (count: number, split = "") => `${n(count)} ${count === 1 ? "change was" : "changes were"} not ticked${split}, so left as they are: see the notes in the file.`,
+      changesUnchanged: (count: number, split = "") => `${n(count)} ${count === 1 ? "change was" : "changes were"} already as the file says${split}.`,
+      samplesApplying: (done: number, total: number) => `Applying: ${n(done)} of ${n(total)} ${total === 1 ? "step" : "steps"} done, a step being a new trap sample or one kind of change to an existing sample.`,
       samplesApplied: (when: string, by: string) => `Applied on ${when} by ${by}.`,
       samplesQueued: (when: string, by: string) => `Queued on ${when} by ${by}, and being applied: the counts below say how far it has got.`,
       samplesCreated: (count: number, deleted: number) =>
@@ -2546,10 +2577,9 @@ export const en = {
         row: (number: string, why: string) => `${number}: ${why}`,
       },
       samplesNotCreated: (count: number) => `${n(count)} ${count === 1 ? "row was" : "rows were"} not created: see the notes in the file.`,
-      samplesExistingNotApplied: "Changes to existing samples aren't applied yet; they are listed as differences only.",
       samplesChangedSince: "The comparison with this file changed after this page was shown, so nothing was applied. This is how it stands now: check it and apply again.",
       samplesNothingTicked:
-        "Nothing was applied: every new row waits for a tick, and none was ticked. Tick create anyway on the look-alike rows you want made, or the OBAS box, or put the sampleId of the existing sample in the file to compare the row with that sample (changes to existing samples are not applied yet).",
+        "Nothing was applied: every new row waits for a tick and none was ticked, and no change to an existing sample is ticked. Tick create anyway on the look-alike rows you want made, or the OBAS box, or a kind of change, or edit the existing sample's row in a fresh download, which carries its sampleId, sampleVersion and fieldNumber, to change that sample.",
       /** After a count: how many of the rows are in seasons Beeline still asks about and how many in settled ones. */
       split: (active: number, settled: number, unplaced: number) =>
         ` (${[
@@ -2567,6 +2597,36 @@ export const en = {
       fileMissing: "The file this upload kept is no longer on disk, so it cannot be compared again.",
       fileAltered: "The file kept for this upload is not the file that was uploaded, so Beeline will not compare it.",
     },
+    /** What applying says of a change it did not make, as a sentence in a note. */
+    changes: {
+      /** Compared with what Beeline holds right before the change is made. */
+      changedSinceStart: "This changed in Beeline after the file was downloaded, so it was not made:",
+      changedSince: (column: string, now: string) => `This changed in Beeline after the file was downloaded, so it was not made: ${column} is now ${now === "" ? "blank" : `"${now}"`}. Download a new file and make the change again.`,
+      /** A stop with the change recorded in the corrections file and not in the store. */
+      notAppliedPending:
+        "The corrections file already holds this change, but the store did not take it because another write got there first. Try again sends it to the store.",
+      notAppliedNothingKept: "The store did not take this change because another write got there first, and nothing was kept elsewhere. Try again sends it again.",
+      notAppliedRefused:
+        "The corrections file holds an event for this change that the store never got, and the sample has changed since. Tell staff, who can check the file.",
+      effortRewritten: (text: string) => `The effort text became ${text}.`,
+      effortNotRewritten: (why: string) => `The method changed, but the effort text was not rewritten: ${why}`,
+      unexpected: "something went wrong, and was reported.",
+      pointDeferred: "The point is saved, but the country, state and county that follow it are not worked out yet.",
+      areaFollowsDeferred: "Not changed on its own: the country, state and county follow the point that was just set, and will follow it when it is worked out.",
+      notAppliedUndone: "The corrections file still holds this change, which the store never got. Tell staff, who can check the file.",
+      /** What a change refused as changed in Beeline says to somebody who is not staff, with no value of Beeline's in it. */
+      changedSinceBare: "This changed in Beeline after the file was downloaded, so it was not made. Download a new file and make the change again.",
+      effortBusy: "another write got there first, so it was left as it was.",
+      localityPrinted: "This sample was entered in Beeline and its labels are printed or about to be, so its locality can no longer be changed from here, by staff or anyone.",
+      conflict: "This sample changed while the change was being worked out, so nothing was done. Download a new file and make the change again.",
+      noLongerStaff: "The person who applied this file is no longer staff, so its changes were not made.",
+      sampleGone: "Beeline no longer has this sample.",
+      notChosen: "not chosen on the page, so it was left as it is.",
+      areaFollowsPoint: (now: string, file: string) =>
+        `Not changed on its own: the country, state and county follow the point that was just set, which puts the sample in ${now}.${file === "" ? " That is what the file says." : ` The file says ${file}.`}`,
+      placeName: (country: string, state: string, county: string) => [country, state, county === "" ? "no county" : county].join(", "),
+      rowUnreadable: (why: string) => `What was queued for this change cannot be read (${why}), so it was not applied.`,
+    },
     /**
      * The note on each row of the file handed back, in a column added after its last. Blank where a volunteer's
      * identification will be saved or nothing changed. Each reason says what is wrong and what to do.
@@ -2581,7 +2641,7 @@ export const en = {
       nothing: "blank",
       newTrap: "New trap sample, ready to be created when you apply the file.",
       newTrapHeld: (number: string) =>
-        `New trap sample, not created yet: it looks like ${number === "" ? "a sample Beeline already has" : `sample ${number}`}. To compare it with that sample instead, put its sampleId in this row (changes to existing samples are not applied yet). To make a new sample anyway, tick create anyway on the page before applying.`,
+        `New trap sample, not created yet: it looks like ${number === "" ? "a sample Beeline already has" : `sample ${number}`}. To change that sample instead, edit its row in a fresh download, which carries its sampleId, sampleVersion and fieldNumber. To make a new sample anyway, tick create anyway on the page before applying.`,
       /** What applying did to a new row. */
       waiting: "Waiting to be applied.",
       created: (number: string) => `Created ${number}.`,
@@ -2590,6 +2650,17 @@ export const en = {
         `New trap sample, not created yet: it looks like row ${row}${number === "" ? "" : ` (${number})`} of this file, with the same first collector, overlapping days and a point within 100 metres. If it is a different trap, tick create anyway on the page before applying.`,
       newTrapObasHeld: "New trap sample, not created yet: its number is in the OBAS series, or blank, and a person has to confirm those numbers. Tick \"I've checked these OBAS numbers\" on the page before applying.",
       notCreated: (why: string) => `Not created: ${why}`,
+      /** An existing sample's change, before and after applying. */
+      moves: (distance: string) => `The point moves ${distance}.`,
+      mayNot: (label: string, why: string) => `May not be applied (${label}): ${why}`,
+      effortBecomes: (text: string) => `The effort text becomes ${text}.`,
+      collectorsWarning: (warnings: string) => `Collectors: ${warnings}`,
+      /** The distance a point moves: metres below a kilometre, else kilometres to one decimal. */
+      distance: (metres: number) => (metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`),
+      unitApplied: (cells: string, detail = "") => `Applied: ${cells}.${detail === "" ? "" : ` ${detail}`}`,
+      unitUnchanged: (label: string) => `Unchanged: ${label} was already as the file says.`,
+      unitNotApplied: (label: string, why: string) => `Not applied (${label}): ${why}`,
+      appliedCell: (column: string, was: string, now: string) => `${column} was ${was}, now ${now}`,
       newTrapCantUse: (why: string) => `New trap sample, can't use: ${why}`,
       /**
        * The reasons only the samples file has. The reasons it shares with the specimens file are in `reason`. Two have no

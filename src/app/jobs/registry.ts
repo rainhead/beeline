@@ -1003,6 +1003,11 @@ export function buildJobs(
           conn: ctx.conn,
           printWriter: extras.printConn,
           samplePaths,
+          correctionsPath: config.correctionsPath ?? deploymentPath("data/corrections.csv"),
+          sampleOverlayPath: config.sampleOverlayPath ?? deploymentPath("data/sample-overlay.csv"),
+          derivePaths: { demDir: DEM_DIR, gazetteerPath: GAZETTEER_PATH },
+          // Only one job runs at a time, so the nightly and the weekly sweep are not running now.
+          isStaff: config.environment === "development" ? async () => true : undefined,
           signal: ctx.signal,
           step: ctx.step,
         });

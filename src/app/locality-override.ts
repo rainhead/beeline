@@ -243,6 +243,9 @@ async function heldByUnprintedRun(conn: DuckDBConnection, sampleId: number): Pro
   return found.length > 0;
 }
 
+/** Why a point cannot be taken away from a sample with no observation: there is nothing for it to fall back to. */
+export const NO_POINT_TO_TAKE_AWAY = "a sample with no iNaturalist observation has no point to take away: set the right one instead";
+
 /**
  * A staff member setting a sample's coordinates (beeline-942): the twin of
  * setStaffLocality. Kept in the sample overlay, applied at once, and
@@ -271,7 +274,7 @@ export async function setStaffCoordinates(
   const anchor = await pointAnchor(deps, sample);
   if (anchor === null) return { outcome: "unchanged" };
   if (input.remove && sample.inat_observation_id === null) {
-    return { outcome: "invalid", problem: "a sample with no iNaturalist observation has no point to take away: set the right one instead" };
+    return { outcome: "invalid", problem: NO_POINT_TO_TAKE_AWAY };
   }
   const reason = input.note.trim();
   let value = "";

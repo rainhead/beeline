@@ -211,6 +211,15 @@ describe("sample corrections: a correction that saves", () => {
     expect(await logged(s)).toContainEqual(["locality", "Finley NWR", "alice"]);
   });
 
+  it("keeps the upload's note beside the adoption's own reason, in the overlay row and in the history", async () => {
+    const s = await withSuggestions();
+    const upload = { ...s.sam, via: "upload" as const };
+    expect(await setPlace(s.deps, upload, s.linked, { locality: "Finley NWR", reasonFor, note: "From upload 7" })).toEqual({ ok: true, outcome: "saved" });
+    expect((await readSampleOverlay(s.paths.sampleOverlayPath)).map((r) => [r.field, r.value, r.reason])).toEqual([["locality", "Finley NWR", "because (From upload 7)"]]);
+    const entry = (await readSampleChanges(s.paths.sampleChangesPath)).find((c) => c.field === "locality" && c.new_value === "Finley NWR");
+    expect(entry).toMatchObject({ source: "upload", author: "samstaff", reason: "because (From upload 7)" });
+  });
+
   it("holds a sample and lifts the hold, logged under staff's login", async () => {
     const s = await withSuggestions();
     expect(await holdSample(s.deps, s.sam, s.linked, { lift: false, note: "date looks a year off" })).toEqual({ ok: true, outcome: "saved" });

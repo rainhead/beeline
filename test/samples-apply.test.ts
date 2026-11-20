@@ -11,7 +11,7 @@ import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, ma
 import { parseSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { duckdbReader } from "../src/person-change.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
-import { edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
+import { UPLOAD_TODAY, edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 import type { TestCell } from "./workbook.js";
 
 /** The tests run at the same time: each has a store of its own, copied from one made once. */
@@ -66,7 +66,16 @@ const offered = async (f: UploadFixture, added: Array<Record<string, TestCell>>)
   return { location, html, digest: digestIn(html) };
 };
 const outcomes = (f: UploadFixture) => rows(f.conn, `SELECT row_number, outcome, sample_number, detail FROM upload_sample_outcome ORDER BY row_number`);
-const deps = (f: UploadFixture, over = {}) => ({ db: f.db, conn: f.conn, printWriter: f.conn, samplePaths: { log: f.paths.sampleChangesPath, state: f.paths.sampleStatePath }, ...over });
+const deps = (f: UploadFixture, over = {}) => ({
+  db: f.db,
+  conn: f.conn,
+  printWriter: f.conn,
+  samplePaths: { log: f.paths.sampleChangesPath, state: f.paths.sampleStatePath },
+  correctionsPath: f.paths.correctionsPath,
+  sampleOverlayPath: f.paths.sampleOverlayPath,
+  today: () => UPLOAD_TODAY,
+  ...over,
+});
 const baseline = (f: UploadFixture) => recordSampleChanges(duckdbReader(f.conn), { log: f.paths.sampleChangesPath, state: f.paths.sampleStatePath }, { source: "reconcile" });
 
 describe("the Apply button", () => {
@@ -85,13 +94,15 @@ describe("the Apply button", () => {
     expect(await outcomes(f)).toEqual([]);
   });
 
-  it("is not offered for a file with no new row ready, and the page says existing samples are not applied", async () => {
+  it("is not offered for a file that says what Beeline has, and is offered, with the kinds of change to tick, for a changed existing sample", async () => {
     const f = await uploadFixture();
+    const same = await upload(f, await download(f));
+    expect(await pageAt(f, same)).not.toContain("apply-samples");
     const location = await upload(f, edited(await download(f), [{ id: f.ids.sampleA, set: { locality: "Albany" } }], { idColumn: "sampleId" }));
     const html = await pageAt(f, location);
-    expect(html).not.toContain("apply-samples");
+    expect(html).toContain("apply-samples");
     expect(html).toContain(esc(en.uploads.page.samplesNothingChanged));
-    expect(en.uploads.page.samplesNothingChanged).toContain("Changes to existing samples aren't applied yet");
+    expect(html).toContain(esc(en.uploads.page.changeKind(en.uploads.page.changeKinds.place!, 1, en.uploads.page.split(1, 0, 0))));
   });
 });
 
@@ -251,7 +262,7 @@ describe("the job", () => {
 
   it("runs as a job: the scheduler starts it when a row is waiting, and not before", async () => {
     const f = await uploadFixture();
-    const jobs = buildJobs({ syncProjects: [], sweepDays: 1, personChangesPath: "unused", sampleChangesPath: f.paths.sampleChangesPath, sampleStatePath: f.paths.sampleStatePath }, { printConn: f.conn });
+    const jobs = buildJobs({ syncProjects: [], sweepDays: 1, personChangesPath: "unused", sampleChangesPath: f.paths.sampleChangesPath, sampleStatePath: f.paths.sampleStatePath, correctionsPath: f.paths.correctionsPath, sampleOverlayPath: f.paths.sampleOverlayPath }, { printConn: f.conn });
     const job = jobs.find((j) => j.name === APPLY_JOB)!;
     expect(job.schedule).toEqual({ kind: "onDemand" });
     expect(await job.waiting!(f.db)).toBe(false);
@@ -756,7 +767,7 @@ describe("what staff are told, and who sees what", () => {
     const queued = await offered(g, [looks(), newRow(2)]);
     await apply(g, queued.location, { digest: queued.digest });
     const [[detail]] = (await rows(g.conn, `SELECT detail FROM upload_sample_outcome WHERE outcome = 'skipped'`)) as [[string]];
-    expect(detail).toContain("upload the file again");
+    expect(detail).toContain("tick create anyway");
     await applyPending(deps(g));
     const [[later]] = (await rows(g.conn, `SELECT detail FROM upload_sample_outcome WHERE outcome = 'skipped'`)) as [[string]];
     expect(later).toBe(detail);
@@ -1174,13 +1185,14 @@ describe("the page of a file that is queued", () => {
 });
 
 describe("smaller guards of the apply", () => {
-  it("refuses a pending row whose unit is not row before reading its payload, and makes nothing", async () => {
+  it("refuses a queued change whose payload cannot be read, and changes nothing", async () => {
     const f = await uploadFixture();
     const { location, digest } = await offered(f, [newRow(1)]);
     await apply(f, location, { digest });
-    await f.conn.run(`UPDATE upload_sample_outcome SET unit = 'collectors', payload = 'not json'`);
-    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
-    expect(String((await outcomes(f))[0]![3])).toContain("not applied yet");
+    // A queued new row made into a change of an existing sample whose payload is not what the job writes from.
+    await f.conn.run(`UPDATE upload_sample_outcome SET unit = 'collectors', sample_id = ${f.ids.sampleA}, payload = 'not json'`);
+    expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, notApplied: 1 });
+    expect(String((await outcomes(f))[0]![3])).toContain("cannot be read");
     expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE sample_number = 'OBAS-00011'`)).toEqual([[0n]]);
   });
 

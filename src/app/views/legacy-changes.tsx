@@ -8,6 +8,7 @@ import {
   type LineSummary,
 } from "../../legacy-changes.js";
 import { RECORD_COLUMN } from "../../legacy-export-rulings.js";
+import { describePrograms } from "../../legacy-program.js";
 import { Absent, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
 
 /**
@@ -16,9 +17,9 @@ import { Absent, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./c
  * /exports, which links here: the examples carry collectors' names.
  *
  * Read from the summary the legacy-changes job writes each night, never
- * worked out on request. A contents table first, each line's counts split
- * into the active and settled seasons, then each heading's lines with what
- * was done, the outcome, a few records, and the line's download.
+ * worked out on request. A contents table first, each line's counts in a
+ * column for each program, then each heading's lines with what was done,
+ * the outcome, a few records, and the line's download.
  */
 export function LegacyChangesPage({ m, summary }: { m: Messages; summary: ChangesSummary | null }) {
   const c = m.legacyChanges;
@@ -30,7 +31,6 @@ export function LegacyChangesPage({ m, summary }: { m: Messages; summary: Change
       </>
     );
   }
-  const since = summary.activeSince.slice(0, 4);
   const byLine = new Map(summary.lines.map((l) => [l.line, l]));
   const sections = CATEGORIES.map((cat) => ({
     cat,
@@ -41,14 +41,18 @@ export function LegacyChangesPage({ m, summary }: { m: Messages; summary: Change
       <PageHeader title={c.heading} lede={c.intro} />
       <Meta block>
         {c.written(m.format.dateTime(new Date(summary.writtenAt)), m.format.dateTime(new Date(summary.exportWrittenAt)))}{" "}
-        {c.matched(summary.matched.active, summary.matched.settled, since)} {c.duplicated(summary.duplicated)}
+        {c.matched(
+          Object.values(summary.matched).reduce((t, x) => t + x, 0),
+          describePrograms(summary.matched, summary.programs),
+        )}{" "}
+        {c.duplicated(summary.duplicated)}
       </Meta>
       <h2>{c.contents}</h2>
-      <DataTable columns={[c.colLine, c.colActive(since), c.colSettled]}>
+      <DataTable columns={[c.colLine, ...summary.programs]}>
         {sections.map((s) => (
           <>
             <tr>
-              <th colspan={3} scope="colgroup">
+              <th colspan={summary.programs.length + 1} scope="colgroup">
                 {s.cat.title}
               </th>
             </tr>
@@ -57,8 +61,9 @@ export function LegacyChangesPage({ m, summary }: { m: Messages; summary: Change
                 <td>
                   <a href={`#${def.id}`}>{def.title}</a>
                 </td>
-                <td>{m.format.number(sum.active)}</td>
-                <td>{m.format.number(sum.settled)}</td>
+                {summary.programs.map((p) => (
+                  <td>{m.format.number(sum.records[p] ?? 0)}</td>
+                ))}
               </tr>
             ))}
           </>
@@ -70,7 +75,7 @@ export function LegacyChangesPage({ m, summary }: { m: Messages; summary: Change
           <h2>{s.cat.title}</h2>
           <p>{s.cat.intro}</p>
           {s.lines.map(({ def, sum }) => (
-            <Line m={m} id={def.id} title={def.title} did={def.did} sum={sum} since={since} generation={summary.generation} download={def.download} csvLabel={def.csv?.label} />
+            <Line m={m} id={def.id} title={def.title} did={def.did} sum={sum} programs={summary.programs} generation={summary.generation} download={def.download} csvLabel={def.csv?.label} />
           ))}
         </section>
       ))}
@@ -85,7 +90,7 @@ function Line({
   title,
   did,
   sum,
-  since,
+  programs,
   generation,
   download,
   csvLabel,
@@ -95,7 +100,7 @@ function Line({
   title: string;
   did: string;
   sum: LineSummary;
-  since: string;
+  programs: string[];
   generation: string;
   /** A download kept elsewhere in place of the line's own, or null for none (ChangeLine.download). */
   download: { href: string; label: string } | null | undefined;
@@ -114,7 +119,7 @@ function Line({
       )}
       <p>
         <Meta>
-          {c.colActive(since)}: {m.format.number(sum.active)} · {c.colSettled}: {m.format.number(sum.settled)} · {c.values(sum.values)}
+          {c.records(describePrograms(sum.records, programs))} · {c.values(sum.values)}
         </Meta>
       </p>
       <p>
@@ -123,7 +128,7 @@ function Line({
           {sum.outcomes.length === 1
             ? (OUTCOME_WORDS[sum.outcomes[0]!.outcome] ?? sum.outcomes[0]!.outcome)
             : sum.outcomes
-                .map((o) => `${OUTCOME_WORDS[o.outcome] ?? o.outcome} (${c.bySeason(o.active, o.settled)})`)
+                .map((o) => `${OUTCOME_WORDS[o.outcome] ?? o.outcome} (${describePrograms(o.records, programs)})`)
                 .join("; ")}
         </Meta>
       </p>

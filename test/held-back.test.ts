@@ -7,6 +7,8 @@ import { en } from "../src/app/messages/en.js";
 import { createApp } from "../src/app/server.js";
 import type { InatClient } from "../src/app/auth.js";
 import { heldBackRecords, type HeldBack } from "../src/app/held-back.js";
+import { HeldBackPage } from "../src/app/views/held-back.js";
+import { AT_LARGE, NO_STATE_WRITTEN } from "../src/legacy-program.js";
 import { compareLegacyExport, DEFAULT_RULINGS, dropComparisonTables } from "../src/compare-legacy-export.js";
 import { legacyExportPath, writeLegacyExport } from "../src/legacy-export.js";
 import { changesDir, writeChanges } from "../src/legacy-changes.js";
@@ -39,6 +41,7 @@ let signedIn: { personId: number; login: string };
 let staff: number;
 let volunteer: number;
 let held: HeldBack;
+let db: ReturnType<typeof createKysely>;
 
 const byField = (n: string) => held.records.find((r) => r.fieldNumber === n);
 
@@ -75,7 +78,7 @@ beforeAll(async () => {
   await conn.run(`INSERT INTO person_admin (person_id) VALUES (${staff})`);
   volunteer = ((await (await conn.run(`SELECT entity_id FROM person WHERE display_name = 'Cleo Cortez'`)).getRows()) as [[number]])[0][0];
   signedIn = { personId: staff, login: "staff" };
-  const db = createKysely(created.instance);
+  db = createKysely(created.instance);
   app = createApp({
     ...(await scratchPaths()),
     db,
@@ -114,18 +117,22 @@ describe("the old records new Beeline held back", () => {
     for (const n of ["2127319", "2127004", "Cleo_Cortez:18.008.004", "Cleo_Cortez:19.008.001", "2037759"]) expect(byField(n)).toBeUndefined();
   });
 
-  test("counts the bare records rather than listing them, and splits the reasons by season", () => {
+  test("counts the bare records rather than listing them, and counts the reasons by program", () => {
     expect(held.bare).toEqual({ records: 2, fieldNumbers: 1, first: "25100000", last: "25100000" });
     // The two blank records rank against each other in promotion, but neither
     // was kept, so neither is called a second print of the other.
     expect(held.records.every((r) => r.rules.length > 0)).toBe(true);
     expect(held.records.some((r) => r.fieldNumber === "25100000")).toBe(false);
     // A record that wrote any part of a date is listed, with what it wrote.
-    expect(byField("25100099")).toMatchObject({ date: "?-6-?", year: null });
-    // Every fixture record is from a settled season.
+    expect(byField("25100099")).toMatchObject({ date: "?-6-?" });
     const duplicates = held.reasons.find((r) => r.rule === "duplicate_specimen")!;
-    expect(duplicates.active).toBe(0);
-    expect(duplicates.settled).toBe(held.records.filter((r) => r.rules.includes("duplicate_specimen")).length);
+    expect(Object.values(duplicates.records).reduce((t, x) => t + x, 0)).toBe(held.records.filter((r) => r.rules.includes("duplicate_specimen")).length);
+    // Each program with a listed record, and the records in field-number order under each.
+    expect(held.programs).toEqual([...new Set(held.records.map((r) => r.program))].sort((a, b) => held.programs.indexOf(a) - held.programs.indexOf(b)));
+    for (const p of held.programs) {
+      const numbers = held.records.filter((r) => r.program === p).map((r) => r.fieldNumber);
+      expect(numbers).toEqual([...numbers].sort());
+    }
   });
 
   test("shows staff the page and the download, linked from Exports", async () => {
@@ -144,7 +151,7 @@ describe("the old records new Beeline held back", () => {
     expect(res.headers.get("content-type")).toContain("text/csv");
     const lines = (await res.text()).replace(/^﻿/, "").trim().split("\n");
     expect(lines[0]!.startsWith("_id,")).toBe(true);
-    expect(lines[0]!.endsWith(",held_back_because,beeline_note_specimen,beeline_note,beeline_sample_id,beeline_sample_counts,beeline_sample_holds")).toBe(true);
+    expect(lines[0]!.endsWith(",held_back_because,beeline_note_specimen,beeline_note,beeline_sample_id,beeline_sample_counts,beeline_sample_holds,beeline_program")).toBe(true);
     // Every listed record and both bare ones.
     expect(lines.length - 1).toBe(held.records.length + 2);
     // Reasons in the page's words, with the note on the kept specimen.
@@ -155,7 +162,7 @@ describe("the old records new Beeline held back", () => {
     const blank = lines.filter((l) => l.includes(",25100000,"));
     expect(blank).toHaveLength(2);
     for (const l of blank) expect(l).not.toContain(en.heldBack.reason.duplicate_specimen);
-    expect(lines.find((l) => l.includes(",2050001,"))).toMatch(/,1,0$/);
+    expect(lines.find((l) => l.includes(",2050001,"))).toMatch(/,1,0,[A-Za-z ]+$/);
   });
 
   test("is refused to a volunteer", async () => {
@@ -165,6 +172,113 @@ describe("the old records new Beeline held back", () => {
       expect((await app.request("/exports/held-back.csv")).status).toBe(403);
     } finally {
       signedIn = { personId: staff, login: "staff" };
+    }
+  });
+});
+
+describe("the program each record belongs to (beeline-z0pi)", () => {
+  const one = async (sqlText: string) => ((await (await conn.run(sqlText)).getRows()) as unknown[][])[0]?.[0];
+  const program = async (code: string) => Number(await one(`SELECT entity_id FROM program WHERE code = '${code}'`));
+  const fileUnder = async (sampleId: number, code: string | null) => {
+    await conn.run(`DELETE FROM sample_atlas WHERE sample_id = ${sampleId}`);
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id, assigned_by) VALUES (${sampleId}, ${code === null ? "NULL" : await program(code)}, ${code === null ? staff : "NULL"})`);
+  };
+
+  /** Synthetic: a held-back record, cloned from the one that wrote only a month, with the state and observation given. */
+  async function programOf(state: string, observation: number | null): Promise<string> {
+    await conn.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('program-probe' AS _id, '29990001' AS "fieldNumber", '${state}' AS "stateProvince",
+                      '${observation === null ? "" : `https://www.inaturalist.org/observations/${observation}`}' AS url)
+                    FROM legacy_occurrence WHERE _id = 'partial'`);
+    try {
+      return (await heldBackRecords(db))!.records.find((r) => r.fieldNumber === "29990001")!.program;
+    } finally {
+      await conn.run(`DELETE FROM legacy_occurrence WHERE _id = 'program-probe'`);
+    }
+  }
+
+  test("takes the atlas of the state a record wrote where its observation is in no sample", async () => {
+    expect(await programOf("OR", null)).toBe("OBA");
+    // Washington's abbreviation is WABA, not its code WaBA.
+    expect(await programOf("WA", null)).toBe("WABA");
+    expect(await programOf("wa ", null)).toBe("WABA");
+  });
+
+  test("calls a record At large where its state belongs to no atlas, or is none", async () => {
+    expect(await programOf("CA", null)).toBe(AT_LARGE);
+    expect(await programOf("ZZ", null)).toBe(AT_LARGE);
+    expect(AT_LARGE).toBe(en.listings.scope.outside);
+  });
+
+  test("gives a record that wrote no state and has no sample a group of its own, not At large", async () => {
+    expect(await programOf("", null)).toBe(NO_STATE_WRITTEN);
+    expect(await programOf("  ", 12345)).toBe(NO_STATE_WRITTEN);
+  });
+
+  test("takes the atlas of the sample its observation is in Beeline before the state it wrote", async () => {
+    const sample = Number(await one(`SELECT entity_id FROM sample WHERE inat_observation_id = 56359335`));
+    const before = await one(`SELECT atlas_id FROM sample_atlas WHERE sample_id = ${sample}`);
+    try {
+      await fileUnder(sample, "WaBA");
+      expect(await programOf("OR", 56359335)).toBe("WABA");
+      // A sample under no atlas is At large, whatever state the record wrote or leaves blank.
+      await fileUnder(sample, null);
+      expect(await programOf("OR", 56359335)).toBe(AT_LARGE);
+      expect(await programOf("", 56359335)).toBe(AT_LARGE);
+    } finally {
+      await conn.run(`DELETE FROM sample_atlas WHERE sample_id = ${sample}`);
+      if (before !== undefined && before !== null) await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${sample}, ${before})`);
+    }
+  });
+
+  test("lists each program's records under it, programs in the program table's order, then At large, then no state", async () => {
+    for (const [i, [number, state]] of [["29990010", ""], ["29990011", "CA"], ["29990012", "WA"], ["29990013", "OR"]].entries()) {
+      await conn.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('probe-${i}' AS _id, '${number}' AS "fieldNumber", '${state}' AS "stateProvince", '' AS url)
+                      FROM legacy_occurrence WHERE _id = 'partial'`);
+    }
+    try {
+      const h = (await heldBackRecords(db))!;
+      expect(h.programs).toEqual(["OBA", "WABA", AT_LARGE, NO_STATE_WRITTEN].filter((p) => h.programs.includes(p)));
+      expect(h.programs.slice(-2)).toEqual([AT_LARGE, NO_STATE_WRITTEN]);
+      // The records come grouped in that order.
+      expect(h.records.map((r) => r.program)).toEqual([...h.records.map((r) => r.program)].sort((a, b) => h.programs.indexOf(a) - h.programs.indexOf(b)));
+      const page = String(HeldBackPage({ m: en as never, heldBack: h }));
+      for (const p of h.programs) expect(page).toContain(`<h3>${p}</h3>`);
+      expect(h.reasons.every((r) => Object.keys(r.records).every((p) => h.programs.includes(p)))).toBe(true);
+      expect(page).not.toMatch(/Active seasons|Settled seasons/);
+    } finally {
+      await conn.run(`DELETE FROM legacy_occurrence WHERE starts_with(_id, 'probe-')`);
+    }
+  });
+
+  test("puts a carried-over record under its specimen's atlas, and a second record under the specimen it is tied to", async () => {
+    const path = join(await mkdtemp(join(tmpdir(), "held-back-program-")), "occurrences.csv");
+    await writeLegacyExport(conn, path);
+    const tied = (await (await conn.run(`
+      SELECT o."fieldNumber", sp.field_number, sp.sample_id FROM legacy_duplicate_record r
+      JOIN legacy_occurrence o ON o._id = r._id JOIN specimen sp ON sp.entity_id = r.specimen_id LIMIT 1`)).getRows()) as [string, string, number][];
+    const [secondRecord, specimenNumber, sampleOfBoth] = [tied[0]![0], tied[0]![1], Number(tied[0]![2])];
+    // A carried pair in another sample, to file under no atlas.
+    const other = (await (await conn.run(`
+      SELECT field_number, sample_id FROM specimen sp WHERE sample_id <> ${sampleOfBoth} AND field_number IN (SELECT "fieldNumber" FROM legacy_occurrence)
+      ORDER BY field_number LIMIT 1`)).getRows()) as [string, number][];
+    const [otherNumber, otherSample] = [other[0]![0], Number(other[0]![1])];
+    const before = [sampleOfBoth, otherSample].map(async (id) => [id, await one(`SELECT atlas_id FROM sample_atlas WHERE sample_id = ${id}`)] as const);
+    const saved = await Promise.all(before);
+    try {
+      await fileUnder(sampleOfBoth, "WaBA");
+      await fileUnder(otherSample, null);
+      await compareLegacyExport(conn, path);
+      const programOfPair = async (n: string) => (await (await conn.run(`SELECT program FROM cmp_pairs WHERE "e_fieldNumber" = '${n}'`)).getRows()) as [string][];
+      expect(await programOfPair(specimenNumber)).toEqual([["WABA"]]);
+      expect(await programOfPair(otherNumber)).toEqual([[AT_LARGE]]);
+      // The second record is only old Beeline's, and in the program of the specimen it is tied to.
+      expect(await one(`SELECT program FROM cmp_difference WHERE field_number = '${secondRecord}' AND "column" = '(record)'`)).toBe("WABA");
+    } finally {
+      await dropComparisonTables(conn);
+      for (const [id, atlas] of saved) {
+        await conn.run(`DELETE FROM sample_atlas WHERE sample_id = ${id}`);
+        if (atlas !== undefined && atlas !== null) await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${id}, ${atlas})`);
+      }
     }
   });
 });
@@ -211,7 +325,7 @@ describe("the second records of a pin, on What new Beeline changed", () => {
     expect(tied.size).toBeGreaterThan(0);
     const csv = (await readFile(join(changesDir(exportsDir), summary.generation, line.file!), "utf8")).replace(/^﻿/, "");
     const [header, ...rows] = csv.trim().split("\n");
-    expect(header).toBe("old_field_number,season,tied_to_field_number,specimen_identified_from_a_second_record");
+    expect(header).toBe("old_field_number,program,tied_to_field_number,specimen_identified_from_a_second_record");
     expect(rows.map((r) => r.split(",").slice(0, 3)).map(([old, , to]) => [old, to])).toEqual(
       [...tied.entries()].sort(([a], [b]) => (a < b ? -1 : 1)),
     );

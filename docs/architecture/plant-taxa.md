@@ -129,6 +129,8 @@ On the copy of production's store of 2026-11-15, "other taxa had this name" cove
 
 ## What a host is today
 
+**A host staff set** (beeline-hlay). On a sample linked to an observation the host follows the observation on every promotion, with one exception: where staff set the host in Beeline (`sample_host_override`, [Editing and corrections](editing-and-corrections.md)), both host statements in `ingest/mint-samples.sql` skip the sample, and the id, name and rank are what staff set, or all null for a sample staff say has no floral host. `sample_host.resolved_by` says `id` for such a host as for an identification on iNaturalist. The name and rank come from iNaturalist's answer for the taxon at the moment of setting and are kept in the override and the overlay file, not read from the cache; the cache learns the taxon from tonight's worklist, since the stored id joins `inat_taxon_uncached`, and until then the page shows the name without a family or a common name.
+
 `plant_taxon_common_name` reads the taxon's own stored lineage, which for a retired taxon is stale (see above), so it is only right for a taxon iNaturalist has not retired. A retired host is resolved to its current taxon first, and the name is read for that one, whose lineage is current.
 
 A sample keeps the host id its observation gave it and the name as observed. `schema/113_views_inat_taxon_current.sql` says what iNaturalist calls that taxon now, when somebody reads it, and stores nothing. It comes before the common names (`schema/114`) because they read it, to follow a list entry's taxon to its current one; it reads only the cache's tables, never the plant list or `plant_taxon_common_name`, because `inat_taxon_uncached` reads `plant_name_hit_current`.

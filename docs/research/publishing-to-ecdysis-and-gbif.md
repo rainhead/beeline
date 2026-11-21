@@ -136,15 +136,17 @@ those to pass through a taxonomist's spreadsheet first.
 Two things in Beeline's own rule matter more once it decides the current name in
 Ecdysis, and should be said at the meeting:
 
-- "Newest" changes meaning (Peter, 2026-11-20): by the date the determiner gave, and
-  then by when Beeline recorded the determination. Today `determination_of_record`
-  (`schema/110`) orders by the recorded time alone, so an old determination loaded
-  late outranks a newer one loaded earlier, and Symbiota, which shows
-  `dateIdentified`, would disagree with Beeline. To settle in the design: where a
-  determination with no date stands against one with a date. Proposed: an undated one
-  counts as made on the day it arrived. This changes the name of record for some
-  specimens, so it is measured on a copy of production, split by season, before it
-  is built (beeline-8dx9.9).
+- "Newest" keeps its meaning (Peter, 2026-11-20, after a measurement): the latest by
+  the time Beeline recorded it, as `determination_of_record` (`schema/110`) orders
+  them. That is the time it arrived, except for an identification Ecdysis has since
+  replaced, which is recorded at the time Ecdysis entered it, so that it ranks behind
+  the one Ecdysis calls current. Peter
+  first asked for the determiner's date and then the arrival, but on production's
+  data both readings of that made names worse: 393 to 3,102 specimens would go from a
+  species to a coarser name, because most determinations have no date, nearly all
+  dated ones give only a year, and every record from the old Beeline arrived on the
+  day of the cutover. Today's rule picks the identification Ecdysis entered most
+  recently in 9,373 of the 9,380 specimens where there is a choice (beeline-8dx9.9).
 - Repeated identifications with the same name, determiner and no date collapsed in
   Symbiota's import in October, and left 1,077 specimens with no current name
   (beeline-1o27). The harvest must send each identification so that it stays distinct
@@ -212,7 +214,6 @@ lists as open whether experts determine in Beeline at all.
 | 1 | Part 1 (sex and caste), Part 5's datum and classification, the archives' own column lists | built 2026-11-20 (beeline-8dx9.8) |
 | 2 | Part 2 (numbers) | built 2026-11-20 (beeline-8dx9.8) |
 | 3 | Part 3 (occurrenceID): store the published ones, then mint | the ADR 0008 amendment and its review |
-| 3a | The determination of record goes by the determiner's date, then the date of arrival | a measurement on a copy of production |
 | 4 | Part 6 and Part 7 | a short design each |
 | 5 | Part 4 (the harvest archive), without a URL | the Symbiota test; step 3 |
 | 6 | The rules that replace the hand filters, then a URL for one collection | the meeting; Joel and Ecdysis's operators |
@@ -368,3 +369,16 @@ that setting would affect every WSU record. So for Washington the occurrenceID s
 the one Ecdysis gives, which Beeline reads back; minting applies where Beeline is the
 publisher (Oregon through the IPT) and where a collection is the atlas's own (British
 Columbia, if it agrees).
+
+### Decided since, 2026-11-20
+
+- The first upload file holds Washington's 2026 season, and the 160 specimens from
+  2025 whose labels were printed in February 2026, after that year's upload file was
+  made. The other 6,645 printed Washington specimens from 2018 to 2025 that Ecdysis
+  does not hold wait on [issue 420](https://github.com/rainhead/beeline/issues/420);
+  2,237 of them are one collector's trap and net specimens, probably a separate
+  project (beeline-h6yi).
+- A new record in the file carries the determination of record only when it is an
+  expert's.
+- The Specimens listing can show which specimens are in Ecdysis and which are
+  expected there but absent (beeline-8dx9.11).

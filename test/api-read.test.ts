@@ -289,6 +289,8 @@ describe("the listings", () => {
       "scope=OBA",
       "scope=outside",
       "scope=all&kind=trap",
+      "scope=all&ecdysis=expected",
+      "scope=all&ecdysis=not",
       "scope=all&q=B-",
       "scope=all&place=Corvallis",
       "scope=all&taxon=Apidae",
@@ -422,7 +424,7 @@ function who(w: Awaited<ReturnType<typeof world>>, as: Who) {
 describe("the counts", () => {
   it("equal the listing's total for the same filters, and divide it by season, atlas and kind", async () => {
     const w = await world();
-    const filters = ["", "scope=all", "scope=WaBA", "scope=outside", "scope=all&qc=flagged", "scope=all&kind=trap", "scope=all&place=Gerlach", "scope=all&taxon=Bombus", "scope=all&q=B-"];
+    const filters = ["", "scope=all", "scope=WaBA", "scope=outside", "scope=all&qc=flagged", "scope=all&kind=trap", "scope=all&ecdysis=expected", "scope=all&place=Gerlach", "scope=all&taxon=Bombus", "scope=all&q=B-"];
     for (const kind of ["samples", "specimens"] as const) {
       for (const f of filters) {
         const listed = await w.json(w.keys.alice, `/${kind}?${f}&page_size=1`);
@@ -811,7 +813,7 @@ describe("what the API publishes of a record, field by field", () => {
     );
     const specimen = await w.json(w.keys.alice, `/specimens/${sample.specimens.rows[0].id}`);
     expect(Object.keys(specimen.specimen).sort()).toEqual(
-      ["disposition", "field_number", "id", "remarks", "remarks_by", "remarks_on", "specimen_id", "specimen_number", "url"].sort(),
+      ["catalog_number", "disposition", "ecdysis_record_id", "field_number", "id", "remarks", "remarks_by", "remarks_on", "specimen_id", "specimen_number", "url"].sort(),
     );
     // The sample inside a specimen has none of the specimen's own columns.
     expect(Object.keys(specimen.sample).sort()).toEqual(Object.keys(sample.sample).sort());

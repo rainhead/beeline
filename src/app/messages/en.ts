@@ -831,6 +831,14 @@ export const en = {
       labelsWaitingHint: "Some specimens have no label printed yet, including samples held back by a flag",
       labelWaiting: "Not printed yet",
       labelPrinted: "Printed",
+      /** Whether Ecdysis holds the specimen (beeline-8dx9.11): what Beeline last read from it, which for Washington is the Washington Bee Atlas dataset and not the whole museum collection. */
+      ecdysis: "Ecdysis",
+      ecdysisAny: "Any",
+      ecdysisIn: "In Ecdysis",
+      ecdysisNot: "Not in Ecdysis",
+      ecdysisExpected: "Expected in Ecdysis, not there",
+      ecdysisHint:
+        "In what Beeline last read from Ecdysis. For Washington that is the Washington Bee Atlas dataset, not the whole collection. Expected means it has a printed label, is not marked missing, and Ecdysis already holds bees of its program from the same year.",
       /** Beside a sample's specimen count. */
       labelsWaitingCount: (count: number) => `${n(count)} waiting on labels`,
       method: "Method",
@@ -1557,6 +1565,11 @@ export const en = {
         missing: "Missing: no pin with this label was found",
         remarks: "Remarks",
         statedBy: (name: string, date: string) => `Stated by ${name}, ${date}.`,
+      },
+      /** What Ecdysis reported for this specimen, shown only where it has (beeline-8dx9.11). */
+      ecdysis: {
+        heading: "Ecdysis",
+        catalogNumber: "Catalog number",
       },
       /** Every time a label for this specimen went into a print run (schema/035). */
       labels: {

@@ -157,6 +157,12 @@ const IDENTIFICATION_COLUMNS = ["family", "genus", "subgenus", "specificEpithet"
 /** The plant columns: the sample's floral host as the store holds it, with its lineage (beeline-qpys). */
 const PLANT_COLUMNS = ["phylumPlant", "orderPlant", "familyPlant", "genusPlant", "speciesPlant", "taxonRankPlant"];
 const PLANT_HIGHER_COLUMNS = ["phylumPlant", "orderPlant", "familyPlant"];
+/** iNaturalist's order of ranks, finest to broadest: a higher number is a broader rank. Hybrids are species-level. */
+const RANK_LEVEL: Record<string, number> = {
+  form: 5, variety: 5, subspecies: 5, species: 10, hybrid: 10, infrahybrid: 5, complex: 11, subsection: 12, section: 13, subgenus: 15,
+  genus: 20, subtribe: 24, tribe: 25, supertribe: 26, subfamily: 27, family: 30, epifamily: 32, superfamily: 33, order: 40,
+  class: 50, phylum: 60,
+};
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
 const list = (xs: readonly string[]) => xs.map((x) => `'${x}'`).join(", ");
@@ -779,7 +785,7 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
             SELECT 1 FROM specimen sp
             JOIN legacy_duplicate_record r ON r.specimen_id = sp.entity_id
             JOIN legacy_occurrence o ON o._id = r._id
-            WHERE sp.field_number = d.field_number AND ${cond})`;
+            WHERE sp.field_number = d.field_number AND (${cond}))`;
     const hasMacros = (await one(conn, `SELECT count(*) FROM duckdb_functions() WHERE function_name = 'legacy_sex_of'`)) > 0;
     for (const col of ["genus", "specificEpithet", "familyVolDet", "genusVolDet", "speciesVolDet"]) {
       await conn.run(`
@@ -913,6 +919,12 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
 async function plantKinds(conn: DuckDBConnection): Promise<void> {
   const plain = (x: string) => `lower(${squash(x)})`;
   const hasOverride = (await one(conn, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'sample_host_override'`)) > 0;
+  // The plant an old record names, by the lowest rank it gives, written as old Beeline wrote it.
+  const oldPlant = (col: (c: string) => string) => `CASE WHEN trim(${col("speciesPlant")}) LIKE '% %' THEN trim(${col("speciesPlant")})
+                          WHEN trim(${col("genusPlant")}) LIKE '% %' THEN trim(${col("genusPlant")})
+                          WHEN trim(${col("speciesPlant")}) <> '' THEN concat_ws(' ', nullif(trim(${col("genusPlant")}), ''), trim(${col("speciesPlant")}))
+                          ELSE coalesce(nullif(trim(${col("genusPlant")}), ''), nullif(trim(${col("familyPlant")}), ''), nullif(trim(${col("orderPlant")}), ''),
+                                        nullif(trim(${col("phylumPlant")}), ''), '') END`;
   // The plant as each side names it: the lowest rank it gives, written as old
   // Beeline wrote it. A whole name in the genus column, or an epithet alone
   // beside a genus, is the name it spells (src/legacy-export.ts, samePlant).
@@ -920,11 +932,7 @@ async function plantKinds(conn: DuckDBConnection): Promise<void> {
     CREATE OR REPLACE TEMP TABLE cmp_plant_pair AS
     SELECT p."e_fieldNumber" AS field_number,
            p."l_phylumPlant" AS l_phylum, p."l_taxonRankPlant" AS l_rank, p."e_genusPlant" AS e_genus, p."e_speciesPlant" AS e_species, p."e_taxonRankPlant" AS e_rank,
-           ${plain(`CASE WHEN trim(p."l_speciesPlant") LIKE '% %' THEN trim(p."l_speciesPlant")
-                          WHEN trim(p."l_genusPlant") LIKE '% %' THEN trim(p."l_genusPlant")
-                          WHEN trim(p."l_speciesPlant") <> '' THEN concat_ws(' ', nullif(trim(p."l_genusPlant"), ''), trim(p."l_speciesPlant"))
-                          ELSE coalesce(nullif(trim(p."l_genusPlant"), ''), nullif(trim(p."l_familyPlant"), ''), nullif(trim(p."l_orderPlant"), ''),
-                                        nullif(trim(p."l_phylumPlant"), ''), '') END`)} AS old_plant,
+           ${plain(oldPlant((c) => `p."l_${c}"`))} AS old_plant,
            ${plain(`coalesce(nullif(p."e_speciesPlant", ''), nullif(p."e_genusPlant", ''), nullif(p."e_familyPlant", ''),
                              nullif(p."e_orderPlant", ''), nullif(p."e_phylumPlant", ''), '')`)} AS new_plant
     FROM cmp_pairs p
@@ -932,7 +940,7 @@ async function plantKinds(conn: DuckDBConnection): Promise<void> {
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_plant_context AS
     WITH rows AS (
-      SELECT n.sample_id, count(DISTINCT concat_ws('|', nullif(trim(lo."genusPlant"), ''), nullif(trim(lo."speciesPlant"), ''))) AS plants
+      SELECT n.sample_id, count(DISTINCT ${plain(oldPlant((c) => `lo."${c}"`))}) AS plants
       FROM legacy_specimen_number n JOIN legacy_occurrence lo ON lo._id = n._id GROUP BY 1)
     SELECT sp.field_number,
            ${hasOverride ? "EXISTS (SELECT 1 FROM sample_host_override o WHERE o.sample_id = s.entity_id)" : "false"} AS staff_host,
@@ -943,7 +951,7 @@ async function plantKinds(conn: DuckDBConnection): Promise<void> {
     FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id LEFT JOIN rows r ON r.sample_id = s.entity_id
     WHERE sp.field_number IN (SELECT field_number FROM cmp_plant_pair)`);
   const unsettled = `d."column" IN (${list(PLANT_COLUMNS)}) AND d.kind IN ('changed', 'filled', 'blanked')`;
-  const ctx = (cond: string) => `EXISTS (SELECT 1 FROM cmp_plant_context c WHERE c.field_number = d.field_number AND ${cond})`;
+  const ctx = (cond: string) => `EXISTS (SELECT 1 FROM cmp_plant_context c WHERE c.field_number = d.field_number AND (${cond}))`;
   const pair = (cond: string) => `EXISTS (SELECT 1 FROM cmp_plant_pair q WHERE q.field_number = d.field_number AND (${cond}))`;
   const sameName = `q.old_plant <> '' AND q.old_plant = q.new_plant`;
   // A family, order or phylum that went blank where the plant's rank is at or below that level
@@ -981,9 +989,14 @@ async function plantKinds(conn: DuckDBConnection): Promise<void> {
   // column was filled (ingest/promote-legacy.sql), so a tribe, subtribe or subfamily
   // became a family, a section, complex or subgenus a genus, a variety or subspecies
   // a species, a class a phylum: the same plant, held at a coarser rank.
+  // Only where the exported rank is broader than the old one, by iNaturalist's own order of ranks;
+  // the other direction, or a rank the order does not know, is left to be seen.
+  const level = (x: string) => `CASE ${x} ${Object.entries(RANK_LEVEL).map(([r, n]) => `WHEN '${r}' THEN ${n}`).join(" ")} END`;
   await set(
     "coarser_plant_rank",
-    `d."column" = 'taxonRankPlant' AND d.kind = 'changed' AND ${pair(`${sameName} AND q.l_rank <> ''`)} AND NOT ${ctx("c.follows")}`,
+    `d."column" = 'taxonRankPlant' AND d.kind = 'changed' AND ${pair(
+      `${sameName} AND ${level("q.e_rank")} > ${level("q.l_rank")}`,
+    )} AND NOT ${ctx("c.follows")}`,
   );
   // The host follows an observation the store holds the taxon of, and writes a
   // plant. A plant that is gone, or a family, order or phylum that went blank,

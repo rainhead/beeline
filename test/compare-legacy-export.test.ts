@@ -733,6 +733,35 @@ describe("why the plant differs from the old record's (beeline-qpys)", () => {
     expect(kindsOf(found, "25000003").filter((k) => k.startsWith("taxonRankPlant"))).toEqual(["taxonRankPlant plant_form"]);
   });
 
+  test("calls a rank coarser only where the store's is broader than the old record's, and sees the rest", async () => {
+    const conn = await store();
+    await conn.run(`UPDATE sample SET host_inat_taxon_id = NULL, host_name_as_observed = 'Asteraceae', host_rank = 'family'
+      WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000001')`);
+    const family = { genusPlant: "", speciesPlant: "", familyPlant: "Asteraceae", orderPlant: "", phylumPlant: "" };
+    await old(conn, "25000001", { ...family, taxonRankPlant: "tribe" });
+    await old(conn, "25000003", { ...family, taxonRankPlant: "order" });
+    await old(conn, "25000009", { ...family, taxonRankPlant: "mystery" });
+    const exportPath = await exportOf(conn);
+    const found = await kinds(conn, exportPath);
+    const rank = (n: string) => kindsOf(found, n).filter((k) => k.startsWith("taxonRankPlant"));
+    expect(rank("25000001")).toEqual(["taxonRankPlant coarser_plant_rank"]);
+    expect(rank("25000003")).toEqual(["taxonRankPlant changed"]);
+    expect(rank("25000009")).toEqual(["taxonRankPlant changed"]);
+  });
+
+  test("counts two old rows of one sample naming different families as disagreeing", async () => {
+    const conn = await store();
+    await conn.run(`UPDATE sample SET host_inat_taxon_id = 712, host_name_as_observed = 'Asteraceae', host_rank = 'family'
+      WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000001')`);
+    const none = { genusPlant: "", speciesPlant: "", orderPlant: "", phylumPlant: "", taxonRankPlant: "family" };
+    await old(conn, "25000001", { ...none, familyPlant: "Asteraceae" });
+    await old(conn, "25000003", { ...none, familyPlant: "Rosaceae" });
+    await old(conn, "25000009", { ...none, familyPlant: "Asteraceae" });
+    const exportPath = await exportOf(conn);
+    const found = await kinds(conn, exportPath);
+    expect(kindsOf(found, "25000003").filter((k) => k.startsWith("familyPlant"))).toEqual(["familyPlant sample_disagreement"]);
+  });
+
   test("says a visit claimed to no plant is that, and keeps a number the old record gave", async () => {
     const conn = await store();
     await host(conn, "25000001", null);

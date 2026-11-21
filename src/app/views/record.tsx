@@ -26,6 +26,7 @@ import {
   Button,
   Callout,
   Card,
+  CheckboxField,
   Chip,
   DataTable,
   DetailList,
@@ -172,6 +173,7 @@ export function SampleFacts({
   placeEdit = null,
   methodEdit = false,
   trapCountEdit = false,
+  hostEdit = false,
   personLinks = false,
 }: {
   m: Messages;
@@ -189,6 +191,8 @@ export function SampleFacts({
   methodEdit?: boolean;
   /** Whether the reader may correct a trap sample's trap count: staff, on any trap sample (beeline-kgyd.4.1). */
   trapCountEdit?: boolean;
+  /** Whether the reader may set the floral host: staff, on a sample a host can be kept against (beeline-hlay). */
+  hostEdit?: boolean;
   /**
    * Whether the reader may change the locality from the Place row, and
    * whether they may write any name or only one offered (`samplePlaceEdit`).
@@ -281,8 +285,9 @@ export function SampleFacts({
       value: <a href={programHref(sample.program_code)}>{sample.program_name}</a>,
     },
     // A bee taken off no flower has no floral host, and that is complete —
-    // so the row is absent rather than reading as something missing.
-    sample.host_name_as_observed === null
+    // so the row is absent rather than reading as something missing. Staff
+    // keep the row, for the pencil, and where they said there is none.
+    sample.host_name_as_observed === null && sample.host_inat_taxon_id === null && sample.host_override === null && !hostEdit
       ? null
       : {
           // A trap does not say which flower its bees visited, so the plant
@@ -293,7 +298,7 @@ export function SampleFacts({
           // 'Chamaenerion' are both one word and only the second is italic.
           // An unknown rank prints upright, which is the honest answer for
           // the legacy hosts whose source column is unrecoverable.
-          value: <HostValue sample={sample} s={s} />,
+          value: <HostValue m={m} sample={sample} s={s} edit={hostEdit ? <HostEdit m={m} sample={sample} /> : null} />,
         },
     {
       term: <Term m={m} slug="observation">{s.observation}</Term>,
@@ -343,18 +348,45 @@ export function SampleFacts({
  * first is absent while the taxon is not in the cache, or is not yet known
  * (pending) or not found (absent), and the page then reads as it did before.
  */
-function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"]["sample"] }) {
+function HostValue({
+  m,
+  sample,
+  s,
+  edit,
+}: {
+  m: Messages;
+  sample: SampleDetail;
+  s: Messages["record"]["sample"];
+  /** The staff pencil, drawn beside the name so the form opens in its place. */
+  edit: Child;
+}) {
   // A scientific name, so it is printed like one. Italics come from the rank
   // and never from the string: 'Onagraceae' and 'Chamaenerion' are both one
   // word and only the second is italic. An unknown rank prints upright, which
   // is the honest answer for the legacy hosts whose source column is
   // unrecoverable.
-  const observed = sample.host_name_as_observed ?? "";
+  const observed = sample.host_name_as_observed;
   const current = sample.host_current_name;
-  const changed = current !== null && observed !== "" && plantNameKey(current) !== plantNameKey(observed);
+  const changed = current !== null && observed !== null && observed !== "" && plantNameKey(current) !== plantNameKey(observed);
+  const set = sample.host_override;
+  const t = s.staffHost;
+  const name =
+    observed === null ? (
+      sample.host_inat_taxon_id !== null ? (
+        s.hostTaxonId(String(sample.host_inat_taxon_id))
+      ) : set === null ? (
+        <Absent label={m.absence.none} spelled />
+      ) : (
+        t.none
+      )
+    ) : (
+      <TaxonName rank={sample.host_rank ?? ""} scientificName={observed} vernacular={sample.host_common_name} />
+    );
   return (
     <>
-      <TaxonName rank={sample.host_rank ?? ""} scientificName={observed} vernacular={sample.host_common_name} />
+      {/* The name gives way to the form while the pencil is open; a reader with no pencil gets the name as it always was. */}
+      {edit === null ? name : <span class="inline-edit-text">{name}</span>}
+      {edit}
       {changed ? (
         <Meta block>{s.hostNow(<TaxonName rank={sample.host_current_rank ?? ""} scientificName={current} />)}</Meta>
       ) : null}
@@ -369,7 +401,54 @@ function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"][
         </Meta>
       ) : null}
       {sample.host_standing === "retired" ? <Meta block>{s.hostNoLongerUsed}</Meta> : null}
+      {/* A host set in Beeline carries its provenance beside it, as the
+          locality and the coordinates do: who, why, and what iNaturalist
+          gives now where the observation has moved on. */}
+      {set === null ? null : (
+        <Meta block>
+          {set.set_by === null ? t.setByStaff : t.setBy(set.set_by)} {t.because(set.reason)}
+        </Meta>
+      )}
+      {set?.observation_now == null ? null : (
+        <Meta block>{t.observationNow(<TaxonName rank={set.observation_now.rank} scientificName={set.observation_now.name} />)}</Meta>
+      )}
     </>
+  );
+}
+
+/**
+ * Staff setting the floral host (beeline-hlay), from a pencil on the host row,
+ * as the coordinates are changed from theirs: the plant as an iNaturalist page
+ * address or taxon number, or a box to say there is none, and the reason,
+ * which is required. Where a host set in Beeline stands, a second form under
+ * it goes back to following iNaturalist, which needs no reason.
+ */
+function HostEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.staffHost;
+  const action = `/samples/${sample.sample_id}/host`;
+  return (
+    <InlineEdit
+      label={t.open}
+      action={action}
+      back={sampleHref(sample.sample_id)}
+      save={t.save}
+      cancel={m.listings.samples.placeEdit.cancel}
+      after={
+        sample.host_override === null ? undefined : (
+          <form method="post" action={action}>
+            <input type="hidden" name="remove" value="1" />
+            <button type="submit" class="outlined compact-button">
+              {t.remove}
+            </button>
+          </form>
+        )
+      }
+    >
+      <Meta block>{sample.inat_observation_id === null ? t.hintNoObservation : t.hint}</Meta>
+      <TextField id="host-taxon" name="taxon" label={t.taxon} hint={t.taxonHint} />
+      <CheckboxField id="host-none" name="none" label={t.noHost} checked={false} />
+      <TextField id="host-note" name="note" label={t.note} required />
+    </InlineEdit>
   );
 }
 
@@ -1132,6 +1211,7 @@ export function SamplePage({
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
           methodEdit={admin && (sample.from_old_records || enteredPastItsForm)}
           trapCountEdit={admin}
+          hostEdit={admin && (sample.inat_observation_id !== null || (sample.from_old_records && !entered))}
           personLinks={admin}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} deleteHref={deleteHref} />

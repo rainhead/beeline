@@ -41,7 +41,7 @@ COMMENT ON COLUMN sample.specimen_count IS 'The working count: free to move up o
 COMMENT ON COLUMN sample.geoprivacy IS 'The observer''s own iNat geoprivacy setting — a fact about the source, kept because it drives QC and reads. Both flags blank ⇒ open coordinates. On a linked sample this and taxon_geoprivacy are a copy of observation_field, rewritten by every observation promotion and by nothing else; sample_geoprivacy_stale (schema/105) names a copy left behind.';
 COMMENT ON COLUMN sample.taxon_geoprivacy IS 'iNat taxon-driven obscuring: in this program, a host plant iNaturalist treats as rare. Labels, and what staff download and send on, carry its true coordinates, and no atlas''s rule withholds them (Peter, 2026-11-20; docs/questions.md).';
 COMMENT ON COLUMN sample.host_rank IS 'The rank host_name_as_observed is at, so the name can be printed correctly: italics are derived from rank and the string cannot be read for it — ''Onagraceae'' (family) and ''Chamaenerion'' (genus) are both one word. From iNaturalist''s taxon.rank where the sample has an observation, and where it does not, from which of the legacy plant columns supplied the name, except that a genus beside a bare epithet, or a binomial typed into the genus column, is a species (ingest/promote-legacy.sql, beeline-32ow). Nullable: the legacy import has hosts whose column is unrecoverable, and an unknown rank prints upright rather than guessing.';
-COMMENT ON COLUMN sample.host_inat_taxon_id IS 'Floral host as an iNat taxon reference — hosts never live in the curated animal table. With host_name_as_observed and host_rank it follows the sample''s observation on every promotion, printed or not, while the observation carries a taxon (ingest/mint-samples.sql, beeline-ni5m.7): a label never carries the host, so a later identification is taken. On a sample with no observation it is what the import stated.';
+COMMENT ON COLUMN sample.host_inat_taxon_id IS 'Floral host as an iNat taxon reference — hosts never live in the curated animal table. With host_name_as_observed and host_rank it follows the sample''s observation on every promotion, printed or not, while the observation carries a taxon (ingest/mint-samples.sql, beeline-ni5m.7): a label never carries the host, so a later identification is taken. Except where staff have set the host in Beeline (sample_host_override): then all three columns are what staff set, or all null for a sample staff say has no floral host, and the observation no longer changes them. On a sample with no observation it is what the import stated, or what staff set.';
 COMMENT ON COLUMN sample.locality IS 'Place text (with country/state_province/county): label text at place-name granularity, ingested private-preferred like the reference implementation.';
 COMMENT ON COLUMN sample.protocol IS 'Free text today (''vane trap'', ''6 Vane Traps''); controlled vocabulary pending staff answers (docs/questions.md, Trap sampling q3).';
 COMMENT ON COLUMN sample.sampling_effort IS 'Trap-count × trap-days etc., pending staff answers (docs/questions.md, Trap sampling q6).';
@@ -132,6 +132,38 @@ CREATE TABLE sample_location_override (
 );
 COMMENT ON TABLE sample_location_override IS 'Coordinates a staff member set on a sample, which promotion never overwrites: the location upgrade (ingest/promote-observations.sql) skips samples with a row here. Re-derived at the end of observation promotion from data/sample-overlay.csv; sample_location carries the same point with source staff_entry, and sample_location_override_stale asserts the two agree.';
 COMMENT ON COLUMN sample_location_override.observed_latitude IS 'With observed_longitude, observed_uncertainty_m and observed_source: the sample_location row as it stood when the override was written — the merge base, and what removal restores. All null where the sample had no coordinates then.';
+
+-- A floral host staff set, the same shape (beeline-hlay). The follow rule
+-- (ingest/mint-samples.sql) gives a sample the plant its observation names on
+-- every promotion; a row here holds it off that sample. host_* are what staff
+-- set, and all three are null where staff say the sample has no floral host.
+-- The observed_host_* columns are the merge base, and unlike the locality's
+-- they are what the SAMPLE held, not what the observation gave: the follow
+-- rule writes only while the observation names a plant, so removing the
+-- override restores this and then applies the rule. The name and rank are
+-- stored here and in the overlay file, never read back from the taxon cache,
+-- so an iNaturalist rename cannot rewrite a host staff set. reason is
+-- required, as sample_hold.reason is.
+CREATE TABLE sample_host_override (
+  sample_id                   INTEGER PRIMARY KEY REFERENCES sample(entity_id),
+  host_inat_taxon_id          BIGINT,
+  host_name                   TEXT,
+  host_rank                   TEXT,
+  observed_host_inat_taxon_id BIGINT,
+  observed_host_name          TEXT,
+  observed_host_rank          TEXT,
+  set_by                      INTEGER REFERENCES person(entity_id),
+  reason                      TEXT NOT NULL CHECK (reason <> ''),
+  CHECK ((host_inat_taxon_id IS NULL) = (host_name IS NULL)),
+  CHECK ((host_inat_taxon_id IS NULL) = (host_rank IS NULL))
+);
+COMMENT ON TABLE sample_host_override IS 'A floral host a staff member set on a sample, or their statement that it has none, which promotion never overwrites: both statements about the host in ingest/mint-samples.sql skip samples with a row here. Re-derived at the end of observation promotion from data/sample-overlay.csv, the durable record; sample.host_inat_taxon_id, host_name_as_observed and host_rank are written beside it because every read uses them, and sample_host_override_stale asserts the two agree.';
+COMMENT ON COLUMN sample_host_override.host_inat_taxon_id IS 'The iNaturalist taxon staff set as the host. Null, with host_name and host_rank, where staff say the sample has no floral host.';
+COMMENT ON COLUMN sample_host_override.host_name IS 'The taxon''s name as iNaturalist gave it when staff set it, kept here and in the overlay file and never read back from the taxon cache.';
+COMMENT ON COLUMN sample_host_override.host_rank IS 'The taxon''s rank as iNaturalist gave it when staff set it.';
+COMMENT ON COLUMN sample_host_override.observed_host_inat_taxon_id IS 'With observed_host_name and observed_host_rank: what the sample held as its host when the override was written, which is the merge base and what removal restores. All null where it had no host. The id alone is null for a host that was only a name. A second save keeps the first base.';
+COMMENT ON COLUMN sample_host_override.set_by IS 'Whoever set it, resolved from the overlay row''s author login through inat_account at apply time; null where the login no longer resolves.';
+COMMENT ON COLUMN sample_host_override.reason IS 'Why staff set it. Required.';
 
 -- A sample somebody entered in Beeline rather than one iNaturalist or the
 -- old Beeline supplied (beeline-3vs.2): trap samples, typed into a form by

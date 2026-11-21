@@ -34,9 +34,11 @@ import { LEGACY_EXPORT_COLUMNS, legacyExportSources, legacyExportSql } from "./l
  * occurrenceRemarks, since the old system's template has no such field. On
  * the store of 7 November 2026 those rows filled every column an old-system
  * printed 2026 record fills except the ones Beeline does not hold: the OSAC
- * occurrenceID and resourceID (ADR 0008: Beeline mints none), the
- * observation's UUID in relatedResourceID, and the plant's phylum, order and
- * family. None of them is read by the old system's determination screens,
+ * occurrenceID and resourceID (ADR 0008: Beeline mints none) and the
+ * observation's UUID in relatedResourceID. (The plant's phylum, order and
+ * family were among them until beeline-qpys: they are now read from the
+ * host's lineage in the taxon cache, so a record copied before is updated at
+ * the next copy.) None of them is read by the old system's determination screens,
  * which find a volunteer's records by userLogin and field number.
  *
  * THE KEY. The old system keys a record by a hash of its sample, specimen,

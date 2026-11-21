@@ -82,7 +82,7 @@ LEFT JOIN host_name_taxon_cache c ON s.host_inat_taxon_id IS NULL AND c.host_nam
 JOIN inat_taxon_current_named h ON h.inat_taxon_id = coalesce(s.host_inat_taxon_id, c.inat_taxon_id);
 COMMENT ON VIEW sample_host IS 'A sample''s floral host as iNaturalist knows it today: the stored taxon (inat_taxon_id, name, rank as the cache last read them), how it was found (resolved_by), its standing, the current taxon (id, name, rank) and the genus and family of the current taxon, whether it is a plant and a vascular plant, and the current taxon''s common name. One row for each sample whose host is in the cache. Resolved when read; the sample keeps the id and the name as observed.';
 COMMENT ON COLUMN sample_host.inat_taxon_id IS 'The sample''s host id, or, for a sample with none, the taxon its host name resolves to (host_name_taxon_cache).';
-COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an identification on iNaturalist. name: the sample has no id and its host name was looked up (beeline-rfkj.5).';
+COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an identification on iNaturalist or a plant staff set in Beeline (sample_host_override). name: the sample has no id and its host name was looked up (beeline-rfkj.5).';
 
 -- The worklist for hand decisions on host names (beeline-rfkj.6): each
 -- sample with a host name and no id that a page does not read through a

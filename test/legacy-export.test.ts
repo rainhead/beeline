@@ -2,11 +2,12 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { LEGACY_EXPORT_COLUMNS, writeLegacyExport } from "../src/legacy-export.js";
 import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 import { promotedStore } from "./promoted-store.js";
 import { createKysely } from "../src/db.js";
+import { applySampleOverlay } from "../src/apply-sample-overlay.js";
 import { createApp } from "../src/app/server.js";
 
 let conn: DuckDBConnection;
@@ -71,11 +72,8 @@ describe("the legacy-format export", () => {
     expect(byNumber.get("25000001")).toMatchObject({
       occurrenceID: "https://osac.oregonstate.edu/OBS/OBA_25000001",
       dateLabelPrint: "17-Aug-25",
-      relationshipOfResource: "",
       specimenId: "1",
     });
-    // A blank plant in the legacy record stays blank, though the sample now names a host.
-    expect(byNumber.get("25000003")).toMatchObject({ speciesPlant: "", genusPlant: "" });
   });
 
   test("writes what Beeline owns from the model, in the legacy formats", async () => {
@@ -370,6 +368,9 @@ describe("the legacy-format export", () => {
 
     const [[sample]] = (await conn.runAndReadAll(`SELECT sp.sample_id FROM specimen sp WHERE sp.field_number = '25000001'`)).getRows() as [[number]];
     const [[before]] = (await conn.runAndReadAll(`SELECT protocol FROM sample WHERE entity_id = ${sample}`)).getRows() as [[string | null]];
+    const [hostBefore] = (await conn.runAndReadAll(
+      `SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${sample}`,
+    )).getRows() as [[bigint | null, string | null, string | null]];
     await conn.run(`CREATE TEMP TABLE trap_test_before AS SELECT * FROM legacy_occurrence WHERE "fieldNumber" = '25000001'`);
     await conn.run(`UPDATE legacy_occurrence SET "samplingProtocol" = 'pan traps', "relationshipOfResource" = 'visits flowers of', "genusPlant" = 'Ceanothus'
                     WHERE "fieldNumber" = '25000001'`);
@@ -386,14 +387,18 @@ describe("the legacy-format export", () => {
       // A number there, as the 2026 vane-trap records hold, is not the claim and stays.
       await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '10' WHERE "fieldNumber" = '25000001'`);
       expect(await exported()).toEqual([["10"]]);
-      // A plant named only to its order is a plant all the same.
+      // The plant is the sample's host, whatever plant the old record names.
       await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = 'visits flowers of', "genusPlant" = '', "speciesPlant" = '',
                         "familyPlant" = '', "orderPlant" = 'Rosales', "phylumPlant" = '' WHERE "fieldNumber" = '25000001'`);
       expect(await exported()).toEqual([["near"]]);
-      // And with no plant in the old record there is nothing to be near.
-      await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '', "orderPlant" = '' WHERE "fieldNumber" = '25000001'`);
+      // And where the sample has no host there is nothing to be near, whatever the old record names.
+      await conn.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '', "orderPlant" = 'Rosales' WHERE "fieldNumber" = '25000001'`);
+      await conn.run(`UPDATE sample SET host_inat_taxon_id = NULL, host_name_as_observed = NULL, host_rank = NULL WHERE entity_id = ${sample}`);
       expect(await exported()).toEqual([[null]]);
     } finally {
+      await conn.run(`UPDATE sample SET host_inat_taxon_id = ${hostBefore![0] === null ? "NULL" : hostBefore![0]},
+                        host_name_as_observed = ${hostBefore![1] === null ? "NULL" : `'${hostBefore![1]}'`},
+                        host_rank = ${hostBefore![2] === null ? "NULL" : `'${hostBefore![2]}'`} WHERE entity_id = ${sample}`);
       await conn.run(`UPDATE sample SET protocol = ${before === null ? "NULL" : `'${before}'`} WHERE entity_id = ${sample}`);
       await conn.run(`UPDATE legacy_occurrence o SET "samplingProtocol" = b."samplingProtocol", "relationshipOfResource" = b."relationshipOfResource",
                         "genusPlant" = b."genusPlant", "speciesPlant" = b."speciesPlant", "familyPlant" = b."familyPlant",
@@ -475,6 +480,207 @@ describe("the legacy-format export", () => {
       await conn.runAndReadAll(`SELECT "coordinateSource" FROM read_csv('${out}', header = true, all_varchar = true) WHERE "fieldNumber" = '25000001'`)
     ).getRowObjectsJson();
     expect(row).toEqual({ coordinateSource: "private" });
+  });
+});
+
+describe("the plant: the sample's floral host as the store holds it (beeline-qpys)", () => {
+  const TRACHEOPHYTA = 211194;
+  // A small lineage, names a plant's own: [id, name, rank, ancestors outermost first].
+  const TAXA: [number, string, string, number[]][] = [
+    [TRACHEOPHYTA, "Tracheophyta", "phylum", []],
+    [701, "Boraginales", "order", [TRACHEOPHYTA]],
+    [702, "Boraginaceae", "family", [TRACHEOPHYTA, 701]],
+    [703, "Nemophila", "genus", [TRACHEOPHYTA, 701, 702]],
+    [704, "Nemophila menziesii", "species", [TRACHEOPHYTA, 701, 702, 703]],
+    [705, "Nemophila menziesii atomaria", "variety", [TRACHEOPHYTA, 701, 702, 703, 704]],
+    [711, "Asterales", "order", [TRACHEOPHYTA]],
+    [712, "Asteraceae", "family", [TRACHEOPHYTA, 711]],
+    [713, "Astereae", "tribe", [TRACHEOPHYTA, 711, 712]],
+    [714, "Ericameria", "genus", [TRACHEOPHYTA, 711, 712, 713]],
+    [715, "Ericameria nauseosa", "species", [TRACHEOPHYTA, 711, 712, 713, 714]],
+    [721, "Caryophyllales", "order", [TRACHEOPHYTA]],
+    [722, "Montiaceae", "family", [TRACHEOPHYTA, 721]],
+    [723, "Claytonia", "genus", [TRACHEOPHYTA, 721, 722]],
+    [724, "Limnia", "section", [TRACHEOPHYTA, 721, 722, 723]],
+    [731, "Lamiales", "order", [TRACHEOPHYTA]],
+    [732, "Oleaceae", "family", [TRACHEOPHYTA, 731]],
+    [733, "Osmanthus", "genus", [TRACHEOPHYTA, 731, 732]],
+    [734, "Osmanthus × burkwoodii", "hybrid", [TRACHEOPHYTA, 731, 732, 733]],
+  ];
+  const PLANT_COLUMNS = ["taxonRankPlant", "genusPlant", "speciesPlant", "familyPlant", "orderPlant", "phylumPlant", "relationshipOfResource"] as const;
+
+  let c: DuckDBConnection;
+  let sampleId: number;
+
+  beforeEach(async () => {
+    ({ conn: c } = await promotedStore("occurrences"));
+    for (const [id, name, rank, above] of TAXA) {
+      await c.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES (${id}, '${name}', '${rank}', 10, true)`);
+      for (const [d, a] of [...above].reverse().entries()) await c.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${a}, ${d + 1})`);
+      await c.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${id}, 0)`);
+    }
+    const [[id]] = (await rows(c, `SELECT sample_id FROM specimen WHERE field_number = '25000001'`)) as [[number]];
+    sampleId = Number(id);
+  });
+
+  const setHost = (id: number | null, name: string | null, rank: string | null) =>
+    c.run(`UPDATE sample SET host_inat_taxon_id = ${id ?? "NULL"}, host_name_as_observed = ${name === null ? "NULL" : `'${name}'`},
+                  host_rank = ${rank === null ? "NULL" : `'${rank}'`} WHERE entity_id = ${sampleId}`);
+
+  async function rowOf(fieldNumber: string): Promise<Record<string, string>> {
+    const out = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+    await writeLegacyExport(c, out);
+    const all = (await c.runAndReadAll(`SELECT * FROM read_csv('${out}', header = true, all_varchar = true)`)).getRowObjectsJson();
+    const row = all.find((r) => r.fieldNumber === fieldNumber)!;
+    return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, (v as string | null) ?? ""]));
+  }
+  const plantOf = async (fieldNumber: string) => {
+    const row = await rowOf(fieldNumber);
+    return Object.fromEntries(PLANT_COLUMNS.map((k) => [k, row[k]]));
+  };
+
+  const ERICAMERIA = {
+    taxonRankPlant: "species", genusPlant: "Ericameria", speciesPlant: "Ericameria nauseosa",
+    familyPlant: "Asteraceae", orderPlant: "Asterales", phylumPlant: "Tracheophyta", relationshipOfResource: "visits flowers of",
+  };
+
+  test("writes the sample's host to a specimen old Beeline held, not the plant its record named, with the lineage from the taxon cache", async () => {
+    // The old record of 25000001 names Salvia officinalis, in Lamiaceae.
+    expect((await rowOf("25000001")).genusPlant).toBe("Salvia");
+    await setHost(715, "Ericameria nauseosa", "species");
+    expect(await plantOf("25000001")).toEqual(ERICAMERIA);
+    // The old record of 25000003, of the same sample, names no plant at all: the sample's host is written all the same.
+    expect(await plantOf("25000003")).toEqual(ERICAMERIA);
+  });
+
+  test("writes a host that followed its observation", async () => {
+    await c.run(`UPDATE sample SET inat_observation_id = 777 WHERE entity_id = ${sampleId}`);
+    await c.run(
+      `INSERT INTO observation_field (inat_id, user_id, host_taxon_id, host_taxon_name, host_taxon_rank, host_is_tracheophyte)
+       VALUES (777, 1, 715, 'Ericameria nauseosa', 'species', true)`,
+    );
+    // The follow rule's own statement, as ingest/mint-samples.sql runs it on every promotion.
+    const mint = await readFile(new URL("../ingest/mint-samples.sql", import.meta.url), "utf8");
+    const followRule = mint.slice(mint.indexOf("UPDATE sample SET\n  host_inat_taxon_id    = f.host_taxon_id"));
+    await c.run(followRule.slice(0, followRule.indexOf(";") + 1));
+    expect(await plantOf("25000001")).toEqual(ERICAMERIA);
+  });
+
+  test("writes a host staff set, with the lineage of the taxon they gave, and no old plant", async () => {
+    await c.run(`INSERT INTO person (display_name) VALUES ('Sam Staff')`);
+    await c.run(`INSERT INTO inat_account (person_id, inat_user_id, login) SELECT entity_id, 3, 'samstaff' FROM person WHERE display_name = 'Sam Staff'`);
+    const [[legacyId]] = (await rows(c, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
+    await applySampleOverlay(c, [{
+      sample_ref: `legacy:${legacyId}`, field: "host", base_value: "", value: "704 species Nemophila menziesii",
+      author: "samstaff", reason: "the bees are on the baby blue eyes",
+    }]);
+    expect(await plantOf("25000001")).toEqual({
+      taxonRankPlant: "species", genusPlant: "Nemophila", speciesPlant: "Nemophila menziesii",
+      familyPlant: "Boraginaceae", orderPlant: "Boraginales", phylumPlant: "Tracheophyta", relationshipOfResource: "visits flowers of",
+    });
+  });
+
+  test.each([
+    ["genus", 703, "Nemophila", { genusPlant: "Nemophila", speciesPlant: "", familyPlant: "Boraginaceae", orderPlant: "Boraginales" }],
+    // A family names no genus and a species, and keeps its family, order and phylum.
+    ["family", 702, "Boraginaceae", { genusPlant: "", speciesPlant: "", familyPlant: "Boraginaceae", orderPlant: "Boraginales" }],
+    ["tribe", 713, "Astereae", { genusPlant: "", speciesPlant: "", familyPlant: "Asteraceae", orderPlant: "Asterales" }],
+    // A section is below a genus the lineage names, so it has one.
+    ["section", 724, "Limnia", { genusPlant: "Claytonia", speciesPlant: "", familyPlant: "Montiaceae", orderPlant: "Caryophyllales" }],
+    // A variety is written as iNaturalist names it, with no rank marker.
+    ["variety", 705, "Nemophila menziesii atomaria", {
+      genusPlant: "Nemophila", speciesPlant: "Nemophila menziesii atomaria", familyPlant: "Boraginaceae", orderPlant: "Boraginales",
+    }],
+    ["hybrid", 734, "Osmanthus × burkwoodii", {
+      genusPlant: "Osmanthus", speciesPlant: "Osmanthus × burkwoodii", familyPlant: "Oleaceae", orderPlant: "Lamiales",
+    }],
+  ] as const)("writes a host at %s rank as old Beeline wrote it", async (rank, id, name, expected) => {
+    await setHost(id, name, rank);
+    expect(await plantOf("25000003")).toEqual({
+      taxonRankPlant: rank, phylumPlant: "Tracheophyta", relationshipOfResource: "visits flowers of", ...expected,
+    });
+  });
+
+  test("takes the old record's family, order and phylum only where it names the same plant and the cache cannot give the lineage", async () => {
+    // The old record of 25000001 names Salvia officinalis, in Lamiaceae, Lamiales and Tracheophyta; the cache holds
+    // neither the sample's plant nor anything above it.
+    await setHost(null, "Salvia officinalis", "species");
+    expect(await plantOf("25000001")).toEqual({
+      taxonRankPlant: "species", genusPlant: "Salvia", speciesPlant: "Salvia officinalis",
+      familyPlant: "Lamiaceae", orderPlant: "Lamiales", phylumPlant: "Tracheophyta", relationshipOfResource: "visits flowers of",
+    });
+    // Another plant: never its genus beside the old record's family.
+    await setHost(null, "Salvia pratensis", "species");
+    expect(await plantOf("25000001")).toEqual({
+      taxonRankPlant: "species", genusPlant: "Salvia", speciesPlant: "Salvia pratensis",
+      familyPlant: "", orderPlant: "", phylumPlant: "", relationshipOfResource: "visits flowers of",
+    });
+    // A taxon the cache has not read yet is the same: the plant is its name, and nothing is known above it.
+    await setHost(999999, "Salvia officinalis", "species");
+    expect((await plantOf("25000001")).familyPlant).toBe("Lamiaceae");
+    await setHost(999999, "Salvia pratensis", "species");
+    expect((await plantOf("25000001")).familyPlant).toBe("");
+    // A taxon the cache holds, with an ancestor it has not read, gives no lineage either, never half of one.
+    await c.run(`DELETE FROM inat_taxon WHERE inat_taxon_id = 712`);
+    await setHost(715, "Ericameria nauseosa", "species");
+    expect(await plantOf("25000001")).toMatchObject({ genusPlant: "Ericameria", familyPlant: "", orderPlant: "", phylumPlant: "" });
+  });
+
+  test("where the lineage is known it wins over an old record naming the same plant", async () => {
+    await c.run(`UPDATE legacy_occurrence SET "familyPlant" = 'Compositae' WHERE "fieldNumber" = '25000001'`);
+    await c.run(`UPDATE legacy_occurrence SET "genusPlant" = 'Ericameria', "speciesPlant" = 'Ericameria nauseosa' WHERE "fieldNumber" = '25000001'`);
+    await setHost(715, "Ericameria nauseosa", "species");
+    expect((await plantOf("25000001")).familyPlant).toBe("Asteraceae");
+  });
+
+  test("writes no plant where the sample has none, whatever the old record names, and keeps the old record's own relationship", async () => {
+    await setHost(null, null, null);
+    // 25000001's old record names Salvia officinalis and says nothing of how the bees came to it.
+    expect(await plantOf("25000001")).toEqual({
+      taxonRankPlant: "", genusPlant: "", speciesPlant: "", familyPlant: "", orderPlant: "", phylumPlant: "", relationshipOfResource: "",
+    });
+    // A claim of a visit, or of a plant near the trap, with no plant to claim it of: blank. Any other value is the old record's own.
+    await c.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = 'visits flowers of' WHERE "fieldNumber" = '25000001'`);
+    expect((await plantOf("25000001")).relationshipOfResource).toBe("");
+    await c.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = ' near ' WHERE "fieldNumber" = '25000001'`);
+    expect((await plantOf("25000001")).relationshipOfResource).toBe("");
+    await c.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '10' WHERE "fieldNumber" = '25000001'`);
+    expect((await plantOf("25000001")).relationshipOfResource).toBe("10");
+  });
+
+  test("writes a replaced taxon's old name beside today's family", async () => {
+    await c.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES
+      (750, 'Mahonia aquifolium', 'species', 10, false), (751, 'Berberis aquifolium', 'species', 10, true),
+      (752, 'Berberidaceae', 'family', 30, true), (753, 'Ranunculales', 'order', 40, true), (754, 'Berberis', 'genus', 20, true)`);
+    await c.run(`INSERT INTO inat_taxon_ancestor VALUES (751, ${TRACHEOPHYTA}, 4), (751, 753, 3), (751, 752, 2), (751, 754, 1), (751, 751, 0),
+      (752, ${TRACHEOPHYTA}, 2), (752, 753, 1), (752, 752, 0), (753, ${TRACHEOPHYTA}, 1), (753, 753, 0), (754, ${TRACHEOPHYTA}, 3), (754, 753, 2), (754, 752, 1), (754, 754, 0),
+      (750, 750, 0)`);
+    await c.run(`INSERT INTO inat_taxon_replacement VALUES (750, 751)`);
+    await setHost(750, "Mahonia aquifolium", "species");
+    expect(await plantOf("25000001")).toEqual({
+      taxonRankPlant: "species", genusPlant: "Mahonia", speciesPlant: "Mahonia aquifolium",
+      familyPlant: "Berberidaceae", orderPlant: "Ranunculales", phylumPlant: "Tracheophyta", relationshipOfResource: "visits flowers of",
+    });
+  });
+
+  test("writes the lineage of a host with no id that resolves by its name", async () => {
+    await setHost(null, "Ericameria nauseosa", "species");
+    await c.run(`INSERT INTO host_name_taxon_cache (host_name, inat_taxon_id) VALUES ('Ericameria nauseosa', 715)`);
+    // The old record of 25000001 names Salvia: the lineage is the host's, and nothing of the old record's.
+    expect(await plantOf("25000001")).toEqual(ERICAMERIA);
+  });
+
+  test("ignores spaces around the old record's genus and species when it names the same plant", async () => {
+    await setHost(null, "Salvia officinalis", "species");
+    await c.run(`UPDATE legacy_occurrence SET "genusPlant" = ' Salvia ', "speciesPlant" = 'officinalis ' WHERE "fieldNumber" = '25000001'`);
+    expect((await plantOf("25000001")).familyPlant).toBe("Lamiaceae");
+  });
+
+  test("says what a specimen with no old record is told where the old record's relationship is blank, and keeps one that is not", async () => {
+    await setHost(715, "Ericameria nauseosa", "species");
+    expect((await plantOf("25000001")).relationshipOfResource).toBe("visits flowers of");
+    await c.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '10' WHERE "fieldNumber" = '25000001'`);
+    expect((await plantOf("25000001")).relationshipOfResource).toBe("10");
   });
 });
 

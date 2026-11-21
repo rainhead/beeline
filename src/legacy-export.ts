@@ -29,10 +29,14 @@ import { methodNamesTrapSql } from "./trap-method.js";
  * legacy record for an imported specimen, because those values were frozen
  * the day they were imported and nothing in Beeline could have made them
  * wrong since: the legacy error flags, the catalog number and resource links,
- * the plant's higher taxonomy, the taxonomic notes, the print date of a label
- * printed before Beeline. A Beeline-originated specimen has none of those,
- * and gets them from the model where it holds the fact (the host plant's
- * name and rank, the observation's link) and blank where it does not. Where
+ * the taxonomic notes, the print date of a label printed before Beeline. A
+ * Beeline-originated specimen has none of those, and gets them from the model
+ * where it holds the fact (the observation's link) and blank where it does
+ * not. The plant is the exception: it is the sample's floral host as the store
+ * holds it, for every specimen whether or not old Beeline held it
+ * (beeline-qpys), so a host that followed its observation, or that staff set,
+ * reaches the file, and its family, order and phylum are read from its lineage
+ * in the taxon cache. Where
  * the model's value is a parse of the staged text and nothing has changed it
  * — a coordinate still sourced from the import — the staged text is written,
  * since "47.5270" and 47.527 are the same fact and only one of them is what
@@ -171,7 +175,9 @@ export function legacyExportSql(
   const t = (expr: string) => `nullif(CAST(${expr} AS VARCHAR), '')`;
   // An imported specimen carries its staged value exactly — a blank included,
   // since a blank is what the legacy file said; only a Beeline-originated
-  // specimen, which has no staged record, gets the model's own value.
+  // specimen, which has no staged record, gets the model's own value. Now used
+  // only for the specimen's number under its sample: the plant is not one of
+  // these (beeline-qpys).
   const orStaged = (col: string, model: string) => `CASE WHEN lo._id IS NOT NULL THEN lo."${col}" ELSE ${model} END`;
   const unidentified = (col: string, model: string) =>
     `CASE WHEN e.entity_id IS NULL AND lo._id IS NOT NULL THEN lo."${col}" ELSE ${model} END`;
@@ -254,6 +260,43 @@ disagreeing AS (
                  : ""
              }`
     : "";
+  // THE PLANT (beeline-qpys). It is the sample's floral host as the store
+  // holds it, for every specimen, whether or not old Beeline held it, written
+  // the way old Beeline wrote it so that the same plant reads the same in both
+  // files (OBP-Server, shared/lib/services/PlantTaxaService.js,
+  // getPlantAncestry). That function walked the observation taxon's ancestors,
+  // kept the one named at each of five ranks (phylum, order, family, genus,
+  // species), and then put the taxon itself at its own rank; the species column
+  // took the taxon's whole name for a species, hybrid, subspecies, variety or
+  // form. So a variety is "Nemophila menziesii atomaria" with no rank marker, a
+  // hybrid is "Osmanthus × burkwoodii", a host at genus rank has a genus and an
+  // empty species, and a host at family or tribe rank has its family, order and
+  // phylum and no genus. The ranks between genus and species (section, complex,
+  // subgenus, subsection) take their genus from the lineage.
+  const SPECIES_RANKS = ["species", "subspecies", "variety", "form", "hybrid", "infrahybrid"];
+  const hostName = `nullif(s.host_name_as_observed, '')`;
+  const inRanks = (ranks: string[]) => `s.host_rank IN (${ranks.map((r) => `'${r}'`).join(", ")})`;
+  const plantGenus = `CASE WHEN ${inRanks(["genus", ...SPECIES_RANKS])}
+                           THEN nullif(split_part(regexp_replace(${hostName}, '^×\\s*', ''), ' ', 1), '')
+                           WHEN ${inRanks(["complex", "section", "subgenus", "subsection"])} THEN pl.genus END`;
+  const plantSpecies = `CASE WHEN ${inRanks(SPECIES_RANKS)} THEN ${hostName} END`;
+  // The old record names the same plant as the store gives: the lowest rank it
+  // names, written as old Beeline wrote it (a whole name in the genus column,
+  // or an epithet alone beside the genus, is the name it spells), is the name
+  // the sample holds as its host. Its family, order and phylum can then stand
+  // in where the taxon cache cannot give the lineage. Never the store's genus
+  // beside another plant's family.
+  const plain = (x: string) => `lower(trim(regexp_replace(${x}, '\\s+', ' ', 'g')))`;
+  const og = `trim(lo."genusPlant")`;
+  const os = `trim(lo."speciesPlant")`;
+  const oldPlantName = `CASE WHEN ${os} LIKE '% %' THEN ${os}
+                              WHEN ${og} LIKE '% %' THEN ${og}
+                              WHEN nullif(${os}, '') IS NOT NULL THEN concat_ws(' ', nullif(${og}, ''), ${os})
+                              ELSE coalesce(nullif(${og}, ''), nullif(trim(lo."familyPlant"), ''), nullif(trim(lo."orderPlant"), ''),
+                                            nullif(trim(lo."phylumPlant"), '')) END`;
+  const samePlant = `(lo._id IS NOT NULL AND ${hostName} IS NOT NULL AND ${plain(oldPlantName)} = ${plain(hostName)})`;
+  const lineageOrOld = (lineage: string, col: string) =>
+    `CASE WHEN pl.sample_id IS NOT NULL THEN pl.${lineage} WHEN ${samePlant} THEN lo."${col}" END`;
   const rows = `
 WITH RECURSIVE up(node_id, anc_id) AS (
   SELECT entity_id, entity_id FROM animal
@@ -267,6 +310,24 @@ lineage AS (
          ${rank("species")} AS species
   FROM up JOIN animal a ON a.entity_id = up.anc_id
   GROUP BY up.node_id
+),
+-- A sample's floral host as the taxon cache gives its lineage (beeline-qpys):
+-- the name at each rank old Beeline filled, read from the host's current taxon
+-- and its ancestors, the taxon itself included. A host whose current taxon or
+-- any ancestor the cache has not read yet, or that has no current taxon (it
+-- was split, or retired with nothing after it), has no row: its lineage is
+-- not known, which is not the same as having none.
+plant_lineage AS (
+  SELECT h.sample_id,
+         max(t.name) FILTER (WHERE t.rank = 'phylum') AS phylum,
+         max(t.name) FILTER (WHERE t.rank = 'order') AS order_name,
+         max(t.name) FILTER (WHERE t.rank = 'family') AS family,
+         max(t.name) FILTER (WHERE t.rank = 'genus') AS genus
+  FROM sample_host h
+  JOIN inat_taxon_ancestor a ON a.inat_taxon_id = h.current_taxon_id
+  LEFT JOIN inat_taxon t ON t.inat_taxon_id = a.ancestor_id
+  GROUP BY h.sample_id
+  HAVING bool_and(t.inat_taxon_id IS NOT NULL)
 ),
 latest AS (
   SELECT d.*, row_number() OVER (PARTITION BY d.specimen_id, d.is_expert ORDER BY d.recorded_at DESC, d.entity_id DESC) AS rn
@@ -365,30 +426,34 @@ rows AS (
     ${t(ownRow('"samplingProtocol"', "samplingProtocol", "s.protocol"))} AS "samplingProtocol",
     -- A trap's plant is near the trap, never a flower its bees were seen on
     -- (beeline-vjqy): judged on the row's own method, as the file writes it,
-    -- and only where the row writes a plant (the old record's, for a record
-    -- old Beeline held; the sample's otherwise) and the old record said
-    -- "visits flowers of" or nothing. Old trap records
-    -- hold other things here too, most of them a number on the 2026 vane-trap
-    -- records (10, 18, 6: 17,263 records on the backup of 16 November 2026),
-    -- which are not this claim and stay as the old record had them.
+    -- and only where the row writes a plant (the sample's floral host, for
+    -- every specimen) and the old record said "visits flowers of" or nothing.
+    -- Old trap records hold other things here too, most of them a number on
+    -- the 2026 vane-trap records (10, 18, 6: 17,263 records on the backup of
+    -- 16 November 2026), which are not this claim and stay as the old record
+    -- had them. Any other value the old record gave stays, and a blank one is
+    -- filled with the claim where the sample has a host, as for a specimen
+    -- with no old record. Where the sample has no host, an old value of exactly
+    -- "visits flowers of" or "near" claimed a plant nobody names: blank.
     ${t(`CASE WHEN ${methodNamesTrapSql(ownRow('"samplingProtocol"', "samplingProtocol", "s.protocol"))}
-               AND CASE WHEN lo._id IS NOT NULL
-                        THEN coalesce(nullif(lo."genusPlant", ''), nullif(lo."speciesPlant", ''), nullif(lo."familyPlant", ''),
-                                      nullif(lo."orderPlant", ''), nullif(lo."phylumPlant", '')) IS NOT NULL
-                        ELSE nullif(s.host_name_as_observed, '') IS NOT NULL END
+               AND ${hostName} IS NOT NULL
                AND coalesce(trim(lo."relationshipOfResource"), '') IN ('', 'visits flowers of') THEN 'near'
-               ELSE ${orStaged("relationshipOfResource", `CASE WHEN nullif(s.host_name_as_observed, '') IS NOT NULL THEN 'visits flowers of' END`)} END`)} AS "relationshipOfResource",
+               WHEN lo._id IS NOT NULL AND nullif(lo."relationshipOfResource", '') IS NOT NULL
+                AND NOT (${hostName} IS NULL AND trim(lo."relationshipOfResource") IN ('visits flowers of', 'near'))
+                 THEN lo."relationshipOfResource"
+               WHEN ${hostName} IS NOT NULL THEN 'visits flowers of' END`)} AS "relationshipOfResource",
     ${t(`lo."resourceID"`)} AS "resourceID",
     ${t(`lo."relatedResourceID"`)} AS "relatedResourceID",
     ${t(`lo."relationshipRemarks"`)} AS "relationshipRemarks",
-    ${t(`lo."phylumPlant"`)} AS "phylumPlant",
-    ${t(`lo."orderPlant"`)} AS "orderPlant",
-    ${t(`lo."familyPlant"`)} AS "familyPlant",
-    ${t(orStaged("genusPlant", `CASE WHEN s.host_rank IN ('genus', 'species', 'subspecies', 'variety', 'form')
-                                      THEN split_part(s.host_name_as_observed, ' ', 1) END`))} AS "genusPlant",
-    ${t(orStaged("speciesPlant", `CASE WHEN s.host_rank IN ('species', 'subspecies', 'variety', 'form')
-                                        THEN s.host_name_as_observed END`))} AS "speciesPlant",
-    ${t(orStaged("taxonRankPlant", "s.host_rank"))} AS "taxonRankPlant",
+    -- The floral host as the store holds it (beeline-qpys); family, order and
+    -- phylum from its lineage, or the old record's where the cache cannot give
+    -- one and the old record names the same plant.
+    ${t(lineageOrOld("phylum", "phylumPlant"))} AS "phylumPlant",
+    ${t(lineageOrOld("order_name", "orderPlant"))} AS "orderPlant",
+    ${t(lineageOrOld("family", "familyPlant"))} AS "familyPlant",
+    ${t(plantGenus)} AS "genusPlant",
+    ${t(plantSpecies)} AS "speciesPlant",
+    ${t("s.host_rank")} AS "taxonRankPlant",
     -- An imported record's own link wins: a sample made from several
     -- observations keeps one of them, and the legacy row kept its specimen's.
     -- The model's link fills only a blank.
@@ -463,6 +528,7 @@ rows AS (
   LEFT JOIN lineage vl ON vl.node_id = v.animal_id
   LEFT JOIN printed pr ON pr.specimen_id = sp.entity_id
   LEFT JOIN specimen_disposition sd ON sd.specimen_id = sp.entity_id
+  LEFT JOIN plant_lineage pl ON pl.sample_id = s.entity_id
   ${staged}
   ${rowJoins}
   ${specimens === null ? "" : `WHERE sp.entity_id IN (${specimens})`}

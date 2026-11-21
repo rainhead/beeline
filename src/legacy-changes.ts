@@ -50,6 +50,7 @@ const PLACE = [
   "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "coordinateSource", "verbatimElevation",
   "county", "locality", "geoprivacy", "taxon_geoprivacy", "url",
 ];
+const PLANT = ["phylumPlant", "orderPlant", "familyPlant", "genusPlant", "speciesPlant", "taxonRankPlant"];
 const DAY_OF_YEAR = ["startDayofYear", "endDayofYear"];
 /** Why promotion held a record back (ingest/promote-legacy.sql), as the comparison kinds a record old Beeline alone holds. */
 const HELD_BACK = ["bad_date", "bad_specimen_number", "missing_sample_number", "missing_person", "duplicate_specimen", "not_exported"];
@@ -180,6 +181,55 @@ export const LINES: readonly ChangeLine[] = [
     match: [{ kinds: ["changed", "filled"], columns: ["relationshipOfResource"] }],
   },
   {
+    id: "host_follows_observation",
+    category: "identifications",
+    title: "A floral host that follows its iNaturalist observation",
+    did: "New Beeline takes a sample's floral host from its iNaturalist observation each night. Where the observation was identified again after old Beeline copied it, or had no plant then, new Beeline writes the plant the observation names today: its name, rank, family, order and phylum.",
+    match: [{ kinds: ["host_follows_observation"] }],
+  },
+  {
+    id: "plant_family_moved",
+    category: "identifications",
+    title: "A plant placed in another family or order",
+    did: "The same plant, which iNaturalist now places in another family, order or phylum than old Beeline's record gave. New Beeline writes where iNaturalist places it today.",
+    match: [{ kinds: ["taxonomy_moved"] }],
+  },
+  {
+    id: "not_a_plant",
+    category: "identifications",
+    title: "A floral host that was not a plant",
+    did: "Old Beeline wrote as the plant whatever its observation showed, a person (Homo sapiens) or another animal, and flagged the record. New Beeline holds no floral host for such a sample, so it gives no plant.",
+    match: [{ kinds: ["not_a_plant"] }],
+  },
+  {
+    id: "plant_disagreement",
+    category: "identifications",
+    title: "One plant for a sample whose records named different ones",
+    did: "Old Beeline's records of one sample named different plants, or only some of them named one, and new Beeline holds one floral host for the sample. This specimen's row carries that plant, not the one its own record named. New Beeline cannot yet hold a plant for each specimen of a sample.",
+    match: [{ kinds: ["sample_disagreement"], columns: PLANT }],
+  },
+  {
+    id: "plant_coarser_rank",
+    category: "identifications",
+    title: "A plant held at a coarser rank than old Beeline gave",
+    did: "The same plant, but new Beeline holds it at a coarser rank than the old record gave: a tribe, subtribe or subfamily as a family, a section, complex or subgenus as a genus, a variety or subspecies as a species, a class as a phylum. The finer rank is not kept.",
+    match: [{ kinds: ["coarser_plant_rank"] }],
+  },
+  {
+    id: "claim_without_plant",
+    category: "identifications",
+    title: "A visit claimed to a plant that was not named",
+    did: "The old record said the bees visited flowers of a plant, or that a plant was near the trap, and the sample has no floral host: most of these records name no plant at all, and some name a person their observation showed. New Beeline writes no relationship.",
+    match: [{ kinds: ["claim_without_plant"] }],
+  },
+  {
+    id: "visit_stated",
+    category: "identifications",
+    title: "Visits to the plant stated",
+    did: "The old record named no relationship to its plant. Where the sample has a floral host, new Beeline writes that the bees visited flowers of it, as it does for every specimen.",
+    match: [{ kinds: ["visit_stated"], columns: ["relationshipOfResource"] }],
+  },
+  {
     id: "subgenus_dropped",
     category: "gaps",
     title: "Subgenus no longer given after a newer identification",
@@ -211,8 +261,15 @@ export const LINES: readonly ChangeLine[] = [
     id: "capitals",
     category: "names",
     title: "Capital letters put right in a name",
-    did: "A genus is capitalised and an epithet never is: Mesillae is written mesillae, and andrena Andrena.",
-    match: [{ kinds: ["case"], columns: NAMES }],
+    did: "A genus is capitalised and an epithet never is: Mesillae is written mesillae, and andrena Andrena. A plant's rank is written in lower case, order and not Order.",
+    match: [{ kinds: ["case"], columns: [...NAMES, "taxonRankPlant"] }],
+  },
+  {
+    id: "plant_form",
+    category: "names",
+    title: "A plant's name written in the standard form",
+    did: "Old Beeline sometimes wrote the plant's whole name in the genus column, an epithet alone in the species column, or left the rank blank. New Beeline writes the genus in its column, the species name in full in the species column, and the rank iNaturalist gives.",
+    match: [{ kinds: ["plant_form"] }],
   },
   {
     id: "subgenus_column",
@@ -369,6 +426,13 @@ export const LINES: readonly ChangeLine[] = [
     match: [{ kinds: ["login_renamed", "filled", "changed", "case"], columns: ACCOUNT }],
   },
   {
+    id: "host_set_by_staff",
+    category: "staff",
+    title: "A floral host set by staff",
+    did: "Staff set this sample's floral host in new Beeline, or said it has none. The plant, its rank, family, order and phylum are the ones staff gave, in place of each old record's own, and new Beeline no longer changes them when the observation is identified again.",
+    match: [{ kinds: ["staff_host"] }],
+  },
+  {
     id: "staff_corrected",
     category: "staff",
     title: "Corrected by staff",
@@ -394,7 +458,7 @@ export const LINES: readonly ChangeLine[] = [
     category: "places",
     title: "One value for a sample whose records disagreed",
     did: "Old Beeline's records of one sample disagreed about this, and the sample holds one value.",
-    match: [{ kinds: ["sample_disagreement"] }],
+    match: [{ kinds: ["sample_disagreement"], columns: ["country", "stateProvince", "county", "locality", "samplingProtocol"] }],
   },
   {
     id: "place_filled",

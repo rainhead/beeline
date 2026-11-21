@@ -347,7 +347,23 @@ SELECT s.entity_id AS sample_id,
        f.host_taxon_rank AS detail_taxon_rank
 FROM sample s
 JOIN observation_host f ON f.inat_id = s.inat_observation_id
-WHERE f.host_is_tracheophyte IS FALSE;
+WHERE f.host_is_tracheophyte IS FALSE
+  AND NOT EXISTS (SELECT 1 FROM sample_host_override o WHERE o.sample_id = s.entity_id)
+UNION ALL
+-- A host staff set is judged by that host and never by the observation
+-- (beeline-hlay). It was checked when it was set, so this fires only on a row
+-- that reached the overlay file another way, and only where the taxon cache's
+-- lineage says the host is no vascular plant: an unknown lineage does not, and
+-- no floral host never does.
+SELECT s.entity_id, CAST(NULL AS INTEGER), 'non_tracheophyte_host',
+       CASE WHEN o.host_name IS NULL
+            THEN concat('staff host taxon ', CAST(o.host_inat_taxon_id AS TEXT), ' is not a vascular plant')
+       END,
+       o.host_name, o.host_rank
+FROM sample s
+JOIN sample_host_override o ON o.sample_id = s.entity_id
+JOIN sample_host h ON h.sample_id = s.entity_id
+WHERE h.is_vascular IS FALSE;
 
 -- The sample's evidencing observation asserts a different specimen count
 -- than the sample carries, or one that is not a count at all. Warning. An

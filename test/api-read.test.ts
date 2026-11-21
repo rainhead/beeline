@@ -796,7 +796,7 @@ describe("what the API publishes of a record, field by field", () => {
       [
         "atlas_code", "atlas_name", "collectors", "coordinate_uncertainty_m", "country", "county", "date_end", "date_start", "ecoregion",
         "elevation_file", "elevation_m", "elevation_source", "elevation_stale", "from_old_records", "geoprivacy", "host_common_name",
-        "host_current_name", "host_family", "host_inat_taxon_id", "host_name_as_observed", "host_rank", "id", "inat_observation_id", "kind", "label_diverged", "latitude", "locality",
+        "host_current_name", "host_family", "host_inat_taxon_id", "host_name_as_observed", "host_override", "host_rank", "id", "inat_observation_id", "kind", "label_diverged", "latitude", "locality",
         "locality_alternatives", "locality_override", "locality_suggestion", "location_override", "location_source",
         "location_withheld", "longitude", "mine", "observation_gone_since", "observation_notes", "observation_place_guess", "place_disagreement", "printed",
         "program_code", "program_name", "protocol", "sample_id", "sample_number", "sampling_effort", "specimen_count", "state_province",

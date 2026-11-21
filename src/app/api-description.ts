@@ -248,6 +248,22 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     method: "POST",
+    route: "/samples/:id/host",
+    summary:
+      "Set a sample's floral host, or say it has none: the host then stops following the sample's iNaturalist observation until it is removed. The plant is an iNaturalist taxon, by its page address or its number (a name is not accepted); Beeline reads it from iNaturalist and refuses one that does not exist, is no longer active (the answer names what replaced it, where iNaturalist says) or is not a vascular plant. The reason is required, to set a host or say there is none. `remove` goes back to following iNaturalist, applies what the observation gives at once and needs no reason. For a sample linked to an observation and one from the old Beeline's records; a sample entered in Beeline is refused (409 no_host_key). If iNaturalist cannot be reached nothing is written (503 inat_unreachable). Setting the host the sample already has, with none set in Beeline, is refused as no change. A host set here keeps the sample's `taxon_geoprivacy` as the observation has it. Unlike the other corrections, a request that sends a taxon waits for iNaturalist before it takes its turn, so two host corrections sent without waiting for the first answer may be applied in either order.",
+    needs: "staff key",
+    body: {
+      taxon: "iNaturalist taxon page address or number, as text or number; absent with none or remove",
+      none: "true to say the sample has no floral host",
+      remove: "true to go back to following iNaturalist",
+      note: "string, the reason: required unless remove",
+      dry_run: "boolean: check everything and write nothing",
+      reference: REFERENCE,
+    },
+    answers: "{ sample_id, outcome, dry_run, host: { inat_taxon_id, name, rank } or null }",
+  },
+  {
+    method: "POST",
     route: "/samples/:id/country-state-county",
     summary:
       "Correct the country, state and county a sample was collected in, printed or not; a new state moves the atlas geography gave it. Refused (409 follows_point) where Beeline writes them from the sample's coordinates each night: correct the coordinates there instead.",

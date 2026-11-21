@@ -1188,6 +1188,8 @@ export const en = {
        * round it in its own order.
        */
       hostNow: (name: Child): Child[] => ["now ", name, " on iNaturalist"],
+      /** A host the sample holds only as an iNaturalist taxon number, whose name nobody has stored. */
+      hostTaxonId: (id: string) => `iNaturalist taxon ${id}`,
       /** iNaturalist replaced the taxon with several, so none is chosen. */
       hostSplit: "split into several names on iNaturalist",
       /** The same, where the new names all lie in one genus or family. `name` is set by its rank. */
@@ -1235,6 +1237,60 @@ export const en = {
         because: (reason: string) => `Reason: ${reason}`,
         observationNow: (text: string) =>
           `iNaturalist now gives “${text}” for this observation. The locality set in Beeline is kept until someone chooses iNaturalist's instead.`,
+      },
+      /**
+       * A floral host set in Beeline over the observation's (beeline-hlay),
+       * in the locality's voice: what stands, who said so, why, and what
+       * iNaturalist now gives where that has moved on. Changed from a pencil
+       * on the Floral host row, where "Follow iNaturalist again" takes it away.
+       */
+      staffHost: {
+        setBy: (name: string) => `Floral host set in Beeline by ${name}.`,
+        setByStaff: "Floral host set in Beeline by staff.",
+        because: (reason: string) => `Reason: ${reason}`,
+        /** The host row's value where staff say the sample has no floral host. */
+        none: "No floral host",
+        /** `name` arrives set by its rank, as hostNow's does. */
+        observationNow: (name: Child): Child[] => [
+          "iNaturalist now gives ",
+          name,
+          " for this observation. The floral host set in Beeline is kept until someone chooses to follow iNaturalist again.",
+        ],
+        /** The pencil, for a screen reader: it has no visible words. */
+        open: "Change the floral host",
+        hint: "Replaces the observation's plant until someone chooses to follow iNaturalist again.",
+        hintNoObservation: "This sample has no iNaturalist observation, so the floral host set here stands until it is changed here.",
+        taxon: "Plant on iNaturalist",
+        taxonHint: "The address of the plant's iNaturalist page, or its taxon number. For example, https://www.inaturalist.org/taxa/53439-Eriophyllum-lanatum.",
+        noHost: "This sample has no floral host",
+        note: "Reason",
+        save: "Save",
+        remove: "Follow iNaturalist again",
+        /** The refusals, in the order they are checked. */
+        problems: {
+          unwritable: "Beeline cannot record that plant, because the name or rank iNaturalist gave is blank or has a space where there should not be one, or the sample's present host cannot be written down. Nothing was saved.",
+          reason: "A floral host needs a reason. Say why it is being changed.",
+          taxon_needed: "Give the plant's iNaturalist page address or taxon number, or say the sample has no floral host.",
+          both: "Give a plant, or say the sample has no floral host, but not both.",
+          address:
+            "That is not the address of an iNaturalist taxon page, or a taxon number. A name is not accepted: open the plant's page on iNaturalist and paste its address.",
+          unknown: "iNaturalist has no taxon with that number.",
+          inactive: (replacedBy: readonly string[]) =>
+            `iNaturalist no longer uses that taxon${replacedBy.length === 0 ? "" : `. It now gives ${list(replacedBy)} in its place`}. Give the current one.`,
+          not_vascular: "That taxon is not a vascular plant, so it cannot be a floral host.",
+          unchanged: "This sample already has that floral host, so nothing was changed.",
+        },
+        /** Nothing was saved, because iNaturalist could not be asked to check the taxon. */
+        unreachable: "Beeline could not reach iNaturalist to check that plant. Nothing was saved. Try again in a minute.",
+        unavailable: "This can't be done right now. Try again in a minute.",
+        /** Refused while the overnight sync runs, which would undo or race the change. */
+        busy: "Beeline is syncing with iNaturalist right now. Try again once it has finished.",
+        /** The change is in the file, and applying it to the store lost a write conflict. */
+        notApplied:
+          "Your change is recorded, but Beeline could not finish applying it just now. It will be applied at the next promotion, overnight, and sending the same request again applies it now.",
+        /** A sample with neither an observation nor an old Beeline record has nothing to keep a host against. */
+        noKey:
+          "This sample is not linked to an iNaturalist observation or to old Beeline records. Samples entered in Beeline are trap samples, and a trap's plant is not a floral host.",
       },
       /**
        * Staff set the coordinates (beeline-942), on the same terms as the

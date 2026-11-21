@@ -120,6 +120,29 @@ describe("the line each difference is on", () => {
     ).toEqual(["newer_expert_sex", "expert_differs", "expert_added", "account", "collector_contradicted", "initials", "contradicted_name", "epithet_column", "classification"]);
   });
 
+  test("puts each kind of plant difference on a line that says why (beeline-qpys), a host staff set under the staff's corrections", async () => {
+    expect(
+      await linesOf([
+        ["staff_host", "genusPlant"],
+        ["host_follows_observation", "familyPlant"],
+        ["host_follows_observation", "genusPlant", "expected", ""],
+        ["taxonomy_moved", "orderPlant"],
+        ["not_a_plant", "speciesPlant", "reference-wrong"],
+        ["plant_form", "speciesPlant"],
+        ["sample_disagreement", "genusPlant", "known-gap"],
+        ["sample_disagreement", "locality"],
+        ["coarser_plant_rank", "taxonRankPlant", "known-gap"],
+        ["claim_without_plant", "relationshipOfResource", "reference-wrong"],
+        ["visit_stated", "relationshipOfResource", "expected", ""],
+        ["case", "taxonRankPlant", "reference-wrong"],
+      ]),
+    ).toEqual([
+      "host_set_by_staff", "host_follows_observation", "host_follows_observation", "plant_family_moved", "not_a_plant",
+      "plant_form", "plant_disagreement", "sample_disagreement", "plant_coarser_rank", "claim_without_plant", "visit_stated", "capitals",
+    ]);
+    expect(LINES.find((l) => l.id === "host_set_by_staff")!.category).toBe("staff");
+  });
+
   test("puts a difference no ruling explains on a line of its own, whatever its kind", async () => {
     expect(await linesOf([["newer_determination", "genus", "unexplained"], ["changed", "url"]])).toEqual(["unexplained", "other"]);
   });

@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { isWriteConflict } from "../write-conflict.js";
 import { apiError, type ApiEnv } from "./api.js";
-import { localityReasonFor, specimenCountProblemFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
+import { hostProblemFor, localityReasonFor, specimenCountProblemFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import type { Messages } from "./messages/index.js";
 import { EDITABLE_FIELDS, type EditableFieldName } from "./sample-edit.js";
 import { PLACE_FIELDS, type PlaceField } from "./sample-place.js";
@@ -14,6 +14,7 @@ import {
   releaseLabels,
   setCollectors,
   setCoordinates,
+  setHost,
   setPlace,
   setSamplePlace,
   setSpecimenCount,
@@ -32,6 +33,7 @@ import {
   type ReleaseLabelsInput,
   type ReleaseLabelsResult,
   type SamplePlaceResult,
+  type StaffHostCorrectionResult,
   type SetPlaceResult,
   type SpecimenCountResult,
   type StaffCoordinatesCorrectionResult,
@@ -147,6 +149,17 @@ const REFUSALS = {
     message:
       "This sample's labels are in a print run that has not printed, which would keep them. Cancel the run first, or let it print. Nothing was done.",
   },
+  no_host_key: {
+    status: 409,
+    error: "no_host_key",
+    message:
+      "This sample is not linked to an iNaturalist observation or to old Beeline records. Samples entered in Beeline are trap samples, and a trap's plant is not a floral host.",
+  },
+  inat_unreachable: {
+    status: 503,
+    error: "inat_unreachable",
+    message: "Beeline could not reach iNaturalist to check that plant. Nothing was done. Try again in a minute.",
+  },
   unavailable: { status: 503, error: "unavailable", message: "This Beeline cannot make this correction." },
 } as const satisfies Record<string, { status: ContentfulStatusCode; error: string; message: string }>;
 
@@ -164,7 +177,8 @@ export type AnyFailure = Extract<
   | SpecimenCountResult
   | ReleaseLabelsResult
   | TakeObservationLocationCorrectionResult
-  | QcDecisionCorrectionResult,
+  | QcDecisionCorrectionResult
+  | StaffHostCorrectionResult,
   { ok: false }
 >;
 
@@ -198,6 +212,8 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "conflict":
     case "count_follows_observation":
     case "labels_in_run":
+    case "no_host_key":
+    case "inat_unreachable":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
       return apiError(c, r.status, r.error, r.message);
@@ -290,7 +306,7 @@ function checkText(label: string, value: string, max: number, counted: string = 
 export function check(body: Body, fields: Record<string, Field>, required: string[] = []): Body {
   const takes = (name: string) => Object.hasOwn(fields, name);
   for (const name of Object.keys(body)) {
-    if (name === "dry_run" && !takes("dry_run")) throw new BadBody("Dry runs exist only for edit and collectors. Nothing was done.");
+    if (name === "dry_run" && !takes("dry_run")) throw new BadBody("Dry runs exist only for edit, collectors and host. Nothing was done.");
     if (!takes(name)) throw new BadBody(`${JSON.stringify(name)} is not a field of this request.`);
   }
   for (const name of required) if (!Object.hasOwn(body, name)) throw new BadBody(`${JSON.stringify(name)} is required.`);
@@ -585,6 +601,34 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     [],
     takeLocation,
     (r) => ({ outcome: r.outcome, settled: r.settled }),
+  );
+
+  // The floral host (beeline-hlay): a plant given as an iNaturalist taxon page address or number, or no floral host,
+  // with the reason that is required; `remove` goes back to following iNaturalist and needs none.
+  endpoint(
+    "host",
+    (b) => {
+      // As the page refuses a plant together with no host: one thing at a time.
+      if (b.remove === true && ((b.taxon !== undefined && text(b.taxon).trim() !== "") || b.none === true)) {
+        throw new BadBody('"remove" cannot be sent with "taxon" or "none". Remove the host, or set one, in separate requests.');
+      }
+      return {
+      taxon: b.taxon === undefined ? "" : text(b.taxon),
+      none: b.none === true,
+      remove: b.remove === true,
+      note: (b.note as string | undefined) ?? "",
+      dryRun: b.dry_run === true,
+      problemFor: hostProblemFor(corrections!.messages),
+      };
+    },
+    { taxon: "text_or_number", none: "boolean", remove: "boolean", note: "string", dry_run: "boolean" },
+    [],
+    setHost,
+    (r, input) => ({
+      outcome: r.outcome,
+      dry_run: input.dryRun === true,
+      host: r.host === null ? null : { inat_taxon_id: r.host.id, name: r.host.name, rank: r.host.rank },
+    }),
   );
 
   endpoint(

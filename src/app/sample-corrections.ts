@@ -15,6 +15,7 @@ import {
   takeObservationLocation,
   type StaffPointResult,
 } from "./locality-override.js";
+import { hostAnchor, inatHostTaxonReader, judgeHostTaxon, parseTaxonRef, setStaffHost, type HostChoice, type HostProblem, type HostTaxon, type HostTaxonReader } from "./host-override.js";
 import { withPrintRunLock } from "../print-run.js";
 import { isWriteConflict } from "../write-conflict.js";
 import { withPromotionLock } from "./promotion-lock.js";
@@ -167,6 +168,8 @@ export interface CorrectionDeps {
   mintConn?: DuckDBConnection;
   correctionsPath: string;
   sampleOverlayPath: string;
+  /** Reads one taxon from iNaturalist for a floral host being set; iNaturalist's API unless a test injects one. */
+  hostTaxon?: HostTaxonReader;
   samplePaths: { log: string; state: string };
   derivePaths?: { demDir?: string; gazetteerPath?: string };
   /** True while the nightly pipeline or the weekly sweep runs, the two jobs that rewrite samples wholesale. */
@@ -1345,4 +1348,104 @@ export function waiveFlag(
   return decideQc(deps, actor, sampleId, input, (writeDeps, sample, author, form) =>
     setWaiver(writeDeps, sample, { rule: form.rule, remove: form.remove, note: form.note, author }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// The floral host
+
+export interface StaffHostFormInput {
+  /** The taxon's iNaturalist page address or its number; blank where `none` or `remove` is. */
+  taxon: string;
+  /** The sample has no floral host. */
+  none: boolean;
+  /** Take what staff set away and follow iNaturalist again. */
+  remove: boolean;
+  /** Why. Required to set a host or say there is none; not to remove. */
+  note: string;
+  /** Check everything, write nothing. */
+  dryRun?: boolean;
+  /** The sentence for each way a host is refused, from the message catalogue (`hostProblemFor`). */
+  problemFor: (problem: HostProblem, replacedBy?: string[]) => string;
+}
+
+export type StaffHostCorrectionResult =
+  | {
+      ok: true;
+      /** `would_save` and `would_remove` are the answers to a dry run that found something to change, as the collector's edit says. */
+      outcome: Outcome | "would_save" | "would_remove";
+      dry_run: boolean;
+      /** The host set, or null where there is none or it was taken away. */
+      host: HostTaxon | null;
+    }
+  | Common
+  | StaffOnly
+  | Refused<"unavailable" | "no_host_key" | "inat_unreachable" | "busy">
+  | Invalid
+  | Unresolved;
+
+/**
+ * Staff set the sample's floral host, say it has none, or go back to following
+ * iNaturalist (beeline-hlay). Staff only, refused while impersonating, and
+ * for a sample that has an observation or old Beeline records, which a host
+ * can be kept against (`hostAnchor`), and while the nightly run or the weekly
+ * sweep runs. Unlike the others it reads from
+ * iNaturalist, once the form is in hand and before the sample's turn is
+ * taken, so the answer is not waited for inside the queue: a request that
+ * carries its input as a value therefore does not take its turn "at once"
+ * (`correct`), and a program that sends host corrections without waiting for
+ * each answer may have them applied in either order.
+ */
+export function setHost(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<StaffHostFormInput>): Promise<StaffHostCorrectionResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const conn = deps.conn;
+    if (conn === undefined) return refused("unavailable");
+    const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
+    if (sample === null) return refused("not_found");
+    const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id };
+    const anchor = await hostAnchor(deps, target);
+    if (anchor === null) return refused("no_host_key");
+    // As the point's corrections are: the nightly run and the weekly sweep rewrite samples wholesale.
+    if (deps.syncJobRunning()) return refused("busy");
+    return { ready: { target, anchor, conn } };
+  };
+  type Checked = { form: StaffHostFormInput; choice: HostChoice } | { form: StaffHostFormInput; refusal: Invalid | Refused<"inat_unreachable"> };
+  // Everything that needs the form and not the sample's turn, the read from iNaturalist included.
+  const check = async (): Promise<Checked> => {
+    const form = await resolveInput(input);
+    const invalid = (problem: HostProblem): Checked => ({ form, refusal: { ok: false, refusal: "invalid", problem: form.problemFor(problem) } });
+    if (form.remove) return { form, choice: { kind: "remove" } };
+    if (form.note.trim() === "") return invalid("reason");
+    if (form.none) return form.taxon.trim() === "" ? { form, choice: { kind: "none" } } : invalid("both");
+    if (form.taxon.trim() === "") return invalid("taxon_needed");
+    const id = parseTaxonRef(form.taxon);
+    if (id === null) return invalid("address");
+    const judged = await judgeHostTaxon(deps.db, deps.hostTaxon ?? inatHostTaxonReader, id);
+    if (judged.ok) return { form, choice: { kind: "taxon", taxon: judged.taxon } };
+    if (judged.problem === "unreachable") return { form, refusal: refused("inat_unreachable") };
+    return {
+      form,
+      refusal: { ok: false, refusal: "invalid", problem: form.problemFor(judged.problem, judged.problem === "inactive" ? judged.replacedBy : undefined) },
+    };
+  };
+  return correct(sampleId, check, gates, async ({ target, anchor, conn }, checked): Promise<StaffHostCorrectionResult> => {
+    if ("refusal" in checked) return checked.refusal;
+    const { form, choice } = checked;
+    const dryRun = form.dryRun === true;
+    const result = await setStaffHost({ db: deps.db, conn, printWriter: deps.printWriter, sampleOverlayPath: deps.sampleOverlayPath }, target, anchor, {
+      choice,
+      note: form.note,
+      author: actor.login,
+      dryRun,
+    });
+    if (result.outcome === "invalid") return { ok: false, refusal: "invalid", problem: form.problemFor(result.problem) };
+    if (result.outcome === "unresolved") return { ok: false, refusal: "unresolved", reason: result.reason };
+    if (result.outcome === "unchanged") return { ok: true, outcome: "unchanged", dry_run: dryRun, host: null };
+    if (!dryRun) {
+      await recordChange(deps, target.entity_id, actor, form.note.trim() || undefined, "floral host change");
+    }
+    const outcome = !dryRun ? result.outcome : result.outcome === "saved" ? "would_save" : "would_remove";
+    return { ok: true, outcome, dry_run: dryRun, host: result.outcome === "saved" ? result.host : null };
+  });
 }

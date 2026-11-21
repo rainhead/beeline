@@ -1,6 +1,16 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { pathToFileURL } from "node:url";
-import { formatPoint, parsePoint, parseSampleRef, waivedRule, type OverlayPoint, type SampleOverlayRow } from "./sample-overlay.js";
+import {
+  formatHost,
+  formatPoint,
+  NO_HOST,
+  parseHost,
+  parsePoint,
+  parseSampleRef,
+  waivedRule,
+  type OverlayPoint,
+  type SampleOverlayRow,
+} from "./sample-overlay.js";
 
 /**
  * Apply staff decisions about samples to the store (src/sample-overlay.ts).
@@ -318,6 +328,136 @@ export async function applyStaffPoint(
   return null;
 }
 
+/**
+ * The base a new host override records, in the overlay's own grammar: what the
+ * SAMPLE holds as its host, which is what removal will restore (beeline-hlay).
+ * Where an override already stands, its recorded base, and not the current
+ * row, which by then is the earlier staff host: a second save must not make
+ * the first save the thing removal goes back to, as currentLocationOf does for
+ * a point. Empty where the sample has no host.
+ */
+export async function currentHostOf(conn: DuckDBConnection, sampleId: number): Promise<string> {
+  const prior = await rows(
+    conn,
+    `SELECT observed_host_inat_taxon_id, observed_host_rank, observed_host_name FROM sample_host_override WHERE sample_id = $1`,
+    [sampleId],
+  );
+  const r =
+    prior[0] ??
+    (await rows(conn, `SELECT host_inat_taxon_id, host_rank, host_name_as_observed FROM sample WHERE entity_id = $1`, [sampleId]))[0];
+  if (r === undefined) return "";
+  return formatHost({
+    inat_taxon_id: r[0] === null ? null : Number(r[0]),
+    rank: r[1] === null ? null : String(r[1]),
+    name: r[2] === null ? null : String(r[2]),
+  });
+}
+
+/**
+ * Apply one `host` row to a sample already resolved: set the staff host (or
+ * `none`, no floral host), or, with an empty value, take it away. Null if
+ * applied, else why not. Delete-then-insert, as the locality's is.
+ *
+ * Removal gives the sample back the host it held before staff set one (the
+ * override's recorded base), then applies the follow rule's two statements to
+ * it (ingest/mint-samples.sql), now rather than at the next nightly. The base
+ * has to be restored first: the follow rule writes only while the observation
+ * names a plant, so on an observation that names none the staff host would
+ * otherwise stay on the sample with nothing recording that staff set it. A
+ * removal row replayed with no override standing has been applied already.
+ * Printing makes no difference: no label carries the host.
+ */
+export async function applyStaffHost(
+  conn: DuckDBConnection,
+  sampleId: number,
+  row: Pick<SampleOverlayRow, "base_value" | "value" | "reason">,
+  setBy: number | null,
+  /** `transactional`: the write is its own transaction, as a staff point's is; promotion, which is inside one, passes false. */
+  opts: { transactional?: boolean } = {},
+): Promise<string | null> {
+  const transactional = opts.transactional ?? false;
+  if (row.value === "") {
+    const held = await rows(
+      conn,
+      `SELECT observed_host_inat_taxon_id, observed_host_rank, observed_host_name FROM sample_host_override WHERE sample_id = $1`,
+      [sampleId],
+    );
+    const b = held[0];
+    if (b === undefined) return null;
+    // The sample first and the override last, in one transaction: a failure part
+    // way leaves the override standing, and the sample as it was.
+    await atomically(conn, transactional, async () => {
+      await writeHost(conn, sampleId, {
+        inat_taxon_id: b[0] === null ? null : Number(b[0]),
+        rank: b[1] === null ? null : String(b[1]),
+        name: b[2] === null ? null : String(b[2]),
+      });
+      await followObservationHost(conn, sampleId);
+      await conn.run(`DELETE FROM sample_host_override WHERE sample_id = $1`, [sampleId] as never);
+    });
+    return null;
+  }
+  if (row.reason.trim() === "") return "a floral host needs a reason";
+  const host = row.value === NO_HOST ? { inat_taxon_id: null, rank: null, name: null } : parseHost(row.value);
+  if ("problem" in host) return host.problem;
+  const base = row.base_value === "" ? { inat_taxon_id: null, rank: null, name: null } : parseHost(row.base_value, true);
+  if ("problem" in base) return `base ${base.problem}`;
+  await atomically(conn, transactional, async () => {
+    await conn.run(`DELETE FROM sample_host_override WHERE sample_id = $1`, [sampleId] as never);
+    await conn.run(
+      `INSERT INTO sample_host_override (sample_id, host_inat_taxon_id, host_name, host_rank,
+         observed_host_inat_taxon_id, observed_host_name, observed_host_rank, set_by, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        sampleId, host.inat_taxon_id === null ? null : BigInt(host.inat_taxon_id), host.name, host.rank,
+        base.inat_taxon_id === null ? null : BigInt(base.inat_taxon_id), base.name, base.rank, setBy, row.reason,
+      ] as never,
+    );
+    await writeHost(conn, sampleId, host);
+  });
+  return null;
+}
+
+/** The three host columns on the sample, together, and only if one differs. */
+async function writeHost(conn: DuckDBConnection, sampleId: number, h: { inat_taxon_id: number | null; rank: string | null; name: string | null }) {
+  await conn.run(
+    `UPDATE sample SET host_inat_taxon_id = $2, host_name_as_observed = $3, host_rank = $4
+     WHERE entity_id = $1
+       AND (host_inat_taxon_id IS DISTINCT FROM $2 OR host_name_as_observed IS DISTINCT FROM $3 OR host_rank IS DISTINCT FROM $4)`,
+    [sampleId, h.inat_taxon_id === null ? null : BigInt(h.inat_taxon_id), h.name, h.rank] as never,
+  );
+}
+
+/** The follow rule's two statements, for one sample (ingest/mint-samples.sql, "The floral host follows its observation"). */
+async function followObservationHost(conn: DuckDBConnection, sampleId: number): Promise<void> {
+  await conn.run(
+    `UPDATE sample SET
+       host_inat_taxon_id    = f.host_taxon_id,
+       host_name_as_observed = f.host_taxon_name,
+       host_rank             = f.host_taxon_rank
+     FROM observation_host f
+     WHERE sample.entity_id = $1
+       AND sample.inat_observation_id = f.inat_id
+       AND f.host_taxon_id IS NOT NULL
+       AND (sample.host_inat_taxon_id    IS DISTINCT FROM f.host_taxon_id
+         OR sample.host_name_as_observed IS DISTINCT FROM f.host_taxon_name
+         OR sample.host_rank             IS DISTINCT FROM f.host_taxon_rank)`,
+    [sampleId] as never,
+  );
+  await conn.run(
+    `UPDATE sample SET host_inat_taxon_id = NULL, host_name_as_observed = NULL, host_rank = NULL
+     FROM observation_field f
+     JOIN inat_taxon_not_a_host x ON x.inat_taxon_id = f.host_taxon_id
+     WHERE sample.entity_id = $1
+       AND sample.inat_observation_id = f.inat_id
+       AND sample.host_inat_taxon_id IN (
+         SELECT inat_taxon_id FROM inat_taxon_ancestor
+         GROUP BY inat_taxon_id
+         HAVING NOT bool_or(ancestor_id = 211194))`,
+    [sampleId] as never,
+  );
+}
+
 export async function applySampleOverlay(
   conn: DuckDBConnection,
   overlay: readonly SampleOverlayRow[],
@@ -343,9 +483,9 @@ export async function applySampleOverlay(
       result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "not a sample reference" });
       continue;
     }
-    if ("legacy_id" in ref && row.field !== "coordinates") {
+    if ("legacy_id" in ref && row.field !== "coordinates" && row.field !== "host") {
       // Reported, never thrown: the file may hold one, and the nightly goes on.
-      result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "an old record's reference carries only a point" });
+      result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "an old record's reference carries only a point or a floral host" });
       continue;
     }
     const found = await resolveSampleRef(conn, ref);
@@ -354,7 +494,7 @@ export async function applySampleOverlay(
       continue;
     }
     const { sampleId } = found;
-    if ("legacy_id" in ref && row.value === "") {
+    if ("legacy_id" in ref && row.value === "" && row.field === "coordinates") {
       // A removal under an old record's key is for a sample that has since been
       // linked to an observation (the key standing in the file is kept, so the
       // sample never has two rows); one with no observation has no removal.
@@ -411,6 +551,13 @@ export async function applySampleOverlay(
 
     if (row.field === "coordinates") {
       const problem = await applyStaffPoint(conn, sampleId, row, setBy, { transactional: opts.transactional });
+      if (problem !== null) result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: problem });
+      else result.applied++;
+      continue;
+    }
+
+    if (row.field === "host") {
+      const problem = await applyStaffHost(conn, sampleId, row, setBy, { transactional: opts.transactional });
       if (problem !== null) result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: problem });
       else result.applied++;
       continue;

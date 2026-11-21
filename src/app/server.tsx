@@ -190,6 +190,7 @@ import {
   readerFor,
   recordTrapChange as recordTrapSampleChange,
   setCoordinates,
+  setHost,
   releaseLabels,
   setMethod,
   setTrapCount,
@@ -203,6 +204,9 @@ import {
 import { localityReasonFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
+import { isWriteConflict } from "../write-conflict.js";
+import type { HostTaxonReader } from "./host-override.js";
+import { hostProblemFor } from "./correction-reasons.js";
 import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 import {
   checkTrapSample,
@@ -370,6 +374,8 @@ export interface AppDeps {
   reportSignIn?: AuthDeps["reportSignIn"];
   /** How /people/new looks an iNaturalist account up (src/app/add-person.ts); iNaturalist's API unless a test says otherwise. */
   inatProfiles?: InatProfiles;
+  /** How a floral host staff set is read from iNaturalist (src/app/host-override.ts); iNaturalist's API unless a test says otherwise. */
+  hostTaxon?: HostTaxonReader;
 }
 
 /**
@@ -408,6 +414,7 @@ export function createApp({
   programContactsPath,
   reportSignIn,
   inatProfiles: lookUpProfile = inatProfiles(),
+  hostTaxon,
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], start: async () => false };
   // Resolved now rather than at first use, so a test that leaves one out
@@ -444,6 +451,7 @@ export function createApp({
     mintConn,
     correctionsPath: corrections,
     sampleOverlayPath: sampleOverlay,
+    hostTaxon,
     samplePaths,
     derivePaths,
     syncJobRunning,
@@ -1925,6 +1933,55 @@ export function createApp({
         return c.text(m.record.sample.staffCoordinates.inPrintRun, 409);
       case "busy":
         return c.text(m.record.sample.staffCoordinates.busy, 409);
+      case "invalid":
+        return c.text(result.problem, 400);
+      case "unresolved":
+        return c.text(result.reason, 409);
+      default:
+        return unreachable(result);
+    }
+  });
+
+  // Staff set the sample's floral host, or go back to following iNaturalist
+  // (beeline-hlay). The taxon is read from iNaturalist as this is submitted.
+  app.post("/samples/:id/host", async (c) => {
+    const m = c.get("m");
+    const t = m.record.sample.staffHost;
+    const id = Number(c.req.param("id"));
+    let result: Awaited<ReturnType<typeof setHost>>;
+    try {
+      result = await setHost(corrective, actorOf(c), id, async () => {
+        const body = await c.req.parseBody();
+        const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+        return {
+          taxon: field("taxon"),
+          none: field("none") !== "",
+          remove: field("remove") !== "",
+          note: field("note"),
+          problemFor: hostProblemFor(m),
+        };
+      });
+    } catch (err) {
+      // The file row was written and applying it lost a write conflict: the API's answer for this (recorded_not_applied).
+      if (isWriteConflict(err)) return c.text(t.notApplied, 409);
+      throw err;
+    }
+    if (result.ok) return c.redirect(sampleHref(id));
+    switch (result.refusal) {
+      case "impersonating":
+        return c.text(m.errors.readOnlyImpersonating, 403);
+      case "not_admin":
+        return c.text("Admins only.", 403);
+      case "not_found":
+        return errorResponse(c, "notFound");
+      case "unavailable":
+        return c.text(t.unavailable, 503);
+      case "no_host_key":
+        return c.text(t.noKey, 409);
+      case "busy":
+        return c.text(t.busy, 409);
+      case "inat_unreachable":
+        return c.text(t.unreachable, 503);
       case "invalid":
         return c.text(result.problem, 400);
       case "unresolved":

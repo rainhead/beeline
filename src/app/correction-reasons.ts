@@ -1,4 +1,5 @@
 import type { Messages } from "./messages/index.js";
+import type { HostProblem } from "./host-override.js";
 import type { LocalitySuggestion } from "./record.js";
 
 /**
@@ -31,4 +32,12 @@ export const specimenCountProblemFor =
   (problem: "count" | "net" | "follows" | "numbered", number?: number): string => {
     const sentences = m.record.sample.specimenCount.problems;
     return problem === "numbered" ? sentences.numbered(number ?? 0) : sentences[problem];
+  };
+
+/** The sentence for each way a floral host is refused, in the catalogue's words; `inactive` takes the names iNaturalist gives in its place. */
+export const hostProblemFor =
+  (m: Messages) =>
+  (problem: HostProblem, replacedBy: readonly string[] = []): string => {
+    const sentences = m.record.sample.staffHost.problems;
+    return problem === "inactive" ? sentences.inactive(replacedBy) : sentences[problem];
   };

@@ -117,6 +117,63 @@ interface InatTaxonJson {
   }> | null;
 }
 
+/** One taxon as iNaturalist answers for it, read without touching a store (`readInatTaxon`). */
+export interface InatTaxonAnswer {
+  id: number;
+  name: string;
+  rank: string;
+  isActive: boolean;
+  /** From the root down to the parent; the taxon itself is not in it. */
+  ancestorIds: number[];
+  /** What iNaturalist says replaced a retired taxon, where it says. */
+  replacedBy: number[];
+}
+
+/**
+ * A pure read of one taxon by id: the same address and fields as the nightly
+ * step, and nothing stored. For a request somebody is waiting on, which must
+ * not take the nightly's worklist, its pace of about a second a request or a
+ * transaction on the store (beeline-hlay). Null where iNaturalist has no such
+ * taxon; throws where it cannot be reached or does not answer sensibly, so
+ * the caller can tell "no such taxon" from "try again". Unauthenticated, and
+ * with a short timeout.
+ */
+export async function readInatTaxon(
+  id: number,
+  opts: { fetchImpl?: typeof fetch; apiBase?: string; timeoutMs?: number } = {},
+): Promise<InatTaxonAnswer | null> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const apiBase = opts.apiBase ?? "https://api.inaturalist.org/v2";
+  const url = `${apiBase}/taxa/${id}?preferred_place_id=${PREFERRED_PLACE_ID}&locale=en&per_page=1&fields=${TAXON_FIELDS}`;
+  const response = await fetchImpl(url, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 10_000),
+  });
+  const body = (await response.json().catch(() => null)) as { results?: unknown } | null;
+  const results = body?.results;
+  // A 404 with an empty list is the answer for an id iNaturalist does not have (as in fetchInatTaxa's post).
+  if (response.status === 404 && Array.isArray(results) && results.length === 0) return null;
+  if (!response.ok) throw new Error(`iNaturalist answered ${response.status}`);
+  if (!Array.isArray(results)) throw new Error("iNaturalist's answer had no results list");
+  // An entry with no usable id says nothing about the taxon: try again, never "no such taxon".
+  if ((results as InatTaxonJson[]).some((r) => typeof r?.id !== "number")) throw new Error("iNaturalist's answer held an entry with no usable id");
+  const t = (results as InatTaxonJson[]).find((r) => r.id === id);
+  if (t === undefined) return null;
+  if (typeof t.is_active !== "boolean") throw new Error("iNaturalist's answer did not say whether the taxon is active");
+  // A name or rank Beeline could not write to its overlay file and read back is no answer.
+  if (typeof t.name !== "string" || t.name.trim() === "" || typeof t.rank !== "string" || !/^\S+$/.test(t.rank)) {
+    throw new Error("iNaturalist's answer had no usable name or rank for the taxon");
+  }
+  return {
+    id,
+    name: t.name,
+    rank: t.rank,
+    isActive: t.is_active,
+    ancestorIds: (t.ancestor_ids ?? []).map(Number).filter((a) => a !== id),
+    replacedBy: [...new Set((t.current_synonymous_taxon_ids ?? []).map(Number))],
+  };
+}
+
 const num = (rows: unknown): number[] => (rows as Array<[bigint | number]>).map(([id]) => Number(id));
 
 async function ids(conn: DuckDBConnection, sql: string): Promise<number[]> {

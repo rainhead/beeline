@@ -58,8 +58,9 @@ import type { CsvTiming } from "./request-timing.js";
  *   not in the archive Beeline last downloaded from Ecdysis either, which
  *   also holds the records Beeline could not match to a specimen, and
  * - unless the downloader chooses otherwise, are not obscured: neither the
- *   taxon (their program has not said whether true coordinates may leave
- *   Beeline, beeline-1kb.7.1) nor the observer's own observation.
+ *   taxon nor the observer's own observation (the judgment is the
+ *   taxonomist's, made before upload: Peter, 2026-10-23), and whose sample's
+ *   geoprivacy flags are not out of date.
  * Nothing is built from a read of Ecdysis more than two hours old, because
  * Symbiota replaces a record it matches by catalog number whole. The rules are
  * applied again, row by row, when the rows are written.
@@ -93,10 +94,19 @@ export interface CollectionConstants {
   preparations: string;
   individualCount: number;
   labelProject?: string;
+  /**
+   * The collection years a file is offered for: a setting, in code, and not a
+   * rule worked out from the store. British Columbia offers 2026 only, by
+   * Peter's decision (2026-11-21): its older years wait on beeline-2afe, and
+   * adding a year is a change here, made when that is settled. A year that has
+   * specimens waiting and is not listed is shown on the page as not offered.
+   */
+  years: number[];
 }
-export const UPLOAD_CONSTANTS: Readonly<Record<string, CollectionConstants>> = {
-  WaBA: { lifeStage: "adult", preparations: "pinned", individualCount: 1, labelProject: "Washington Bee Atlas" },
-  BC: { lifeStage: "adult", preparations: "pinned", individualCount: 1 },
+export const UPLOAD_CONSTANTS: Record<string, CollectionConstants> = {
+  // Washington is read as a dataset, so no file is offered for it yet (see readsWholeCollection); its years wait on GitHub #420.
+  WaBA: { lifeStage: "adult", preparations: "pinned", individualCount: 1, labelProject: "Washington Bee Atlas", years: [] },
+  BC: { lifeStage: "adult", preparations: "pinned", individualCount: 1, years: [2026] },
 };
 const constantsOf = (collection: EcdysisCollection): CollectionConstants => {
   const found = UPLOAD_CONSTANTS[collection.program];
@@ -160,56 +170,65 @@ export async function ecdysisRead(collection: EcdysisCollection, opts: { ecdysis
 /** Catalog numbers are compared the way Symbiota's database compares them: without regard to case. */
 export const catalogKey = (catalogNumber: string): string => catalogNumber.trim().toLowerCase();
 
-const heldCache = new Map<string, { key: string; held: Set<string> }>();
+/** What the cached archive holds: its distinct catalog numbers, and how many occurrence rows it has. */
+export interface ArchiveContents {
+  held: Set<string>;
+  rows: number;
+}
+
+const heldCache = new Map<string, { key: string; contents: ArchiveContents }>();
 /** An unpack in progress, by archive, so two first views share one. */
-const heldInFlight = new Map<string, Promise<Set<string>>>();
-/** Unpacks run one at a time, so that clearing the leftovers of an earlier one cannot clear a folder another is using. */
+const heldInFlight = new Map<string, Promise<ArchiveContents>>();
+/** The unpack most recently asked for, whatever it is for. */
 let unpacking: Promise<unknown> = Promise.resolve();
 
 /**
  * Every catalog number in the archive Beeline last downloaded from Ecdysis,
- * the ones it matched to a specimen and the ones it could not. The store keeps
- * only the matched ones (`specimen_catalog_number`: the loader counts the rest
- * and keeps five as a sample), so the archive itself is read, with DuckDB as
- * the loader reads it. It is unpacked into a folder of its own under
- * `workDir`, which the store may read (`storeFiles`), and removed; folders
- * left by an unpack that was cut short are removed first. Read once per
- * download: the result is kept while the file's size and time stay the same,
- * and two requests that arrive together share one unpack.
+ * the ones it matched to a specimen and the ones it could not, and the number
+ * of its rows. The store keeps only the matched ones (`specimen_catalog_number`:
+ * the loader counts the rest and keeps five as a sample), so the archive itself
+ * is read, with DuckDB as the loader reads it. It is unpacked into a folder of
+ * its own under `workDir`, which the store may read (`storeFiles`), and
+ * removed; folders left by an unpack that was cut short are removed first.
+ * Unpacks run one at a time: each is chained, when it is asked for, onto the
+ * one before it, so clearing the leftovers of an earlier one can never clear a
+ * folder another is using. Read once per download: the result is kept while the
+ * file's size and time stay the same, and two requests that arrive together
+ * share one unpack.
  */
-export async function catalogNumbersInArchive(db: Kysely<Database>, archivePath: string, workDir: string): Promise<Set<string>> {
+export async function catalogNumbersInArchive(db: Kysely<Database>, archivePath: string, workDir: string): Promise<ArchiveContents> {
   const st = await stat(archivePath);
   const key = `${st.size}:${st.mtimeMs}`;
   const kept = heldCache.get(archivePath);
-  if (kept?.key === key) return kept.held;
+  if (kept?.key === key) return kept.contents;
   const flightKey = `${archivePath}:${key}`;
   const running = heldInFlight.get(flightKey);
   if (running !== undefined) return running;
-  const job = (async () => {
-    await unpacking.catch(() => undefined);
-    const mine = (async () => {
-      for (const leftover of await readdir(workDir)) if (/^upload-/.test(leftover)) await rm(join(workDir, leftover), { recursive: true, force: true });
-      const files = unzipSync(new Uint8Array(await readFile(archivePath)), { filter: (f) => /^occurrences\.(tab|csv|txt)$/i.test(f.name) });
-      const [name, data] = Object.entries(files)[0] ?? [];
-      if (name === undefined || data === undefined) throw new Error(`${archivePath} has no occurrences file: it is not an Ecdysis archive`);
-      const folder = await mkdtemp(join(workDir, "upload-"));
-      try {
-        const path = join(folder, name);
-        await writeFile(path, data);
-        const result = await sql<{ catalog_number: string }>`
-          SELECT DISTINCT trim("catalogNumber") AS catalog_number
-          FROM read_csv(${sql.lit(path)}, header = true, all_varchar = true)
-          WHERE nullif(trim("catalogNumber"), '') IS NOT NULL`.execute(db);
-        const held = new Set(result.rows.map((r) => catalogKey(r.catalog_number)));
-        heldCache.set(archivePath, { key, held });
-        return held;
-      } finally {
-        await rm(folder, { recursive: true, force: true });
-      }
-    })();
-    unpacking = mine;
-    return mine;
-  })().finally(() => heldInFlight.delete(flightKey));
+  const unpack = async (): Promise<ArchiveContents> => {
+    for (const leftover of await readdir(workDir)) if (/^upload-/.test(leftover)) await rm(join(workDir, leftover), { recursive: true, force: true });
+    const files = unzipSync(new Uint8Array(await readFile(archivePath)), { filter: (f) => /^occurrences\.(tab|csv|txt)$/i.test(f.name) });
+    const [name, data] = Object.entries(files)[0] ?? [];
+    if (name === undefined || data === undefined) throw new Error(`${archivePath} has no occurrences file: it is not an Ecdysis archive`);
+    const folder = await mkdtemp(join(workDir, "upload-"));
+    try {
+      const path = join(folder, name);
+      await writeFile(path, data);
+      const result = await sql<{ catalog_number: string | null; rows: number | bigint }>`
+        SELECT nullif(trim("catalogNumber"), '') AS catalog_number, count(*) OVER () AS rows
+        FROM read_csv(${sql.lit(path)}, header = true, all_varchar = true)`.execute(db);
+      const contents = {
+        held: new Set(result.rows.flatMap((r) => (r.catalog_number === null ? [] : [catalogKey(r.catalog_number)]))),
+        rows: result.rows.length === 0 ? 0 : Number(result.rows[0]!.rows),
+      };
+      heldCache.set(archivePath, { key, contents });
+      return contents;
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  };
+  // Chained now, before anything is awaited, so the next call sees this one.
+  const job = unpacking.catch(() => undefined).then(unpack).finally(() => heldInFlight.delete(flightKey));
+  unpacking = job;
   heldInFlight.set(flightKey, job);
   return job;
 }
@@ -227,6 +246,8 @@ interface Candidate {
   label_not_digits: boolean;
   /** A disposition other than "in collection" is recorded: missing, or a remark that old Beeline recorded it twice. */
   disposition_held: boolean;
+  /** The sample's copy of its observation's geoprivacy disagrees with the observation's (`sample_geoprivacy_stale`): which flags are true is not known. */
+  geoprivacy_stale: boolean;
   /** The taxon is obscured or private (`sample.taxon_geoprivacy`). */
   taxon_obscured: boolean;
   /** The observer obscured or hid their own observation (`sample.geoprivacy`). */
@@ -254,10 +275,8 @@ export const included = (e: Pick<Eligible, "taxonObscured" | "observerObscured">
 /** What the file for one collection year holds, and what was left out of it and why. */
 export interface UploadYear {
   year: number;
-  /** A file is offered for this year. */
+  /** A file is offered for this year: it is one of the collection's `years`. */
   offered: boolean;
-  /** Why not, for a year with specimens waiting: it is older than the seasons Beeline offers, or Ecdysis already holds specimens of the program from it. */
-  notOffered: "older" | "held" | null;
   /** Every specimen that passes the rules, with whether each is obscured. */
   eligible: Eligible[];
   /** Counts of what was left out, each under a plain heading on the page. */
@@ -269,6 +288,8 @@ export interface UploadYear {
   dispositionHeld: number;
   /** The catalog number would be unusable in Ecdysis: shared with another specimen, or longer than Ecdysis allows. */
   unusable: number;
+  /** The sample's geoprivacy flags are out of date with its observation's, so whether it is obscured is not known. */
+  geoprivacyStale: number;
 }
 
 export const idsOf = (year: UploadYear, include: Include): number[] => year.eligible.filter((e) => included(e, include)).map((e) => e.id);
@@ -313,6 +334,7 @@ async function candidatesOf(db: Kysely<Database>, scope: string, query: ListingQ
       sql<boolean>`EXISTS (SELECT 1 FROM specimen twin WHERE twin.field_number = sp.field_number AND twin.entity_id <> sp.entity_id)`.as("label_number_shared"),
       sql<boolean>`NOT regexp_full_match(coalesce(sp.field_number, ''), '[0-9]+')`.as("label_not_digits"),
       sql<boolean>`EXISTS (SELECT 1 FROM specimen_disposition md WHERE md.specimen_id = sp.entity_id AND md.disposition IS DISTINCT FROM 'in collection')`.as("disposition_held"),
+      sql<boolean>`EXISTS (SELECT 1 FROM sample_geoprivacy_stale gs WHERE gs.sample_id = s.entity_id)`.as("geoprivacy_stale"),
       // As the views read it: 'open' is a value, not a null.
       sql<boolean>`nullif(s.taxon_geoprivacy, 'open') IS NOT NULL`.as("taxon_obscured"),
       sql<boolean>`nullif(s.geoprivacy, 'open') IS NOT NULL`.as("observer_obscured"),
@@ -325,7 +347,7 @@ async function candidatesOf(db: Kysely<Database>, scope: string, query: ListingQ
 }
 
 /** What one candidate is to the rules: not a candidate at all, left out for a reason that is counted, or eligible. */
-type Verdict = { kind: "skip" } | { kind: "left-out"; reason: "labelNotDigits" | "dispositionHeld" | "unusable" } | { kind: "eligible"; taxonObscured: boolean; observerObscured: boolean };
+type Verdict = { kind: "skip" } | { kind: "left-out"; reason: "labelNotDigits" | "dispositionHeld" | "unusable" | "geoprivacyStale" } | { kind: "eligible"; taxonObscured: boolean; observerObscured: boolean };
 
 function judge(c: Candidate, collection: EcdysisCollection, held: ReadonlySet<string>): Verdict {
   // No label number: nothing to make a catalog number from.
@@ -336,36 +358,17 @@ function judge(c: Candidate, collection: EcdysisCollection, held: ReadonlySet<st
   if (c.label_not_digits) return { kind: "left-out", reason: "labelNotDigits" };
   if (c.label_number_shared || catalogNumber.length > CATALOG_NUMBER_LIMIT) return { kind: "left-out", reason: "unusable" };
   if (c.disposition_held) return { kind: "left-out", reason: "dispositionHeld" };
+  // Whether the coordinates are obscured is not settled, so the downloader's choice about them cannot be applied.
+  if (c.geoprivacy_stale) return { kind: "left-out", reason: "geoprivacyStale" };
   return { kind: "eligible", taxonObscured: Boolean(c.taxon_obscured), observerObscured: Boolean(c.observer_obscured) };
 }
 
 /**
- * The seasons a file is offered for: the active seasons and the one that
- * settled most recently, by the store's own season line (schema/102). Older
- * years wait (Peter, 2026-11-20; GitHub #420 for Washington, beeline-2afe for
- * British Columbia).
+ * What goes in the file for each year of the collection, and what does not and
+ * why. A specimen is eligible on its own account: the rules above, and nothing
+ * about its year or about what else of that year Ecdysis holds. Which years are
+ * offered is the collection's setting (`UploadYear.offered`).
  */
-async function offeredSeasons(db: Kysely<Database>): Promise<{ from: number; to: number }> {
-  const { rows } = await sql<{ current_season: number; first_active: number }>`
-    SELECT current_season, CAST(extract(year FROM active_since) AS INTEGER) AS first_active FROM season`.execute(db);
-  const season = rows[0]!;
-  return { from: Number(season.first_active) - 1, to: Number(season.current_season) };
-}
-
-/** The years in which Ecdysis already holds a specimen of the program, as Beeline last read it. */
-async function yearsEcdysisHolds(db: Kysely<Database>, collection: EcdysisCollection): Promise<Set<number>> {
-  const { rows } = await sql<{ y: number }>`
-    SELECT DISTINCT CAST(extract(year FROM s.date_start) AS INTEGER) AS y
-    FROM specimen_catalog_number c
-    JOIN specimen sp ON sp.entity_id = c.specimen_id
-    JOIN sample s ON s.entity_id = sp.sample_id
-    JOIN sample_atlas sa ON sa.sample_id = s.entity_id
-    JOIN program p ON p.entity_id = sa.atlas_id
-    WHERE p.code = ${collection.program}`.execute(db);
-  return new Set(rows.map((r) => Number(r.y)));
-}
-
-/** What goes in the file for each year of the collection, and what does not and why. */
 export async function planUpload(
   db: Kysely<Database>,
   collection: EcdysisCollection,
@@ -373,7 +376,8 @@ export async function planUpload(
   query: ListingQuery = EMPTY_QUERY,
 ): Promise<UploadPlan> {
   const scope = await scopeOf(db, collection);
-  const [found, seasons, holds] = await Promise.all([candidatesOf(db, scope, query), offeredSeasons(db), yearsEcdysisHolds(db, collection)]);
+  const found = await candidatesOf(db, scope, query);
+  const offeredYears = constantsOf(collection).years;
   const byYear = new Map<number, UploadYear>();
   const unspelled = new Set<string>();
   for (const c of found) {
@@ -382,7 +386,7 @@ export async function planUpload(
     const year = Number(c.year);
     const entry =
       byYear.get(year) ??
-      ({ year, offered: false, notOffered: null, eligible: [], taxonObscured: 0, observerObscured: 0, labelNotDigits: 0, dispositionHeld: 0, unusable: 0 } satisfies UploadYear);
+      ({ year, offered: offeredYears.includes(year), eligible: [], taxonObscured: 0, observerObscured: 0, labelNotDigits: 0, dispositionHeld: 0, unusable: 0, geoprivacyStale: 0 } satisfies UploadYear);
     byYear.set(year, entry);
     if (verdict.kind === "left-out") {
       entry[verdict.reason]++;
@@ -393,10 +397,6 @@ export async function planUpload(
     if (verdict.observerObscured) entry.observerObscured++;
     if (c.country !== null && COUNTRY_NAMES[c.country] === undefined) unspelled.add(c.country);
     if (c.state_province !== null && STATE_NAMES[c.state_province] === undefined) unspelled.add(c.state_province);
-  }
-  for (const y of byYear.values()) {
-    y.notOffered = y.year < seasons.from || y.year > seasons.to ? "older" : holds.has(y.year) ? "held" : null;
-    y.offered = y.notOffered === null;
   }
   return { collection, readAt: read.readAt, years: [...byYear.values()].sort((a, b) => b.year - a.year), unspelled: [...unspelled].sort() };
 }
@@ -431,103 +431,196 @@ export interface UploadRules {
 
 // --- Downloads, recorded -----------------------------------------------------
 
+/** How long a download that has not finished is taken to be still being written. */
+export const BEING_WRITTEN_MINUTES = 15;
+
 /** A recorded download of an archive. */
 export interface DownloadRecord {
+  id: number;
   collection: string;
   year: number;
   filters: string;
   include: Include;
-  specimens: number;
+  planned: number;
   readAt: Date;
   personId: number | null;
   /** Who, by name, where the person is known. */
   by: string | null;
-  at: Date;
+  startedAt: Date;
+  /** Null for a download that has not finished: being written, abandoned or failed. */
+  completedAt: Date | null;
+  /** How many specimens it held, once it has finished. */
+  specimens: number | null;
 }
 
-/** The latest recorded download of an archive for the collection, with who took it. */
-export async function latestDownload(db: Kysely<Database>, collection: EcdysisCollection): Promise<DownloadRecord | null> {
-  const row = await db
+const asDate = (value: unknown): Date => new Date(value as string | Date);
+
+/** Every recorded download for the collection, newest first, with who took it and whether it finished. */
+export async function downloadsOf(db: Kysely<Database>, collection: EcdysisCollection, limit = 50): Promise<DownloadRecord[]> {
+  const found = await db
     .selectFrom("ecdysis_upload_download as d")
+    .leftJoin("ecdysis_upload_download_completed as c", "c.download_id", "d.entity_id")
     .leftJoin("person as p", "p.entity_id", "d.person_id")
     .where("d.collection", "=", collection.program)
     .orderBy("d.entity_id", "desc")
-    .limit(1)
-    .select(["d.collection", "d.year", "d.filters", "d.include_taxon_obscured", "d.include_observer_obscured", "d.specimens", "d.read_at", "d.person_id", "p.display_name", "d.downloaded_at"])
-    .executeTakeFirst();
-  if (row === undefined) return null;
-  return {
-    collection: row.collection,
-    year: Number(row.year),
-    filters: row.filters,
-    include: { taxonObscured: Boolean(row.include_taxon_obscured), observerObscured: Boolean(row.include_observer_obscured) },
-    specimens: Number(row.specimens),
-    readAt: new Date(row.read_at as unknown as string | Date),
-    personId: row.person_id === null ? null : Number(row.person_id),
-    by: row.display_name,
-    at: new Date(row.downloaded_at as unknown as string | Date),
-  };
-}
-
-/** Writes the record of a download that finished. */
-export async function recordDownload(
-  db: Kysely<Database>,
-  d: { collection: EcdysisCollection; year: number; filters: string; include: Include; specimens: number; readAt: Date; personId: number | null },
-): Promise<void> {
-  await db
-    .insertInto("ecdysis_upload_download")
-    .values({
-      collection: d.collection.program,
-      year: d.year,
-      filters: d.filters,
-      include_taxon_obscured: d.include.taxonObscured,
-      include_observer_obscured: d.include.observerObscured,
-      specimens: d.specimens,
-      read_at: d.readAt.toISOString(),
-      person_id: d.personId,
-    })
+    .limit(limit)
+    .select([
+      "d.entity_id",
+      "d.collection",
+      "d.year",
+      "d.filters",
+      "d.include_taxon_obscured",
+      "d.include_observer_obscured",
+      "d.planned_specimens",
+      "d.read_at",
+      "d.person_id",
+      "p.display_name",
+      "d.started_at",
+      "c.completed_at",
+      "c.specimens",
+    ])
     .execute();
+  return found.map((r) => ({
+    id: Number(r.entity_id),
+    collection: r.collection,
+    year: Number(r.year),
+    filters: r.filters,
+    include: { taxonObscured: Boolean(r.include_taxon_obscured), observerObscured: Boolean(r.include_observer_obscured) },
+    planned: Number(r.planned_specimens),
+    readAt: asDate(r.read_at),
+    personId: r.person_id === null ? null : Number(r.person_id),
+    by: r.display_name,
+    startedAt: asDate(r.started_at),
+    completedAt: r.completed_at === null ? null : asDate(r.completed_at),
+    specimens: r.specimens === null ? null : Number(r.specimens),
+  }));
 }
 
-const downloadsInFlight = new Set<string>();
+/** A download, by its id, with who took it and whether it finished; null where there is none. */
+export async function downloadById(db: Kysely<Database>, id: number): Promise<DownloadRecord | null> {
+  const row = await db.selectFrom("ecdysis_upload_download").where("entity_id", "=", id).select("collection").executeTakeFirst();
+  const collection = row === undefined ? undefined : collectionOf(row.collection);
+  if (collection === undefined) return null;
+  return (await downloadsOf(db, collection, 100_000)).find((d) => d.id === id) ?? null;
+}
 
-/** Claims a collection's archive for one download at a time; false when another is being written now. */
-export const claimDownload = (collection: EcdysisCollection): boolean => {
-  if (downloadsInFlight.has(collection.program)) return false;
-  downloadsInFlight.add(collection.program);
-  return true;
-};
-export const releaseDownload = (collection: EcdysisCollection): void => void downloadsInFlight.delete(collection.program);
+/** Whether a download that began after the last read is on record, which means no second archive: the one still being written, or the one taken. */
+export const blocking = (downloads: readonly DownloadRecord[], readAt: Date): DownloadRecord | null =>
+  downloads.find((d) => d.startedAt.getTime() > readAt.getTime()) ?? null;
+
+/** Whether a download without a completion began recently enough to be still going. */
+export const beingWritten = (d: DownloadRecord, now: Date = new Date()): boolean =>
+  d.completedAt === null && now.getTime() - d.startedAt.getTime() < BEING_WRITTEN_MINUTES * 60_000;
 
 /**
- * The stream, with `onComplete` run when the last byte has been handed on and
- * `release` run however it ends. A download the person abandons (the stream is
- * cancelled) or one that fails calls only `release`, so nothing is recorded for
- * it: a partial zip is not a file anyone can upload, and the person may ask
- * again. A download is recorded when the server has written the whole file,
- * which is the nearest it can know; the browser may still be receiving the
- * last of it.
+ * Decides that an archive may be written and records its start, in one
+ * transaction. The decision reads the downloads on record; two requests that
+ * arrive together can each see none, because DuckDB's transactions work on
+ * snapshots and a check followed by an insert is not exclusive. What makes one
+ * of them fail is the table's `UNIQUE (collection, read_at)`: DuckDB refuses the
+ * second row with the same key, and that refusal is taken here as "another
+ * archive was just started". Any other error is the caller's.
  */
-export function recordWhenComplete(source: ReadableStream<Uint8Array>, onComplete: () => Promise<void>, release: () => void): ReadableStream<Uint8Array> {
+export async function startDownload(
+  db: Kysely<Database>,
+  d: { collection: EcdysisCollection; year: number; filters: string; include: Include; planned: number; readAt: Date; personId: number | null },
+): Promise<{ ok: true; id: number } | { ok: false; because: DownloadRecord | null }> {
+  try {
+    return await db.transaction().execute(async (trx) => {
+      const already = blocking(await downloadsOf(trx, d.collection, 20), d.readAt);
+      if (already !== null) return { ok: false as const, because: already };
+      const { entity_id } = await trx
+        .insertInto("ecdysis_upload_download")
+        .values({
+          collection: d.collection.program,
+          year: d.year,
+          filters: d.filters,
+          include_taxon_obscured: d.include.taxonObscured,
+          include_observer_obscured: d.include.observerObscured,
+          planned_specimens: d.planned,
+          read_at: d.readAt.toISOString(),
+          person_id: d.personId,
+        })
+        .returning("entity_id")
+        .executeTakeFirstOrThrow();
+      return { ok: true as const, id: Number(entity_id) };
+    });
+  } catch (err) {
+    // A request that lost the race fails on the unique key, and DuckDB has by then rolled its transaction back, so
+    // Kysely's own rollback may fail too and hide the cause. Whatever the message, what decides is whether another
+    // download for this read is now on record; the other transaction may take a moment to commit.
+    for (let tries = 0; tries < 20; tries++) {
+      const already = blocking(await downloadsOf(db, d.collection, 20), d.readAt);
+      if (already !== null) return { ok: false, because: already };
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw err;
+  }
+}
+
+/**
+ * Records that a download finished: its completion, with the number of
+ * specimens actually written, and the specimens themselves, in one transaction.
+ */
+export async function completeDownload(db: Kysely<Database>, id: number, specimenIds: readonly number[]): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    await trx.insertInto("ecdysis_upload_download_completed").values({ download_id: id, specimens: specimenIds.length }).execute();
+    for (let from = 0; from < specimenIds.length; from += 2_000) {
+      await trx
+        .insertInto("ecdysis_upload_download_specimen")
+        .values(specimenIds.slice(from, from + 2_000).map((specimen_id) => ({ download_id: id, specimen_id })))
+        .execute();
+    }
+  });
+}
+
+/** The specimens a completed download held, in id order. */
+export async function downloadSpecimens(db: Kysely<Database>, id: number): Promise<number[]> {
+  const found = await db.selectFrom("ecdysis_upload_download_specimen").where("download_id", "=", id).orderBy("specimen_id").select("specimen_id").execute();
+  return found.map((r) => Number(r.specimen_id));
+}
+
+/** How many of a completed download's specimens Ecdysis does not hold yet, as the cached archive says. */
+async function stillNotInEcdysis(db: Kysely<Database>, collection: EcdysisCollection, id: number, held: ReadonlySet<string>): Promise<number> {
+  const found = await db
+    .selectFrom("ecdysis_upload_download_specimen as d")
+    .innerJoin("specimen as sp", "sp.entity_id", "d.specimen_id")
+    .where("d.download_id", "=", id)
+    .select("sp.field_number")
+    .execute();
+  return found.filter((r) => r.field_number !== null && !held.has(catalogKey(catalogNumberOf(collection, r.field_number)))).length;
+}
+
+/**
+ * The stream, with `onComplete` run once, when the last byte has been handed
+ * on. A download the reader abandons (the stream is cancelled) or that fails
+ * never calls it: cancelling resolves the read that is waiting with "done", and
+ * that must not be taken for the end of the file. Nothing is recorded for such
+ * a download beyond its start, which still blocks a second archive until the
+ * next read, because the person may hold a partial file. The completion is
+ * recorded when the server has written the whole file, which is the nearest it
+ * can know: the browser may still be receiving the last of it.
+ */
+export function recordWhenComplete(source: ReadableStream<Uint8Array>, onComplete: () => Promise<void>): ReadableStream<Uint8Array> {
   const reader = source.getReader();
+  let cancelled = false;
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         const { done, value } = await reader.read();
+        if (cancelled) return;
         if (done) {
           await onComplete();
-          release();
           controller.close();
         } else {
           controller.enqueue(value);
         }
       } catch (err) {
-        release();
-        controller.error(err);
+        if (!cancelled) controller.error(err);
       }
     },
     async cancel(reason) {
-      release();
+      cancelled = true;
       await reader.cancel(reason);
     },
   });
@@ -535,20 +628,43 @@ export function recordWhenComplete(source: ReadableStream<Uint8Array>, onComplet
 
 // --- The state of a collection -----------------------------------------------
 
-/** What the Exports page and the files' routes ask: the plan for a collection, or why there is none. */
-export type UploadState =
-  | { ok: true; plan: UploadPlan; read: Extract<EcdysisRead, { ok: true }>; held: ReadonlySet<string>; download: DownloadRecord | null }
-  | ({ ok: false } & UploadRefusal);
-
-/** How many catalog numbers Beeline has recorded from Ecdysis for the collection's specimens, which an archive must at least hold. */
-async function recordedCatalogNumbers(db: Kysely<Database>, collection: EcdysisCollection): Promise<number> {
-  const { rows } = await sql<{ n: number | bigint }>`
-    SELECT count(DISTINCT lower(catalog_number)) AS n FROM specimen_catalog_number
-    WHERE starts_with(lower(catalog_number), ${collection.catalogPrefix.toLowerCase()})`.execute(db);
-  return Number(rows[0]!.n);
+/** A completed download whose specimens Ecdysis does not all hold yet, for the page. */
+export interface OutstandingDownload extends DownloadRecord {
+  /** How many of its specimens Ecdysis does not hold yet. */
+  notYetInEcdysis: number | null;
 }
 
-/** The read of Ecdysis, then the plan built from it, and the download recorded since: one question, answered the same on the page and in the routes. */
+/** What the Exports page and the files' routes ask: the plan for a collection, or why there is none. */
+export type UploadState =
+  | {
+      ok: true;
+      plan: UploadPlan;
+      read: Extract<EcdysisRead, { ok: true }>;
+      held: ReadonlySet<string>;
+      /** The download that began after the read, which means no second archive; null where there is none. */
+      blocking: DownloadRecord | null;
+      /** Downloads whose specimens Ecdysis does not hold yet, which a person might still upload: newest first. */
+      outstanding: OutstandingDownload[];
+    }
+  | ({ ok: false } & UploadRefusal);
+
+/**
+ * The catalog numbers loaded at this read that the archive does not hold. The
+ * loader writes `specimen_catalog_number.loaded_at` for every matched specimen
+ * with the read's own start time, so each of these was in the archive the read
+ * loaded: one missing from the zip means the zip is not that one. A specimen
+ * whose Ecdysis record has since been deleted keeps an older `loaded_at` (the
+ * loader never removes a row, src/load-ecdysis.ts), so it never counts.
+ */
+async function loadedButNotHeld(db: Kysely<Database>, collection: EcdysisCollection, readAt: Date, held: ReadonlySet<string>): Promise<number> {
+  const { rows } = await sql<{ catalog_number: string }>`
+    SELECT catalog_number FROM specimen_catalog_number
+    WHERE starts_with(lower(catalog_number), ${collection.catalogPrefix.toLowerCase()})
+      AND loaded_at >= ${readAt.toISOString()}::TIMESTAMPTZ`.execute(db);
+  return rows.filter((r) => !held.has(catalogKey(r.catalog_number))).length;
+}
+
+/** The read of Ecdysis, then the plan built from it, and the downloads on record: one question, answered the same on the page and in the routes. */
 export async function uploadStateOf(
   db: Kysely<Database>,
   collection: EcdysisCollection,
@@ -556,22 +672,35 @@ export async function uploadStateOf(
 ): Promise<UploadState> {
   const read = await ecdysisRead(collection, opts);
   if (!read.ok) return read;
-  let held: Set<string>;
+  let contents: ArchiveContents;
   try {
-    held = await catalogNumbersInArchive(db, read.archivePath, opts.ecdysisDir);
+    contents = await catalogNumbersInArchive(db, read.archivePath, opts.ecdysisDir);
   } catch (err) {
     console.error(`The cached Ecdysis archive for ${collection.program} could not be read: ${(err as Error).message}`);
     return { ok: false, reason: "unreadable", readAt: read.readAt };
   }
-  // An archive with fewer catalog numbers than Beeline has recorded from Ecdysis is not the whole of what Ecdysis held.
-  if (held.size < (await recordedCatalogNumbers(db, collection))) return { ok: false, reason: "incomplete", readAt: read.readAt };
-  const latest = await latestDownload(db, collection);
+  // The zip must be the one the read loaded: as many occurrences as the marker says, and every catalog number loaded at that read.
+  if (contents.rows !== read.marker.records || (await loadedButNotHeld(db, collection, read.readAt, contents.held)) > 0) {
+    return { ok: false, reason: "incomplete", readAt: read.readAt };
+  }
+  const downloads = await downloadsOf(db, collection);
+  const outstanding: OutstandingDownload[] = [];
+  for (const d of downloads) {
+    if (d.completedAt === null) {
+      // No specimens are recorded for a download that did not finish: it is shown while it blocks, and no longer after the next read.
+      if (d.startedAt.getTime() > read.readAt.getTime()) outstanding.push({ ...d, notYetInEcdysis: null });
+      continue;
+    }
+    const missing = await stillNotInEcdysis(db, collection, d.id, contents.held);
+    if (missing > 0) outstanding.push({ ...d, notYetInEcdysis: missing });
+  }
   return {
     ok: true,
-    plan: await planUpload(db, collection, { readAt: read.readAt, held }, opts.query),
+    plan: await planUpload(db, collection, { readAt: read.readAt, held: contents.held }, opts.query),
     read,
-    held,
-    download: latest !== null && latest.at.getTime() > read.readAt.getTime() ? latest : null,
+    held: contents.held,
+    blocking: blocking(downloads, read.readAt),
+    outstanding,
   };
 }
 
@@ -760,20 +889,23 @@ export function uploadArchiveLayout(collection: EcdysisCollection): ArchiveLayou
  * transaction, so a page is one moment of the store and a specimen that has
  * become obscured, marked missing or held in Ecdysis since the plan is not
  * written. The stream is told it has ended by the page's `last`, since a page
- * can be short of a full one without being the last.
+ * can be short of a full one without being the last. `written`, when given,
+ * collects the ids of the specimens actually written, which is what a
+ * completed download records; `pageSize` lets a test make pages small enough
+ * to have several.
  */
 export function uploadArchiveStream(
   db: Kysely<Database>,
   collection: EcdysisCollection,
   specimenIds: readonly number[],
   rules: UploadRules,
-  timing?: CsvTiming,
+  opts: { timing?: CsvTiming; written?: number[]; pageSize?: number } = {},
 ): ReadableStream<Uint8Array> {
   const hostNames = hostNamesOnce(db);
   let cursor = 0;
   return specimenArchiveStream(
     async (limit) => {
-      const slice = specimenIds.slice(cursor, cursor + limit);
+      const slice = specimenIds.slice(cursor, cursor + Math.min(limit, opts.pageSize ?? limit));
       cursor += slice.length;
       const names = await hostNames();
       const page = await db.transaction().execute(async (trx) => {
@@ -787,9 +919,10 @@ export function uploadArchiveStream(
         });
         return { ...listed, identifications: await identificationsOf(trx, listed.rows.map((r) => r.specimen_id)) };
       });
+      opts.written?.push(...page.rows.map((r) => r.specimen_id));
       return { ...page, last: cursor >= specimenIds.length };
     },
-    { layout: uploadArchiveLayout(collection), timing },
+    { layout: uploadArchiveLayout(collection), timing: opts.timing },
   );
 }
 
@@ -810,43 +943,36 @@ export const observationUrl = (observationId: number | bigint): string => `https
 const ASSOCIATION_PAGE = 5_000;
 
 /**
- * The associations file for these specimens: one row for each whose sample has
- * an iNaturalist observation that still exists. The host is named as the
- * observation named it, at whatever rank Beeline holds, as `associatedTaxa`
- * does, and left empty where there is none, and where the sample's method names
- * a trap: the plant near a trap is not a host (`plantRelationship` makes the
- * same distinction, "near" and not "visits flowers of"). The rules are applied
- * again as the rows are read, in one transaction, as the archive's are.
- * UTF-8 with no byte order mark and no formula guard. The program's CSV
- * downloads have both for the sake of spreadsheets; this file is read by
- * Symbiota, which loaded it the same with and without a mark (tried
- * 2026-11-20), so the headers are left as exact bytes, and a guard would write
- * an apostrophe into a name that begins with `-`, `=`, `+` or `@`.
+ * The associations file for the specimens a completed download held: exactly
+ * those, with no rule applied again, so the file matches the archive that was
+ * uploaded. One row for each whose sample has an iNaturalist observation that
+ * still exists. The host is named as the observation named it, at whatever rank
+ * Beeline holds, as `associatedTaxa` does, and left empty where there is none.
+ * A trap sample has no row at all: Symbiota applies one relationship, `hasHost`,
+ * to the whole file, and the plant near a trap is not a host (`plantRelationship`
+ * makes the same distinction, "near" and not "visits flowers of"). UTF-8 with no
+ * byte order mark and no formula guard. The program's CSV downloads have both
+ * for the sake of spreadsheets; this file is read by Symbiota, which loaded it
+ * the same with and without a mark (tried 2026-11-20), so the headers are left
+ * as exact bytes, and a guard would write an apostrophe into a name that begins
+ * with `-`, `=`, `+` or `@`. Read in one transaction.
  */
-export async function associationsCsv(
-  db: Kysely<Database>,
-  collection: EcdysisCollection,
-  specimenIds: readonly number[],
-  rules: UploadRules,
-): Promise<string> {
+export async function associationsCsv(db: Kysely<Database>, collection: EcdysisCollection, specimenIds: readonly number[]): Promise<string> {
   const lines = [csvExactLine(ASSOCIATION_HEADER)];
   await db.transaction().execute(async (trx) => {
     for (let from = 0; from < specimenIds.length; from += ASSOCIATION_PAGE) {
-      const ids = await eligibleNow(trx, collection, specimenIds.slice(from, from + ASSOCIATION_PAGE), rules);
-      if (ids.length === 0) continue;
       const found = await trx
         .selectFrom("specimen as sp")
         .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
-        .where("sp.entity_id", "in", ids)
+        .where("sp.entity_id", "in", specimenIds.slice(from, from + ASSOCIATION_PAGE))
         .where("s.inat_observation_id", "is not", null)
         .where(sql<boolean>`NOT ${observationGone}`)
         .select(["sp.entity_id as specimen_id", "sp.field_number", "s.inat_observation_id", "s.host_name_as_observed", "s.protocol"])
         .orderBy("sp.entity_id")
         .execute();
       for (const r of found) {
-        if (r.field_number === null || r.inat_observation_id === null) continue;
-        const host = methodNamesTrap(r.protocol) ? null : r.host_name_as_observed;
-        lines.push(csvExactLine([catalogNumberOf(collection, r.field_number), observationUrl(r.inat_observation_id), host]));
+        if (r.field_number === null || r.inat_observation_id === null || methodNamesTrap(r.protocol)) continue;
+        lines.push(csvExactLine([catalogNumberOf(collection, r.field_number), observationUrl(r.inat_observation_id), r.host_name_as_observed]));
       }
     }
   });
@@ -865,8 +991,10 @@ export async function associationsCsv(
 export const uploadFileName = (collection: EcdysisCollection, year: number, written: Date, kind: "archive" | "associations", specimens: number): string =>
   exportFilename(`ecdysis-${kind === "archive" ? "upload" : "associations"}-${collection.program}-${year}-${specimens}-specimens`, written, kind === "archive" ? "zip" : "csv");
 
-/** Where a file is served: `/exports/ecdysis/BC-2026-upload.zip`; the download is given its own, stamped, name in the response. */
-export const ecdysisFileHref = (collection: EcdysisCollection, year: number, kind: "archive" | "associations"): string =>
-  `/exports/ecdysis/${collection.program}-${year}-${kind === "archive" ? "upload.zip" : "associations.csv"}`;
+/** Where an archive is asked for: `/exports/ecdysis/BC-2026-upload.zip`; the download is given its own, stamped, name in the response. */
+export const archiveHref = (collection: EcdysisCollection, year: number): string => `/exports/ecdysis/${collection.program}-${year}-upload.zip`;
+
+/** Where the associations file for a completed download is asked for. */
+export const associationsHref = (downloadId: number): string => `/exports/ecdysis/downloads/${downloadId}/associations.csv`;
 
 export const collectionOf = (program: string): EcdysisCollection | undefined => ECDYSIS_COLLECTIONS.find((c) => c.program === program);

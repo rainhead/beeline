@@ -7,16 +7,17 @@ import {
   ASSOCIATION_HEADER,
   associationsCsv,
   catalogNumbersInArchive,
-  claimDownload,
+  completeDownload,
+  downloadSpecimens,
+  downloadsOf,
+  startDownload,
+  blocking,
   eligibleNow,
   ecdysisRead,
   idsOf,
   INCLUDE_NONE,
-  latestDownload,
   planUpload,
-  recordDownload,
   recordWhenComplete,
-  releaseDownload,
   symbiotaKey,
   uploadArchiveStream,
   uploadFileName,
@@ -29,7 +30,7 @@ import {
   type UploadPlan,
 } from "../src/app/ecdysis-upload.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
-import { BC, fixture, HOUR, WABA } from "./ecdysis-upload-fixture.js";
+import { BC, BC_OFFERED_YEARS_IN_CODE, fixture, HOUR, WABA } from "./ecdysis-upload-fixture.js";
 
 /**
  * The upload to Ecdysis (beeline-8dx9.12): which specimens, when it may be
@@ -149,23 +150,32 @@ describe("which specimens go in a file", () => {
     );
   });
 
-  it("offers a year only if it is an active season or the one that settled last, and Ecdysis holds none of its specimens", async () => {
+  it("offers the years the collection's setting names, and lists the others as waiting; nothing else about a year decides it", async () => {
     const f = await fixture();
+    expect(BC_OFFERED_YEARS_IN_CODE).toEqual([2026]);
     await f.specimen({ field: "2500001" });
     await f.specimen({ field: "2500002", year: SETTLED_SEASON });
     await f.specimen({ field: "2500003", year: CURRENT_SEASON - 6 });
     const plan = await planWith(f);
-    expect(plan.years.map((y) => [y.year, y.offered, y.notOffered])).toEqual([
-      [CURRENT_SEASON, true, null],
-      [SETTLED_SEASON, true, null],
-      [CURRENT_SEASON - 6, false, "older"],
-    ]);
-    // Ecdysis holds a specimen of the program from the settled year: that year is not offered, and says why.
-    const held = await f.specimen({ field: "2500004", year: SETTLED_SEASON });
+    expect(plan.years.map((y) => [y.year, y.offered])).toEqual([[CURRENT_SEASON, true], [SETTLED_SEASON, true], [CURRENT_SEASON - 6, false]]);
+    // Ecdysis holding a specimen of the program from a year does not take the year away: what is still eligible is offered.
+    const held = await f.specimen({ field: "2500004" });
     await f.conn.run(`INSERT INTO specimen_catalog_number (specimen_id, catalog_number) VALUES (${held.id}, 'BCBA_2500004')`);
     const again = await planWith(f);
-    expect(again.years.find((y) => y.year === SETTLED_SEASON)).toMatchObject({ offered: false, notOffered: "held" });
-    expect(again.years.find((y) => y.year === CURRENT_SEASON)?.offered).toBe(true);
+    expect(again.years.find((y) => y.year === CURRENT_SEASON)).toMatchObject({ offered: true });
+    expect(inFile(again, CURRENT_SEASON)).toHaveLength(1);
+  });
+
+  it("leaves out, counted apart, a specimen whose sample's geoprivacy flags are out of date with its observation's", async () => {
+    const f = await fixture();
+    const plain = await f.specimen({ field: "2500060" });
+    const stale = await f.specimen({ field: "2500061", sample: { inat_observation_id: "9001" } });
+    // The observation says private; the sample's copy says nothing.
+    await f.conn.run(`INSERT INTO observation_field (inat_id, geoprivacy) VALUES (9001, 'private')`);
+    const plan = await planWith(f);
+    expect(inFile(plan, CURRENT_SEASON, { taxonObscured: true, observerObscured: true })).toEqual([plain.id]);
+    expect(plan.years[0]).toMatchObject({ geoprivacyStale: 1, observerObscured: 0, taxonObscured: 0 });
+    expect(stale.id).toBeGreaterThan(0);
   });
 
   it("narrows by the Specimens listing's own filters, and every quality filter runs", async () => {
@@ -177,11 +187,15 @@ describe("which specimens go in a file", () => {
     expect(inFile(await planWith(f, [], query("kind=net")), CURRENT_SEASON)).toEqual([net.id]);
     expect(inFile(await planWith(f, [], query("collector=Nobody")), CURRENT_SEASON)).toEqual([]);
     // The statuses that read the flag roll-up (flagged, blocking, warning, clean) joined it for the listing and not for a file.
-    for (const qc of QC_STATUSES) {
-      const plan = await planWith(f, [], query(`qc=${qc}`));
-      expect(plan.years.flatMap((y) => y.eligible.length)).toBeDefined();
-    }
-    expect(inFile(await planWith(f, [], query("qc=clean")), CURRENT_SEASON)).toEqual([trap.id, net.id]);
+    const every = (qc: string) => planWith(f, [], query(`qc=${qc}`)).then((plan) => inFile(plan, CURRENT_SEASON));
+    expect(QC_STATUSES).toEqual(["any", "flagged", "blocking", "warning", "clean", "locality"]);
+    // The fixture's samples are clean and have a locality: each status selects what it says, and none fails.
+    expect(await every("any")).toEqual([trap.id, net.id]);
+    expect(await every("clean")).toEqual([trap.id, net.id]);
+    expect(await every("flagged")).toEqual([]);
+    expect(await every("blocking")).toEqual([]);
+    expect(await every("warning")).toEqual([]);
+    expect(await every("locality")).toEqual([]);
   });
 
   it("reports the country and state values that it had no spelling for, and writes them as they are", async () => {
@@ -266,14 +280,35 @@ describe("when a file may be built", () => {
     expect(await ecdysisRead(BC, { ecdysisDir: f.dir })).toMatchObject({ ok: false, reason: "changed" });
   });
 
-  it("is refused when the archive holds fewer catalog numbers than Beeline has recorded from Ecdysis", async () => {
+  it("is refused when the zip has a different number of records than the read loaded, or lacks a catalog number that read recorded", async () => {
     const f = await fixture();
     const a = await f.specimen({ field: "2500001" });
     const b = await f.specimen({ field: "2500002" });
-    for (const s of [a, b]) await f.conn.run(`INSERT INTO specimen_catalog_number (specimen_id, catalog_number) VALUES (${s.id}, 'BCBA_${s.id}')`);
+    // Loaded at this read (loaded_at is the read's own start, as the loader writes it).
+    await f.cacheArchive(BC, [`BCBA_${a.id}`, `BCBA_${b.id}`], { readHoursAgo: 1 });
+    const readAt = JSON.parse(await (await import("node:fs/promises")).readFile(`${f.dir}/collection-196.read.json`, "utf8")).readAt as string;
+    for (const s of [a, b]) {
+      await f.conn.run(`INSERT INTO specimen_catalog_number (specimen_id, catalog_number, loaded_at) VALUES (${s.id}, 'BCBA_${s.id}', TIMESTAMPTZ '${readAt}')`);
+    }
+    expect((await uploadStateOf(f.db, BC, { ecdysisDir: f.dir })).ok).toBe(true);
+    // The zip holds one fewer record than the marker says it did.
     await f.cacheArchive(BC, [`BCBA_${a.id}`]);
+    const marker = `${f.dir}/collection-196.read.json`;
+    const { readFile, writeFile: write } = await import("node:fs/promises");
+    await write(marker, JSON.stringify({ ...JSON.parse(await readFile(marker, "utf8")), readAt, records: 2 }));
     expect(await uploadStateOf(f.db, BC, { ecdysisDir: f.dir })).toMatchObject({ ok: false, reason: "incomplete" });
-    await f.cacheArchive(BC, [`BCBA_${a.id}`, `BCBA_${b.id}`]);
+    // As many records, but another catalog number in place of one this read recorded.
+    await f.cacheArchive(BC, [`BCBA_${a.id}`, "BCBA_other"]);
+    await write(marker, JSON.stringify({ ...JSON.parse(await readFile(marker, "utf8")), readAt }));
+    expect(await uploadStateOf(f.db, BC, { ecdysisDir: f.dir })).toMatchObject({ ok: false, reason: "incomplete" });
+  });
+
+  it("is not refused for good because Ecdysis has deleted a record: the store keeps its catalog number from an earlier read", async () => {
+    const f = await fixture();
+    const gone = await f.specimen({ field: "2500003" });
+    // Loaded long ago, and since deleted in Ecdysis: the loader never removes the row, and this read did not rewrite it.
+    await f.conn.run(`INSERT INTO specimen_catalog_number (specimen_id, catalog_number, loaded_at) VALUES (${gone.id}, 'BCBA_${gone.id}', now() - INTERVAL '30 days')`);
+    await f.cacheArchive(BC, ["BCBA_1"]);
     expect((await uploadStateOf(f.db, BC, { ecdysisDir: f.dir })).ok).toBe(true);
   });
 
@@ -290,9 +325,21 @@ describe("when a file may be built", () => {
     await f.cacheArchive(BC, ["BCBA_1", " BCBA_2 ", "bcba_3", ""], { header: "CATALOGNUMBER" });
     const path = cachedArchivePath(f.dir, BC);
     const [one, two] = await Promise.all([catalogNumbersInArchive(f.db, path, f.dir), catalogNumbersInArchive(f.db, path, f.dir)]);
-    expect([...one].sort()).toEqual(["bcba_1", "bcba_2", "bcba_3"]);
+    expect([...one.held].sort()).toEqual(["bcba_1", "bcba_2", "bcba_3"]);
+    expect(one.rows).toBe(4);
     expect(two).toBe(one);
     expect(await catalogNumbersInArchive(f.db, path, f.dir)).toBe(one);
+  });
+
+  it("runs unpacks one at a time, so one cannot clear the folder another is using", async () => {
+    const f = await fixture();
+    await f.cacheArchive(BC, Array.from({ length: 200 }, (_, i) => `BCBA_${i}`));
+    const copy = `${f.dir}/second.zip`;
+    const { copyFile } = await import("node:fs/promises");
+    await copyFile(cachedArchivePath(f.dir, BC), copy);
+    // Two different archives asked for together: each must find its whole folder, which a parallel cleanup would remove.
+    const [one, two] = await Promise.all([catalogNumbersInArchive(f.db, cachedArchivePath(f.dir, BC), f.dir), catalogNumbersInArchive(f.db, copy, f.dir)]);
+    expect([one.held.size, two.held.size, one.rows]).toEqual([200, 200, 200]);
   });
 
   it("removes the folder an earlier unpack left behind", async () => {
@@ -328,19 +375,36 @@ describe("the rules hold when the rows are written", () => {
     const a = await archiveOf(f, ids);
     expect(a.occurrence.body.map((r) => r[0])).toEqual([String(stays.id)]);
     expect(await eligibleNow(f.db, BC, ids, rulesOf())).toEqual([stays.id]);
-    // The associations file is written under the same rules.
-    await f.conn.run(`UPDATE sample SET inat_observation_id = 5 WHERE entity_id IN (${stays.sample}, ${obscured.sample})`);
-    const csv = await associationsCsv(f.db, BC, ids, rulesOf());
-    expect(csv.split("\n").filter((l) => l !== "")).toEqual([ASSOCIATION_HEADER.join(","), `BCBA_2500001,https://www.inaturalist.org/observations/5,`]);
   });
 
-  it("writes every page of a long file, though rows were dropped from a page", async () => {
+  it("writes every page of a file of several pages, though rows were dropped from one, and ends on the page marked last", async () => {
     const f = await fixture();
-    const ids: number[] = [];
-    for (let i = 0; i < 3; i++) ids.push((await f.specimen({ field: `26000${i}` })).id);
-    // Many more ids than there are specimens, as a plan that has gone stale: only the real ones are written, and the file ends.
-    const a = await archiveOf(f, [...ids, 999999, 999998]);
-    expect(a.occurrence.body).toHaveLength(3);
+    const made: { id: number; sample: number }[] = [];
+    for (let i = 0; i < 7; i++) made.push(await f.specimen({ field: `26000${i}` }));
+    const ids = made.map((m) => m.id);
+    // The third specimen becomes obscured after the plan: its page is short and is not the last.
+    await f.conn.run(`UPDATE sample SET taxon_geoprivacy = 'obscured' WHERE entity_id = ${made[2]!.sample}`);
+    const written: number[] = [];
+    // Pages of three: 3 + 3 + 1 specimens, the first of them one short.
+    const stream = uploadArchiveStream(f.db, BC, ids, rulesOf(), { pageSize: 3, written });
+    const files = unzipSync(new Uint8Array(await new Response(stream).arrayBuffer()));
+    const body = strFromU8(files["occurrence.txt"]!).trim().split("\n").slice(1).map((l) => l.split("\t")[0]);
+    expect(body).toHaveLength(6);
+    expect(new Set(body)).toEqual(new Set(ids.filter((id) => id !== made[2]!.id).map(String)));
+    expect(written.sort((a, b) => a - b)).toEqual(ids.filter((id) => id !== made[2]!.id));
+    // Identifications of every page are in the one file.
+    expect(strFromU8(files["identification.txt"]!).split("\n")[0]).toContain("coreid");
+  });
+
+  it("ends a file whose last full page is exactly the size of a page", async () => {
+    const f = await fixture();
+    const made: number[] = [];
+    for (let i = 0; i < 4; i++) made.push((await f.specimen({ field: `27000${i}` })).id);
+    const a = await archiveOf(f, made);
+    expect(a.occurrence.body).toHaveLength(4);
+    const stream = uploadArchiveStream(f.db, BC, made, rulesOf(), { pageSize: 2 });
+    const files = unzipSync(new Uint8Array(await new Response(stream).arrayBuffer()));
+    expect(strFromU8(files["occurrence.txt"]!).trim().split("\n")).toHaveLength(5);
   });
 });
 
@@ -502,7 +566,7 @@ describe("the associations file", () => {
     await f.conn.run(`INSERT INTO observation_absent (inat_id) VALUES (444)`);
     const quoted = await f.specimen({ field: "2500006", sample: { inat_observation_id: "555", host_name_as_observed: "'Rosa, \"wild\"'", host_rank: "'genus'" } });
     const ids = [species, genus, noHost, noObservation, gone, quoted].map((s) => s.id);
-    const csv = await associationsCsv(f.db, BC, ids, rulesOf());
+    const csv = await associationsCsv(f.db, BC, ids);
     expect([...ASSOCIATION_HEADER]).toEqual(["subject identifier: catalogNumber", "resourceUrl", "verbatimSciname"]);
     expect(csv.split("\n").filter((l) => l !== "")).toEqual([
       "subject identifier: catalogNumber,resourceUrl,verbatimSciname",
@@ -514,85 +578,125 @@ describe("the associations file", () => {
     expect(csv.charCodeAt(0)).not.toBe(0xfeff);
   });
 
-  it("leaves the host empty for a trap, where the plant is only near it", async () => {
+  it("has no row at all for a trap sample: one relationship, hasHost, applies to the whole file and a plant near a trap is not a host", async () => {
     const f = await fixture();
     const trap = await f.specimen({ field: "2500007", sample: { kind: "'trap'", protocol: "'blue vane trap'", inat_observation_id: "666", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } });
     const pan = await f.specimen({ field: "2500008", sample: { kind: "'trap'", protocol: "'pan trap'", inat_observation_id: "667", host_name_as_observed: "'Rosa'", host_rank: "'genus'" } });
     const net = await f.specimen({ field: "2500009", sample: { inat_observation_id: "668", host_name_as_observed: "'Salvia'", host_rank: "'genus'" } });
-    const csv = await associationsCsv(f.db, BC, [trap.id, pan.id, net.id], rulesOf());
-    expect(csv.split("\n").filter((l) => l !== "").slice(1)).toEqual([
-      "BCBA_2500007,https://www.inaturalist.org/observations/666,",
-      "BCBA_2500008,https://www.inaturalist.org/observations/667,",
-      "BCBA_2500009,https://www.inaturalist.org/observations/668,Salvia",
-    ]);
+    const csv = await associationsCsv(f.db, BC, [trap.id, pan.id, net.id]);
+    expect(csv.split("\n").filter((l) => l !== "").slice(1)).toEqual(["BCBA_2500009,https://www.inaturalist.org/observations/668,Salvia"]);
   });
 
   it("writes a name beginning with a formula character as it is, not behind an apostrophe", async () => {
     const f = await fixture();
     const s = await f.specimen({ field: "2500012", sample: { inat_observation_id: "669", host_name_as_observed: "'-unknown plant'" } });
-    expect(await associationsCsv(f.db, BC, [s.id], rulesOf())).toContain(",-unknown plant\n");
+    expect(await associationsCsv(f.db, BC, [s.id])).toContain(",-unknown plant\n");
   });
 
   it("has the header alone for no specimens", async () => {
     const f = await fixture();
-    expect(await associationsCsv(f.db, BC, [], rulesOf())).toBe("subject identifier: catalogNumber,resourceUrl,verbatimSciname\n");
+    expect(await associationsCsv(f.db, BC, [])).toBe("subject identifier: catalogNumber,resourceUrl,verbatimSciname\n");
   });
 });
 
 describe("one archive for each read of Ecdysis", () => {
-  const record = (f: F, over: Partial<Parameters<typeof recordDownload>[1]> = {}) =>
-    recordDownload(f.db, { collection: BC, year: CURRENT_SEASON, filters: "kind=trap", include: { taxonObscured: true, observerObscured: false }, specimens: 5, readAt: new Date(Date.now() - HOUR), personId: f.eva, ...over });
+  const start = (f: F, over: Partial<Parameters<typeof startDownload>[1]> = {}) =>
+    startDownload(f.db, { collection: BC, year: CURRENT_SEASON, filters: "kind=trap", include: { taxonObscured: true, observerObscured: false }, planned: 5, readAt: new Date(Date.now() - HOUR), personId: f.eva, ...over });
 
-  it("records who took which archive, with the filters and the choice, and finds the latest", async () => {
+  it("records the start of a download with who, the filters, the choice and the read it rested on, and its completion apart", async () => {
     const f = await fixture();
-    expect(await latestDownload(f.db, BC)).toBeNull();
-    await record(f, { specimens: 3 });
-    await record(f, { specimens: 9, personId: null });
-    const latest = (await latestDownload(f.db, BC))!;
-    expect(latest).toMatchObject({ collection: "BC", year: CURRENT_SEASON, filters: "kind=trap", specimens: 9, by: null, include: { taxonObscured: true, observerObscured: false } });
-    expect(await latestDownload(f.db, WABA)).toBeNull();
+    expect(await downloadsOf(f.db, BC)).toEqual([]);
+    const a = await f.specimen({ field: "2500001" });
+    const b = await f.specimen({ field: "2500002" });
+    const started = await start(f);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const [before] = await downloadsOf(f.db, BC);
+    expect(before).toMatchObject({ id: started.id, year: CURRENT_SEASON, filters: "kind=trap", planned: 5, by: "Eva Expert", completedAt: null, specimens: null, include: { taxonObscured: true, observerObscured: false } });
+    await completeDownload(f.db, started.id, [a.id, b.id]);
+    const [after] = await downloadsOf(f.db, BC);
+    expect(after).toMatchObject({ specimens: 2 });
+    expect(after!.completedAt).toBeInstanceOf(Date);
+    expect(await downloadSpecimens(f.db, started.id)).toEqual([a.id, b.id].sort((x, y) => x - y));
+    expect(await downloadsOf(f.db, WABA)).toEqual([]);
   });
 
-  it("offers no second archive after a download that came after the last read, and offers one after a newer read", async () => {
+  it("refuses a second archive after a download that began after the read, whatever the year, until a newer read", async () => {
+    const f = await fixture();
+    const readAt = new Date(Date.now() - HOUR);
+    expect((await start(f, { readAt })).ok).toBe(true);
+    const second = await start(f, { readAt, year: SETTLED_SEASON, filters: "" });
+    expect(second).toMatchObject({ ok: false });
+    // A read that began after the download: the next archive is allowed.
+    const newer = new Date(Date.now() + 1);
+    expect(blocking(await downloadsOf(f.db, BC), newer)).toBeNull();
+    expect((await start(f, { readAt: newer })).ok).toBe(true);
+  });
+
+  it("lets only one of two simultaneous requests start: the table's unique key refuses the second", async () => {
+    const f = await fixture();
+    const readAt = new Date(Date.now() - HOUR);
+    const results = await Promise.all([start(f, { readAt }), start(f, { readAt, filters: "" }), start(f, { readAt, year: SETTLED_SEASON })]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(await downloadsOf(f.db, BC)).toHaveLength(1);
+  });
+
+  it("blocks a second archive when a read began before the download and finished after it", async () => {
     const f = await fixture();
     await f.specimen({ field: "2500001" });
-    await f.cacheArchive(BC, [], { readHoursAgo: 1 });
-    const before = await uploadStateOf(f.db, BC, { ecdysisDir: f.dir });
-    expect(before).toMatchObject({ ok: true, download: null });
-    // Taken 30 minutes ago, after the read an hour ago.
-    await record(f, { readAt: new Date(Date.now() - HOUR), personId: f.eva });
-    await f.conn.run(`UPDATE ecdysis_upload_download SET downloaded_at = now() - INTERVAL '30 minutes'`);
-    const after = (await uploadStateOf(f.db, BC, { ecdysisDir: f.dir })) as Extract<Awaited<ReturnType<typeof uploadStateOf>>, { ok: true }>;
-    expect(after.download).toMatchObject({ by: "Eva Expert", year: CURRENT_SEASON, specimens: 5 });
-    // The read that ran again, after the upload.
-    await f.cacheArchive(BC, [], { readHoursAgo: 0.1 });
-    expect(await uploadStateOf(f.db, BC, { ecdysisDir: f.dir })).toMatchObject({ ok: true, download: null });
+    // The download rests on the read of two hours ago and begins now.
+    await f.cacheArchive(BC, [], { readHoursAgo: 1.9 });
+    const started = await start(f, { readAt: new Date(Date.now() - 1.9 * HOUR) });
+    expect(started.ok).toBe(true);
+    // A read that began ten minutes ago, before the download, finishes now: its marker lands after the download began.
+    await f.cacheArchive(BC, [], { readHoursAgo: 1 / 6 });
+    const state = await uploadStateOf(f.db, BC, { ecdysisDir: f.dir });
+    if (!state.ok) throw new Error(`refused: ${state.reason}`);
+    expect(state.blocking).toMatchObject({ id: started.ok ? started.id : -1 });
   });
 
-  it("records a download when its stream ends, and not when it is abandoned or fails", async () => {
+  it("shows every download whose specimens Ecdysis does not hold yet, and none whose specimens it holds", async () => {
+    const f = await fixture();
+    const a = await f.specimen({ field: "2500001" });
+    const b = await f.specimen({ field: "2500002" });
+    const c = await f.specimen({ field: "2500003" });
+    const one = await start(f, { readAt: new Date(Date.now() - 5 * HOUR), year: SETTLED_SEASON });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // A read began after the first download, and the second download rests on it.
+    const two = await start(f, { readAt: new Date() });
+    if (!one.ok || !two.ok) throw new Error("not started");
+    await completeDownload(f.db, one.id, [a.id]);
+    await completeDownload(f.db, two.id, [b.id, c.id]);
+    // The next read found the first in Ecdysis and one of the second.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await f.cacheArchive(BC, ["BCBA_2500001", "BCBA_2500002"], { readHoursAgo: 0 });
+    const state = await uploadStateOf(f.db, BC, { ecdysisDir: f.dir });
+    if (!state.ok) throw new Error(`refused: ${state.reason}`);
+    expect(state.outstanding.map((d) => [d.id, d.notYetInEcdysis])).toEqual([[two.id, 1]]);
+    expect(state.blocking).toBeNull();
+  });
+
+  it("completes a download only when its stream ends, and never when it is abandoned or fails", async () => {
     const make = () => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array([1])); c.enqueue(new Uint8Array([2])); c.close(); } });
-    let recorded = 0;
-    let released = 0;
-    await new Response(recordWhenComplete(make(), async () => void recorded++, () => void released++)).arrayBuffer();
-    expect([recorded, released]).toEqual([1, 1]);
-    // The reader goes away part way: released, nothing recorded.
-    const abandoned = recordWhenComplete(make(), async () => void recorded++, () => void released++);
+    let completed = 0;
+    await new Response(recordWhenComplete(make(), async () => void completed++)).arrayBuffer();
+    expect(completed).toBe(1);
+    // The reader goes away while a read is waiting: that read resolves as done, and is not the end of the file.
+    let pending!: (v: IteratorResult<Uint8Array>) => void;
+    const slow = new ReadableStream<Uint8Array>({ pull: () => new Promise<void>((resolve) => void (pending = () => resolve())) });
+    const abandoned = recordWhenComplete(slow, async () => void completed++);
     const reader = abandoned.getReader();
-    await reader.read();
+    const waiting = reader.read();
+    await new Promise((r) => setTimeout(r, 10));
     await reader.cancel();
-    expect([recorded, released]).toEqual([1, 2]);
+    await waiting.catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(completed).toBe(1);
+    expect(pending).toBeDefined();
     // The source fails.
     const failing = new ReadableStream<Uint8Array>({ pull() { throw new Error("store down"); } });
-    await expect(new Response(recordWhenComplete(failing, async () => void recorded++, () => void released++)).arrayBuffer()).rejects.toThrow();
-    expect([recorded, released]).toEqual([1, 3]);
-  });
-
-  it("lets one archive for a collection be written at a time", () => {
-    expect(claimDownload(BC)).toBe(true);
-    expect(claimDownload(BC)).toBe(false);
-    releaseDownload(BC);
-    expect(claimDownload(BC)).toBe(true);
-    releaseDownload(BC);
+    await expect(new Response(recordWhenComplete(failing, async () => void completed++)).arrayBuffer()).rejects.toThrow();
+    expect(completed).toBe(1);
   });
 });
 

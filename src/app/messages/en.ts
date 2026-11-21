@@ -2852,36 +2852,37 @@ export const en = {
     ecdysis: {
       heading: "Files to upload to Ecdysis",
       intro:
-        "For each Ecdysis collection Beeline writes the two files a person uploads by hand: an archive of the specimens Ecdysis does not hold yet, and a file that links each of those specimens to its iNaturalist observation and its host plant. These are the only files on this page meant for Ecdysis. Each is written when you ask for it, from what Beeline read from Ecdysis in the last two hours.",
+        "For each Ecdysis collection Beeline writes the two files a person uploads by hand: an archive of the specimens Ecdysis does not hold yet, and, for each archive that has been downloaded in full, a file that links the specimens in it to their iNaturalist observations and host plants. These are the only files on this page meant for Ecdysis. An archive is written when you ask for it, from what Beeline read from Ecdysis in the last two hours, and there is one for each read.",
       instructionsHeading: "How to upload",
       readNowButton: "Read Ecdysis now",
       steps: {
         readNow:
           "Read Ecdysis now, with the button below, so that this page counts what Ecdysis holds at this moment. The read takes a few minutes, and Jobs shows it running. Reload this page when it has finished.",
         download:
-          "Download both files for a collection and upload the archive once, today. Delete it afterwards. Uploading it again later would replace any identification made in Ecdysis since, with the name this file holds.",
+          "Download the archive for a collection and upload it once, today. Delete it afterwards. Uploading it again later would replace any identification made in Ecdysis since, with the name this file holds. The first archive of a year need not be the last: what is left out of it is offered again after the next read.",
         collection: "Upload into the Ecdysis collection named under each collection's heading below.",
         uploadPage:
-          'On that collection\'s Upload page, choose a Darwin Core archive. Switch on "Match on Catalog Number" and "Import Identification History".',
+          'On that collection\'s Upload page, choose a Darwin Core archive. Make sure "Match on Catalog Number" and "Import Identification History" are both ticked; Symbiota ticks the first by default.',
         report:
-          'Before anything is written, Symbiota shows a "Pending Data Transfer Report" with "Records to be updated" and "New records". Press "Transfer Records to Central Specimen Table" only if it says "Records to be updated: 0" and the number of new records is the one in the archive\'s file name. Otherwise stop: nothing in Ecdysis has changed until that button is pressed.',
+          'Before anything is written, Symbiota shows a "Pending Data Transfer Report". Press "Transfer Records to Central Specimen Table" only if it says "Records to be updated: 0", the number of "New records" is the one in the archive\'s file name, and it shows no line "Records matching on catalog number that will be appended" (with the warning "This will result in records with duplicate catalog numbers"), which appears when "Match on Catalog Number" is off. Otherwise stop: nothing in Ecdysis has changed until that button is pressed.',
         associations:
-          'Then open "Import extended data" for the collection and choose the associations file. Set the association type to "Occurrence - External Link" and the relationship to "hasHost", the only fitting choice Ecdysis offers today. Leave the box about updating or deleting existing associations unticked. A catalog number that Ecdysis does not hold is skipped.',
+          'Then open "Import extended data" for the collection and choose the associations file of that archive, from the button beside the finished download. Set the association type to "Occurrence - External Link" and the relationship to "hasHost", the only fitting choice Ecdysis offers today. Leave the box about updating or deleting existing associations unticked. A catalog number that Ecdysis does not hold is skipped. Samples taken with a trap have no row in it: a plant near a trap is not a host.',
         readAgain: "Then read Ecdysis again, as in the first step. The counts on this page do not change until it has, and no second archive is offered until it has.",
         localities: "Localities are as the labels have them. Beeline does not rewrite them.",
       },
       narrowing:
-        'To write a file for only some of a year\'s specimens, add filters from the Specimens listing to the end of the file\'s address, for example "?collector=Ada Lovelace". A filter Beeline cannot read is refused, never ignored.',
+        'To write an archive for only some of a year\'s specimens, add filters from the Specimens listing to the end of its address, for example "?collector=Ada Lovelace". A filter Beeline cannot read is refused, never ignored.',
       collection: (program: string, scope: string) => `${program} (Ecdysis ${scope})`,
       uploadInto: (collectionId: number, prefix: string) => `Upload into Ecdysis collection ${collectionId}. Its catalog numbers begin ${prefix}.`,
       readOn: (when: string) => `Based on Beeline's read of Ecdysis on ${when}.`,
-      yearHeading: (year: number, specimens: number) => `${year}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"} in the file`,
-      leftOut: "Left out of the file:",
-      leftOutTaxon: (count: number) => `${n(count)} with an obscured taxon (their program has not said whether true coordinates may leave Beeline)`,
+      yearHeading: (year: number, specimens: number) => `${year}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"} in the archive`,
+      leftOut: "Left out of the archive:",
+      leftOutTaxon: (count: number) => `${n(count)} with an obscured taxon (iNaturalist obscures the coordinates of a rare taxon)`,
       leftOutObserver: (count: number) => `${n(count)} whose observer obscured or hid their own observation`,
       leftOutNotDigits: (count: number) => `${n(count)} with a label number that is not digits only`,
       leftOutDisposition: (count: number) => `${n(count)} with a recorded disposition other than "in collection": a missing pin, or a remark that the specimen may be recorded twice`,
       leftOutUnusable: (count: number) => `${n(count)} with a label number that cannot be a catalog number: on two specimens, or longer than Ecdysis allows`,
+      leftOutStale: (count: number) => `${n(count)} whose observation's privacy settings are out of date with iNaturalist's, so whether they are obscured is not known until the next sync`,
       choiceLegend: "Obscured specimens",
       includeTaxon: "Include the specimens whose taxon is obscured",
       includeObserver: "Include the specimens whose observer obscured or hid their observation",
@@ -2890,18 +2891,21 @@ export const en = {
       downloadArchive: "Download archive",
       downloadAssociations: "Download associations",
       archiveDownload: (program: string, year: number) => `Download the ${program} upload archive for ${year}`,
-      associationsDownload: (program: string, year: number) => `Download the ${program} associations file for ${year}`,
+      associationsDownload: (program: string, year: number) => `Download the associations file of the ${program} archive for ${year}`,
       notOfferedHeading: "Years not offered",
-      notOfferedOlder: (year: number, count: number) =>
-        `${year}: ${n(count)} ${count === 1 ? "specimen waits" : "specimens wait"}. Older years are not offered yet.`,
-      notOfferedHeld: (year: number, count: number) =>
-        `${year}: ${n(count)} ${count === 1 ? "specimen waits" : "specimens wait"}, but Ecdysis already holds specimens of this program from that year, so a file for it is not offered.`,
+      notOfferedYear: (year: number, count: number, offered: string) =>
+        `${year}: ${n(count)} ${count === 1 ? "specimen waits" : "specimens wait"}. Files for this collection are offered for ${offered} only; older years wait for a decision.`,
       seeThem: "See them in the Specimens listing",
       unspelled: (values: string) => `These country and state values are written as Beeline holds them, not spelled out: ${values}.`,
       nothing: "Nothing to upload: every specimen of this collection with a label on paper is already in Ecdysis, or is left out for a reason given here.",
-      downloaded: (by: string | null, when: string, year: number, specimens: number) =>
-        `${by ?? "Someone"} downloaded the archive for ${year} (${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}) on ${when}. Beeline gives one archive for each read of Ecdysis, so no second archive is offered. After the upload, read Ecdysis again (the first step above); the associations files stay available.`,
-      downloadedChoice: (taxon: boolean, observer: boolean) =>
+      downloadsHeading: "Archives downloaded and not yet in Ecdysis",
+      downloadsNote:
+        "These archives held specimens that Ecdysis does not hold yet. Delete an older archive, do not upload it: it was made from an earlier read, and uploading it could replace records changed in Ecdysis since. Read Ecdysis again once you have uploaded one.",
+      downloadItem: (by: string | null, when: string, year: number, specimens: number, notYet: number | null, completed: boolean) =>
+        completed
+          ? `${by ?? "Someone"} downloaded the archive for ${year} on ${when}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}${notYet === null ? "" : `, ${n(notYet)} of them not in Ecdysis yet`}.`
+          : `${by ?? "Someone"} began downloading the archive for ${year} on ${when} (${n(specimens)} planned), and it did not finish. It blocks a second archive until the next read.`,
+      downloadChoice: (taxon: boolean, observer: boolean) =>
         taxon && observer
           ? "It included both kinds of obscured specimens."
           : taxon
@@ -2909,7 +2913,12 @@ export const en = {
             : observer
               ? "It included the specimens whose observer obscured their observation."
               : "",
-      beingWritten: "Another archive for this collection is being written now. Wait for it to finish, then reload this page.",
+      downloaded: (by: string | null, when: string, year: number, specimens: number, completed: boolean) =>
+        completed
+          ? `${by ?? "Someone"} downloaded the archive for ${year} (${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}) on ${when}. Beeline gives one archive for each read of Ecdysis, so no second archive is offered. After the upload, read Ecdysis again (the first step above).`
+          : `${by ?? "Someone"} began downloading the archive for ${year} (${n(specimens)} planned) on ${when} and it did not finish. Beeline gives one archive for each read of Ecdysis, so no second archive is offered until Ecdysis has been read again.`,
+      beingWritten: "An archive for this collection is being written now, or was started a moment ago. Wait for it to finish, then reload this page.",
+      associationsUnfinished: "That archive did not finish downloading, so it has no associations file.",
       refused: {
         dataset: (scope: string) =>
           `Beeline reads only ${scope} of this collection, and not the whole of it. An upload adds no record to a dataset, and Ecdysis matches catalog numbers across the whole collection, so Beeline cannot tell which specimens Ecdysis holds and offers no file.`,
@@ -2924,10 +2933,10 @@ export const en = {
         unreadable:
           "Beeline has the archive it downloaded from Ecdysis for this collection but could not read it, so it writes no file. Read Ecdysis now with the button above. If this stays, ask whoever runs Beeline.",
         incomplete:
-          "The archive Beeline downloaded from Ecdysis for this collection holds fewer catalog numbers than Beeline has recorded from Ecdysis, so it is not the whole of what Ecdysis holds and Beeline writes no file. Read Ecdysis now with the button above. If this stays, ask whoever runs Beeline.",
+          "The archive Beeline downloaded from Ecdysis for this collection does not match what its last read loaded: it has a different number of records, or lacks catalog numbers that read recorded. So it is not the whole of what Ecdysis held and Beeline writes no file. Read Ecdysis now with the button above. If this stays, ask whoever runs Beeline.",
       },
       noSpecimensForFile: "No specimens to write for this collection and year.",
-      yearNotOffered: "A file is not offered for this year: older years are not offered yet, and a year in which Ecdysis already holds specimens of the program is not offered.",
+      yearNotOffered: "A file is not offered for this year: files for this collection are offered only for the years set for it, and older years wait for a decision.",
       badQuery: (names: string) =>
         `These query parameters are not filters of the Specimens listing that these files take, or their values are not ones the listing reads: ${names}. Nothing was written. A file is never written with a filter left out.`,
     },

@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { strToU8, zipSync } from "fflate";
 import { createKysely } from "../src/db.js";
 import { cachedArchivePath, ECDYSIS_COLLECTIONS, readMarkerPath, type EcdysisCollection } from "../src/fetch-ecdysis.js";
-import { CURRENT_SEASON, createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { UPLOAD_CONSTANTS } from "../src/app/ecdysis-upload.js";
+import { CURRENT_SEASON, SETTLED_SEASON, createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 /**
  * A store with invented people and specimens for the upload to Ecdysis
@@ -14,6 +15,8 @@ import { CURRENT_SEASON, createMemoryDb, insertCleanSample, rows } from "./helpe
 export const WABA = ECDYSIS_COLLECTIONS.find((c) => c.program === "WaBA")!;
 export const BC = ECDYSIS_COLLECTIONS.find((c) => c.program === "BC")!;
 export const HOUR = 3_600_000;
+/** British Columbia's offered years as the code sets them, before a test changes them. */
+export const BC_OFFERED_YEARS_IN_CODE = [...UPLOAD_CONSTANTS.BC!.years];
 
 type Spec = {
   field: string | null;
@@ -31,6 +34,8 @@ type Spec = {
  * offered files.
  */
 export async function fixture() {
+  // The setting names a written year; a test offers the seasons its fixtures are dated in, never a year it writes.
+  UPLOAD_CONSTANTS.BC!.years = [CURRENT_SEASON, SETTLED_SEASON];
   const { instance, conn } = await createMemoryDb();
   const db = createKysely(instance);
   const person = async (name: string) =>

@@ -133,7 +133,7 @@ describe("the app's store still reaches", () => {
     const archive = join(config.ecdysisDir, "44.zip");
     await writeFile(archive, zipSync({ "occurrences.tab": strToU8("id\tcatalogNumber\n1\tWSDA_1\n2\tWSDA_2\n") }));
     const held = await catalogNumbersInArchive(createKysely(app.instance), archive, config.ecdysisDir);
-    expect([...held].sort()).toEqual(["wsda_1", "wsda_2"]);
+    expect([...held.held].sort()).toEqual(["wsda_1", "wsda_2"]);
   });
 
   test("Ecdysis's taxonomy, fetched into the folder the weekly job uses", async () => {

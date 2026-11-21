@@ -2176,12 +2176,21 @@ export function pagedStream<P extends { rows: readonly unknown[]; last?: boolean
     reported = true;
     timing(storeMs, offset, outcome);
   };
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
+  /**
+   * One step: the header, or one page. True when the stream was given
+   * something, was closed, or ended; false when the page wrote nothing yet (a
+   * compressor holds a short page's bytes back), in which case a stream that
+   * simply returned would never be asked for the next page.
+   */
+  const step = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<boolean> => {
       if (!started) {
         started = true;
-        for (const chunk of writer.head()) controller.enqueue(chunk);
-        return;
+        let any = false;
+        for (const chunk of writer.head()) {
+          controller.enqueue(chunk);
+          any = true;
+        }
+        return any;
       }
       let page: P;
       let chunks: Uint8Array[];
@@ -2206,21 +2215,35 @@ export function pagedStream<P extends { rows: readonly unknown[]; last?: boolean
         console.error(`Download of ${name} failed after ${offset} rows: ${(err as Error).stack ?? String(err)}`);
         if (cancelled) {
           report("cancelled"); // nobody is reading any more; there is no stream to fail
-          return;
+          return true;
         }
         report("failed");
         controller.error(err);
-        return;
+        return true;
       }
       if (cancelled) {
         report("cancelled");
-        return;
+        return true;
       }
-      for (const chunk of chunks) if (chunk.byteLength > 0) controller.enqueue(chunk);
+      let any = false;
+      for (const chunk of chunks) {
+        if (chunk.byteLength > 0) {
+          controller.enqueue(chunk);
+          any = true;
+        }
+      }
       offset += page.rows.length;
       if (page.last ?? page.rows.length < CSV_PAGE_SIZE) {
         report("complete");
         controller.close();
+        return true;
+      }
+      return any;
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      while (!(await step(controller))) {
+        // Nothing was written: fetch the next page rather than wait to be asked.
       }
     },
     // The client went away before the end: what was fetched still cost what

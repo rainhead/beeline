@@ -643,7 +643,8 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
             reason: override_reason,
             observation_now: await localityObservationNow(db, Number(row.sample_id)),
           },
-    host_override: !host_overridden
+    // As the locality's is: a reason is free text and can say where the plant was.
+    host_override: hidden || !host_overridden
       ? null
       : {
           set_by: host_set_by,

@@ -157,7 +157,10 @@ export async function readInatTaxon(
   if (!Array.isArray(results)) throw new Error("iNaturalist's answer had no results list");
   const t = (results as InatTaxonJson[]).find((r) => r.id === id);
   if (t === undefined) return null;
-  if (typeof t.name !== "string" || typeof t.rank !== "string") throw new Error("iNaturalist's answer had no name or rank for the taxon");
+  // A name or rank Beeline could not write to its overlay file and read back is no answer.
+  if (typeof t.name !== "string" || t.name.trim() === "" || typeof t.rank !== "string" || !/^\S+$/.test(t.rank)) {
+    throw new Error("iNaturalist's answer had no usable name or rank for the taxon");
+  }
   return {
     id,
     name: t.name,

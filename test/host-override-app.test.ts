@@ -50,6 +50,7 @@ async function world(signedInAs: "alice" | "sam" = "sam") {
   const { instance, conn } = await createMemoryDb();
   const alice = await person(conn, "Alice Adams", "alice", 1);
   const sam = await person(conn, "Sam Staff", "samstaff", 3);
+  await person(conn, "Bob Barnes", "bob", 2);
   await conn.run(`INSERT INTO person_admin (person_id, granted_by) VALUES (${sam}, 'peter')`);
   const sampleId = await insertCleanSample(conn, {
     collector_id: String(alice), sample_number: "'A-1'", inat_observation_id: "998877",
@@ -90,7 +91,7 @@ async function world(signedInAs: "alice" | "sam" = "sam") {
     if ("problem" in made) throw new Error(made.problem);
     return made.key;
   };
-  const keys = { sam: await keyFor(3, "staff"), samRead: await keyFor(3, "read"), samEdit: await keyFor(3, "edit"), alice: await keyFor(1, "edit") };
+  const keys = { sam: await keyFor(3, "staff"), samRead: await keyFor(3, "read"), samEdit: await keyFor(3, "edit"), alice: await keyFor(1, "edit"), bob: await keyFor(2, "edit") };
   const send = (key: string, path: string, body: unknown) =>
     app.request(`/api/v1${path}`, {
       method: "POST",
@@ -282,9 +283,55 @@ describe("the host through the API", () => {
     expect((await other.json()).message).toContain("Dry runs exist only for edit, collectors and host");
   });
 
+  it("refuses `remove` sent with a taxon or `none`, as the page refuses a plant with no host", async () => {
+    const w = await world();
+    const path = `/samples/${w.sampleId}/host`;
+    for (const body of [{ remove: true, taxon: "53439" }, { remove: true, none: true }]) {
+      const res = await w.send(w.keys.sam, path, body);
+      expect([res.status, (await res.json()).error]).toEqual([400, "invalid_request"]);
+    }
+    expect(w.read).not.toHaveBeenCalled();
+  });
+
   it("is described, so a program can find it", async () => {
     const w = await world();
     const described = await w.get(w.keys.sam, "");
     expect(JSON.stringify(described)).toContain("/samples/:id/host");
+  });
+});
+
+describe("what a host set in Beeline reaches", () => {
+  it("shows in the samples and specimens listings and the samples download, and in no other plant's place", async () => {
+    const w = await world();
+    await w.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${w.sampleId}, 1)`);
+    await w.form(`/samples/${w.sampleId}/host`, { taxon: "53439", note: "the sunflower" });
+    for (const path of ["/samples?scope=all", "/specimens?scope=all"]) {
+      const page = await (await w.app.request(path)).text();
+      expect(page, path).toContain("<i>Eriophyllum</i> <i>lanatum</i>");
+      expect(page, path).not.toContain("<i>Rubus</i>");
+    }
+    const csv = await (await w.app.request("/samples.csv?scope=all")).text();
+    expect(csv).toContain("Eriophyllum lanatum");
+    expect(csv).not.toContain("Rubus");
+  });
+
+  it("is hidden, reason and all, from a reader from whom the sample's location is withheld, as the locality override is", async () => {
+    const w = await world();
+    await w.conn.run(`UPDATE sample SET geoprivacy = 'obscured' WHERE entity_id = ${w.sampleId}`);
+    await w.form(`/samples/${w.sampleId}/host`, { taxon: "53439", note: "on the ridge above the old mill" });
+    const seen = async (key: string) => (await w.get(key, `/samples/${w.sampleId}`)).sample;
+    expect((await seen(w.keys.bob)).location_withheld).toBe(true);
+    expect((await seen(w.keys.bob)).host_override).toBeNull();
+    expect(JSON.stringify(await w.get(w.keys.bob, `/samples/${w.sampleId}`))).not.toContain("old mill");
+    // Staff and the collector see it.
+    expect((await seen(w.keys.sam)).host_override).toMatchObject({ reason: "on the ridge above the old mill" });
+    expect((await seen(w.keys.alice)).host_override).toMatchObject({ reason: "on the ridge above the old mill" });
+  });
+
+  it("is refused to a collector who posts to the page route, and is refused while the sync job runs", async () => {
+    const mine = await world("alice");
+    const res = await mine.form(`/samples/${mine.sampleId}/host`, { taxon: "53439", note: "mine" });
+    expect([res.status, await res.text()]).toEqual([403, "Admins only."]);
+    expect(await mine.overlay()).toEqual([]);
   });
 });

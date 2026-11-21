@@ -372,7 +372,10 @@ export async function applyStaffHost(
   sampleId: number,
   row: Pick<SampleOverlayRow, "base_value" | "value" | "reason">,
   setBy: number | null,
+  /** `transactional`: the write is its own transaction, as a staff point's is; promotion, which is inside one, passes false. */
+  opts: { transactional?: boolean } = {},
 ): Promise<string | null> {
+  const transactional = opts.transactional ?? false;
   if (row.value === "") {
     const held = await rows(
       conn,
@@ -381,13 +384,17 @@ export async function applyStaffHost(
     );
     const b = held[0];
     if (b === undefined) return null;
-    await conn.run(`DELETE FROM sample_host_override WHERE sample_id = $1`, [sampleId] as never);
-    await writeHost(conn, sampleId, {
-      inat_taxon_id: b[0] === null ? null : Number(b[0]),
-      rank: b[1] === null ? null : String(b[1]),
-      name: b[2] === null ? null : String(b[2]),
+    // The sample first and the override last, in one transaction: a failure part
+    // way leaves the override standing, and the sample as it was.
+    await atomically(conn, transactional, async () => {
+      await writeHost(conn, sampleId, {
+        inat_taxon_id: b[0] === null ? null : Number(b[0]),
+        rank: b[1] === null ? null : String(b[1]),
+        name: b[2] === null ? null : String(b[2]),
+      });
+      await followObservationHost(conn, sampleId);
+      await conn.run(`DELETE FROM sample_host_override WHERE sample_id = $1`, [sampleId] as never);
     });
-    await followObservationHost(conn, sampleId);
     return null;
   }
   if (row.reason.trim() === "") return "a floral host needs a reason";
@@ -395,17 +402,19 @@ export async function applyStaffHost(
   if ("problem" in host) return host.problem;
   const base = row.base_value === "" ? { inat_taxon_id: null, rank: null, name: null } : parseHost(row.base_value, true);
   if ("problem" in base) return `base ${base.problem}`;
-  await conn.run(`DELETE FROM sample_host_override WHERE sample_id = $1`, [sampleId] as never);
-  await conn.run(
-    `INSERT INTO sample_host_override (sample_id, host_inat_taxon_id, host_name, host_rank,
-       observed_host_inat_taxon_id, observed_host_name, observed_host_rank, set_by, reason)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [
-      sampleId, host.inat_taxon_id === null ? null : BigInt(host.inat_taxon_id), host.name, host.rank,
-      base.inat_taxon_id === null ? null : BigInt(base.inat_taxon_id), base.name, base.rank, setBy, row.reason,
-    ] as never,
-  );
-  await writeHost(conn, sampleId, host);
+  await atomically(conn, transactional, async () => {
+    await conn.run(`DELETE FROM sample_host_override WHERE sample_id = $1`, [sampleId] as never);
+    await conn.run(
+      `INSERT INTO sample_host_override (sample_id, host_inat_taxon_id, host_name, host_rank,
+         observed_host_inat_taxon_id, observed_host_name, observed_host_rank, set_by, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        sampleId, host.inat_taxon_id === null ? null : BigInt(host.inat_taxon_id), host.name, host.rank,
+        base.inat_taxon_id === null ? null : BigInt(base.inat_taxon_id), base.name, base.rank, setBy, row.reason,
+      ] as never,
+    );
+    await writeHost(conn, sampleId, host);
+  });
   return null;
 }
 
@@ -548,7 +557,7 @@ export async function applySampleOverlay(
     }
 
     if (row.field === "host") {
-      const problem = await applyStaffHost(conn, sampleId, row, setBy);
+      const problem = await applyStaffHost(conn, sampleId, row, setBy, { transactional: opts.transactional });
       if (problem !== null) result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: problem });
       else result.applied++;
       continue;

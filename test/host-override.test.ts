@@ -12,6 +12,7 @@ import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js"
 import { duckdbReader } from "../src/person-change.js";
 import {
   formatHost,
+  hostRowProblem,
   parseHost,
   parseSampleOverlay,
   readSampleOverlay,
@@ -64,6 +65,16 @@ describe("the overlay's host grammar", () => {
     expect(parseHost("1 species Mentha × piperita")).toMatchObject({ name: "Mentha × piperita" });
   });
 
+  it("writes `-` for a rank or name it cannot carry, so a base always reads back", () => {
+    expect(formatHost({ inat_taxon_id: 47604, rank: "", name: null })).toBe("47604 - -");
+    expect(formatHost({ inat_taxon_id: 47604, rank: "sub species", name: "  " })).toBe("47604 - -");
+    expect(formatHost({ inat_taxon_id: null, rank: "", name: "" })).toBe("");
+    expect(parseHost("47604 - -", true)).toEqual({ inat_taxon_id: 47604, rank: null, name: null });
+    expect(hostRowProblem("53439 species Eriophyllum lanatum", "47604 - -")).toBeNull();
+    expect(hostRowProblem("53439 species ", "")).not.toBeNull();
+    expect(hostRowProblem("none", "garbage")).toMatch(/base/);
+  });
+
   it("refuses a value that is not a taxon id, a rank and a name, and accepts `none` and an empty value", () => {
     expect(sampleValueProblem("host", "none")).toBeNull();
     expect(sampleValueProblem("host", "")).toBeNull();
@@ -95,7 +106,7 @@ describe("the taxon a staff member gives", () => {
     expect(parseTaxonRef(" https://www.inaturalist.org/taxa/53439-Eriophyllum-lanatum ")).toBe(53439);
     expect(parseTaxonRef("https://www.inaturalist.org/taxa/53439")).toBe(53439);
     expect(parseTaxonRef("http://inaturalist.org/taxa/53439-Eriophyllum-lanatum?locale=en")).toBe(53439);
-    for (const bad of ["Eriophyllum lanatum", "", "0", "-5", "https://www.inaturalist.org/observations/53439", "https://example.org/taxa/53439", "53439 species"]) {
+    for (const bad of ["Eriophyllum lanatum", "", "0", "-5", "12345678901", "https://www.inaturalist.org/observations/53439", "https://example.org/taxa/53439", "53439 species"]) {
       expect(parseTaxonRef(bad), bad).toBeNull();
     }
   });
@@ -123,6 +134,12 @@ describe("the taxon a staff member gives", () => {
       taxon: { id: 53439, name: "Eriophyllum lanatum", rank: "species" },
     });
     expect(read).not.toHaveBeenCalled();
+    // A cached taxon with a recorded absence is asked about again, whatever the cache says of its lineage.
+    await conn.run(`INSERT INTO inat_taxon_absent (inat_taxon_id) VALUES (53439)`);
+    expect(await judgeHostTaxon(createKysely(instance), read, 53439)).toMatchObject({ ok: true });
+    expect(read).toHaveBeenCalledTimes(1);
+    await conn.run(`DELETE FROM inat_taxon_absent`);
+    read.mockClear();
     // A cached taxon that is not vascular is asked about again: the cache may be old.
     await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES (47219, 'Apis mellifera', 'species', 10, true)`);
     await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (47219, 47219, 0)`);
@@ -144,6 +161,15 @@ describe("reading one taxon from iNaturalist", () => {
     const url = String((fetchImpl.mock.calls[0] as unknown[])[0]);
     expect(url).toContain("https://api.inaturalist.org/v2/taxa/60000?");
     expect(url).toContain("ancestor_ids");
+  });
+
+  it("refuses an answer whose name is blank or whose rank is empty or has a space in it", async () => {
+    const one = (name: string, rank: string) => answer(200, { results: [{ id: 5, name, rank, is_active: true, ancestor_ids: [] }] });
+    await expect(readInatTaxon(5, { fetchImpl: one("   ", "species") })).rejects.toThrow(/usable name or rank/);
+    await expect(readInatTaxon(5, { fetchImpl: one("", "species") })).rejects.toThrow(/usable name or rank/);
+    await expect(readInatTaxon(5, { fetchImpl: one("Rubus", "sub species") })).rejects.toThrow(/usable name or rank/);
+    await expect(readInatTaxon(5, { fetchImpl: one("Rubus", "") })).rejects.toThrow(/usable name or rank/);
+    expect(await readInatTaxon(5, { fetchImpl: one("Rubus", "genus") })).toMatchObject({ name: "Rubus", rank: "genus" });
   });
 
   it("answers null for a taxon iNaturalist does not have, and throws for anything that is not an answer", async () => {
@@ -310,6 +336,23 @@ describe("a floral host staff set stands over the observation's", () => {
     expect(await one("SELECT observed_host_inat_taxon_id, observed_host_name, observed_host_rank FROM sample_host_override")).toEqual([null, "Ericameria nauseosa", "species"]);
     await apply(hostRow("", { reason: "", base_value: "" }));
     expect(await host()).toEqual([null, "Ericameria nauseosa", "species"]);
+  });
+
+  it("leaves the override standing and the sample as it was when removal fails part way", async () => {
+    await stage(obs(7));
+    await promote();
+    await apply(hostRow(SET));
+    // The follow rule reads observation_host, which is gone for the moment: the removal gets as far as restoring the base.
+    await conn.run("ALTER VIEW observation_host RENAME TO observation_host_away");
+    await expect(applySampleOverlay(conn, [hostRow("", { reason: "" })], { transactional: true })).rejects.toThrow();
+    await conn.run("ALTER VIEW observation_host_away RENAME TO observation_host");
+    expect(await count("SELECT count(*) FROM sample_host_override")).toBe(1);
+    expect(await host()).toEqual([53439n, "Eriophyllum lanatum", "species"]);
+    expect(await count("SELECT count(*) FROM sample_host_override_stale")).toBe(0);
+    // And once it works, the same row applies whole.
+    await applySampleOverlay(conn, [hostRow("", { reason: "" })], { transactional: true });
+    expect(await count("SELECT count(*) FROM sample_host_override")).toBe(0);
+    expect(await host()).toEqual([47604n, "Rubus", "genus"]);
   });
 
   it("restores a sample that had no host to having none", async () => {
@@ -647,6 +690,40 @@ describe("the correction", () => {
     expect(s.read).not.toHaveBeenCalled();
   });
 
+  it("is refused while the nightly run or the weekly sweep runs, before iNaturalist is read", async () => {
+    const s = await setup();
+    const busy = { ...s.deps, syncJobRunning: () => true };
+    expect(await setHost(busy, s.sam, s.linked, s.form())).toEqual({ ok: false, refusal: "busy" });
+    expect(s.read).not.toHaveBeenCalled();
+    expect(await s.file()).toEqual([]);
+  });
+
+  it("writes nothing to the file for an answer whose name is blank or whose rank has a space in it", async () => {
+    const s = await setup();
+    for (const answer of [
+      { ...eriophyllum, name: "   " },
+      { ...eriophyllum, rank: "sub species" },
+      { ...eriophyllum, rank: "" },
+    ]) {
+      const deps = { ...s.deps, hostTaxon: vi.fn<HostTaxonReader>(async () => answer) };
+      expect(await setHost(deps, s.sam, s.linked, s.form())).toEqual({
+        ok: false, refusal: "invalid", problem: en.record.sample.staffHost.problems.unwritable,
+      });
+      expect(await setHost(deps, s.sam, s.linked, s.form({ dryRun: true }))).toMatchObject({ refusal: "invalid" });
+    }
+    expect(await s.file()).toEqual([]);
+    expect(await s.hostOf(s.linked)).toEqual([47604n, "Rubus", "genus"]);
+  });
+
+  it("records a base the sample holds with an empty rank and no name, and the file reads back", async () => {
+    const s = await setup();
+    await s.conn.run(`UPDATE sample SET host_rank = '', host_name_as_observed = NULL WHERE entity_id = ${s.linked}`);
+    expect(await setHost(s.deps, s.sam, s.linked, s.form())).toMatchObject({ ok: true, outcome: "saved" });
+    expect((await s.file())[0]).toMatchObject({ base_value: "47604 - -" });
+    expect(await setHost(s.deps, s.sam, s.linked, s.form({ taxon: "", remove: true, note: "" }))).toMatchObject({ ok: true, outcome: "removed" });
+    expect(await s.hostOf(s.linked)).toEqual([47604n, null, null]);
+  });
+
   it("refuses a sample with no observation and no old record, and one entered in Beeline, with a message", async () => {
     const s = await setup();
     expect(await setHost(s.deps, s.sam, s.unlinked, s.form())).toEqual({ ok: false, refusal: "no_host_key" });
@@ -666,4 +743,36 @@ describe("the correction", () => {
 test("a host staff set goes when its sample is deleted", async () => {
   const { DELETED_WITH_SAMPLE } = await import("../src/trap-sample.js");
   expect(DELETED_WITH_SAMPLE).toContain("sample_host_override");
+});
+
+describe("a sample from the old Beeline that gains an observation by the free link", () => {
+  it("keeps its one row under the old record's key through a second save and a removal", async () => {
+    const { instance, conn: c } = await promotedStore("occurrences");
+    const [[sampleId]] = (await rows(c, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00657'`)) as [[number]];
+    const [[legacyId]] = (await rows(c, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
+    const paths = await scratchPaths();
+    const deps: CorrectionDeps = {
+      db: createKysely(instance), conn: c, correctionsPath: paths.correctionsPath, sampleOverlayPath: paths.sampleOverlayPath,
+      hostTaxon: fakeReader(), samplePaths: { log: paths.sampleChangesPath, state: paths.sampleStatePath }, syncJobRunning: () => false,
+    };
+    const sam: Actor = { personId: 1, signedInPersonId: 1, login: "samstaff", staff: true, impersonating: false };
+    const form = (extra: Partial<StaffHostFormInput> = {}): StaffHostFormInput => ({
+      taxon: "53439", none: false, remove: false, note: "because", problemFor: hostProblemFor(en), ...extra,
+    });
+    const file = () => readSampleOverlay(paths.sampleOverlayPath);
+    const before = (await rows(c, `SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${sampleId}`))[0];
+
+    expect(await setHost(deps, sam, Number(sampleId), form())).toMatchObject({ ok: true, outcome: "saved" });
+    expect((await file()).map((r) => r.sample_ref)).toEqual([`legacy:${legacyId}`]);
+
+    // The free link: the sample now carries an observation.
+    await c.run(`UPDATE sample SET inat_observation_id = 777 WHERE entity_id = ${sampleId}`);
+    expect(await setHost(deps, sam, Number(sampleId), form({ taxon: "", none: true, note: "no flower after all" }))).toMatchObject({ ok: true, outcome: "saved" });
+    expect((await file()).map((r) => [r.sample_ref, r.value])).toEqual([[`legacy:${legacyId}`, "none"]]);
+
+    expect(await setHost(deps, sam, Number(sampleId), form({ taxon: "", remove: true, note: "" }))).toMatchObject({ ok: true, outcome: "removed" });
+    expect((await file()).map((r) => [r.sample_ref, r.value])).toEqual([[`legacy:${legacyId}`, ""]]);
+    expect((await rows(c, `SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${sampleId}`))[0]).toEqual(before);
+    expect(await rows(c, "SELECT 1 FROM sample_host_override")).toEqual([]);
+  });
 });

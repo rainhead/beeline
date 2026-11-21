@@ -177,14 +177,31 @@ export function parseHost(value: string, base = false): OverlayHost | { problem:
   const id = m[1] === "-" ? null : /^[1-9]\d{0,11}$/.test(m[1]!) ? Number(m[1]) : undefined;
   if (id === undefined) return { problem: `'${m[1]}' is not an iNaturalist taxon id` };
   const rank = m[2] === "-" ? null : m[2]!;
-  const name = m[3] ?? null;
+  const name = m[3] === undefined || m[3] === "-" ? null : m[3];
   if (!base && (id === null || rank === null || name === null)) return { problem: `a floral host is ${shape}` };
   return { inat_taxon_id: id, rank, name };
 }
 
 export function formatHost(h: OverlayHost): string {
-  if (h.inat_taxon_id === null && h.rank === null && h.name === null) return "";
-  return [h.inat_taxon_id === null ? "-" : String(h.inat_taxon_id), h.rank ?? "-", ...(h.name === null ? [] : [h.name.trim()])].join(" ");
+  // A part the grammar cannot carry is unknown: an empty or blank name, and a rank that is empty or has a space in it.
+  const rank = h.rank !== null && /^\S+$/.test(h.rank) ? h.rank : null;
+  const name = h.name !== null && h.name.trim() !== "" ? h.name.trim() : null;
+  if (h.inat_taxon_id === null && rank === null && name === null) return "";
+  return [h.inat_taxon_id === null ? "-" : String(h.inat_taxon_id), rank ?? "-", name ?? "-"].join(" ");
+}
+
+/**
+ * Why a host row cannot be written to the file, or null if it can: the value
+ * and the base are held to what `parseSampleOverlay` will hold them to when
+ * the file is read, since a row the reader refuses stops every later save,
+ * promotion and boot.
+ */
+export function hostRowProblem(value: string, baseValue: string): string | null {
+  const bad = sampleValueProblem("host", value);
+  if (bad !== null) return bad;
+  if (baseValue === "") return null;
+  const base = parseHost(baseValue, true);
+  return "problem" in base ? `base ${base.problem}` : null;
 }
 
 /** Why this value cannot be stored for this field, or null if it can. */

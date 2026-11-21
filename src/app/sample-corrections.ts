@@ -1379,7 +1379,7 @@ export type StaffHostCorrectionResult =
     }
   | Common
   | StaffOnly
-  | Refused<"unavailable" | "no_host_key" | "inat_unreachable">
+  | Refused<"unavailable" | "no_host_key" | "inat_unreachable" | "busy">
   | Invalid
   | Unresolved;
 
@@ -1387,7 +1387,8 @@ export type StaffHostCorrectionResult =
  * Staff set the sample's floral host, say it has none, or go back to following
  * iNaturalist (beeline-hlay). Staff only, refused while impersonating, and
  * for a sample that has an observation or old Beeline records, which a host
- * can be kept against (`hostAnchor`). Unlike the others it reads from
+ * can be kept against (`hostAnchor`), and while the nightly run or the weekly
+ * sweep runs. Unlike the others it reads from
  * iNaturalist, once the form is in hand and before the sample's turn is
  * taken, so the answer is not waited for inside the queue: a request that
  * carries its input as a value therefore does not take its turn "at once"
@@ -1405,6 +1406,8 @@ export function setHost(deps: CorrectionDeps, actor: Actor, sampleId: number, in
     const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id };
     const anchor = await hostAnchor(deps, target);
     if (anchor === null) return refused("no_host_key");
+    // As the point's corrections are: the nightly run and the weekly sweep rewrite samples wholesale.
+    if (deps.syncJobRunning()) return refused("busy");
     return { ready: { target, anchor, conn } };
   };
   type Checked = { form: StaffHostFormInput; choice: HostChoice } | { form: StaffHostFormInput; refusal: Invalid | Refused<"inat_unreachable"> };
@@ -1430,7 +1433,7 @@ export function setHost(deps: CorrectionDeps, actor: Actor, sampleId: number, in
     if ("refusal" in checked) return checked.refusal;
     const { form, choice } = checked;
     const dryRun = form.dryRun === true;
-    const result = await setStaffHost({ db: deps.db, conn, sampleOverlayPath: deps.sampleOverlayPath }, target, anchor, {
+    const result = await setStaffHost({ db: deps.db, conn, printWriter: deps.printWriter, sampleOverlayPath: deps.sampleOverlayPath }, target, anchor, {
       choice,
       note: form.note,
       author: actor.login,

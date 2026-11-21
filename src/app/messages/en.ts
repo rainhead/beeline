@@ -1254,7 +1254,7 @@ export const en = {
         ],
         /** The pencil, for a screen reader: it has no visible words. */
         open: "Change the floral host",
-        hint: "The plant the bees were collected from. It replaces the observation's, and stays when iNaturalist changes, until someone chooses to follow iNaturalist again. Say why: the reason is kept with the change.",
+        hint: "Replaces the observation's plant until someone chooses to follow iNaturalist again.",
         hintNoObservation: "This sample has no iNaturalist observation, so the floral host set here stands until it is changed here.",
         taxon: "Plant on iNaturalist",
         taxonHint: "The address of the plant's iNaturalist page, or its taxon number. For example, https://www.inaturalist.org/taxa/53439-Eriophyllum-lanatum.",
@@ -1264,6 +1264,7 @@ export const en = {
         remove: "Follow iNaturalist again",
         /** The refusals, in the order they are checked. */
         problems: {
+          unwritable: "Beeline cannot record that plant, because the name or rank iNaturalist gave is blank or has a space where there should not be one, or the sample's present host cannot be written down. Nothing was saved.",
           reason: "A floral host needs a reason. Say why it is being changed.",
           taxon_needed: "Give the plant's iNaturalist page address or taxon number, or say the sample has no floral host.",
           both: "Give a plant, or say the sample has no floral host, but not both.",
@@ -1278,9 +1279,14 @@ export const en = {
         /** Nothing was saved, because iNaturalist could not be asked to check the taxon. */
         unreachable: "Beeline could not reach iNaturalist to check that plant. Nothing was saved. Try again in a minute.",
         unavailable: "This can't be done right now. Try again in a minute.",
+        /** Refused while the overnight sync runs, which would undo or race the change. */
+        busy: "Beeline is syncing with iNaturalist right now. Try again once it has finished.",
+        /** The change is in the file, and applying it to the store lost a write conflict. */
+        notApplied:
+          "Your change is recorded, but Beeline could not finish applying it just now. It will be applied at the next promotion, overnight, and sending the same request again applies it now.",
         /** A sample with neither an observation nor an old Beeline record has nothing to keep a host against. */
         noKey:
-          "This sample has no iNaturalist observation and no old Beeline record, so a floral host has nothing to be kept against. A sample entered in Beeline is a trap sample, and a trap's plant is not a floral host.",
+          "This sample is not linked to an iNaturalist observation or to old Beeline records. Samples entered in Beeline are trap samples, and a trap's plant is not a floral host.",
       },
       /**
        * Staff set the coordinates (beeline-942), on the same terms as the

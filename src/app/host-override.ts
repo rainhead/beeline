@@ -7,11 +7,13 @@ import {
   resolveOldRecordSample,
   resolveObservationSample,
 } from "../apply-sample-overlay.js";
+import { withPrintRunLock } from "../print-run.js";
 import { readInatTaxon, type InatTaxonAnswer } from "../fetch-inat-taxa.js";
 import {
   legacyRecordRef,
   NO_HOST,
   observationRef,
+  hostRowProblem,
   parseSampleRef,
   readSampleOverlay,
   upsertSampleOverlay,
@@ -53,7 +55,7 @@ export interface HostTaxon {
 }
 
 /** Why a plant cannot be set as the host, or that iNaturalist could not be asked. */
-export type HostProblem = "reason" | "taxon_needed" | "both" | "address" | "unknown" | "inactive" | "not_vascular" | "unchanged";
+export type HostProblem = "unwritable" | "reason" | "taxon_needed" | "both" | "address" | "unknown" | "inactive" | "not_vascular" | "unchanged";
 
 /**
  * The taxon an iNaturalist page address or a bare number names: the id in
@@ -63,8 +65,8 @@ export type HostProblem = "reason" | "taxon_needed" | "both" | "address" | "unkn
  */
 export function parseTaxonRef(raw: string): number | null {
   const s = raw.trim();
-  if (/^[1-9]\d{0,11}$/.test(s)) return Number(s);
-  const link = /^(?:https?:\/\/)?(?:www\.)?inaturalist\.org\/taxa\/([1-9]\d{0,11})(?:-[^/?#\s]*)?\/?(?:[?#].*)?$/i.exec(s);
+  if (/^[1-9]\d{0,9}$/.test(s)) return Number(s);
+  const link = /^(?:https?:\/\/)?(?:www\.)?inaturalist\.org\/taxa\/([1-9]\d{0,9})(?:-[^/?#\s]*)?\/?(?:[?#].*)?$/i.exec(s);
   return link === null ? null : Number(link[1]);
 }
 
@@ -77,7 +79,8 @@ export type HostJudgement =
 
 /**
  * Whether this taxon may be a floral host, and what it is called. A taxon the
- * cache already holds, active and with Tracheophyta in its lineage, is taken
+ * cache already holds, active, with Tracheophyta in its lineage and with no
+ * recorded absence (inat_taxon_absent), is taken
  * as it is and iNaturalist is not asked. Otherwise iNaturalist is asked, and
  * the answer judged: it must exist, be active, and have Tracheophyta in its
  * lineage (or be Tracheophyta). An inactive taxon is refused with what
@@ -88,7 +91,8 @@ export async function judgeHostTaxon(db: Kysely<Database>, read: HostTaxonReader
   const cached = await sql<{ name: string; rank: string; is_active: boolean; vascular: boolean }>`
     SELECT t.name, t.rank, t.is_active,
            EXISTS (SELECT 1 FROM inat_taxon_ancestor a
-                   WHERE a.inat_taxon_id = t.inat_taxon_id AND a.ancestor_id = ${TRACHEOPHYTA}) AS vascular
+                   WHERE a.inat_taxon_id = t.inat_taxon_id AND a.ancestor_id = ${TRACHEOPHYTA})
+             AND NOT EXISTS (SELECT 1 FROM inat_taxon_absent ab WHERE ab.inat_taxon_id = t.inat_taxon_id) AS vascular
     FROM inat_taxon t WHERE t.inat_taxon_id = ${id}`.execute(db);
   const c = cached.rows[0];
   if (c !== undefined && c.is_active && c.vascular) return { ok: true, taxon: { id, name: c.name, rank: c.rank } };
@@ -114,6 +118,13 @@ export async function judgeHostTaxon(db: Kysely<Database>, read: HostTaxonReader
 
 export interface StaffHostDeps {
   db: Kysely<Database>;
+  /**
+   * The connection the write's transaction runs on, behind the print runs'
+   * lock, as a staff point's does (src/app/locality-override.ts): the app's own
+   * `conn` is shared by every request, so a BEGIN there would take other
+   * requests' statements into the transaction. Absent, `conn` is used under the lock.
+   */
+  printWriter?: DuckDBConnection;
   /** For the overlay applier; absent in a test app that only writes the file. */
   conn?: DuckDBConnection;
   sampleOverlayPath: string;
@@ -215,7 +226,11 @@ export async function setStaffHost(
     const hasName = held[0]?.[1] !== null && held[0]?.[1] !== undefined;
     if (host === null ? id === null && !hasName : id === host.id) return { outcome: "invalid", problem: "unchanged" };
   }
+  // The grammar reads the rank as one word and the name as the rest of the line, so a rank with a
+  // space in it would read back as a different name: it is refused here, where the file cannot say so.
+  if (host !== null && (!/^\S+$/.test(host.rank) || host.name.trim() === "")) return { outcome: "invalid", problem: "unwritable" };
   const value = host === null ? NO_HOST : `${host.id} ${host.rank} ${host.name.trim()}`;
+  if (hostRowProblem(value, "") !== null) return { outcome: "invalid", problem: "unwritable" };
   if (input.dryRun === true) return { outcome: "saved", host };
   // Read in this turn, so a second save keeps the first base.
   const base_value = await currentHostOf(conn, sample.entity_id);
@@ -228,11 +243,17 @@ async function write(
   row: Omit<SampleOverlayRow, "sample_ref" | "field">,
   done: StaffHostResult,
 ): Promise<StaffHostResult> {
+  // Before anything durable: a row the file's reader refuses would stop every
+  // later save, promotion and boot, so it is held to the reader's own rules.
+  if (hostRowProblem(row.value, row.base_value) !== null) return { outcome: "invalid", problem: "unwritable" };
   const full: SampleOverlayRow = { sample_ref: anchor, field: "host", ...row };
-  // Durability before immediacy: if the file write fails, nothing applied.
-  await upsertSampleOverlay(deps.sampleOverlayPath, [full]);
-  const applied = await applySampleOverlay(deps.conn, [full]);
-  const first = applied.unresolved[0];
-  if (first !== undefined) return { outcome: "unresolved", reason: first.reason };
-  return done;
+  const writer = deps.printWriter ?? deps.conn;
+  return withPrintRunLock(async () => {
+    // Durability before immediacy: if the file write fails, nothing applied.
+    await upsertSampleOverlay(deps.sampleOverlayPath, [full]);
+    const applied = await applySampleOverlay(writer, [full], { transactional: true });
+    const first = applied.unresolved[0];
+    if (first !== undefined) return { outcome: "unresolved", reason: first.reason } as StaffHostResult;
+    return done;
+  });
 }

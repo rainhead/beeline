@@ -153,7 +153,7 @@ const REFUSALS = {
     status: 409,
     error: "no_host_key",
     message:
-      "This sample has no iNaturalist observation and no old Beeline record, so a floral host has nothing to be kept against. A sample entered in Beeline is a trap sample, and a trap's plant is not a floral host.",
+      "This sample is not linked to an iNaturalist observation or to old Beeline records. Samples entered in Beeline are trap samples, and a trap's plant is not a floral host.",
   },
   inat_unreachable: {
     status: 503,
@@ -607,14 +607,20 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
   // with the reason that is required; `remove` goes back to following iNaturalist and needs none.
   endpoint(
     "host",
-    (b) => ({
+    (b) => {
+      // As the page refuses a plant together with no host: one thing at a time.
+      if (b.remove === true && ((b.taxon !== undefined && text(b.taxon).trim() !== "") || b.none === true)) {
+        throw new BadBody('"remove" cannot be sent with "taxon" or "none". Remove the host, or set one, in separate requests.');
+      }
+      return {
       taxon: b.taxon === undefined ? "" : text(b.taxon),
       none: b.none === true,
       remove: b.remove === true,
       note: (b.note as string | undefined) ?? "",
       dryRun: b.dry_run === true,
       problemFor: hostProblemFor(corrections!.messages),
-    }),
+      };
+    },
     { taxon: "text_or_number", none: "boolean", remove: "boolean", note: "string", dry_run: "boolean" },
     [],
     setHost,

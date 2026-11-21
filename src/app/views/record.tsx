@@ -441,7 +441,7 @@ function HostEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
       <Meta block>{sample.inat_observation_id === null ? t.hintNoObservation : t.hint}</Meta>
       <TextField id="host-taxon" name="taxon" label={t.taxon} hint={t.taxonHint} />
       <CheckboxField id="host-none" name="none" label={t.noHost} checked={false} />
-      <TextField id="host-note" name="note" label={t.note} />
+      <TextField id="host-note" name="note" label={t.note} required />
     </InlineEdit>
   );
 }

@@ -45,6 +45,7 @@ export function TextField({
   placeholder,
   base,
   list,
+  required,
 }: {
   id: string;
   name: string;
@@ -55,11 +56,13 @@ export function TextField({
   base?: string | null;
   /** The id of a `<datalist>` whose options the browser offers as the person types. */
   list?: string;
+  /** The browser refuses a blank value before the form is sent; the server's check stays. */
+  required?: boolean;
 }) {
   return (
     <Field id={id} label={label} hint={hint}>
       {base !== undefined && <input type="hidden" name={`base:${name}`} value={base ?? ""} />}
-      <input id={id} name={name} type="text" value={value ?? ""} placeholder={placeholder} list={list} />
+      <input id={id} name={name} type="text" value={value ?? ""} placeholder={placeholder} list={list} required={required} />
     </Field>
   );
 }

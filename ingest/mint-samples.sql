@@ -251,12 +251,17 @@ WHERE sample.inat_observation_id = pl.inat_id
 -- Read through observation_host, so a taxon that means no host (Homo sapiens,
 -- a user's flag; beeline-rfkj.11) reads as an observation with no taxon: a
 -- flag added after a plant was identified does not overwrite the plant.
+--
+-- Not a sample whose host staff set in Beeline (sample_host_override,
+-- beeline-hlay): it keeps what they set, however the observation changes,
+-- until they choose to follow iNaturalist again. Both statements below skip it.
 UPDATE sample SET
   host_inat_taxon_id    = f.host_taxon_id,
   host_name_as_observed = f.host_taxon_name,
   host_rank             = f.host_taxon_rank
 FROM observation_host f
 WHERE sample.inat_observation_id = f.inat_id
+  AND NOT EXISTS (SELECT 1 FROM sample_host_override o WHERE o.sample_id = sample.entity_id)
   AND f.host_taxon_id IS NOT NULL
   AND (sample.host_inat_taxon_id    IS DISTINCT FROM f.host_taxon_id
     OR sample.host_name_as_observed IS DISTINCT FROM f.host_taxon_name
@@ -281,6 +286,7 @@ UPDATE sample SET
 FROM observation_field f
 JOIN inat_taxon_not_a_host x ON x.inat_taxon_id = f.host_taxon_id
 WHERE sample.inat_observation_id = f.inat_id
+  AND NOT EXISTS (SELECT 1 FROM sample_host_override o WHERE o.sample_id = sample.entity_id)
   AND sample.host_inat_taxon_id IN (
     SELECT inat_taxon_id FROM inat_taxon_ancestor
     GROUP BY inat_taxon_id

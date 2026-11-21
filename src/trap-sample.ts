@@ -613,6 +613,7 @@ export const DELETED_WITH_SAMPLE = [
   "sample_collector",
   "sample_entry",
   "sample_hold",
+  "sample_host_override",
   "sample_locality_candidate",
   "sample_locality_override",
   "sample_location",

@@ -112,3 +112,34 @@ FROM (
 ) d
 WHERE d.distance_m > 100;
 COMMENT ON VIEW sample_location_label_diverged IS 'Samples Beeline has printed a label for, with no staff-set point, whose observation now puts them more than 100 m from where the sample (and so its labels) says: where iNaturalist puts it now (observation_place has the country, state and county). /samples/:id offers staff the observation''s location from here (beeline-1kb.17.1).';
+
+-- The same two statements for a floral host staff set (beeline-hlay). Stale:
+-- the override and the sample disagree about any of the three host columns.
+-- The applier writes both and the follow rule skips an overridden sample, so
+-- this is empty by construction, and asserted empty by test.
+CREATE VIEW sample_host_override_stale AS
+SELECT o.sample_id, o.host_inat_taxon_id AS override_host_inat_taxon_id, o.host_name AS override_host_name, o.host_rank AS override_host_rank,
+       s.host_inat_taxon_id AS sample_host_inat_taxon_id, s.host_name_as_observed AS sample_host_name, s.host_rank AS sample_host_rank
+FROM sample_host_override o
+JOIN sample s ON s.entity_id = o.sample_id
+WHERE s.host_inat_taxon_id IS DISTINCT FROM o.host_inat_taxon_id
+   OR s.host_name_as_observed IS DISTINCT FROM o.host_name
+   OR s.host_rank IS DISTINCT FROM o.host_rank;
+COMMENT ON VIEW sample_host_override_stale IS 'Host overrides the sample row disagrees with, in any of the three host columns. Empty by construction; a row here means a writer bypassed src/apply-sample-overlay.ts.';
+
+-- Diverged: the observation now names a plant that is neither what the sample
+-- held when staff set the host nor what staff set. The override stands, and
+-- the sample page says what iNaturalist now gives. An observation that names
+-- no plant is not a third value, since the follow rule ignores one too
+-- (observation_host is NULL where the taxon means no host).
+CREATE VIEW sample_host_override_diverged AS
+SELECT o.sample_id, o.host_inat_taxon_id AS override_host_inat_taxon_id, o.observed_host_inat_taxon_id,
+       h.host_taxon_id AS observation_host_inat_taxon_id, h.host_taxon_name AS observation_host_name,
+       h.host_taxon_rank AS observation_host_rank
+FROM sample_host_override o
+JOIN sample s ON s.entity_id = o.sample_id
+JOIN observation_host h ON h.inat_id = s.inat_observation_id
+WHERE h.host_taxon_id IS NOT NULL
+  AND h.host_taxon_id IS DISTINCT FROM o.host_inat_taxon_id
+  AND h.host_taxon_id IS DISTINCT FROM o.observed_host_inat_taxon_id;
+COMMENT ON VIEW sample_host_override_diverged IS 'Host overrides whose observation has since moved to a third plant: the override stands, and /samples/:id shows staff what iNaturalist now gives.';

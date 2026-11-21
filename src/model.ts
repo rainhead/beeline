@@ -1044,6 +1044,40 @@ export interface SampleLocationOverrideTable {
   reason: string | null;
 }
 
+/** A floral host staff set, or their statement that there is none, which promotion never overwrites (beeline-hlay). */
+export interface SampleHostOverrideTable {
+  sample_id: number;
+  /** Null, with the name and rank, where staff say the sample has no floral host. */
+  host_inat_taxon_id: BigIntCol | null;
+  host_name: string | null;
+  host_rank: string | null;
+  /** What the sample held as its host when this was written: the merge base, and what removal restores. */
+  observed_host_inat_taxon_id: BigIntCol | null;
+  observed_host_name: string | null;
+  observed_host_rank: string | null;
+  set_by: number | null;
+  reason: string;
+}
+
+export interface SampleHostOverrideStaleView {
+  sample_id: number;
+  override_host_inat_taxon_id: BigIntCol | null;
+  override_host_name: string | null;
+  override_host_rank: string | null;
+  sample_host_inat_taxon_id: BigIntCol | null;
+  sample_host_name: string | null;
+  sample_host_rank: string | null;
+}
+
+export interface SampleHostOverrideDivergedView {
+  sample_id: number;
+  override_host_inat_taxon_id: BigIntCol | null;
+  observed_host_inat_taxon_id: BigIntCol | null;
+  observation_host_inat_taxon_id: BigIntCol;
+  observation_host_name: string | null;
+  observation_host_rank: string | null;
+}
+
 /** Where an observation says it was, believed true (schema/105). */
 export interface ObservationLocationView {
   inat_id: BigIntCol;
@@ -2097,6 +2131,9 @@ export interface Database {
   sample_locality_override: SampleLocalityOverrideTable;
   sample_locality_override_stale: SampleLocalityOverrideStaleView;
   sample_locality_override_diverged: SampleLocalityOverrideDivergedView;
+  sample_host_override: SampleHostOverrideTable;
+  sample_host_override_stale: SampleHostOverrideStaleView;
+  sample_host_override_diverged: SampleHostOverrideDivergedView;
   sample_location_override: SampleLocationOverrideTable;
   sample_location_override_stale: SampleLocationOverrideStaleView;
   sample_location_override_diverged: SampleLocationOverrideDivergedView;

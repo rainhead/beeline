@@ -315,6 +315,70 @@ UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host;`);
   });
 });
 
+describe("a floral host staff set (0115)", () => {
+  const NEW_VIEWS = ["sample_host_override_stale", "sample_host_override_diverged"];
+  const viewSql = (c: DuckDBConnection, name: string) =>
+    rows(c, `SELECT sql, comment FROM duckdb_views() WHERE view_name = '${name}' AND NOT internal`);
+  const tableShape = async (c: DuckDBConnection) => [
+    await rows(c, `SELECT column_name, data_type, is_nullable, comment FROM duckdb_columns() WHERE table_name = 'sample_host_override' ORDER BY column_index`),
+    await rows(c, `SELECT comment FROM duckdb_tables() WHERE table_name = 'sample_host_override'`),
+    await rows(c, `SELECT constraint_type, constraint_text FROM duckdb_constraints() WHERE table_name = 'sample_host_override' ORDER BY constraint_type, constraint_text`),
+  ];
+  const comments = async (c: DuckDBConnection) => [
+    await rows(c, "SELECT comment FROM duckdb_columns() WHERE table_name = 'sample' AND column_name = 'host_inat_taxon_id'"),
+    await rows(c, "SELECT comment FROM duckdb_columns() WHERE table_name = 'sample_host' AND column_name = 'resolved_by'"),
+  ];
+
+  test("adds the table, the two views and the rule's new reading to a store that lacks them, and the comments say what the schema's do", async () => {
+    const { conn: fresh } = await createMemoryDb();
+
+    // Put the store back as it stood before: no table, no views, the rule reading the observation alone and the two old comments.
+    for (const view of NEW_VIEWS) await conn.run(`DROP VIEW ${view}`);
+    await conn.run("DROP TABLE sample_host_override");
+    await conn.run(`CREATE OR REPLACE VIEW qc_rule_non_tracheophyte_host AS
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'non_tracheophyte_host' AS rule_name,
+       CASE WHEN f.host_taxon_name IS NULL
+            THEN concat('observation taxon ', CAST(f.host_taxon_id AS TEXT), ' is not a vascular plant')
+       END AS details,
+       f.host_taxon_name AS detail_taxon_name,
+       f.host_taxon_rank AS detail_taxon_rank
+FROM sample s
+JOIN observation_host f ON f.inat_id = s.inat_observation_id
+WHERE f.host_is_tracheophyte IS FALSE`);
+    await conn.run("COMMENT ON COLUMN sample.host_inat_taxon_id IS 'old'");
+    await conn.run("COMMENT ON COLUMN sample_host.resolved_by IS 'old'");
+    expect(await schemaDrift(conn)).toContain("missing: sample_host_override");
+
+    // The rule as it stood still finds a bee, and a row of the old store is not disturbed.
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "7", host_inat_taxon_id: "47219", host_name_as_observed: "'Apis mellifera'", host_rank: "'species'" });
+    await conn.run(`INSERT INTO observation_field (inat_id, user_id, host_taxon_id, host_taxon_name, host_taxon_rank, host_is_tracheophyte)
+                    VALUES (7, 1, 47219, 'Apis mellifera', 'species', false)`);
+    expect(await rows(conn, `SELECT count(*) FROM qc_finding WHERE rule_name = 'non_tracheophyte_host' AND sample_id = ${sampleId}`)).toEqual([[1n]]);
+
+    const name = "0115-a-floral-host-staff-set.sql";
+    await copyFile(join(MIGRATIONS_DIR, name), join(dir, name));
+    expect(await migrate(conn, { dir })).toEqual([name]);
+
+    // The migrated store equals one built from schema/, comments and constraints included, not only by name.
+    expect(await tableShape(conn)).toEqual(await tableShape(fresh));
+    for (const view of [...NEW_VIEWS, "qc_rule_non_tracheophyte_host", "qc_finding"]) {
+      expect(await viewSql(conn, view), view).toEqual(await viewSql(fresh, view));
+    }
+    expect(await comments(conn)).toEqual(await comments(fresh));
+    expect(await schemaDrift(conn)).toEqual([]);
+
+    // And it works: the rule still finds the bee until staff name a host, and the table refuses a blank reason.
+    expect(await rows(conn, `SELECT count(*) FROM qc_finding WHERE rule_name = 'non_tracheophyte_host' AND sample_id = ${sampleId}`)).toEqual([[1n]]);
+    await conn.run(`INSERT INTO sample_host_override (sample_id, reason) VALUES (${sampleId}, 'a bee off the road')`);
+    expect(await rows(conn, `SELECT count(*) FROM qc_finding WHERE rule_name = 'non_tracheophyte_host' AND sample_id = ${sampleId}`)).toEqual([[0n]]);
+    const second = await insertCleanSample(conn, { sample_number: "'2'" });
+    await expect(conn.run(`INSERT INTO sample_host_override (sample_id, reason) VALUES (${second}, '')`)).rejects.toThrow(/CHECK/i);
+  });
+});
+
 describe("abbreviating each program (0089)", () => {
   test("gives every program its code as its abbreviation, and Washington WABA, on a store whose Washington row is referenced", async () => {
     // The table arrives with the schema; take it away to stand for a store

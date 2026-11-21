@@ -10,9 +10,11 @@ import { parseCsv } from "./corrections.js";
  * Fields: `locality` (beeline-649) and `coordinates` (beeline-942), which
  * stand over what the observation says — a locality is also written here
  * when a collector adopts the one Beeline names from the coordinates
- * (beeline-7i6), with their login as the author; `hold` (beeline-plu), which keeps the
- * sample from printing; and `waiver:<rule>` (beeline-1kb.9), one per flag,
- * which lets a blocking flag staff judged fine print anyway.
+ * (beeline-7i6), with their login as the author; `host` (beeline-hlay), the
+ * sample's floral host, which stops following the observation; `hold`
+ * (beeline-plu), which keeps the sample from printing; and `waiver:<rule>`
+ * (beeline-1kb.9), one per flag, which lets a blocking flag staff judged fine
+ * print anyway.
  *
  * The key is the design problem again. A sample's `entity_id` is a per-store
  * draw a rebuild redraws (beeline-ten), and the legacy corrections' Mongo
@@ -28,7 +30,7 @@ import { parseCsv } from "./corrections.js";
  * already knows how to name it; the staff screen hides the split. The one
  * thing the corrections overlay cannot say is a staff point of its own, so
  * a coordinates row may name such a sample by its first old record,
- * `legacy:<_id>` (legacyRecordRef).
+ * `legacy:<_id>` (legacyRecordRef). A host row may too, for the same reason.
  *
  * Unlike the person overlay a row carries a `base_value`, because these
  * decisions author over UPSTREAM data (CONTEXT.md, Data handling): the
@@ -39,7 +41,7 @@ import { parseCsv } from "./corrections.js";
  * sample, or two, is reported and never guessed at.
  */
 
-export const SAMPLE_OVERLAY_FIELDS = ["locality", "coordinates", "hold"] as const;
+export const SAMPLE_OVERLAY_FIELDS = ["locality", "coordinates", "host", "hold"] as const;
 /** A waiver's field names the flag it waives: `waiver:locality_format`. */
 export type WaiverField = `waiver:${string}`;
 export type SampleOverlayField = (typeof SAMPLE_OVERLAY_FIELDS)[number] | WaiverField;
@@ -150,6 +152,41 @@ export function formatPoint(p: OverlayPoint): string {
   return parts.join(" ");
 }
 
+/**
+ * A floral host as the overlay writes it: `<taxon id> <rank> <name>`, the name
+ * being the rest of the line, as in `53439 species Eriophyllum lanatum`. On a
+ * base value any part may be unknown, written `-`: a host that was only a name
+ * has no id (`- species Eriophyllum lanatum`). On a value, which is what staff
+ * set, all three are known; `none` says the sample has no floral host. The
+ * name and rank are in the file so a rebuild or a replay never has to ask the
+ * taxon cache, and an iNaturalist rename cannot rewrite a host staff set.
+ */
+export interface OverlayHost {
+  inat_taxon_id: number | null;
+  rank: string | null;
+  name: string | null;
+}
+
+/** The value of a host row that says the sample has no floral host. */
+export const NO_HOST = "none";
+
+export function parseHost(value: string, base = false): OverlayHost | { problem: string } {
+  const m = /^(\S+)\s+(\S+)(?:\s+([\s\S]*\S))?$/.exec(value.trim());
+  const shape = base ? "'<taxon id or -> <rank or -> <name>'" : `'<taxon id> <rank> <name>' or '${NO_HOST}'`;
+  if (m === null) return { problem: `a floral host is ${shape}` };
+  const id = m[1] === "-" ? null : /^[1-9]\d{0,11}$/.test(m[1]!) ? Number(m[1]) : undefined;
+  if (id === undefined) return { problem: `'${m[1]}' is not an iNaturalist taxon id` };
+  const rank = m[2] === "-" ? null : m[2]!;
+  const name = m[3] ?? null;
+  if (!base && (id === null || rank === null || name === null)) return { problem: `a floral host is ${shape}` };
+  return { inat_taxon_id: id, rank, name };
+}
+
+export function formatHost(h: OverlayHost): string {
+  if (h.inat_taxon_id === null && h.rank === null && h.name === null) return "";
+  return [h.inat_taxon_id === null ? "-" : String(h.inat_taxon_id), h.rank ?? "-", ...(h.name === null ? [] : [h.name.trim()])].join(" ");
+}
+
 /** Why this value cannot be stored for this field, or null if it can. */
 export function sampleValueProblem(field: SampleOverlayField, value: string): string | null {
   if (field === "hold") return value === "" || value === HELD ? null : `a hold is '${HELD}' or empty`;
@@ -158,6 +195,11 @@ export function sampleValueProblem(field: SampleOverlayField, value: string): st
     if (value === "") return null;
     const p = parsePoint(value);
     return "problem" in p ? p.problem : null;
+  }
+  if (field === "host") {
+    if (value === "" || value === NO_HOST) return null;
+    const h = parseHost(value);
+    return "problem" in h ? h.problem : null;
   }
   if (field === "locality") {
     // Empty removes; anything else must be a place name. Whitespace-only is
@@ -199,6 +241,11 @@ export function parseSampleOverlay(text: string, where: string): SampleOverlayRo
     // none" and take the row away (CodeRabbit on PR #99).
     if (row.field === "coordinates" && row.base_value !== "") {
       const base = parsePoint(row.base_value);
+      if ("problem" in base) throw new Error(`${where} line ${line}: base ${base.problem}`);
+    }
+    // The base is read back on removal too, so it is held to its grammar.
+    if (row.field === "host" && row.base_value !== "") {
+      const base = parseHost(row.base_value, true);
       if ("problem" in base) throw new Error(`${where} line ${line}: base ${base.problem}`);
     }
     return row;

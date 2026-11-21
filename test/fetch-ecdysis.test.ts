@@ -161,7 +161,12 @@ describe("the nightly Ecdysis fetch", () => {
   test("a kept archive that cannot be read is downloaded afresh rather than failing every night", async () => {
     const e = ecdysis();
     await fetchWith(e);
-    await (await import("node:fs/promises")).writeFile(join(dir, "44.zip"), "not a zip");
+    const { writeFile, stat } = await import("node:fs/promises");
+    await writeFile(join(dir, "44.zip"), "not a zip");
+    // The marker describes the file as it is now, so that it is the unreadable content and not the mismatch that is found.
+    const st = await stat(join(dir, "44.zip"));
+    const marker = JSON.parse(await readFile(join(dir, "44.read.json"), "utf8"));
+    await writeFile(join(dir, "44.read.json"), JSON.stringify({ ...marker, zipBytes: st.size, zipModifiedAt: st.mtime.toISOString() }));
     const again = await fetchWith(e, new Date("2026-10-10T10:00:00Z"));
     expect(again.source).toBe("downloaded");
     expect(again.reason).toMatch(/^the kept archive could not be loaded \(.+\), so downloading$/);
@@ -225,6 +230,50 @@ describe("the read marker and the upload files", () => {
     await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date() });
     expect((await uploadStateOf(db, BC, { ecdysisDir: dir })).ok).toBe(true);
     expect(e.downloads).toBe(1);
+  });
+});
+
+describe("the marker's record count", () => {
+  test("is the archive's own occurrence rows, so a label number on two specimens does not make the upload code refuse for good", async () => {
+    // One Ecdysis record (BCBA_2303966) whose label number is on two Beeline specimens: the loader's join counts it twice.
+    const [[sample]] = (await rows(conn, `SELECT min(entity_id) FROM sample`)) as [[number]];
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sample}, 9, '2303966')`);
+    const bcOccurrences = (await readFile(`${FIXTURES}occurrences.csv`, "utf8")).replaceAll("WSDA_", "BCBA_");
+    const archiveRows = bcOccurrences.trim().split("\n").length - 1;
+    zip = zipSync({
+      "occurrences.csv": new TextEncoder().encode(bcOccurrences),
+      "identifications.csv": new Uint8Array(await readFile(`${FIXTURES}identifications.csv`)),
+    });
+    const e = ecdysis();
+    const r = await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date() });
+    // The loader counted more occurrences than the archive has, or no more: either way the marker says the archive's.
+    expect(r.load.occurrences).toBeGreaterThanOrEqual(archiveRows);
+    expect(JSON.parse(await readFile(join(dir, "collection-196.read.json"), "utf8")).records).toBe(archiveRows);
+    const state = await uploadStateOf(createKysely(instance), BC, { ecdysisDir: dir });
+    expect(state.ok, JSON.stringify(state)).toBe(true);
+  });
+});
+
+describe("a kept archive that is not the one the last read loaded", () => {
+  test("is downloaded again, though Ecdysis says nothing moved, rather than reloaded", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    const { utimes } = await import("node:fs/promises");
+    // Same size, another time: some other process touched the file, and the marker no longer describes it.
+    await utimes(join(dir, "44.zip"), new Date(Date.now() - 86_400_000), new Date(Date.now() - 86_400_000));
+    const again = await fetchWith(e, new Date("2026-10-10T10:00:00Z"));
+    expect(again).toMatchObject({ source: "downloaded", reason: "the kept archive is not the one the last read loaded, so downloading" });
+    expect(e.downloads).toBe(2);
+    // And once the marker is rewritten the next quiet night reloads it as before.
+    expect((await fetchWith(e, new Date("2026-10-11T10:00:00Z"))).source).toBe("cached");
+  });
+
+  test("a store with no marker yet (deployed before it existed) downloads once", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    const { rm } = await import("node:fs/promises");
+    await rm(join(dir, "44.read.json"));
+    expect((await fetchWith(e, new Date("2026-10-10T10:00:00Z"))).source).toBe("downloaded");
   });
 });
 

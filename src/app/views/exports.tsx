@@ -1,7 +1,7 @@
 import type { Messages } from "../messages/index.js";
 import type { ProgramArchive } from "../dwc-archive.js";
 import { describeScope, type EcdysisCollection } from "../../fetch-ecdysis.js";
-import { archiveHref, associationsHref, beingWritten, idsOf, INCLUDE_NONE, UPLOAD_CONSTANTS, type UploadState, type UploadYear } from "../ecdysis-upload.js";
+import { archiveHref, associationsHref, beingWritten, idsOf, INCLUDE_NONE, UPLOAD_CONSTANTS, type DownloadView, type UploadState, type UploadYear } from "../ecdysis-upload.js";
 import { EMPTY_QUERY, listingHref } from "../listings.js";
 import { sharedLicense, type AllYearsEntry, type ArchiveEntry, type ArchiveManifest, type ChecklistEntry } from "../program-archives.js";
 import { governanceFor, LICENSES, type LicenseId, type ProgramGovernance } from "../../program-governance.js";
@@ -13,6 +13,8 @@ export interface EcdysisUploadSection {
   /** The collection's program, by name. */
   programName: string;
   state: UploadState;
+  /** The finished downloads to list, whatever the state of the read (`downloadViewsOf`). */
+  downloads: DownloadView[];
 }
 
 /** The current export file, as the page describes it; null when none has been written. */
@@ -132,7 +134,7 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
       <p>
         <Meta>{e.narrowing}</Meta>
       </p>
-      {sections.map(({ collection, programName, state }) => (
+      {sections.map(({ collection, programName, state, downloads }) => (
         <section>
           <h3>{e.collection(programName, describeScope(collection))}</h3>
           {collection.collectionId !== undefined && <Meta block>{e.uploadInto(collection.collectionId, collection.catalogPrefix)}</Meta>}
@@ -166,25 +168,6 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
                 .map((y) => (
                   <YearOffer m={m} collection={collection} programName={programName} year={y} archiveOpen={state.blocking === null} />
                 ))}
-              {state.outstanding.length > 0 && (
-                <>
-                  <h4>{e.downloadsHeading}</h4>
-                  <Meta block>{e.downloadsNote}</Meta>
-                  <ul>
-                    {state.outstanding.map((d) => (
-                      <li>
-                        {e.downloadItem(d.by, m.format.dateTime(d.startedAt), d.year, d.specimens ?? d.planned, d.notYetInEcdysis, d.completedAt !== null)}{" "}
-                        {e.downloadChoice(d.include.taxonObscured, d.include.observerObscured)}{" "}
-                        {d.completedAt !== null && (
-                          <a href={associationsHref(d.id)} aria-label={e.associationsDownload(programName, d.year)}>
-                            {e.downloadAssociations}
-                          </a>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
               {state.plan.years.some((y) => !y.offered) && (
                 <>
                   <h4>{e.notOfferedHeading}</h4>
@@ -201,6 +184,25 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
                 </>
               )}
               {state.plan.unspelled.length > 0 && <Meta block>{e.unspelled(state.plan.unspelled.join(", "))}</Meta>}
+            </>
+          )}
+          {downloads.length > 0 && (
+            <>
+              <h4>{e.downloadsHeading}</h4>
+              <Meta block>{e.downloadsNote}</Meta>
+              <ul>
+                {downloads.map((d) => (
+                  <li>
+                    {e.downloadItem(d.by, m.format.dateTime(d.startedAt), d.year, d.specimens ?? d.planned, d.notYetInEcdysis, d.completedAt !== null)}{" "}
+                    {e.downloadChoice(d.include.taxonObscured, d.include.observerObscured)}{" "}
+                    {d.completedAt !== null && (
+                      <a href={associationsHref(d.id)} aria-label={e.associationsDownload(programName, d.year)}>
+                        {e.downloadAssociations}
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
             </>
           )}
         </section>
@@ -247,8 +249,8 @@ function YearOffer({
           </ul>
         </>
       )}
-      {archiveOpen && (
-        <form method="get" action={archiveHref(collection, year.year)}>
+      {archiveOpen && year.eligible.length > 0 && (
+        <form method="post" action={archiveHref(collection, year.year)}>
           {(year.taxonObscured > 0 || year.observerObscured > 0) && (
             <fieldset>
               <legend>{e.choiceLegend}</legend>

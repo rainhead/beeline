@@ -17,7 +17,12 @@ import {
   idsOf,
   INCLUDE_NONE,
   planUpload,
-  recordWhenComplete,
+  ArchiveChanged,
+  ArchiveTooLarge,
+  buildArchive,
+  downloadById,
+  downloadViewsOf,
+  ReadSuperseded,
   symbiotaKey,
   uploadArchiveStream,
   uploadFileName,
@@ -223,6 +228,13 @@ describe("the filters of a file are read as given or refused", () => {
     expect(problems("qc=bad&det=nonsense")).toEqual(["qc", "det"]);
     expect(problems("area=nope")).toEqual(["area"]);
     expect(problems("member=nobody")).toEqual(["member"]);
+  });
+  it("refuses a text filter that says nothing or is only wildcards, which would select the whole year", () => {
+    expect(problems("place=,,,")).toEqual(["place"]);
+    expect(problems("place=%25")).toEqual(["place"]);
+    expect(problems("q=_&collector=%25%25&host=,&taxon=%25")).toEqual(["q", "collector", "host", "taxon"]);
+    // A word with a wildcard among real letters is a narrower pattern and is read as it always was.
+    expect(problems("place=Umtanum")).toEqual([]);
   });
   it("refuses a parameter that is not a filter, or is given twice", () => {
     expect(problems("colector=Casey")).toEqual(["colector"]);
@@ -578,13 +590,23 @@ describe("the associations file", () => {
     expect(csv.charCodeAt(0)).not.toBe(0xfeff);
   });
 
-  it("has no row at all for a trap sample: one relationship, hasHost, applies to the whole file and a plant near a trap is not a host", async () => {
+  it("has no row at all for a trap sample, decided by the sample's kind and not the words of its protocol", async () => {
     const f = await fixture();
     const trap = await f.specimen({ field: "2500007", sample: { kind: "'trap'", protocol: "'blue vane trap'", inat_observation_id: "666", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } });
-    const pan = await f.specimen({ field: "2500008", sample: { kind: "'trap'", protocol: "'pan trap'", inat_observation_id: "667", host_name_as_observed: "'Rosa'", host_rank: "'genus'" } });
+    const unnamed = await f.specimen({ field: "2500008", sample: { kind: "'trap'", protocol: "'blue vane'", inat_observation_id: "667", host_name_as_observed: "'Rosa'", host_rank: "'genus'" } });
+    const netWithTheWord = await f.specimen({ field: "2500010", sample: { kind: "'net'", protocol: "'netting near the trap line'", inat_observation_id: "669", host_name_as_observed: "'Aster'", host_rank: "'genus'" } });
     const net = await f.specimen({ field: "2500009", sample: { inat_observation_id: "668", host_name_as_observed: "'Salvia'", host_rank: "'genus'" } });
-    const csv = await associationsCsv(f.db, BC, [trap.id, pan.id, net.id]);
-    expect(csv.split("\n").filter((l) => l !== "").slice(1)).toEqual(["BCBA_2500009,https://www.inaturalist.org/observations/668,Salvia"]);
+    const csv = await associationsCsv(f.db, BC, [trap.id, unnamed.id, netWithTheWord.id, net.id]);
+    expect(csv.split("\n").filter((l) => l !== "").slice(1)).toEqual([
+      "BCBA_2500010,https://www.inaturalist.org/observations/669,Aster",
+      "BCBA_2500009,https://www.inaturalist.org/observations/668,Salvia",
+    ]);
+    // The archive says "near" for the trap whatever its protocol says, and "visits flowers of" for the net.
+    const a = await archiveOf(f, [unnamed.id, netWithTheWord.id]);
+    const col = (row: number) => a.occurrence.cell(row, "associatedTaxa");
+    const byId = (id: number) => a.occurrence.body.findIndex((r) => r[0] === String(id));
+    expect(col(byId(unnamed.id))).toBe('"near":"Rosa"');
+    expect(col(byId(netWithTheWord.id))).toBe('"visits flowers of":"Aster"');
   });
 
   it("writes a name beginning with a formula character as it is, not behind an apostrophe", async () => {
@@ -655,48 +677,113 @@ describe("one archive for each read of Ecdysis", () => {
     expect(state.blocking).toMatchObject({ id: started.ok ? started.id : -1 });
   });
 
-  it("shows every download whose specimens Ecdysis does not hold yet, and none whose specimens it holds", async () => {
+});
+
+describe("building the whole archive before answering", () => {
+  const current = async () => true;
+
+  it("builds the archive in memory and says how many specimens it actually wrote", async () => {
     const f = await fixture();
     const a = await f.specimen({ field: "2500001" });
     const b = await f.specimen({ field: "2500002" });
-    const c = await f.specimen({ field: "2500003" });
-    const one = await start(f, { readAt: new Date(Date.now() - 5 * HOUR), year: SETTLED_SEASON });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    // A read began after the first download, and the second download rests on it.
-    const two = await start(f, { readAt: new Date() });
-    if (!one.ok || !two.ok) throw new Error("not started");
-    await completeDownload(f.db, one.id, [a.id]);
-    await completeDownload(f.db, two.id, [b.id, c.id]);
-    // The next read found the first in Ecdysis and one of the second.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    await f.cacheArchive(BC, ["BCBA_2500001", "BCBA_2500002"], { readHoursAgo: 0 });
-    const state = await uploadStateOf(f.db, BC, { ecdysisDir: f.dir });
-    if (!state.ok) throw new Error(`refused: ${state.reason}`);
-    expect(state.outstanding.map((d) => [d.id, d.notYetInEcdysis])).toEqual([[two.id, 1]]);
-    expect(state.blocking).toBeNull();
+    await f.conn.run(`UPDATE sample SET taxon_geoprivacy = 'obscured' WHERE entity_id = ${b.sample}`);
+    const built = await buildArchive(f.db, BC, [a.id, b.id], rulesOf(), { stillCurrent: current });
+    expect(built.written).toEqual([a.id]);
+    const files = unzipSync(built.bytes);
+    expect(strFromU8(files["occurrence.txt"]!).trim().split("\n")).toHaveLength(2);
   });
 
-  it("completes a download only when its stream ends, and never when it is abandoned or fails", async () => {
-    const make = () => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array([1])); c.enqueue(new Uint8Array([2])); c.close(); } });
-    let completed = 0;
-    await new Response(recordWhenComplete(make(), async () => void completed++)).arrayBuffer();
-    expect(completed).toBe(1);
-    // The reader goes away while a read is waiting: that read resolves as done, and is not the end of the file.
-    let pending!: (v: IteratorResult<Uint8Array>) => void;
-    const slow = new ReadableStream<Uint8Array>({ pull: () => new Promise<void>((resolve) => void (pending = () => resolve())) });
-    const abandoned = recordWhenComplete(slow, async () => void completed++);
-    const reader = abandoned.getReader();
-    const waiting = reader.read();
-    await new Promise((r) => setTimeout(r, 10));
-    await reader.cancel();
-    await waiting.catch(() => undefined);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(completed).toBe(1);
-    expect(pending).toBeDefined();
-    // The source fails.
-    const failing = new ReadableStream<Uint8Array>({ pull() { throw new Error("store down"); } });
-    await expect(new Response(recordWhenComplete(failing, async () => void completed++)).arrayBuffer()).rejects.toThrow();
-    expect(completed).toBe(1);
+  it("stops, with nothing to record, when the read the plan rested on is replaced while it is written", async () => {
+    const f = await fixture();
+    const made: number[] = [];
+    for (let i = 0; i < 5; i++) made.push((await f.specimen({ field: `28000${i}` })).id);
+    let pages = 0;
+    const stillCurrent = async () => ++pages < 3;
+    await expect(buildArchive(f.db, BC, made, rulesOf(), { stillCurrent, pageSize: 2 })).rejects.toBeInstanceOf(ReadSuperseded);
+    // A read that lands after the last page is caught by the check at the end.
+    let calls = 0;
+    await expect(buildArchive(f.db, BC, made, rulesOf(), { stillCurrent: async () => ++calls <= 1, pageSize: 10 })).rejects.toBeInstanceOf(ReadSuperseded);
+  });
+
+  it("refuses an archive larger than the bound, with a clear error", async () => {
+    const f = await fixture();
+    const s = await f.specimen({ field: "2500001" });
+    await expect(buildArchive(f.db, BC, [s.id], rulesOf(), { stillCurrent: current, limit: 10 })).rejects.toBeInstanceOf(ArchiveTooLarge);
+  });
+
+  it("asks again about the year and the filters, as each page is written", async () => {
+    const f = await fixture();
+    const kept = await f.specimen({ field: "2500001" });
+    const moved = await f.specimen({ field: "2500002" });
+    const filtered = await f.specimen({ field: "2500003", sample: { kind: "'trap'", protocol: "'blue vane trap'" } });
+    const ids = [kept.id, moved.id, filtered.id];
+    // After the plan: one sample's date was corrected to another year.
+    await f.conn.run(`UPDATE sample SET date_start = DATE '${SETTLED_SEASON}-07-14', date_end = DATE '${SETTLED_SEASON}-07-14' WHERE entity_id = ${moved.sample}`);
+    expect(await eligibleNow(f.db, BC, ids, { ...rulesOf(), year: CURRENT_SEASON })).toEqual([kept.id, filtered.id]);
+    const query = parseListingQuery(new URLSearchParams("kind=net"), { atlasCodes: ["BC"] });
+    expect(await eligibleNow(f.db, BC, ids, { ...rulesOf(), year: CURRENT_SEASON, query })).toEqual([kept.id]);
+    const built = await buildArchive(f.db, BC, ids, { ...rulesOf(), year: CURRENT_SEASON, query }, { stillCurrent: current });
+    expect(built.written).toEqual([kept.id]);
+  });
+});
+
+describe("the cached archive is the file the marker describes", () => {
+  it("refuses a file whose size or time is not the marker's, before or after it is read", async () => {
+    const f = await fixture();
+    await f.cacheArchive(BC, ["BCBA_1"]);
+    const path = cachedArchivePath(f.dir, BC);
+    const { stat } = await import("node:fs/promises");
+    const st = await stat(path);
+    const expected = { bytes: st.size, modifiedAt: st.mtime.toISOString() };
+    expect((await catalogNumbersInArchive(f.db, path, f.dir, expected)).rows).toBe(1);
+    await utimes(path, new Date(Date.now() - 10_000), new Date(Date.now() - 10_000));
+    await expect(catalogNumbersInArchive(f.db, path, f.dir, expected)).rejects.toBeInstanceOf(ArchiveChanged);
+    await expect(catalogNumbersInArchive(f.db, path, f.dir, { bytes: st.size + 1, modifiedAt: expected.modifiedAt })).rejects.toBeInstanceOf(ArchiveChanged);
+  });
+});
+
+describe("the finished downloads of a collection, whatever the state of the read", () => {
+  const start = (f: F, over: Partial<Parameters<typeof startDownload>[1]> = {}) =>
+    startDownload(f.db, { collection: BC, year: CURRENT_SEASON, filters: "", include: INCLUDE_NONE, planned: 1, readAt: new Date(Date.now() - 100 * HOUR), personId: f.eva, ...over });
+
+  it("finds one download by id in one query, finished or not", async () => {
+    const f = await fixture();
+    const a = await start(f);
+    if (!a.ok) throw new Error("not started");
+    expect(await downloadById(f.db, a.id)).toMatchObject({ id: a.id, completedAt: null, by: "Eva Expert" });
+    expect(await downloadById(f.db, 999_999)).toBeNull();
+  });
+
+  it("lists the ten most recent finished ones, and any beyond them with specimens still absent from Ecdysis, newest first", async () => {
+    const f = await fixture();
+    const spec = await f.specimen({ field: "2500001" });
+    const absent = await f.specimen({ field: "2500002" });
+    // Twelve finished downloads, each on its own read; the oldest holds a specimen Ecdysis does not hold.
+    const ids: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      // Each rests on a read that began after the download before it.
+      const r = await start(f, { readAt: i === 0 ? new Date(Date.now() - 200 * HOUR) : new Date() });
+      if (!r.ok) throw new Error("not started");
+      await completeDownload(f.db, r.id, i === 0 ? [absent.id] : [spec.id]);
+      ids.push(r.id);
+      await new Promise((resolve) => setTimeout(resolve, 8));
+    }
+    await f.conn.run(`INSERT INTO specimen_catalog_number (specimen_id, catalog_number) VALUES (${spec.id}, 'BCBA_2500001')`);
+    const views = await downloadViewsOf(f.db, BC, null, null);
+    // Ten newest, then the oldest because it is still outstanding.
+    expect(views.map((v) => v.id)).toEqual([...ids.slice(2).reverse(), ids[0]]);
+    expect(views.find((v) => v.id === ids[0])).toMatchObject({ notYetInEcdysis: 1 });
+    expect(views.find((v) => v.id === ids[11])).toMatchObject({ notYetInEcdysis: 0 });
+  });
+
+  it("judges by the cached archive too, where it is in hand", async () => {
+    const f = await fixture();
+    const spec = await f.specimen({ field: "2500001" });
+    const r = await start(f);
+    if (!r.ok) throw new Error("not started");
+    await completeDownload(f.db, r.id, [spec.id]);
+    expect((await downloadViewsOf(f.db, BC, null, null))[0]).toMatchObject({ notYetInEcdysis: 1 });
+    expect((await downloadViewsOf(f.db, BC, new Set(["bcba_2500001"]), null))[0]).toMatchObject({ notYetInEcdysis: 0 });
   });
 });
 

@@ -289,7 +289,7 @@ async function loadArchive(
   dir: string,
   collection: EcdysisCollection,
   now: Date,
-): Promise<LoadEcdysisResult> {
+): Promise<LoadEcdysisResult & { archiveRows: number }> {
   const files = unzipSync(zip, { filter: (f) => /^(occurrences|identifications)\.(tab|csv|txt)$/i.test(f.name) });
   if (Object.keys(files).length < 2) {
     throw new Error(`Ecdysis archive for ${describeScope(collection)} lacks occurrences or identifications (has: ${Object.keys(files).join(", ") || "nothing"})`);
@@ -297,7 +297,15 @@ async function loadArchive(
   const unpacked = await mkdtemp(join(dir, `${scopeKey(collection)}-unpacked-`));
   try {
     for (const [name, data] of Object.entries(files)) await writeFile(join(unpacked, name), data);
-    return await loadEcdysis(conn, { path: unpacked, catalogPrefix: collection.catalogPrefix, now });
+    // The archive's own count of occurrence rows, as the upload code counts them again from the zip. The loader's
+    // `occurrences` is a count over a join to specimens, and an Ecdysis record whose label number is on two
+    // specimens is counted twice there (src/load-ecdysis.ts, beeline-1kb.14): it is not the archive's.
+    const occurrencesFile = Object.keys(files).find((n) => /^occurrences\.(tab|csv|txt)$/i.test(n))!;
+    const counted = await conn.runAndReadAll(
+      `SELECT count(*) FROM read_csv('${join(unpacked, occurrencesFile).replaceAll("'", "''")}', header = true, all_varchar = true)`,
+    );
+    const archiveRows = Number(counted.getRows()[0]![0]);
+    return { ...(await loadEcdysis(conn, { path: unpacked, catalogPrefix: collection.catalogPrefix, now })), archiveRows };
   } finally {
     await rm(unpacked, { recursive: true, force: true });
   }
@@ -341,10 +349,21 @@ export async function fetchEcdysis(
   }
 
   if (unchanged) {
+    // "Nothing moved" is about Ecdysis, not about the file here: the kept zip must still be the one the last read
+    // loaded (the marker's size and time), or the upload code, which trusts that marker, would be blessing whatever
+    // file happens to be there. A store deployed before the marker existed has none, and downloads once.
+    const marker = await readMarkerOf(opts.dir, collection);
+    const st = await stat(zipPath).catch(() => null);
+    if (marker === null || st === null || st.size !== marker.zipBytes || st.mtime.toISOString() !== marker.zipModifiedAt) {
+      unchanged = false;
+      reason = "the kept archive is not the one the last read loaded, so downloading";
+    }
+  }
+  if (unchanged) {
     try {
       const zip = new Uint8Array(await readFile(zipPath));
-      const load = await step("load the cached archive", () => loadArchive(conn, zip, opts.dir, collection, now));
-      await writeReadMarker(opts.dir, collection, zipPath, { readAt: now, source: "cached", records: load.occurrences });
+      const { archiveRows, ...load } = await step("load the cached archive", () => loadArchive(conn, zip, opts.dir, collection, now));
+      await writeReadMarker(opts.dir, collection, zipPath, { readAt: now, source: "cached", records: archiveRows });
       return { scope: describeScope(scope), source: "cached", reason, load };
     } catch (err) {
       // A kept archive that will not load would fail every night until
@@ -356,7 +375,7 @@ export async function fetchEcdysis(
   }
 
   const zip = await step("download the archive", () => downloadArchive(f, opts.credentials, scope, opts.signal));
-  const load = await step("load the archive", () => loadArchive(conn, zip, opts.dir, collection, now));
+  const { archiveRows, ...load } = await step("load the archive", () => loadArchive(conn, zip, opts.dir, collection, now));
   // Kept only once it has loaded, and the baseline with it: a failed load
   // leaves the previous pair, so the next night downloads again.
   await writeFile(`${zipPath}.tmp`, zip);
@@ -367,7 +386,7 @@ export async function fetchEcdysis(
   } else {
     await rm(baselinePath, { force: true }); // no probe, no baseline: tomorrow downloads again
   }
-  await writeReadMarker(opts.dir, collection, zipPath, { readAt: now, source: "downloaded", records: load.occurrences });
+  await writeReadMarker(opts.dir, collection, zipPath, { readAt: now, source: "downloaded", records: archiveRows });
   return { scope: describeScope(scope), source: "downloaded", reason, load };
 }
 

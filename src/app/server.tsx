@@ -259,8 +259,8 @@ import {
 import { oregonToday } from "../oregon-today.js";
 import { programArchives } from "./dwc-archive.js";
 import { archiveDir, readArchiveManifest } from "./program-archives.js";
-import { associationsCsv, beingWritten, collectionOf, completeDownload, downloadById, downloadSpecimens, idsOf, recordWhenComplete, startDownload, uploadArchiveStream, uploadFileName, uploadStateOf, type DownloadRecord } from "./ecdysis-upload.js";
-import { describeScope, ECDYSIS_COLLECTIONS } from "../fetch-ecdysis.js";
+import { ArchiveTooLarge, associationsCsv, beingWritten, buildArchive, collectionOf, completeDownload, downloadById, downloadSpecimens, downloadViewsOf, idsOf, ReadSuperseded, startDownload, uploadFileName, uploadStateOf, type DownloadRecord } from "./ecdysis-upload.js";
+import { describeScope, ECDYSIS_COLLECTIONS, readMarkerOf } from "../fetch-ecdysis.js";
 import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
@@ -2427,34 +2427,38 @@ export function createApp({
           archives={await readArchiveManifest(exportsDir())}
           governance={await readProgramGovernance(programGovernance)}
           ecdysis={await Promise.all(
-            ECDYSIS_COLLECTIONS.map(async (collection) => ({
-              collection,
-              programName: (await programArchives(db)).find((p) => p.code === collection.program)?.name ?? collection.program,
-              state: await uploadStateOf(db, collection, { ecdysisDir: ecdysisDir() }),
-            })),
+            ECDYSIS_COLLECTIONS.map(async (collection) => {
+              const state = await uploadStateOf(db, collection, { ecdysisDir: ecdysisDir() });
+              // The finished downloads are listed whatever the state of the read: the freshness check governs only starting a new archive.
+              const marker = await readMarkerOf(ecdysisDir(), collection);
+              return {
+                collection,
+                programName: (await programArchives(db)).find((p) => p.code === collection.program)?.name ?? collection.program,
+                state,
+                downloads: await downloadViewsOf(db, collection, state.ok ? state.held : null, state.ok ? state.read.readAt : marker === null ? null : new Date(marker.readAt)),
+              };
+            }),
           )}
         />,
       ),
     );
   });
 
-  // The two files a person uploads to Ecdysis (beeline-8dx9.12). Admins only, like the page; GET only, since Hono would
-  // run the handler for HEAD and discard the body, which would start a download nobody receives.
+  // The two files a person uploads to Ecdysis (beeline-8dx9.12). Admins only, like the page.
   //
-  // The archive is written when asked for, one collection and year at a time, from what the nightly read of Ecdysis last
-  // loaded. It is refused with a plain sentence and no file when that read is missing or too old, when Beeline reads only
-  // a dataset of the collection, when the year is not one the collection offers, and when an archive has already been
-  // started since the last read. The Specimens listing's own filters in the query string narrow it; one Beeline cannot
-  // read is a 400, never ignored, and the rules of which specimens may go at all are not the query's to change. The
-  // choice to include obscured specimens is two explicit parameters, `includeTaxonObscured=1` and
-  // `includeObserverObscured=1`, each given at most once. Its start is recorded, with the decision, in one transaction
-  // before the first byte, and its completion when the last byte has been written.
-  const refusing = (c: Context<AppEnv>) => (status: 400 | 404 | 405 | 409, text: string) => c.text(text, status, { "cache-control": "no-store" });
-  // Hono answers HEAD by running the GET handler and dropping the body, and says so only through the request's method.
-  const headRefused = (c: Context<AppEnv>) => c.req.method === "HEAD" && c.text("", 405, { allow: "GET", "cache-control": "no-store" });
-  app.get("/exports/ecdysis/:file{[A-Za-z]+-\\d{4}-upload\\.zip}", async (c) => {
-    const head = headRefused(c);
-    if (head) return head;
+  // The archive is asked for with POST, because asking records a start and uses up the read (so no link, and no GET or
+  // HEAD, which answer 405). It is written when asked for, one collection and year at a time, from what the nightly read
+  // of Ecdysis last loaded, and refused with a plain sentence and no file when that read is missing or too old, when
+  // Beeline reads only a dataset of the collection, when the year is not one the collection offers, and when an archive
+  // has already been started since the last read. The Specimens listing's own filters in the query string narrow it; one
+  // Beeline cannot read is a 400, never ignored, and the rules of which specimens may go at all are not the query's to
+  // change. The choice to include obscured specimens is two fields of the form, `includeTaxonObscured=1` and
+  // `includeObserverObscured=1`, each at most once. Its start is recorded, with the decision, in one transaction; the
+  // whole archive is then built in memory, the completion recorded with the specimens actually written, and only then
+  // is it sent, under a name that says how many.
+  const refusing = (c: Context<AppEnv>) => (status: 400 | 404 | 405 | 409 | 413, text: string) => c.text(text, status, { "cache-control": "no-store", ...(status === 405 ? { allow: "POST" } : {}) });
+  app.get("/exports/ecdysis/:file{[A-Za-z]+-\\d{4}-upload\\.zip}", (c) => (c.get("admin") ? refusing(c)(405, c.get("m").exports.ecdysis.postOnly) : c.text("Admins only.", 403)));
+  app.post("/exports/ecdysis/:file{[A-Za-z]+-\\d{4}-upload\\.zip}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
     const e = m.exports.ecdysis;
@@ -2463,11 +2467,12 @@ export function createApp({
     const collection = collectionOf(program!);
     if (collection === undefined) return errorResponse(c, "notFound");
     const year = Number(yearText);
-    const params = new URL(c.req.url).searchParams;
     const own = ["includeTaxonObscured", "includeObserverObscured"];
-    const include = { taxonObscured: params.get("includeTaxonObscured") === "1", observerObscured: params.get("includeObserverObscured") === "1" };
-    const filterParams = new URLSearchParams([...params].filter(([key]) => !own.includes(key)));
-    const badChoice = own.filter((key) => params.has(key) && (params.getAll(key).length > 1 || params.get(key) !== "1"));
+    const body = await c.req.parseBody({ all: true });
+    const sent = (key: string) => (body[key] === undefined ? [] : Array.isArray(body[key]) ? body[key] : [body[key]]);
+    const badChoice = [...Object.keys(body).filter((key) => !own.includes(key)), ...own.filter((key) => sent(key).length > 1 || (sent(key).length === 1 && sent(key)[0] !== "1"))];
+    const include = { taxonObscured: sent("includeTaxonObscured")[0] === "1", observerObscured: sent("includeObserverObscured")[0] === "1" };
+    const filterParams = new URL(c.req.url).searchParams;
     const atlases = await atlasOptions(db);
     const programs = await scopePrograms(db);
     const query = parseListingQuery(filterParams, { atlasCodes: atlases.map((a) => a.code), programCodes: programs.map((a) => a.code) });
@@ -2491,27 +2496,44 @@ export function createApp({
     const ids = idsOf(entry, include);
     if (ids.length === 0) return refuse(404, e.noSpecimensForFile);
     if (state.blocking !== null) return refuse(409, stated(state.blocking));
+    // The filters as a query string with its keys sorted, so that a value holding an ampersand cannot read as two filters.
+    const sorted = new URLSearchParams([...filterParams].sort(([a, x], [b, y]) => (a < b ? -1 : a > b ? 1 : x < y ? -1 : x > y ? 1 : 0)));
     const started = await startDownload(db, {
       collection,
       year,
-      filters: [...filterParams].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${k}=${v}`).join("&"),
+      filters: sorted.toString(),
       include,
       planned: ids.length,
       readAt: state.read.readAt,
       personId: c.get("session").personId ?? null,
     });
     if (!started.ok) return refuse(409, started.because === null ? e.beingWritten : stated(started.because));
-    const written: number[] = [];
-    const stream = recordWhenComplete(
-      uploadArchiveStream(db, collection, ids, { held: state.held, include }, { timing: csvGenerationTiming("ecdysis upload"), written }),
-      () => completeDownload(db, started.id, written),
-    );
-    return c.body(stream, 200, {
+    // The read the plan rested on is the marker as it is now; a newer read replaces the marker, and then nothing is kept.
+    const marker = state.read.marker;
+    const stillCurrent = async () => {
+      const now = await readMarkerOf(ecdysisDir(), collection);
+      return now !== null && now.readAt === marker.readAt && now.zipBytes === marker.zipBytes && now.zipModifiedAt === marker.zipModifiedAt;
+    };
+    let built;
+    try {
+      built = await buildArchive(db, collection, ids, { held: state.held, include, year, query }, { stillCurrent, timing: csvGenerationTiming("ecdysis upload") });
+    } catch (err) {
+      if (err instanceof ReadSuperseded) return refuse(409, e.superseded);
+      if (err instanceof ArchiveTooLarge) return refuse(413, e.tooLarge);
+      throw err;
+    }
+    if (built.written.length === 0) return refuse(404, e.noSpecimensForFile);
+    await completeDownload(db, started.id, built.written);
+    return c.body(built.bytes as unknown as ArrayBuffer, 200, {
       "content-type": "application/zip",
-      "content-disposition": `attachment; filename="${uploadFileName(collection, year, new Date(), "archive", ids.length)}"`,
+      "content-length": String(built.bytes.byteLength),
+      "content-disposition": `attachment; filename="${uploadFileName(collection, year, new Date(), "archive", built.written.length)}"`,
       "cache-control": "no-store",
     });
   });
+
+  // Hono answers HEAD by running the GET handler and dropping the body, and says so only through the request's method.
+  const headRefused = (c: Context<AppEnv>) => c.req.method === "HEAD" && c.text("", 405, { allow: "GET", "cache-control": "no-store" });
 
   // The associations file of a completed archive download: exactly the specimens that archive held, so it takes no
   // filters or choices of its own, and it stays available for as long as the record does.

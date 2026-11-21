@@ -2866,7 +2866,7 @@ export const en = {
         report:
           'Before anything is written, Symbiota shows a "Pending Data Transfer Report". Press "Transfer Records to Central Specimen Table" only if it says "Records to be updated: 0", the number of "New records" is the one in the archive\'s file name, and it shows no line "Records matching on catalog number that will be appended" (with the warning "This will result in records with duplicate catalog numbers"), which appears when "Match on Catalog Number" is off. Otherwise stop: nothing in Ecdysis has changed until that button is pressed.',
         associations:
-          'Then open "Import extended data" for the collection and choose the associations file of that archive, from the button beside the finished download. Set the association type to "Occurrence - External Link" and the relationship to "hasHost", the only fitting choice Ecdysis offers today. Leave the box about updating or deleting existing associations unticked. A catalog number that Ecdysis does not hold is skipped. Samples taken with a trap have no row in it: a plant near a trap is not a host.',
+          'Then open "Import extended data" for the collection and choose the associations file of that archive. Its link, "Download associations", appears on this page beside the finished download, after you reload the page. Set the association type to "Occurrence - External Link" and the relationship to "hasHost", the only fitting choice Ecdysis offers today. Leave the box about updating or deleting existing associations unticked. A catalog number that Ecdysis does not hold is skipped. Samples taken with a trap have no row in it: a plant near a trap is not a host.',
         readAgain: "Then read Ecdysis again, as in the first step. The counts on this page do not change until it has, and no second archive is offered until it has.",
         localities: "Localities are as the labels have them. Beeline does not rewrite them.",
       },
@@ -2898,12 +2898,12 @@ export const en = {
       seeThem: "See them in the Specimens listing",
       unspelled: (values: string) => `These country and state values are written as Beeline holds them, not spelled out: ${values}.`,
       nothing: "Nothing to upload: every specimen of this collection with a label on paper is already in Ecdysis, or is left out for a reason given here.",
-      downloadsHeading: "Archives downloaded and not yet in Ecdysis",
+      downloadsHeading: "Archives downloaded",
       downloadsNote:
-        "These archives held specimens that Ecdysis does not hold yet. Delete an older archive, do not upload it: it was made from an earlier read, and uploading it could replace records changed in Ecdysis since. Read Ecdysis again once you have uploaded one.",
+        "The ten most recent, and any with specimens Ecdysis does not hold yet. Delete an older archive, do not upload it: it was made from an earlier read, and uploading it could replace records changed in Ecdysis since. Read Ecdysis again once you have uploaded one. The associations file of each archive stays here.",
       downloadItem: (by: string | null, when: string, year: number, specimens: number, notYet: number | null, completed: boolean) =>
         completed
-          ? `${by ?? "Someone"} downloaded the archive for ${year} on ${when}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}${notYet === null ? "" : `, ${n(notYet)} of them not in Ecdysis yet`}.`
+          ? `${by ?? "Someone"} downloaded the archive for ${year} on ${when}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}${notYet === null ? "" : notYet === 0 ? ", all in Ecdysis since the last read" : `, ${n(notYet)} of them not in Ecdysis yet`}.`
           : `${by ?? "Someone"} began downloading the archive for ${year} on ${when} (${n(specimens)} planned), and it did not finish. It blocks a second archive until the next read.`,
       downloadChoice: (taxon: boolean, observer: boolean) =>
         taxon && observer
@@ -2917,7 +2917,10 @@ export const en = {
         completed
           ? `${by ?? "Someone"} downloaded the archive for ${year} (${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}) on ${when}. Beeline gives one archive for each read of Ecdysis, so no second archive is offered. After the upload, read Ecdysis again (the first step above).`
           : `${by ?? "Someone"} began downloading the archive for ${year} (${n(specimens)} planned) on ${when} and it did not finish. Beeline gives one archive for each read of Ecdysis, so no second archive is offered until Ecdysis has been read again.`,
-      beingWritten: "An archive for this collection is being written now, or was started a moment ago. Wait for it to finish, then reload this page.",
+      beingWritten: "An archive for this collection is being written now, or was started a moment ago. Wait for it to finish, then reload this page. Reading Ecdysis again clears it.",
+      postOnly: "An archive is asked for with the button on the Exports page, not by an address: asking for one uses up the read of Ecdysis it rests on.",
+      superseded: "Ecdysis was read again while the archive was being written, so the archive was not kept. Reload the Exports page and ask again. If Beeline then says an archive was already started, read Ecdysis once more.",
+      tooLarge: "The archive is larger than Beeline builds in memory (50 MB), so none was written. Narrow it with filters from the Specimens listing, or ask whoever runs Beeline.",
       associationsUnfinished: "That archive did not finish downloading, so it has no associations file.",
       refused: {
         dataset: (scope: string) =>

@@ -4,7 +4,6 @@ import { strFromU8, unzipSync } from "fflate";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { cachedArchivePath, ECDYSIS_COLLECTIONS, readMarkerOf, type EcdysisCollection, type ReadMarker } from "../fetch-ecdysis.js";
-import { methodNamesTrap } from "../trap-method.js";
 import {
   archiveDescriptor,
   csvCellsOf,
@@ -19,6 +18,7 @@ import {
 } from "./dwc-archive.js";
 import {
   ALL,
+  associatedTaxaFor,
   csvExactLine,
   dateIdentified,
   EMPTY_QUERY,
@@ -170,6 +170,13 @@ export async function ecdysisRead(collection: EcdysisCollection, opts: { ecdysis
 /** Catalog numbers are compared the way Symbiota's database compares them: without regard to case. */
 export const catalogKey = (catalogNumber: string): string => catalogNumber.trim().toLowerCase();
 
+/** The cached archive was replaced while it was being read, or is not the file the read marker describes. */
+export class ArchiveChanged extends Error {
+  constructor(path: string) {
+    super(`${path} is not the file the last read loaded, or changed while it was read`);
+  }
+}
+
 /** What the cached archive holds: its distinct catalog numbers, and how many occurrence rows it has. */
 export interface ArchiveContents {
   held: Set<string>;
@@ -196,7 +203,12 @@ let unpacking: Promise<unknown> = Promise.resolve();
  * file's size and time stay the same, and two requests that arrive together
  * share one unpack.
  */
-export async function catalogNumbersInArchive(db: Kysely<Database>, archivePath: string, workDir: string): Promise<ArchiveContents> {
+export async function catalogNumbersInArchive(
+  db: Kysely<Database>,
+  archivePath: string,
+  workDir: string,
+  expected?: { bytes: number; modifiedAt: string },
+): Promise<ArchiveContents> {
   const st = await stat(archivePath);
   const key = `${st.size}:${st.mtimeMs}`;
   const kept = heldCache.get(archivePath);
@@ -204,9 +216,18 @@ export async function catalogNumbersInArchive(db: Kysely<Database>, archivePath:
   const flightKey = `${archivePath}:${key}`;
   const running = heldInFlight.get(flightKey);
   if (running !== undefined) return running;
+  /** The file's size and time now, which must be the marker's both before the bytes are read and after. */
+  const matches = async () => {
+    if (expected === undefined) return true;
+    const now = await stat(archivePath);
+    return now.size === expected.bytes && now.mtime.toISOString() === expected.modifiedAt;
+  };
   const unpack = async (): Promise<ArchiveContents> => {
+    if (!(await matches())) throw new ArchiveChanged(archivePath);
     for (const leftover of await readdir(workDir)) if (/^upload-/.test(leftover)) await rm(join(workDir, leftover), { recursive: true, force: true });
-    const files = unzipSync(new Uint8Array(await readFile(archivePath)), { filter: (f) => /^occurrences\.(tab|csv|txt)$/i.test(f.name) });
+    const bytes = new Uint8Array(await readFile(archivePath));
+    if (!(await matches())) throw new ArchiveChanged(archivePath);
+    const files = unzipSync(bytes, { filter: (f) => /^occurrences\.(tab|csv|txt)$/i.test(f.name) });
     const [name, data] = Object.entries(files)[0] ?? [];
     if (name === undefined || data === undefined) throw new Error(`${archivePath} has no occurrences file: it is not an Ecdysis archive`);
     const folder = await mkdtemp(join(workDir, "upload-"));
@@ -407,16 +428,14 @@ export async function planUpload(
  * between the plan and the file, and nothing may go that the rules now refuse.
  * Returned in id order.
  */
-export async function eligibleNow(
-  db: Kysely<Database>,
-  collection: EcdysisCollection,
-  ids: readonly number[],
-  rules: { held: ReadonlySet<string>; include: Include },
-): Promise<number[]> {
+export async function eligibleNow(db: Kysely<Database>, collection: EcdysisCollection, ids: readonly number[], rules: UploadRules): Promise<number[]> {
   if (ids.length === 0) return [];
-  const found = await candidatesOf(db, await scopeOf(db, collection), EMPTY_QUERY, ids);
+  // The listing filters the request gave are asked again too, and so is the year: a sample whose date was corrected
+  // to another year since the plan belongs to another year's archive.
+  const found = await candidatesOf(db, await scopeOf(db, collection), rules.query ?? EMPTY_QUERY, ids);
   const out: number[] = [];
   for (const c of found) {
+    if (rules.year !== undefined && Number(c.year) !== rules.year) continue;
     const verdict = judge(c, collection, rules.held);
     if (verdict.kind === "eligible" && included(verdict, rules.include)) out.push(Number(c.specimen_id));
   }
@@ -427,6 +446,10 @@ export async function eligibleNow(
 export interface UploadRules {
   held: ReadonlySet<string>;
   include: Include;
+  /** The collection year the archive is for, asked again as each page is written. */
+  year?: number;
+  /** The Specimens listing filters the request gave, asked again as each page is written. */
+  query?: ListingQuery;
 }
 
 // --- Downloads, recorded -----------------------------------------------------
@@ -455,15 +478,11 @@ export interface DownloadRecord {
 
 const asDate = (value: unknown): Date => new Date(value as string | Date);
 
-/** Every recorded download for the collection, newest first, with who took it and whether it finished. */
-export async function downloadsOf(db: Kysely<Database>, collection: EcdysisCollection, limit = 50): Promise<DownloadRecord[]> {
-  const found = await db
+const selectDownloads = (db: Kysely<Database>) =>
+  db
     .selectFrom("ecdysis_upload_download as d")
     .leftJoin("ecdysis_upload_download_completed as c", "c.download_id", "d.entity_id")
     .leftJoin("person as p", "p.entity_id", "d.person_id")
-    .where("d.collection", "=", collection.program)
-    .orderBy("d.entity_id", "desc")
-    .limit(limit)
     .select([
       "d.entity_id",
       "d.collection",
@@ -478,30 +497,32 @@ export async function downloadsOf(db: Kysely<Database>, collection: EcdysisColle
       "d.started_at",
       "c.completed_at",
       "c.specimens",
-    ])
-    .execute();
-  return found.map((r) => ({
-    id: Number(r.entity_id),
-    collection: r.collection,
-    year: Number(r.year),
-    filters: r.filters,
-    include: { taxonObscured: Boolean(r.include_taxon_obscured), observerObscured: Boolean(r.include_observer_obscured) },
-    planned: Number(r.planned_specimens),
-    readAt: asDate(r.read_at),
-    personId: r.person_id === null ? null : Number(r.person_id),
-    by: r.display_name,
-    startedAt: asDate(r.started_at),
-    completedAt: r.completed_at === null ? null : asDate(r.completed_at),
-    specimens: r.specimens === null ? null : Number(r.specimens),
-  }));
+    ]);
+
+const toRecord = (r: Awaited<ReturnType<ReturnType<typeof selectDownloads>["execute"]>>[number]): DownloadRecord => ({
+  id: Number(r.entity_id),
+  collection: r.collection,
+  year: Number(r.year),
+  filters: r.filters,
+  include: { taxonObscured: Boolean(r.include_taxon_obscured), observerObscured: Boolean(r.include_observer_obscured) },
+  planned: Number(r.planned_specimens),
+  readAt: asDate(r.read_at),
+  personId: r.person_id === null ? null : Number(r.person_id),
+  by: r.display_name,
+  startedAt: asDate(r.started_at),
+  completedAt: r.completed_at === null ? null : asDate(r.completed_at),
+  specimens: r.specimens === null ? null : Number(r.specimens),
+});
+
+/** Every recorded download for the collection, newest first, with who took it and whether it finished. */
+export async function downloadsOf(db: Kysely<Database>, collection: EcdysisCollection, limit = 50): Promise<DownloadRecord[]> {
+  return (await selectDownloads(db).where("d.collection", "=", collection.program).orderBy("d.entity_id", "desc").limit(limit).execute()).map(toRecord);
 }
 
-/** A download, by its id, with who took it and whether it finished; null where there is none. */
+/** A download, by its id, with who took it and whether it finished; null where there is none. One query. */
 export async function downloadById(db: Kysely<Database>, id: number): Promise<DownloadRecord | null> {
-  const row = await db.selectFrom("ecdysis_upload_download").where("entity_id", "=", id).select("collection").executeTakeFirst();
-  const collection = row === undefined ? undefined : collectionOf(row.collection);
-  if (collection === undefined) return null;
-  return (await downloadsOf(db, collection, 100_000)).find((d) => d.id === id) ?? null;
+  const found = await selectDownloads(db).where("d.entity_id", "=", id).execute();
+  return found.length === 0 ? null : toRecord(found[0]!);
 }
 
 /** Whether a download that began after the last read is on record, which means no second archive: the one still being written, or the one taken. */
@@ -580,59 +601,71 @@ export async function downloadSpecimens(db: Kysely<Database>, id: number): Promi
   return found.map((r) => Number(r.specimen_id));
 }
 
-/** How many of a completed download's specimens Ecdysis does not hold yet, as the cached archive says. */
-async function stillNotInEcdysis(db: Kysely<Database>, collection: EcdysisCollection, id: number, held: ReadonlySet<string>): Promise<number> {
-  const found = await db
-    .selectFrom("ecdysis_upload_download_specimen as d")
-    .innerJoin("specimen as sp", "sp.entity_id", "d.specimen_id")
-    .where("d.download_id", "=", id)
-    .select("sp.field_number")
-    .execute();
-  return found.filter((r) => r.field_number !== null && !held.has(catalogKey(catalogNumberOf(collection, r.field_number)))).length;
+/** A finished download as the page shows it, with how many of its specimens Ecdysis does not hold yet. */
+export interface DownloadView extends DownloadRecord {
+  /** Null for a download that did not finish: its specimens are not recorded. */
+  notYetInEcdysis: number | null;
 }
 
+/** How many finished downloads the page lists besides those with specimens still absent from Ecdysis. */
+export const RECENT_DOWNLOADS = 10;
+
 /**
- * The stream, with `onComplete` run once, when the last byte has been handed
- * on. A download the reader abandons (the stream is cancelled) or that fails
- * never calls it: cancelling resolves the read that is waiting with "done", and
- * that must not be taken for the end of the file. Nothing is recorded for such
- * a download beyond its start, which still blocks a second archive until the
- * next read, because the person may hold a partial file. The completion is
- * recorded when the server has written the whole file, which is the nearest it
- * can know: the browser may still be receiving the last of it.
+ * The downloads the page lists for a collection, newest first: the most recent
+ * ten finished ones, and any finished one beyond them with specimens still
+ * absent from Ecdysis, since that is what a person might still upload; and an
+ * unfinished one while it blocks a second archive. Which specimens Ecdysis
+ * holds is judged from the store's catalog numbers (`specimen_catalog_number`,
+ * which is there whatever the state of the read) and, where the cached archive
+ * is in hand, from its catalog numbers too. The list is not cut before the
+ * outstanding ones are found.
  */
-export function recordWhenComplete(source: ReadableStream<Uint8Array>, onComplete: () => Promise<void>): ReadableStream<Uint8Array> {
-  const reader = source.getReader();
-  let cancelled = false;
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read();
-        if (cancelled) return;
-        if (done) {
-          await onComplete();
-          controller.close();
-        } else {
-          controller.enqueue(value);
-        }
-      } catch (err) {
-        if (!cancelled) controller.error(err);
-      }
-    },
-    async cancel(reason) {
-      cancelled = true;
-      await reader.cancel(reason);
-    },
-  });
+export async function downloadViewsOf(
+  db: Kysely<Database>,
+  collection: EcdysisCollection,
+  held: ReadonlySet<string> | null,
+  readAt: Date | null,
+  now: Date = new Date(),
+): Promise<DownloadView[]> {
+  const all = await downloadsOf(db, collection, 100_000);
+  const finished = all.filter((d) => d.completedAt !== null);
+  const specimens =
+    finished.length === 0
+      ? []
+      : await db
+          .selectFrom("ecdysis_upload_download_specimen as ds")
+          .innerJoin("specimen as sp", "sp.entity_id", "ds.specimen_id")
+          .where("ds.download_id", "in", finished.map((d) => d.id))
+          .select([
+            "ds.download_id",
+            "sp.field_number",
+            sql<boolean>`EXISTS (SELECT 1 FROM specimen_catalog_number c WHERE c.specimen_id = sp.entity_id)`.as("in_store"),
+          ])
+          .execute();
+  const missing = new Map<number, number>();
+  for (const r of specimens) {
+    const inEcdysis = Boolean(r.in_store) || (held !== null && r.field_number !== null && held.has(catalogKey(catalogNumberOf(collection, r.field_number))));
+    if (!inEcdysis) missing.set(Number(r.download_id), (missing.get(Number(r.download_id)) ?? 0) + 1);
+  }
+  const out: DownloadView[] = [];
+  let recent = 0;
+  for (const d of all) {
+    if (d.completedAt === null) {
+      // No specimens are recorded for it: shown while it blocks, which is after the last read began (or, with no read on record, for a day).
+      const blocks = readAt === null ? now.getTime() - d.startedAt.getTime() < 86_400_000 : d.startedAt.getTime() > readAt.getTime();
+      if (blocks) out.push({ ...d, notYetInEcdysis: null });
+      continue;
+    }
+    const notYet = missing.get(d.id) ?? 0;
+    if (recent < RECENT_DOWNLOADS || notYet > 0) {
+      out.push({ ...d, notYetInEcdysis: notYet });
+      recent++;
+    }
+  }
+  return out;
 }
 
 // --- The state of a collection -----------------------------------------------
-
-/** A completed download whose specimens Ecdysis does not all hold yet, for the page. */
-export interface OutstandingDownload extends DownloadRecord {
-  /** How many of its specimens Ecdysis does not hold yet. */
-  notYetInEcdysis: number | null;
-}
 
 /** What the Exports page and the files' routes ask: the plan for a collection, or why there is none. */
 export type UploadState =
@@ -643,8 +676,6 @@ export type UploadState =
       held: ReadonlySet<string>;
       /** The download that began after the read, which means no second archive; null where there is none. */
       blocking: DownloadRecord | null;
-      /** Downloads whose specimens Ecdysis does not hold yet, which a person might still upload: newest first. */
-      outstanding: OutstandingDownload[];
     }
   | ({ ok: false } & UploadRefusal);
 
@@ -674,8 +705,9 @@ export async function uploadStateOf(
   if (!read.ok) return read;
   let contents: ArchiveContents;
   try {
-    contents = await catalogNumbersInArchive(db, read.archivePath, opts.ecdysisDir);
+    contents = await catalogNumbersInArchive(db, read.archivePath, opts.ecdysisDir, { bytes: read.marker.zipBytes, modifiedAt: read.marker.zipModifiedAt });
   } catch (err) {
+    if (err instanceof ArchiveChanged) return { ok: false, reason: "changed", readAt: read.readAt };
     console.error(`The cached Ecdysis archive for ${collection.program} could not be read: ${(err as Error).message}`);
     return { ok: false, reason: "unreadable", readAt: read.readAt };
   }
@@ -683,24 +715,13 @@ export async function uploadStateOf(
   if (contents.rows !== read.marker.records || (await loadedButNotHeld(db, collection, read.readAt, contents.held)) > 0) {
     return { ok: false, reason: "incomplete", readAt: read.readAt };
   }
-  const downloads = await downloadsOf(db, collection);
-  const outstanding: OutstandingDownload[] = [];
-  for (const d of downloads) {
-    if (d.completedAt === null) {
-      // No specimens are recorded for a download that did not finish: it is shown while it blocks, and no longer after the next read.
-      if (d.startedAt.getTime() > read.readAt.getTime()) outstanding.push({ ...d, notYetInEcdysis: null });
-      continue;
-    }
-    const missing = await stillNotInEcdysis(db, collection, d.id, contents.held);
-    if (missing > 0) outstanding.push({ ...d, notYetInEcdysis: missing });
-  }
+  const downloads = await downloadsOf(db, collection, 20);
   return {
     ok: true,
     plan: await planUpload(db, collection, { readAt: read.readAt, held: contents.held }, opts.query),
     read,
     held: contents.held,
     blocking: blocking(downloads, read.readAt),
-    outstanding,
   };
 }
 
@@ -811,7 +832,8 @@ export function uploadOccurrenceRow(r: SpecimenRow, page: ArchivePage, collectio
     lifeStage: fixed.lifeStage,
     preparations: fixed.preparations,
     individualCount: fixed.individualCount,
-    associatedTaxa: cell("associatedTaxa"),
+    // A trap does not say which flower its bees visited, so the plant near it is "near" (decided by the sample's kind, not the words of its protocol).
+    associatedTaxa: associatedTaxaFor(r.host_name, r.sample_kind === "trap" ? "near" : "visits flowers of"),
     disposition: cell("disposition"),
     occurrenceRemarks: cell("occurrenceRemarks"),
     scientificName: expert ? r.scientific_name : null,
@@ -892,19 +914,20 @@ export function uploadArchiveLayout(collection: EcdysisCollection): ArchiveLayou
  * can be short of a full one without being the last. `written`, when given,
  * collects the ids of the specimens actually written, which is what a
  * completed download records; `pageSize` lets a test make pages small enough
- * to have several.
+ * to have several; `beforePage` runs before each page and may throw to stop.
  */
 export function uploadArchiveStream(
   db: Kysely<Database>,
   collection: EcdysisCollection,
   specimenIds: readonly number[],
   rules: UploadRules,
-  opts: { timing?: CsvTiming; written?: number[]; pageSize?: number } = {},
+  opts: { timing?: CsvTiming; written?: number[]; pageSize?: number; beforePage?: () => Promise<void> } = {},
 ): ReadableStream<Uint8Array> {
   const hostNames = hostNamesOnce(db);
   let cursor = 0;
   return specimenArchiveStream(
     async (limit) => {
+      await opts.beforePage?.();
       const slice = specimenIds.slice(cursor, cursor + Math.min(limit, opts.pageSize ?? limit));
       cursor += slice.length;
       const names = await hostNames();
@@ -924,6 +947,71 @@ export function uploadArchiveStream(
     },
     { layout: uploadArchiveLayout(collection), timing: opts.timing },
   );
+}
+
+/** The archive would be larger than `ARCHIVE_LIMIT_BYTES`: it is built in memory, and British Columbia's is about 145 KB. */
+export class ArchiveTooLarge extends Error {
+  constructor(bytes: number) {
+    super(`The archive is more than ${bytes} bytes, which is more than Beeline builds in memory`);
+  }
+}
+
+/** The read of Ecdysis the archive rested on has been replaced by a newer one while the archive was being written. */
+export class ReadSuperseded extends Error {
+  constructor() {
+    super("Ecdysis was read again while the archive was being written");
+  }
+}
+
+/** A generous bound on an archive built in memory. */
+export const ARCHIVE_LIMIT_BYTES = 50 * 1024 * 1024;
+
+/**
+ * The whole archive, built in memory before anything is answered: the person
+ * may have the file from the moment it is sent, so "completed" has to mean
+ * "Beeline finished writing it", and the file name can carry the number of
+ * specimens actually written. `stillCurrent` is asked before each page and
+ * once more at the end; when the read marker on disk is no longer the one the
+ * plan rested on it ends the build, with nothing to record.
+ */
+export async function buildArchive(
+  db: Kysely<Database>,
+  collection: EcdysisCollection,
+  specimenIds: readonly number[],
+  rules: UploadRules,
+  opts: { stillCurrent: () => Promise<boolean>; pageSize?: number; limit?: number; timing?: CsvTiming },
+): Promise<{ bytes: Uint8Array; written: number[] }> {
+  const written: number[] = [];
+  const limit = opts.limit ?? ARCHIVE_LIMIT_BYTES;
+  const stream = uploadArchiveStream(db, collection, specimenIds, rules, {
+    written,
+    pageSize: opts.pageSize,
+    timing: opts.timing,
+    beforePage: async () => {
+      if (!(await opts.stillCurrent())) throw new ReadSuperseded();
+    },
+  });
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = stream.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel();
+      throw new ArchiveTooLarge(limit);
+    }
+    chunks.push(value);
+  }
+  if (!(await opts.stillCurrent())) throw new ReadSuperseded();
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return { bytes, written };
 }
 
 // --- The associations file -----------------------------------------------------
@@ -948,9 +1036,10 @@ const ASSOCIATION_PAGE = 5_000;
  * uploaded. One row for each whose sample has an iNaturalist observation that
  * still exists. The host is named as the observation named it, at whatever rank
  * Beeline holds, as `associatedTaxa` does, and left empty where there is none.
- * A trap sample has no row at all: Symbiota applies one relationship, `hasHost`,
- * to the whole file, and the plant near a trap is not a host (`plantRelationship`
- * makes the same distinction, "near" and not "visits flowers of"). UTF-8 with no
+ * A trap sample (the sample's `kind`, not the words of its protocol) has no
+ * row at all: Symbiota applies one relationship, `hasHost`, to the whole file,
+ * and the plant near a trap is not a host (the archive's `associatedTaxa` says
+ * "near" for it, and not "visits flowers of"). UTF-8 with no
  * byte order mark and no formula guard. The program's CSV downloads have both
  * for the sake of spreadsheets; this file is read by Symbiota, which loaded it
  * the same with and without a mark (tried 2026-11-20), so the headers are left
@@ -967,11 +1056,11 @@ export async function associationsCsv(db: Kysely<Database>, collection: EcdysisC
         .where("sp.entity_id", "in", specimenIds.slice(from, from + ASSOCIATION_PAGE))
         .where("s.inat_observation_id", "is not", null)
         .where(sql<boolean>`NOT ${observationGone}`)
-        .select(["sp.entity_id as specimen_id", "sp.field_number", "s.inat_observation_id", "s.host_name_as_observed", "s.protocol"])
+        .select(["sp.entity_id as specimen_id", "sp.field_number", "s.inat_observation_id", "s.host_name_as_observed", "s.kind"])
         .orderBy("sp.entity_id")
         .execute();
       for (const r of found) {
-        if (r.field_number === null || r.inat_observation_id === null || methodNamesTrap(r.protocol)) continue;
+        if (r.field_number === null || r.inat_observation_id === null || r.kind === "trap") continue;
         lines.push(csvExactLine([catalogNumberOf(collection, r.field_number), observationUrl(r.inat_observation_id), r.host_name_as_observed]));
       }
     }

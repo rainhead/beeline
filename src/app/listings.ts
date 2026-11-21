@@ -523,7 +523,9 @@ export const LISTING_FILTER_KEYS = ["q", "from", "to", "place", "area", "collect
  * file that goes to a museum must not do that, so a caller that wants an
  * answer, not a shrug, asks here. A parameter that is not one of
  * `LISTING_FILTER_KEYS` is a problem too, and so is one given twice; a blank
- * value, and `any` for a status, are no filter and no problem.
+ * value, and `any` for a status, are no filter and no problem. A text filter
+ * that says nothing, or only wildcards, is a problem too: it would select the
+ * whole year.
  */
 export function listingFilterProblems(params: URLSearchParams, parsed: ListingQuery): string[] {
   const kept = listingParams(parsed, { scope: parsed.scope });
@@ -538,6 +540,10 @@ export function listingFilterProblems(params: URLSearchParams, parsed: ListingQu
     const given = (values[0] ?? "").trim();
     if (given === "" || (given === "any" && ["det", "kind", "qc"].includes(key))) continue;
     if (kept.get(key) !== given) problems.add(key);
+    // A text filter the parser keeps but that selects everything: one made only of separators (the place filter reads
+    // `,,,` as no place and narrows nothing) or of LIKE wildcards (`%` and `_` are not escaped by the listing's
+    // matching, so `q=%` or `collector=%` matches every sample).
+    else if (["q", "place", "collector", "host", "taxon"].includes(key) && /^[\s,%_]*$/.test(given)) problems.add(key);
   }
   return [...problems];
 }
@@ -712,6 +718,8 @@ export interface SpecimenRow {
   state_province: string | null;
   country: string | null;
   protocol: string | null;
+  /** How the sample was collected, as the sample says: netted, or the contents of a trap. Unlike `protocol`, which is free text. */
+  sample_kind: SampleKind;
   /** The museum's catalog number, as Ecdysis reports it; null where no museum has said (gh-98). */
   catalog_number: string | null;
   /** What became of the pin, where a staff inventory has said (specimen_disposition, beeline-fud5). */
@@ -1852,6 +1860,7 @@ export async function listSpecimens(
         "s.state_province",
         "s.country",
         "s.protocol",
+        "s.kind as sample_kind",
         sql<string | null>`(SELECT c.catalog_number FROM specimen_catalog_number c WHERE c.specimen_id = sp.entity_id)`.as(
           "catalog_number",
         ),
@@ -2279,8 +2288,11 @@ export const alpha3Of = (alpha2: string): string | undefined => Object.entries(A
  * where the method names a trap, the plant near the trap ("near":"Ceanothus"),
  * since a trap does not say which flower its bees visited (beeline-vjqy).
  */
-const associatedTaxa = (host: string | null, method: string | null) =>
-  host === null || host === "" ? null : `"${plantRelationship(method)}":"${host.replaceAll('"', "'")}"`;
+const associatedTaxa = (host: string | null, method: string | null) => associatedTaxaFor(host, plantRelationship(method));
+
+/** The same term with the relationship given: the upload to Ecdysis decides it by the sample's kind, not by words in its method. */
+export const associatedTaxaFor = (host: string | null, relationship: "near" | "visits flowers of") =>
+  host === null || host === "" ? null : `"${relationship}":"${host.replaceAll('"', "'")}"`;
 
 /**
  * dwc:geodeticDatum: WGS84 for every point there is. iNaturalist stores

@@ -9,6 +9,8 @@ import { configFromEnv } from "../src/app/config.js";
 import { describeFetch, fetchEcdysis, type EcdysisCollection } from "../src/fetch-ecdysis.js";
 import { createKysely } from "../src/db.js";
 import { uploadStateOf } from "../src/app/ecdysis-upload.js";
+import { buildJobs } from "../src/app/jobs/registry.js";
+import { vi } from "vitest";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 /**
@@ -91,8 +93,8 @@ function ecdysis(): Ecdysis {
   return e;
 }
 
-const fetchWith = (e: Ecdysis, now = new Date("2026-10-09T10:00:00Z")) =>
-  fetchEcdysis(conn, WA, { dir, credentials: CREDENTIALS, fetch: e.fetch, now });
+const fetchWith = (e: Ecdysis, now = new Date("2026-10-09T10:00:00Z"), extra: { force?: boolean } = {}) =>
+  fetchEcdysis(conn, WA, { dir, credentials: CREDENTIALS, fetch: e.fetch, now, ...extra });
 
 describe("the nightly Ecdysis fetch", () => {
   test("the first run signs in, downloads, loads, and keeps the archive and the probe's baseline", async () => {
@@ -226,10 +228,14 @@ describe("the read marker and the upload files", () => {
     // Matched to a specimen, and not matched (BCBA_9999999 is no specimen's).
     expect(state.held.has("bcba_2303966")).toBe(true);
     expect(state.held.has("bcba_9999999")).toBe(true);
-    // A read that finds nothing new counts too, and the zip is the same one.
+    // A read that found nothing new reloaded the kept archive and did not download one: the upload does not rest on it.
     await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date() });
-    expect((await uploadStateOf(db, BC, { ecdysisDir: dir })).ok).toBe(true);
+    expect(await uploadStateOf(db, BC, { ecdysisDir: dir })).toMatchObject({ ok: false, reason: "reloaded" });
     expect(e.downloads).toBe(1);
+    // The manual read forces a download whatever the probe says, and then the upload has a read to rest on.
+    await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date(), force: true });
+    expect(e.downloads).toBe(2);
+    expect((await uploadStateOf(db, BC, { ecdysisDir: dir })).ok).toBe(true);
   });
 });
 
@@ -246,11 +252,61 @@ describe("the marker's record count", () => {
     });
     const e = ecdysis();
     const r = await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date() });
-    // The loader counted more occurrences than the archive has, or no more: either way the marker says the archive's.
-    expect(r.load.occurrences).toBeGreaterThanOrEqual(archiveRows);
+    // The loader counted the doubly matched record twice; the marker says the archive's own count.
+    expect(r.load.occurrences).toBe(archiveRows + 1);
     expect(JSON.parse(await readFile(join(dir, "collection-196.read.json"), "utf8")).records).toBe(archiveRows);
     const state = await uploadStateOf(createKysely(instance), BC, { ecdysisDir: dir });
     expect(state.ok, JSON.stringify(state)).toBe(true);
+  });
+});
+
+describe("a forced read", () => {
+  test("downloads a collection read whole though the probe says nothing moved, and the nightly read does not", async () => {
+    const e = ecdysis();
+    await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date("2026-10-09T10:00:00Z") });
+    expect(e.downloads).toBe(1);
+    const nightly = await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date("2026-10-10T10:00:00Z") });
+    expect(nightly.source).toBe("cached");
+    const forced = await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date("2026-10-10T11:00:00Z"), force: true });
+    expect(forced).toMatchObject({ source: "downloaded", reason: "a download was asked for" });
+    expect(e.downloads).toBe(2);
+    expect(JSON.parse(await readFile(join(dir, "collection-196.read.json"), "utf8"))).toMatchObject({ source: "downloaded" });
+  });
+
+  test("leaves a dataset (Washington's) to the probe, as before", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    const again = await fetchWith(e, new Date("2026-10-10T10:00:00Z"), { force: true });
+    expect(again.source).toBe("cached");
+    expect(e.downloads).toBe(1);
+  });
+});
+
+describe("the two jobs that read Ecdysis", () => {
+  test("the nightly one leaves the probe to decide; the one the button runs downloads a collection read whole", async () => {
+    const e = ecdysis();
+    vi.stubGlobal("fetch", e.fetch);
+    try {
+      const jobs = buildJobs({ ecdysis: CREDENTIALS, ecdysisDir: dir } as never);
+      const nightly = jobs.find((j) => j.name === "ecdysis-fetch")!;
+      const readNow = jobs.find((j) => j.name === "ecdysis-read-now")!;
+      expect(nightly.schedule).toEqual({ kind: "dailyLA", hour: 3 });
+      expect(readNow.schedule).toEqual({ kind: "onDemand" });
+      const ctx = { db: createKysely(instance), conn, log: () => undefined, step: <T,>(_: string, fn: () => Promise<T>) => fn(), signal: new AbortController().signal };
+      // The first nightly run downloads both collections; a second, with nothing moved, downloads neither.
+      await nightly.run(ctx);
+      const first = e.downloads;
+      expect(first).toBe(2);
+      await nightly.run(ctx);
+      expect(e.downloads).toBe(first);
+      // The button's run downloads British Columbia, read whole, and leaves Washington's dataset to the probe.
+      const detail = await readNow.run(ctx);
+      expect(e.downloads).toBe(first + 1);
+      expect(String(detail)).toContain("collection 196 downloaded (a download was asked for)");
+      expect(String(detail)).toContain("dataset 44 cached archive reloaded");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

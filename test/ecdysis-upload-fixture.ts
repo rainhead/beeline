@@ -82,21 +82,21 @@ export async function fixture() {
    * The archive last downloaded for a collection, holding these catalog numbers (some of which match no specimen),
    * and the marker the fetch leaves for a read that began this many hours ago and loaded it.
    */
-  const cacheArchive = async (c: EcdysisCollection, catalogNumbers: string[], opts: { readHoursAgo?: number; header?: string } = {}) => {
+  const cacheArchive = async (c: EcdysisCollection, catalogNumbers: string[], opts: { readHoursAgo?: number; header?: string; source?: "downloaded" | "cached" } = {}) => {
     const header = opts.header ?? "catalogNumber";
     const occurrences = [`id\t${header}\trecordID`, ...catalogNumbers.map((n, i) => `${i + 1}\t${n}\tuuid-${i}`)].join("\n") + "\n";
     await writeFile(cachedArchivePath(dir, c), zipSync({ "occurrences.tab": strToU8(occurrences), "identifications.tab": strToU8("coreid\trecordID\n") }));
-    await writeMarker(c, opts.readHoursAgo ?? 1, catalogNumbers.length);
+    await writeMarker(c, opts.readHoursAgo ?? 1, catalogNumbers.length, opts.source ?? "downloaded");
   };
   /** The marker for a read that began this many hours ago and loaded the zip as it is on disk now. */
-  const writeMarker = async (c: EcdysisCollection, hoursAgo: number, records = 0) => {
+  const writeMarker = async (c: EcdysisCollection, hoursAgo: number, records = 0, source: "downloaded" | "cached" = "downloaded") => {
     const st = await stat(cachedArchivePath(dir, c));
     await writeFile(
       readMarkerPath(dir, c),
       JSON.stringify({
         scope: c.collectionId !== undefined ? `collection ${c.collectionId}` : `dataset ${c.datasetId}`,
         readAt: new Date(Date.now() - hoursAgo * HOUR).toISOString(),
-        source: "downloaded",
+        source,
         zipBytes: st.size,
         zipModifiedAt: st.mtime.toISOString(),
         records,

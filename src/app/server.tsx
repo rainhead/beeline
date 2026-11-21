@@ -243,7 +243,6 @@ import {
   OUTSIDE,
   STAFF_READER,
   parseListingQuery,
-  listingFilterProblems,
   csvStream,
   xlsxStream,
   XLSX_CONTENT_TYPE,
@@ -2450,12 +2449,11 @@ export function createApp({
   // HEAD, which answer 405). It is written when asked for, one collection and year at a time, from what the nightly read
   // of Ecdysis last loaded, and refused with a plain sentence and no file when that read is missing or too old, when
   // Beeline reads only a dataset of the collection, when the year is not one the collection offers, and when an archive
-  // has already been started since the last read. The Specimens listing's own filters in the query string narrow it; one
-  // Beeline cannot read is a 400, never ignored, and the rules of which specimens may go at all are not the query's to
-  // change. The choice to include obscured specimens is two fields of the form, `includeTaxonObscured=1` and
-  // `includeObserverObscured=1`, each at most once. Its start is recorded, with the decision, in one transaction; the
-  // whole archive is then built in memory, the completion recorded with the specimens actually written, and only then
-  // is it sent, under a name that says how many.
+  // has already been started since the last read. It takes the collection, the year and nothing else: narrowing an
+  // archive within a year is deliberately not offered, and any query parameter is a 400. The choice to include obscured
+  // specimens is two fields of the form, `includeTaxonObscured=1` and `includeObserverObscured=1`, each at most once.
+  // Its start is recorded, with the decision, in one transaction; the whole archive is then built in memory, the
+  // completion recorded with the specimens actually written, and only then is it sent, under a name that says how many.
   const refusing = (c: Context<AppEnv>) => (status: 400 | 404 | 405 | 409 | 413, text: string) => c.text(text, status, { "cache-control": "no-store", ...(status === 405 ? { allow: "POST" } : {}) });
   app.get("/exports/ecdysis/:file{[A-Za-z]+-\\d{4}-upload\\.zip}", (c) => (c.get("admin") ? refusing(c)(405, c.get("m").exports.ecdysis.postOnly) : c.text("Admins only.", 403)));
   app.post("/exports/ecdysis/:file{[A-Za-z]+-\\d{4}-upload\\.zip}", async (c) => {
@@ -2472,13 +2470,10 @@ export function createApp({
     const sent = (key: string) => (body[key] === undefined ? [] : Array.isArray(body[key]) ? body[key] : [body[key]]);
     const badChoice = [...Object.keys(body).filter((key) => !own.includes(key)), ...own.filter((key) => sent(key).length > 1 || (sent(key).length === 1 && sent(key)[0] !== "1"))];
     const include = { taxonObscured: sent("includeTaxonObscured")[0] === "1", observerObscured: sent("includeObserverObscured")[0] === "1" };
-    const filterParams = new URL(c.req.url).searchParams;
-    const atlases = await atlasOptions(db);
-    const programs = await scopePrograms(db);
-    const query = parseListingQuery(filterParams, { atlasCodes: atlases.map((a) => a.code), programCodes: programs.map((a) => a.code) });
-    const problems = [...badChoice, ...listingFilterProblems(filterParams, query)];
+    const queryKeys = [...new Set(new URL(c.req.url).searchParams.keys())];
+    const problems = [...queryKeys, ...badChoice];
     if (problems.length > 0) return refuse(400, e.badQuery(problems.join(", ")));
-    const state = await uploadStateOf(db, collection, { ecdysisDir: ecdysisDir(), query });
+    const state = await uploadStateOf(db, collection, { ecdysisDir: ecdysisDir() });
     const stated = (d: DownloadRecord) =>
       beingWritten(d) ? e.beingWritten : e.downloaded(d.by, m.format.dateTime(d.startedAt), d.year, d.specimens ?? d.planned, d.completedAt !== null);
     if (!state.ok) {
@@ -2494,14 +2489,12 @@ export function createApp({
     if (entry === undefined) return refuse(404, e.noSpecimensForFile);
     if (!entry.offered) return refuse(409, e.yearNotOffered);
     const ids = idsOf(entry, include);
-    if (ids.length === 0) return refuse(404, e.noSpecimensForFile);
+    // Everything eligible is obscured and no box was ticked: say so, and do not start an empty archive.
+    if (ids.length === 0) return entry.eligible.length > 0 ? refuse(400, e.choiceNeeded) : refuse(404, e.noSpecimensForFile);
     if (state.blocking !== null) return refuse(409, stated(state.blocking));
-    // The filters as a query string with its keys sorted, so that a value holding an ampersand cannot read as two filters.
-    const sorted = new URLSearchParams([...filterParams].sort(([a, x], [b, y]) => (a < b ? -1 : a > b ? 1 : x < y ? -1 : x > y ? 1 : 0)));
     const started = await startDownload(db, {
       collection,
       year,
-      filters: sorted.toString(),
       include,
       planned: ids.length,
       readAt: state.read.readAt,
@@ -2516,7 +2509,7 @@ export function createApp({
     };
     let built;
     try {
-      built = await buildArchive(db, collection, ids, { held: state.held, include, year, query }, { stillCurrent, timing: csvGenerationTiming("ecdysis upload") });
+      built = await buildArchive(db, collection, ids, { held: state.held, include, year }, { stillCurrent, timing: csvGenerationTiming("ecdysis upload") });
     } catch (err) {
       if (err instanceof ReadSuperseded) return refuse(409, e.superseded);
       if (err instanceof ArchiveTooLarge) return refuse(413, e.tooLarge);
@@ -2548,10 +2541,10 @@ export function createApp({
     const collection = download === null ? undefined : collectionOf(download.collection);
     if (download === null || collection === undefined) return errorResponse(c, "notFound");
     if (download.completedAt === null) return refuse(409, e.associationsUnfinished);
-    const ids = await downloadSpecimens(db, download.id);
-    return c.body(await associationsCsv(db, collection, ids), 200, {
+    const recorded = await downloadSpecimens(db, download.id);
+    return c.body(await associationsCsv(db, recorded), 200, {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${uploadFileName(collection, download.year, download.completedAt, "associations", ids.length)}"`,
+      "content-disposition": `attachment; filename="${uploadFileName(collection, download.year, download.completedAt, "associations", recorded.length)}"`,
       "cache-control": "no-store",
     });
   });

@@ -154,6 +154,13 @@ export interface FetchEcdysisOptions {
   /** Injected in tests; the global fetch otherwise. */
   fetch?: typeof fetch;
   now?: Date;
+  /**
+   * Download the archive whether or not the probe says Ecdysis changed, for a collection read whole (`collectionId`):
+   * the probe counts records and records modified since the last download, so a second change to a record already
+   * modified leaves both numbers as they were. The upload files rest on a read that downloaded, so the manual read
+   * on the Exports page forces one. The nightly run does not. A dataset (Washington's) is read as before.
+   */
+  force?: boolean;
   /** Run around each phase, as the job framework's ctx.step does; a plain call otherwise. */
   step?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 }
@@ -330,9 +337,13 @@ export async function fetchEcdysis(
   let reason: string;
   let fresh: { total: number; modifiedSince: number } | null = null;
   let unchanged = false;
+  const forced = opts.force === true && collection.collectionId !== undefined;
   try {
     fresh = await step("probe Ecdysis", () => probeEcdysis(f, scope, since, opts.signal));
-    if (baseline === null || baseline.datasetId !== scope.datasetId || baseline.collectionId !== scope.collectionId || !existsSync(zipPath)) {
+    if (forced) {
+      // The counts are still taken, for the baseline the nightly run compares with, but they decide nothing.
+      reason = "a download was asked for";
+    } else if (baseline === null || baseline.datasetId !== scope.datasetId || baseline.collectionId !== scope.collectionId || !existsSync(zipPath)) {
       reason = "no archive downloaded before";
     } else {
       const sinceThen = await step("probe since the last download", () =>

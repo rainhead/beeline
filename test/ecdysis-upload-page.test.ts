@@ -60,7 +60,7 @@ const specimensIn = async (res: Response) => {
   const files = unzipSync(new Uint8Array(await res.arrayBuffer()));
   return strFromU8(files["occurrence.txt"]!).trim().split("\n").slice(1).map((l) => l.split("\t")[0]!);
 };
-/** Asks for an archive the way the page's form does: a POST, with the choices as fields and any filters in the query. */
+/** Asks for an archive the way the page's form does: a POST, with the choices as fields. A query string is for the tests that must be refused. */
 const ask = (app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }, opts: { year?: number; query?: string; fields?: Record<string, string> } = {}) =>
   app.request(`/exports/ecdysis/BC-${opts.year ?? CURRENT_SEASON}-upload.zip${opts.query === undefined ? "" : `?${opts.query}`}`, {
     method: "POST",
@@ -88,7 +88,7 @@ describe("the Ecdysis section of the Exports page", () => {
     expect(page).toContain(e.heading);
     for (const step of Object.values(e.steps)) expect(page).toContain(html(step));
     expect(page).toContain(e.readNowButton);
-    expect(page).toContain('action="/jobs/run/ecdysis-fetch"');
+    expect(page).toContain('action="/jobs/run/ecdysis-read-now"');
     expect(page).toContain(e.collection("British Columbia Bee Atlas", "collection 196"));
     expect(page).toContain(e.uploadInto(196, "BCBA_"));
     expect(page).toContain(e.yearHeading(CURRENT_SEASON, 2));
@@ -211,32 +211,23 @@ describe("downloading the archive", () => {
     const { f, staff, app } = await setup();
     const a = await f.specimen({ field: "2500001" });
     await f.specimen({ field: "2500002", year: SETTLED_SEASON });
-    const first = await ask(app, { query: "kind=net" });
+    const first = await ask(app);
     expect(first.status).toBe(200);
     // Complete already: the person may have the file from the moment it is sent.
-    expect((await rows(f.conn, `SELECT person_id, filters, planned_specimens FROM ecdysis_upload_download`))[0]).toEqual([staff, "kind=net", 1]);
+    expect((await rows(f.conn, `SELECT person_id, planned_specimens FROM ecdysis_upload_download`))[0]).toEqual([staff, 1]);
     expect((await rows(f.conn, `SELECT specimens FROM ecdysis_upload_download_completed`))[0]).toEqual([1]);
-    expect((await rows(f.conn, `SELECT specimen_id FROM ecdysis_upload_download_specimen`))[0]).toEqual([a.id]);
+    expect((await rows(f.conn, `SELECT specimen_id, catalog_number FROM ecdysis_upload_download_specimen`))[0]).toEqual([a.id, "BCBA_2500001"]);
     await drain(first);
-    // Another year, other filters: still one archive for each read.
+    // Another year: still one archive for each read.
     const second = await ask(app, { year: SETTLED_SEASON });
     expect(second.status).toBe(409);
-    expect(await textOf(second)).toContain("Sam Staff downloaded the archive");
+    expect(await textOf(second)).toContain("Sam Staff prepared the archive");
     const page = await textOf(await app.request("/exports"));
-    expect(page).toContain("Sam Staff downloaded the archive");
+    expect(page).toContain("Sam Staff prepared the archive");
     expect(page).not.toContain(e.downloadArchive);
     expect(page).toMatch(/\/exports\/ecdysis\/downloads\/\d+\/associations\.csv/);
     expect(page).toContain(e.downloadsHeading);
     expect(page).toContain(html(e.downloadsNote));
-  });
-
-  it("records the filters as a sorted query string in which an ampersand in a value cannot read as two filters", async () => {
-    const { f, app } = await setup();
-    await f.specimen({ field: "2500001", sample: { locality: "'Rock & Creek'" } });
-    const res = await ask(app, { query: "place=" + encodeURIComponent("Rock & Creek") + "&kind=net" });
-    expect(res.status).toBe(200);
-    await drain(res);
-    expect((await rows(f.conn, `SELECT filters FROM ecdysis_upload_download`))[0]).toEqual(["kind=net&place=Rock+%26+Creek"]);
   });
 
   it("offers an archive again after the next read, which is run for real, and what was left out earlier can go", async () => {
@@ -263,7 +254,7 @@ describe("downloading the archive", () => {
     expect(res.status).toBe(200);
     await res.body!.cancel();
     expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download_completed`))[0]).toEqual([1n]);
-    expect(await textOf(await app.request("/exports"))).toContain("Sam Staff downloaded the archive");
+    expect(await textOf(await app.request("/exports"))).toContain("Sam Staff prepared the archive");
   });
 
   it("lets only one of two simultaneous requests for an archive through", async () => {
@@ -275,10 +266,10 @@ describe("downloading the archive", () => {
     expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download`))[0]).toEqual([1n]);
   });
 
-  it("answers 400 to a filter it cannot read, a place that says nothing, a parameter it does not know, a field it does not take or a choice given twice, and writes nothing", async () => {
+  it("answers 400 to any query parameter, a field it does not take or a choice given twice, and writes nothing", async () => {
     const { f, app } = await setup();
     await f.specimen({ field: "2500001" });
-    for (const query of ["kind=traps", "colector=Casey", "from=2026-13-99", "place=,,,", "q=%25", "scope=WaBA", "year=2025", "includeTaxonObscured=1"]) {
+    for (const query of ["kind=net", "collector=Casey", "place=Umtanum", "scope=WaBA", "year=2025", "includeTaxonObscured=1"]) {
       const res = await ask(app, { query });
       expect(res.status, query).toBe(400);
       expect(res.headers.get("cache-control")).toBe("no-store");
@@ -294,19 +285,7 @@ describe("downloading the archive", () => {
     expect(twice.status).toBe(400);
     await drain(twice);
     expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download`))[0]).toEqual([0n]);
-    expect(await textOf(await ask(app, { query: "kind=traps" }))).toContain("kind");
-  });
-
-  it("answers each quality filter with a definite status", async () => {
-    const results: Record<string, number> = {};
-    for (const qc of ["any", "flagged", "blocking", "warning", "clean", "locality"]) {
-      const { f, app } = await setup();
-      await f.specimen({ field: "2500001" });
-      const res = await ask(app, { query: `qc=${qc}` });
-      results[qc] = res.status;
-      await drain(res);
-    }
-    expect(results).toEqual({ any: 200, flagged: 404, blocking: 404, warning: 404, clean: 200, locality: 404 });
+    expect(await textOf(await ask(app, { query: "kind=net" }))).toContain("kind");
   });
 
   it("refuses a year that is not offered, and the archive when the read is old", async () => {
@@ -357,6 +336,55 @@ describe("downloading the archive", () => {
   });
 });
 
+describe("the read the archive rests on, and the copy about it", () => {
+  it("refuses, with its own sentence, when the last read reloaded the kept archive; the button forces a download", async () => {
+    const { f, app } = await setup();
+    await f.specimen({ field: "2500001" });
+    await f.cacheArchive(BC, ["BCBA_9999999"], { readHoursAgo: 1, source: "cached" });
+    const page = await textOf(await app.request("/exports"));
+    expect(page).toContain(html(e.refused.reloaded));
+    expect(page).toContain('action="/jobs/run/ecdysis-read-now"');
+    const res = await ask(app);
+    expect(res.status).toBe(409);
+    expect(await textOf(res)).toBe(e.refused.reloaded);
+  });
+
+  it("says a box must be ticked for a year in which everything eligible is obscured, and answers a request with none with that sentence", async () => {
+    const { f, app } = await setup();
+    await f.specimen({ field: "2500001", sample: { taxon_geoprivacy: "'obscured'" } });
+    const page = await textOf(await app.request("/exports"));
+    expect(page).toContain(e.yearHeading(CURRENT_SEASON, 0));
+    expect(page).toContain(html(e.choiceNeeded));
+    const res = await ask(app);
+    expect(res.status).toBe(400);
+    expect(await textOf(res)).toBe(e.choiceNeeded);
+    expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download`))[0]).toEqual([0n]);
+    const chosen = await ask(app, { fields: { includeTaxonObscured: "1" } });
+    expect(chosen.status).toBe(200);
+    await drain(chosen);
+  });
+
+  it("describes an archive being prepared without saying it did not finish, and one that was not prepared as such", async () => {
+    const { f, app } = await setup();
+    await f.specimen({ field: "2500001" });
+    const { startDownload, INCLUDE_NONE } = await import("../src/app/ecdysis-upload.js");
+    const readAt = new Date(Date.now() - 3_600_000);
+    const r = await startDownload(f.db, { collection: BC, year: CURRENT_SEASON, include: INCLUDE_NONE, planned: 1, readAt, personId: null });
+    expect(r.ok).toBe(true);
+    const preparing = await textOf(await app.request("/exports"));
+    expect(preparing).toContain("Beeline is preparing it now");
+    expect(preparing).not.toContain("was not prepared");
+    await f.conn.run(`UPDATE ecdysis_upload_download SET started_at = now() - INTERVAL '20 minutes'`);
+    const unfinished = await textOf(await app.request("/exports"));
+    expect(unfinished).toContain("and it was not prepared");
+    expect(unfinished).not.toContain("did not finish");
+    // The record is described as prepared, and tells a person who did not receive the file what to do.
+    expect(e.downloaded("Sam", "today", 2026, 1, true)).toContain("If you did not receive the file, read Ecdysis again and ask for it again.");
+    expect(e.downloadsNote).toContain("if you did not receive the file, read Ecdysis again and ask for it again");
+    expect(e.tooLarge).toContain("until Ecdysis has been read again");
+  });
+});
+
 describe("finished downloads on the page, whatever the state of the read", () => {
   it("stay listed, with their associations link, when the read is old, missing, or the archive is gone; and say whether Ecdysis holds their specimens", async () => {
     const { f, app } = await setup();
@@ -366,9 +394,12 @@ describe("finished downloads on the page, whatever the state of the read", () =>
     await f.cacheArchive(BC, ["BCBA_9999999"], { readHoursAgo: 5 });
     const stale = await textOf(await app.request("/exports"));
     expect(stale).toContain("more than 2 hours ago");
-    expect(stale).toContain("Sam Staff downloaded the archive");
+    expect(stale).toContain("Sam Staff prepared the archive");
     expect(stale).toMatch(/\/exports\/ecdysis\/downloads\/\d+\/associations\.csv/);
     expect(stale).not.toContain(e.downloadArchive);
+    // With no recent read, absence from Ecdysis cannot be established: "not known", not "not in Ecdysis yet".
+    expect(stale).toContain("not known to be in Ecdysis");
+    expect(stale).not.toContain("not in Ecdysis yet");
     await rm(`${f.dir}/collection-196.read.json`);
     const never = await textOf(await app.request("/exports"));
     expect(never).toContain(html(e.refused.never));
@@ -385,9 +416,9 @@ describe("finished downloads on the page, whatever the state of the read", () =>
     const absent = await f.specimen({ field: "2500002" });
     const { startDownload, completeDownload, INCLUDE_NONE } = await import("../src/app/ecdysis-upload.js");
     for (let i = 0; i < 12; i++) {
-      const r = await startDownload(f.db, { collection: BC, year: CURRENT_SEASON, filters: "", include: INCLUDE_NONE, planned: 1, readAt: i === 0 ? new Date(Date.now() - 300 * 3_600_000) : new Date(), personId: null });
+      const r = await startDownload(f.db, { collection: BC, year: CURRENT_SEASON, include: INCLUDE_NONE, planned: 1, readAt: i === 0 ? new Date(Date.now() - 300 * 3_600_000) : new Date(), personId: null });
       if (!r.ok) throw new Error("not started");
-      await completeDownload(f.db, r.id, [i === 0 ? absent.id : spec.id]);
+      await completeDownload(f.db, r.id, [i === 0 ? { id: absent.id, catalogNumber: "BCBA_2500002" } : { id: spec.id, catalogNumber: "BCBA_2500001" }]);
       await new Promise((resolve) => setTimeout(resolve, 8));
     }
     await f.conn.run(`INSERT INTO specimen_catalog_number (specimen_id, catalog_number, loaded_at) VALUES (${spec.id}, 'BCBA_2500001', now() - INTERVAL '30 days')`);
@@ -398,7 +429,7 @@ describe("finished downloads on the page, whatever the state of the read", () =>
 });
 
 describe("the associations file of a finished download", () => {
-  it("holds exactly the specimens that archive held, with no filters of its own, and stays after later reads", async () => {
+  it("holds exactly the specimens that archive held, under the catalog numbers they were written under, and stays after later reads", async () => {
     const { f, app, readAgain } = await setup();
     await f.specimen({ field: "2500001", sample: { inat_observation_id: "111", host_name_as_observed: "'Salvia officinalis'", host_rank: "'species'" } });
     await f.specimen({ field: "2500002", sample: { kind: "'trap'", protocol: "'blue vane trap'", inat_observation_id: "112", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } });
@@ -429,6 +460,16 @@ describe("the associations file of a finished download", () => {
     await drain(none);
   });
 
+  it("names the subject by the catalog number written, though the label number was corrected after the archive was prepared", async () => {
+    const { f, app } = await setup();
+    const spec = await f.specimen({ field: "2500001", sample: { inat_observation_id: "111", host_name_as_observed: "'Salvia'", host_rank: "'genus'" } });
+    await drain(await ask(app));
+    await f.conn.run(`UPDATE specimen SET field_number = '2599999' WHERE entity_id = ${spec.id}`);
+    const [[id]] = (await rows(f.conn, `SELECT entity_id FROM ecdysis_upload_download`)) as [[number]];
+    const res = await app.request(`/exports/ecdysis/downloads/${id}/associations.csv`);
+    expect(await res.text()).toContain("BCBA_2500001,https://www.inaturalist.org/observations/111,Salvia");
+  });
+
   it("is on the page beside the finished download, not beside the checkboxes", async () => {
     const { f, app } = await setup();
     await f.specimen({ field: "2500001", sample: { geoprivacy: "'private'" } });
@@ -438,6 +479,6 @@ describe("the associations file of a finished download", () => {
     await drain(await ask(app));
     const after = await textOf(await app.request("/exports"));
     expect(after).toContain(`>${e.downloadAssociations}</a>`);
-    expect(after).toMatch(/<li>[^<]*Sam Staff downloaded the archive[^]*associations\.csv/);
+    expect(after).toMatch(/<li>[^<]*Sam Staff prepared the archive[^]*associations\.csv/);
   });
 });

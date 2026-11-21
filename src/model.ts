@@ -1754,7 +1754,6 @@ export interface EcdysisUploadDownloadTable {
   entity_id: Generated<number>;
   collection: string;
   year: number;
-  filters: string;
   include_taxon_obscured: boolean;
   include_observer_obscured: boolean;
   planned_specimens: number;
@@ -1774,6 +1773,7 @@ export interface EcdysisUploadDownloadCompletedTable {
 export interface EcdysisUploadDownloadSpecimenTable {
   download_id: number;
   specimen_id: number;
+  catalog_number: string;
 }
 
 /** One step of a night job's run (beeline-e1xg). */

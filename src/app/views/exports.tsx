@@ -119,7 +119,7 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
       <ol>
         <li>
           {e.steps.readNow}
-          <form method="post" action="/jobs/run/ecdysis-fetch">
+          <form method="post" action="/jobs/run/ecdysis-read-now">
             <Button variant="tonal">{e.readNowButton}</Button>
           </form>
         </li>
@@ -131,9 +131,6 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
         <li>{e.steps.readAgain}</li>
         <li>{e.steps.localities}</li>
       </ol>
-      <p>
-        <Meta>{e.narrowing}</Meta>
-      </p>
       {sections.map(({ collection, programName, state, downloads }) => (
         <section>
           <h3>{e.collection(programName, describeScope(collection))}</h3>
@@ -193,7 +190,15 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
               <ul>
                 {downloads.map((d) => (
                   <li>
-                    {e.downloadItem(d.by, m.format.dateTime(d.startedAt), d.year, d.specimens ?? d.planned, d.notYetInEcdysis, d.completedAt !== null)}{" "}
+                    {e.downloadItem(
+                      d.by,
+                      m.format.dateTime(d.startedAt),
+                      d.year,
+                      d.specimens ?? d.planned,
+                      d.notKnown,
+                      d.established,
+                      d.completedAt !== null ? "prepared" : beingWritten(d) ? "preparing" : "unfinished",
+                    )}{" "}
                     {e.downloadChoice(d.include.taxonObscured, d.include.observerObscured)}{" "}
                     {d.completedAt !== null && (
                       <a href={associationsHref(d.id)} aria-label={e.associationsDownload(programName, d.year)}>
@@ -265,6 +270,7 @@ function YearOffer({
                 </label>
               )}
               <Meta block>{e.choiceWarning}</Meta>
+              {none === 0 && <Meta block>{e.choiceNeeded}</Meta>}
             </fieldset>
           )}
           <p>

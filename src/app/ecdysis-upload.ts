@@ -27,10 +27,8 @@ import {
   hostNamesOnce,
   isoDate,
   listSpecimens,
-  needsRollup,
   observationGone,
   STAFF_READER,
-  type ListingQuery,
   type SpecimenRow,
 } from "./listings.js";
 import type { CsvTiming } from "./request-timing.js";
@@ -127,6 +125,8 @@ export type UploadRefusal =
   | { reason: "never"; readAt: null }
   /** The last read is older than `UPLOAD_FRESH_HOURS`. */
   | { reason: "stale"; readAt: Date }
+  /** The last read reloaded the archive Beeline kept because the probe said nothing moved, and did not download one. */
+  | { reason: "reloaded"; readAt: Date }
   /** A read succeeded but the archive it loaded is not on disk. */
   | { reason: "no-archive"; readAt: Date }
   /** The archive on disk is not the one the read loaded: its size or time differs from the marker's. */
@@ -156,6 +156,10 @@ export async function ecdysisRead(collection: EcdysisCollection, opts: { ecdysis
   if (marker === null) return { ok: false, reason: "never", readAt: null };
   const readAt = new Date(marker.readAt);
   if (now.getTime() - readAt.getTime() > UPLOAD_FRESH_HOURS * 3_600_000) return { ok: false, reason: "stale", readAt };
+  // The probe's "nothing moved" counts records and records modified since the last download, so a second change to
+  // a record already modified leaves both as they were. A file made from a reloaded archive could rest on a stale
+  // copy; one made from a download rests on what Ecdysis said at the read.
+  if (marker.source !== "downloaded") return { ok: false, reason: "reloaded", readAt };
   const archivePath = cachedArchivePath(opts.ecdysisDir, collection);
   let st;
   try {
@@ -210,6 +214,8 @@ export async function catalogNumbersInArchive(
   expected?: { bytes: number; modifiedAt: string },
 ): Promise<ArchiveContents> {
   const st = await stat(archivePath);
+  // The file must be the marker's before a kept or in-flight answer is returned, as well as around a fresh read.
+  if (expected !== undefined && (st.size !== expected.bytes || st.mtime.toISOString() !== expected.modifiedAt)) throw new ArchiveChanged(archivePath);
   const key = `${st.size}:${st.mtimeMs}`;
   const kept = heldCache.get(archivePath);
   if (kept?.key === key) return kept.contents;
@@ -290,6 +296,12 @@ export interface Eligible {
   taxonObscured: boolean;
   observerObscured: boolean;
 }
+/** A specimen as an archive wrote it: its id and the catalog number it was written under. */
+export interface WrittenSpecimen {
+  id: number;
+  catalogNumber: string;
+}
+
 export const included = (e: Pick<Eligible, "taxonObscured" | "observerObscured">, include: Include): boolean =>
   (!e.taxonObscured || include.taxonObscured) && (!e.observerObscured || include.observerObscured);
 
@@ -343,10 +355,10 @@ async function scopeOf(db: Kysely<Database>, collection: EcdysisCollection): Pro
  * mean on the Specimens page. `ids`, when given, asks about those specimens
  * only: the writers ask again about the rows they are about to write.
  */
-async function candidatesOf(db: Kysely<Database>, scope: string, query: ListingQuery, ids?: readonly number[]): Promise<Candidate[]> {
-  const asked = { ...query, scope, labels: "printed" as const, ecdysis: "not" as const };
-  // The flag roll-up is joined only for a quality filter that reads it; the listing's own rule says which.
-  const base = await filteredSpecimens(db, asked, 0, STAFF_READER, undefined, {}, needsRollup(asked), ids);
+async function candidatesOf(db: Kysely<Database>, scope: string, ids?: readonly number[]): Promise<Candidate[]> {
+  const asked = { ...EMPTY_QUERY, scope, labels: "printed" as const, ecdysis: "not" as const };
+  // No quality filter is asked, so the flag roll-up is not joined.
+  const base = await filteredSpecimens(db, asked, 0, STAFF_READER, undefined, {}, false, ids);
   const found = await base
     .select([
       "sp.entity_id as specimen_id",
@@ -394,10 +406,9 @@ export async function planUpload(
   db: Kysely<Database>,
   collection: EcdysisCollection,
   read: { readAt: Date; held: ReadonlySet<string> },
-  query: ListingQuery = EMPTY_QUERY,
 ): Promise<UploadPlan> {
   const scope = await scopeOf(db, collection);
-  const found = await candidatesOf(db, scope, query);
+  const found = await candidatesOf(db, scope);
   const offeredYears = constantsOf(collection).years;
   const byYear = new Map<number, UploadYear>();
   const unspelled = new Set<string>();
@@ -430,9 +441,9 @@ export async function planUpload(
  */
 export async function eligibleNow(db: Kysely<Database>, collection: EcdysisCollection, ids: readonly number[], rules: UploadRules): Promise<number[]> {
   if (ids.length === 0) return [];
-  // The listing filters the request gave are asked again too, and so is the year: a sample whose date was corrected
-  // to another year since the plan belongs to another year's archive.
-  const found = await candidatesOf(db, await scopeOf(db, collection), rules.query ?? EMPTY_QUERY, ids);
+  // The year is asked again too: a sample whose date was corrected to another year since the plan belongs to
+  // another year's archive.
+  const found = await candidatesOf(db, await scopeOf(db, collection), ids);
   const out: number[] = [];
   for (const c of found) {
     if (rules.year !== undefined && Number(c.year) !== rules.year) continue;
@@ -448,8 +459,6 @@ export interface UploadRules {
   include: Include;
   /** The collection year the archive is for, asked again as each page is written. */
   year?: number;
-  /** The Specimens listing filters the request gave, asked again as each page is written. */
-  query?: ListingQuery;
 }
 
 // --- Downloads, recorded -----------------------------------------------------
@@ -462,7 +471,6 @@ export interface DownloadRecord {
   id: number;
   collection: string;
   year: number;
-  filters: string;
   include: Include;
   planned: number;
   readAt: Date;
@@ -487,7 +495,6 @@ const selectDownloads = (db: Kysely<Database>) =>
       "d.entity_id",
       "d.collection",
       "d.year",
-      "d.filters",
       "d.include_taxon_obscured",
       "d.include_observer_obscured",
       "d.planned_specimens",
@@ -503,7 +510,6 @@ const toRecord = (r: Awaited<ReturnType<ReturnType<typeof selectDownloads>["exec
   id: Number(r.entity_id),
   collection: r.collection,
   year: Number(r.year),
-  filters: r.filters,
   include: { taxonObscured: Boolean(r.include_taxon_obscured), observerObscured: Boolean(r.include_observer_obscured) },
   planned: Number(r.planned_specimens),
   readAt: asDate(r.read_at),
@@ -544,7 +550,7 @@ export const beingWritten = (d: DownloadRecord, now: Date = new Date()): boolean
  */
 export async function startDownload(
   db: Kysely<Database>,
-  d: { collection: EcdysisCollection; year: number; filters: string; include: Include; planned: number; readAt: Date; personId: number | null },
+  d: { collection: EcdysisCollection; year: number; include: Include; planned: number; readAt: Date; personId: number | null },
 ): Promise<{ ok: true; id: number } | { ok: false; because: DownloadRecord | null }> {
   try {
     return await db.transaction().execute(async (trx) => {
@@ -555,7 +561,6 @@ export async function startDownload(
         .values({
           collection: d.collection.program,
           year: d.year,
-          filters: d.filters,
           include_taxon_obscured: d.include.taxonObscured,
           include_observer_obscured: d.include.observerObscured,
           planned_specimens: d.planned,
@@ -580,45 +585,52 @@ export async function startDownload(
 }
 
 /**
- * Records that a download finished: its completion, with the number of
- * specimens actually written, and the specimens themselves, in one transaction.
+ * Records that an archive has been prepared: its completion, with the number of
+ * specimens actually written, and the specimens themselves with the catalog
+ * number each was written under, in one transaction.
  */
-export async function completeDownload(db: Kysely<Database>, id: number, specimenIds: readonly number[]): Promise<void> {
+export async function completeDownload(db: Kysely<Database>, id: number, written: readonly WrittenSpecimen[]): Promise<void> {
   await db.transaction().execute(async (trx) => {
-    await trx.insertInto("ecdysis_upload_download_completed").values({ download_id: id, specimens: specimenIds.length }).execute();
-    for (let from = 0; from < specimenIds.length; from += 2_000) {
+    await trx.insertInto("ecdysis_upload_download_completed").values({ download_id: id, specimens: written.length }).execute();
+    for (let from = 0; from < written.length; from += 2_000) {
       await trx
         .insertInto("ecdysis_upload_download_specimen")
-        .values(specimenIds.slice(from, from + 2_000).map((specimen_id) => ({ download_id: id, specimen_id })))
+        .values(written.slice(from, from + 2_000).map((w) => ({ download_id: id, specimen_id: w.id, catalog_number: w.catalogNumber })))
         .execute();
     }
   });
 }
 
-/** The specimens a completed download held, in id order. */
-export async function downloadSpecimens(db: Kysely<Database>, id: number): Promise<number[]> {
-  const found = await db.selectFrom("ecdysis_upload_download_specimen").where("download_id", "=", id).orderBy("specimen_id").select("specimen_id").execute();
-  return found.map((r) => Number(r.specimen_id));
+/** The specimens a completed download held, with the catalog number each was written under, in id order. */
+export async function downloadSpecimens(db: Kysely<Database>, id: number): Promise<WrittenSpecimen[]> {
+  const found = await db.selectFrom("ecdysis_upload_download_specimen").where("download_id", "=", id).orderBy("specimen_id").select(["specimen_id", "catalog_number"]).execute();
+  return found.map((r) => ({ id: Number(r.specimen_id), catalogNumber: r.catalog_number }));
 }
 
-/** A finished download as the page shows it, with how many of its specimens Ecdysis does not hold yet. */
+/** A finished download as the page shows it. */
 export interface DownloadView extends DownloadRecord {
-  /** Null for a download that did not finish: its specimens are not recorded. */
-  notYetInEcdysis: number | null;
+  /** How many of its recorded specimens are not known to be in Ecdysis; null for a download that did not finish, whose specimens are not recorded. */
+  notKnown: number | null;
+  /** Whether absence from Ecdysis could be established: only with the cached archive of a recent read in hand. Otherwise a specimen not in the store is "not known", not "not in Ecdysis yet". */
+  established: boolean;
 }
 
-/** How many finished downloads the page lists besides those with specimens still absent from Ecdysis. */
+/** How many finished downloads the page lists besides those with specimens still not known to be in Ecdysis. */
 export const RECENT_DOWNLOADS = 10;
 
 /**
  * The downloads the page lists for a collection, newest first: the most recent
- * ten finished ones, and any finished one beyond them with specimens still
- * absent from Ecdysis, since that is what a person might still upload; and an
- * unfinished one while it blocks a second archive. Which specimens Ecdysis
- * holds is judged from the store's catalog numbers (`specimen_catalog_number`,
- * which is there whatever the state of the read) and, where the cached archive
- * is in hand, from its catalog numbers too. The list is not cut before the
- * outstanding ones are found.
+ * ten finished ones, and any finished one beyond them with specimens not
+ * known to be in Ecdysis, since that is what a person might still upload; and
+ * an unfinished one while it blocks a second archive. A recorded specimen is
+ * in Ecdysis when the catalog number it was written under is that of a
+ * `specimen_catalog_number` row of the specimen as it is now, or (where the
+ * cached archive is in hand) is in the cached collection. One that no longer
+ * exists counts as not known, never as held. The counting is one SQL statement
+ * grouped by download; the cached archive's catalog numbers go into a
+ * temporary table for it, on the transaction's own connection, since a
+ * Kysely connection is not kept between statements. The list is not cut before
+ * the outstanding ones are found.
  */
 export async function downloadViewsOf(
   db: Kysely<Database>,
@@ -628,24 +640,26 @@ export async function downloadViewsOf(
   now: Date = new Date(),
 ): Promise<DownloadView[]> {
   const all = await downloadsOf(db, collection, 100_000);
-  const finished = all.filter((d) => d.completedAt !== null);
-  const specimens =
-    finished.length === 0
-      ? []
-      : await db
-          .selectFrom("ecdysis_upload_download_specimen as ds")
-          .innerJoin("specimen as sp", "sp.entity_id", "ds.specimen_id")
-          .where("ds.download_id", "in", finished.map((d) => d.id))
-          .select([
-            "ds.download_id",
-            "sp.field_number",
-            sql<boolean>`EXISTS (SELECT 1 FROM specimen_catalog_number c WHERE c.specimen_id = sp.entity_id)`.as("in_store"),
-          ])
-          .execute();
   const missing = new Map<number, number>();
-  for (const r of specimens) {
-    const inEcdysis = Boolean(r.in_store) || (held !== null && r.field_number !== null && held.has(catalogKey(catalogNumberOf(collection, r.field_number))));
-    if (!inEcdysis) missing.set(Number(r.download_id), (missing.get(Number(r.download_id)) ?? 0) + 1);
+  if (all.some((d) => d.completedAt !== null)) {
+    const counted = await db.transaction().execute(async (trx) => {
+      await sql`CREATE OR REPLACE TEMP TABLE ecdysis_held (catalog_number TEXT)`.execute(trx);
+      const keys = held === null ? [] : [...held];
+      for (let from = 0; from < keys.length; from += 1_000) {
+        await sql`INSERT INTO ecdysis_held VALUES ${sql.join(keys.slice(from, from + 1_000).map((k) => sql`(${k})`))}`.execute(trx);
+      }
+      const result = await sql<{ download_id: number | bigint; not_known: number | bigint }>`
+        SELECT ds.download_id, count(*) FILTER (WHERE sp.entity_id IS NULL OR NOT (
+                 EXISTS (SELECT 1 FROM specimen_catalog_number c WHERE c.specimen_id = sp.entity_id AND lower(c.catalog_number) = lower(ds.catalog_number))
+                 OR EXISTS (SELECT 1 FROM ecdysis_held h WHERE h.catalog_number = lower(ds.catalog_number)))) AS not_known
+        FROM ecdysis_upload_download_specimen ds
+        JOIN ecdysis_upload_download d ON d.entity_id = ds.download_id AND d.collection = ${collection.program}
+        LEFT JOIN specimen sp ON sp.entity_id = ds.specimen_id
+        GROUP BY ds.download_id`.execute(trx);
+      await sql`DROP TABLE ecdysis_held`.execute(trx);
+      return result.rows;
+    });
+    for (const r of counted) missing.set(Number(r.download_id), Number(r.not_known));
   }
   const out: DownloadView[] = [];
   let recent = 0;
@@ -653,12 +667,12 @@ export async function downloadViewsOf(
     if (d.completedAt === null) {
       // No specimens are recorded for it: shown while it blocks, which is after the last read began (or, with no read on record, for a day).
       const blocks = readAt === null ? now.getTime() - d.startedAt.getTime() < 86_400_000 : d.startedAt.getTime() > readAt.getTime();
-      if (blocks) out.push({ ...d, notYetInEcdysis: null });
+      if (blocks) out.push({ ...d, notKnown: null, established: held !== null });
       continue;
     }
-    const notYet = missing.get(d.id) ?? 0;
-    if (recent < RECENT_DOWNLOADS || notYet > 0) {
-      out.push({ ...d, notYetInEcdysis: notYet });
+    const notKnown = missing.get(d.id) ?? 0;
+    if (recent < RECENT_DOWNLOADS || notKnown > 0) {
+      out.push({ ...d, notKnown, established: held !== null });
       recent++;
     }
   }
@@ -699,7 +713,7 @@ async function loadedButNotHeld(db: Kysely<Database>, collection: EcdysisCollect
 export async function uploadStateOf(
   db: Kysely<Database>,
   collection: EcdysisCollection,
-  opts: { ecdysisDir: string; now?: Date; query?: ListingQuery },
+  opts: { ecdysisDir: string; now?: Date },
 ): Promise<UploadState> {
   const read = await ecdysisRead(collection, opts);
   if (!read.ok) return read;
@@ -718,7 +732,7 @@ export async function uploadStateOf(
   const downloads = await downloadsOf(db, collection, 20);
   return {
     ok: true,
-    plan: await planUpload(db, collection, { readAt: read.readAt, held: contents.held }, opts.query),
+    plan: await planUpload(db, collection, { readAt: read.readAt, held: contents.held }),
     read,
     held: contents.held,
     blocking: blocking(downloads, read.readAt),
@@ -921,7 +935,7 @@ export function uploadArchiveStream(
   collection: EcdysisCollection,
   specimenIds: readonly number[],
   rules: UploadRules,
-  opts: { timing?: CsvTiming; written?: number[]; pageSize?: number; beforePage?: () => Promise<void> } = {},
+  opts: { timing?: CsvTiming; written?: WrittenSpecimen[]; pageSize?: number; beforePage?: () => Promise<void> } = {},
 ): ReadableStream<Uint8Array> {
   const hostNames = hostNamesOnce(db);
   let cursor = 0;
@@ -942,7 +956,7 @@ export function uploadArchiveStream(
         });
         return { ...listed, identifications: await identificationsOf(trx, listed.rows.map((r) => r.specimen_id)) };
       });
-      opts.written?.push(...page.rows.map((r) => r.specimen_id));
+      opts.written?.push(...page.rows.map((r) => ({ id: r.specimen_id, catalogNumber: catalogNumberOf(collection, r.field_number ?? "") })));
       return { ...page, last: cursor >= specimenIds.length };
     },
     { layout: uploadArchiveLayout(collection), timing: opts.timing },
@@ -980,8 +994,8 @@ export async function buildArchive(
   specimenIds: readonly number[],
   rules: UploadRules,
   opts: { stillCurrent: () => Promise<boolean>; pageSize?: number; limit?: number; timing?: CsvTiming },
-): Promise<{ bytes: Uint8Array; written: number[] }> {
-  const written: number[] = [];
+): Promise<{ bytes: Uint8Array; written: WrittenSpecimen[] }> {
+  const written: WrittenSpecimen[] = [];
   const limit = opts.limit ?? ARCHIVE_LIMIT_BYTES;
   const stream = uploadArchiveStream(db, collection, specimenIds, rules, {
     written,
@@ -1033,35 +1047,38 @@ const ASSOCIATION_PAGE = 5_000;
 /**
  * The associations file for the specimens a completed download held: exactly
  * those, with no rule applied again, so the file matches the archive that was
- * uploaded. One row for each whose sample has an iNaturalist observation that
- * still exists. The host is named as the observation named it, at whatever rank
- * Beeline holds, as `associatedTaxa` does, and left empty where there is none.
- * A trap sample (the sample's `kind`, not the words of its protocol) has no
- * row at all: Symbiota applies one relationship, `hasHost`, to the whole file,
- * and the plant near a trap is not a host (the archive's `associatedTaxa` says
- * "near" for it, and not "visits flowers of"). UTF-8 with no
- * byte order mark and no formula guard. The program's CSV downloads have both
- * for the sake of spreadsheets; this file is read by Symbiota, which loaded it
- * the same with and without a mark (tried 2026-11-20), so the headers are left
- * as exact bytes, and a guard would write an apostrophe into a name that begins
- * with `-`, `=`, `+` or `@`. Read in one transaction.
+ * uploaded, and each named by the catalog number it was written under, not one
+ * made again from the specimen's label number as it is now. One row for each
+ * whose sample has an iNaturalist observation that still exists. The host is
+ * named as the observation named it, at whatever rank Beeline holds, as
+ * `associatedTaxa` does, and left empty where there is none. A trap sample (the
+ * sample's `kind`, not the words of its protocol) has no row at all: Symbiota
+ * applies one relationship, `hasHost`, to the whole file, and the plant near a
+ * trap is not a host (the archive's `associatedTaxa` says "near" for it, and not
+ * "visits flowers of"). UTF-8 with no byte order mark and no formula guard. The
+ * program's CSV downloads have both for the sake of spreadsheets; this file is
+ * read by Symbiota, which loaded it the same with and without a mark (tried
+ * 2026-11-20), so the headers are left as exact bytes, and a guard would write
+ * an apostrophe into a name that begins with `-`, `=`, `+` or `@`. Read in one
+ * transaction.
  */
-export async function associationsCsv(db: Kysely<Database>, collection: EcdysisCollection, specimenIds: readonly number[]): Promise<string> {
+export async function associationsCsv(db: Kysely<Database>, recorded: readonly WrittenSpecimen[]): Promise<string> {
   const lines = [csvExactLine(ASSOCIATION_HEADER)];
+  const catalogNumbers = new Map(recorded.map((w) => [w.id, w.catalogNumber]));
   await db.transaction().execute(async (trx) => {
-    for (let from = 0; from < specimenIds.length; from += ASSOCIATION_PAGE) {
+    for (let from = 0; from < recorded.length; from += ASSOCIATION_PAGE) {
       const found = await trx
         .selectFrom("specimen as sp")
         .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
-        .where("sp.entity_id", "in", specimenIds.slice(from, from + ASSOCIATION_PAGE))
+        .where("sp.entity_id", "in", recorded.slice(from, from + ASSOCIATION_PAGE).map((w) => w.id))
         .where("s.inat_observation_id", "is not", null)
         .where(sql<boolean>`NOT ${observationGone}`)
-        .select(["sp.entity_id as specimen_id", "sp.field_number", "s.inat_observation_id", "s.host_name_as_observed", "s.kind"])
+        .select(["sp.entity_id as specimen_id", "s.inat_observation_id", "s.host_name_as_observed", "s.kind"])
         .orderBy("sp.entity_id")
         .execute();
       for (const r of found) {
-        if (r.field_number === null || r.inat_observation_id === null || r.kind === "trap") continue;
-        lines.push(csvExactLine([catalogNumberOf(collection, r.field_number), observationUrl(r.inat_observation_id), r.host_name_as_observed]));
+        if (r.inat_observation_id === null || r.kind === "trap") continue;
+        lines.push(csvExactLine([catalogNumbers.get(Number(r.specimen_id)), observationUrl(r.inat_observation_id), r.host_name_as_observed]));
       }
     }
   });

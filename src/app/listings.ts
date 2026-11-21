@@ -1668,7 +1668,7 @@ export interface ListedFlag {
 }
 
 /** The specimens a query selects, as this reader may see them; see {@link filteredSamples}. */
-async function filteredSpecimens(
+export async function filteredSpecimens(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
@@ -2024,6 +2024,21 @@ export function csvCell(value: unknown): string {
   return /[",\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
 }
 
+/**
+ * A cell as the text a program is to read exactly: RFC 4180 quoting and no
+ * formula guard, since the guard writes an apostrophe into the value. For a
+ * file that is loaded into another system and not opened in a spreadsheet
+ * (the associations file for Ecdysis, src/app/ecdysis-upload.ts).
+ */
+export const csvExactLine = (row: readonly unknown[]) =>
+  `${row
+    .map((value) => {
+      if (value === null || value === undefined) return "";
+      const cell = String(value);
+      return /[",\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
+    })
+    .join(",")}\n`;
+
 /** One record, with its terminator. */
 export const csvLine = (row: readonly unknown[]) => `${row.map(csvCell).join(",")}\n`;
 
@@ -2189,7 +2204,7 @@ export function pagedStream<P extends { rows: readonly unknown[] }>(
 }
 
 /** Dates go out as ISO, whatever shape the driver handed back. */
-function isoDate(value: Date | string): string {
+export function isoDate(value: Date | string): string {
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
 }
 

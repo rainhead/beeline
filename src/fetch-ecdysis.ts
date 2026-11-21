@@ -68,6 +68,9 @@ export const describeScope = (s: EcdysisScope): string =>
 /** The name its archive and baseline are kept under. A dataset's stays its bare id, as before collections were an option. */
 const scopeKey = (s: EcdysisScope): string => (s.collectionId !== undefined ? `collection-${s.collectionId}` : String(s.datasetId));
 
+/** Where the archive last downloaded for a collection is kept, under the folder the fetch is given. */
+export const cachedArchivePath = (dir: string, collection: EcdysisScope): string => join(dir, `${scopeKey(collection)}.zip`);
+
 export interface EcdysisCredentials {
   username: string;
   password: string;
@@ -259,7 +262,7 @@ export async function fetchEcdysis(
   const step = opts.step ?? (<T>(_: string, fn: () => Promise<T>) => fn());
   const scope: EcdysisScope = collection.collectionId !== undefined ? { collectionId: collection.collectionId } : { datasetId: collection.datasetId };
   await mkdir(opts.dir, { recursive: true });
-  const zipPath = join(opts.dir, `${scopeKey(collection)}.zip`);
+  const zipPath = cachedArchivePath(opts.dir, collection);
   const baselinePath = join(opts.dir, `${scopeKey(collection)}.probe.json`);
 
   // Read the source before anything else, and decide.
@@ -314,6 +317,20 @@ export async function fetchEcdysis(
   }
   return { scope: describeScope(scope), source: "downloaded", reason, load };
 }
+
+/**
+ * Whether the detail of an `ecdysis-fetch` run says the collection was read:
+ * `describeFetch` begins its part of the detail with the scope's words and
+ * then either "downloaded" or "cached archive reloaded", both of which mean
+ * Ecdysis answered and the archive was loaded. A run that failed for another
+ * collection still names this one if it was read, and a run that read nothing
+ * ("no Ecdysis login") names none.
+ */
+export const detailSaysRead = (detail: string | null, collection: EcdysisScope): boolean => {
+  if (detail === null) return false;
+  const scope = describeScope(collection);
+  return detail.split("; ").some((part) => part.startsWith(`${scope} downloaded (`) || part.startsWith(`${scope} cached archive reloaded (`));
+};
 
 /** One line for the job's detail: what was fetched, what loaded, and what is left for a person. */
 export function describeFetch(r: FetchEcdysisResult): string {

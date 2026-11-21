@@ -2812,7 +2812,7 @@ export const en = {
     archivesIntro:
       "Each program's specimens collected in a calendar year, as a Darwin Core archive: the specimen columns, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got. Each program also has an archive of every year together, which states a licence only when all its years share one, and a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
     archivesCaution:
-      "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including those of rare host plants, which every export carries until an atlas says otherwise.",
+      "These program archives are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including those of rare host plants, which every export carries until an atlas says otherwise. The files for Ecdysis are a different thing, written differently, and are further down this page.",
     archivesMissing:
       "Not written yet. They appear after the next nightly run, or after running the dwc-archives job on Jobs.",
     archiveNone: (code: string) =>
@@ -2848,6 +2848,51 @@ export const en = {
     allYearsDownload: (program: string) => `Download the ${program} archive of every year`,
     /** The file states a licence its years no longer share. */
     allYearsLicenseDropped: (license: string) => `This file states ${license}; it is rewritten with no licence tonight.`,
+    /** The files a person uploads to Ecdysis (beeline-8dx9.12). */
+    ecdysis: {
+      heading: "Files to upload to Ecdysis",
+      intro:
+        "For each Ecdysis collection Beeline writes the two files a person uploads by hand: an archive of the specimens Ecdysis does not hold yet, and a file that links each of those specimens to its iNaturalist observation and its host plant. These are the only files on this page meant for Ecdysis. Each is written when you ask for it, from what Beeline last read from Ecdysis, and only if that read is recent.",
+      instructionsHeading: "How to upload",
+      steps: [
+        "Download both files on the day you upload them, and upload the archive once. Delete it afterwards. Uploading it again later would replace any identification made in Ecdysis since, with the name this file holds.",
+        'In Ecdysis, open the collection\'s Upload page and choose a Darwin Core archive. Switch on "Match on Catalog Number" and "Import Identification History".',
+        'Then open "Import extended data" for the collection and choose the associations file. Set the association type to "Occurrence - External Link" and the relationship to "hasHost", the only fitting choice Ecdysis offers today.',
+      ],
+      narrowing:
+        'To write a file for only some of a year\'s specimens, add filters from the Specimens listing to the end of the file\'s address, for example "?collector=Ada Lovelace".',
+      collection: (program: string, scope: string) => `${program} (Ecdysis ${scope})`,
+      readOn: (when: string) => `Based on Beeline's read of Ecdysis on ${when}.`,
+      colYear: "Year",
+      colSpecimens: "Specimens in the file",
+      colObscured: "Left out: taxon obscured",
+      colUnusable: "Left out: unusable label number",
+      colFiles: "Files",
+      archiveLink: "Archive",
+      associationsLink: "Associations",
+      archiveDownload: (program: string, year: number) => `Download the ${program} upload archive for ${year}`,
+      associationsDownload: (program: string, year: number) => `Download the ${program} associations file for ${year}`,
+      notAvailable: "none to write",
+      obscuredNote:
+        "A specimen whose taxon is obscured stays out of the file until its program says whether true coordinates may leave Beeline.",
+      unusableNote:
+        "A label number is unusable as a catalog number when it is on two specimens, or longer than Ecdysis allows. Those specimens stay out of the file until it is put right.",
+      unspelled: (values: string) =>
+        `These country and state values are written as Beeline holds them, not spelled out: ${values}.`,
+      nothing:
+        "Nothing to upload: every specimen of this collection with a label on paper is already in Ecdysis, or has been left out for a reason above.",
+      refused: {
+        never:
+          "Beeline has not read this collection from Ecdysis yet, so it cannot tell which specimens Ecdysis already holds, and it writes no file. Run the ecdysis-fetch job on Jobs, then reload this page.",
+        stale: (when: string) =>
+          `Beeline last read this collection from Ecdysis on ${when}, more than 36 hours ago. A file made from an old read could replace a record that someone has added to Ecdysis since, so Beeline writes none. The ecdysis-fetch job on Jobs should run every night at 3am Pacific: look there for why it has not succeeded, or run it now, then reload this page.`,
+        "no-archive":
+          "Beeline read this collection from Ecdysis but no longer has the archive it downloaded, which lists the catalog numbers Ecdysis holds, so it writes no file. Run the ecdysis-fetch job on Jobs, which downloads it again, then reload this page.",
+        unreadable:
+          "Beeline has the archive it downloaded from Ecdysis for this collection but could not read it, so it writes no file. Run the ecdysis-fetch job on Jobs, then reload this page. If this stays, ask whoever runs Beeline.",
+      },
+      noSpecimensForFile: "No specimens to write for this collection and year.",
+    },
   },
   /**
    * The old Beeline's records new Beeline held back, and why (/exports/held-back,

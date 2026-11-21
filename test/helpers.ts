@@ -133,6 +133,7 @@ export async function scratchPaths() {
     printRunsDir: join(dir, "print-runs"),
     uploadsDir: join(dir, "uploads"),
     registryMarkPath: join(dir, "registry-mark.json"),
+    ecdysisDir: join(dir, "ecdysis"),
   };
 }
 

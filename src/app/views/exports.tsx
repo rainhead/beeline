@@ -1,8 +1,18 @@
 import type { Messages } from "../messages/index.js";
 import type { ProgramArchive } from "../dwc-archive.js";
+import { describeScope, type EcdysisCollection } from "../../fetch-ecdysis.js";
+import { ecdysisFileHref, type UploadState } from "../ecdysis-upload.js";
 import { sharedLicense, type AllYearsEntry, type ArchiveEntry, type ArchiveManifest, type ChecklistEntry } from "../program-archives.js";
 import { governanceFor, LICENSES, type LicenseId, type ProgramGovernance } from "../../program-governance.js";
 import { Absent, Callout, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
+
+/** One Ecdysis collection's upload files, or why there are none. */
+export interface EcdysisUploadSection {
+  collection: EcdysisCollection;
+  /** The collection's program, by name. */
+  programName: string;
+  state: UploadState;
+}
 
 /** The current export file, as the page describes it; null when none has been written. */
 export interface ExportFile {
@@ -30,12 +40,14 @@ export function Exports({
   programs,
   archives,
   governance,
+  ecdysis,
 }: {
   m: Messages;
   occurrences: ExportFile | null;
   programs: ProgramArchive[];
   archives: ArchiveManifest | null;
   governance: ProgramGovernance;
+  ecdysis: EcdysisUploadSection[];
 }) {
   const e = m.exports;
   return (
@@ -79,6 +91,78 @@ export function Exports({
           ))}
         </>
       )}
+      <EcdysisUploads m={m} sections={ecdysis} />
+    </>
+  );
+}
+
+/**
+ * The files a person uploads to Ecdysis (beeline-8dx9.12): the instructions,
+ * then for each collection, each year's counts and links to its two files, or
+ * where the last read of Ecdysis is too old (or missing) the reason and what to
+ * do, and no link. The counts are what the files would hold now.
+ */
+function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadSection[] }) {
+  const e = m.exports.ecdysis;
+  return (
+    <>
+      <h2>{e.heading}</h2>
+      <p>{e.intro}</p>
+      <h3>{e.instructionsHeading}</h3>
+      <ol>
+        {e.steps.map((step) => (
+          <li>{step}</li>
+        ))}
+      </ol>
+      <p>
+        <Meta>{e.narrowing}</Meta>
+      </p>
+      {sections.map(({ collection, programName, state }) => (
+        <section>
+          <h3>{e.collection(programName, describeScope(collection))}</h3>
+          {!state.ok ? (
+            <Callout tone="warning">
+              {state.reason === "stale" ? e.refused.stale(m.format.dateTime(state.readAt)) : e.refused[state.reason]}
+            </Callout>
+          ) : (
+            <>
+              <Meta block>{e.readOn(m.format.dateTime(state.plan.readAt))}</Meta>
+              {state.plan.years.length === 0 ? (
+                <EmptyState>{e.nothing}</EmptyState>
+              ) : (
+                <DataTable columns={[e.colYear, e.colSpecimens, e.colObscured, e.colUnusable, e.colFiles]}>
+                  {state.plan.years.map((y) => (
+                    <tr>
+                      <td>{y.year}</td>
+                      <td>{m.format.number(y.specimenIds.length)}</td>
+                      <td>{m.format.number(y.obscured)}</td>
+                      <td>{m.format.number(y.unusable)}</td>
+                      <td>
+                        {y.specimenIds.length === 0 ? (
+                          <Meta>{e.notAvailable}</Meta>
+                        ) : (
+                          <>
+                            <a href={ecdysisFileHref(collection, y.year, "archive")} aria-label={e.archiveDownload(programName, y.year)}>
+                              {e.archiveLink}
+                            </a>
+                            {" · "}
+                            <a href={ecdysisFileHref(collection, y.year, "associations")} aria-label={e.associationsDownload(programName, y.year)}>
+                              {e.associationsLink}
+                            </a>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </DataTable>
+              )}
+              {state.plan.years.some((y) => y.obscured > 0) && <Meta block>{e.obscuredNote}</Meta>}
+              {state.plan.years.some((y) => y.unusable > 0) && <Meta block>{e.unusableNote}</Meta>}
+              {state.plan.unspelled.length > 0 && <Meta block>{e.unspelled(state.plan.unspelled.join(", "))}</Meta>}
+            </>
+          )}
+        </section>
+      ))}
     </>
   );
 }

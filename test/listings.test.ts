@@ -1833,7 +1833,8 @@ describe("Darwin Core archives, by program and year", () => {
     // The refuge program has no ground either, in its own terms (beeline-8zlh).
     expect(page).toContain("by the refuge they were collected in");
     // By name, atlases and the rest together (Peter, 2026-10-26).
-    const programs = [...page.matchAll(/<h3>([^<]+)<\/h3>/g)].map(([, name]) => name);
+    // Only the program archives' section: the files for Ecdysis below it have headings of their own.
+    const programs = [...page.split("<h2>Files to upload to Ecdysis</h2>")[0]!.matchAll(/<h3>([^<]+)<\/h3>/g)].map(([, name]) => name);
     expect(programs).toEqual([
       "BLM surveys",
       "British Columbia Bee Atlas",
@@ -1988,6 +1989,7 @@ describe("Darwin Core archives, by program and year", () => {
     ];
     const ident = (id: number): IdentificationRow => ({
       specimen_id: id,
+      determination_id: id,
       scientific_name: "Bombus",
       authorship: null,
       rank: "genus",

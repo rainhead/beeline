@@ -258,6 +258,8 @@ import {
 import { oregonToday } from "../oregon-today.js";
 import { programArchives } from "./dwc-archive.js";
 import { archiveDir, readArchiveManifest } from "./program-archives.js";
+import { associationsCsv, collectionOf, uploadArchiveStream, uploadFileName, uploadStateOf } from "./ecdysis-upload.js";
+import { ECDYSIS_COLLECTIONS } from "../fetch-ecdysis.js";
 import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
@@ -285,7 +287,9 @@ export interface JobsDep {
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir" | "idealLogic" | "registrationEmailKey">>;
+  /** Where the nightly read keeps the archives it downloads from Ecdysis; tests pass a scratch folder (scratchPaths). */
+  ecdysisDir?: string;
+  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir" | "ecdysisDir" | "idealLogic" | "registrationEmailKey">>;
   inat: InatClient;
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
@@ -387,6 +391,7 @@ export interface AppDeps {
 export function createApp({
   db,
   config,
+  ecdysisDir: ecdysisPath,
   inat,
   resolveSession,
   jobs,
@@ -2394,6 +2399,8 @@ export function createApp({
   // here and most tests never ask for an export; and outside each try, so a
   // test's refusal is not mistaken for a missing file.
   const exportsDir = () => config.exportsDir ?? deploymentPath("data/exports");
+  // Where the nightly read keeps the archives it downloads from Ecdysis (BEELINE_ECDYSIS).
+  const ecdysisDir = () => ecdysisPath ?? config.ecdysisDir ?? deploymentPath("data/ecdysis");
   const occurrencesPath = () => legacyExportPath(exportsDir());
   const occurrencesFile = async () => {
     const path = occurrencesPath();
@@ -2418,9 +2425,52 @@ export function createApp({
           programs={await programArchives(db)}
           archives={await readArchiveManifest(exportsDir())}
           governance={await readProgramGovernance(programGovernance)}
+          ecdysis={await Promise.all(
+            ECDYSIS_COLLECTIONS.map(async (collection) => ({
+              collection,
+              programName: (await programArchives(db)).find((p) => p.code === collection.program)?.name ?? collection.program,
+              state: await uploadStateOf(db, collection, { ecdysisDir: ecdysisDir() }),
+            })),
+          )}
         />,
       ),
     );
+  });
+
+  // The two files a person uploads to Ecdysis (beeline-8dx9.12), written when asked for, one collection and year at
+  // a time, from what the nightly read of Ecdysis last loaded. Admins only, like the page. Refused with a plain
+  // sentence and no file when that read is missing or more than 36 hours old. The Specimens listing's own filters in
+  // the query string narrow the file; the rules of which specimens may go at all are not the query's to change.
+  app.get("/exports/ecdysis/:file{[A-Za-z]+-\\d{4}-(upload\\.zip|associations\\.csv)}", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const [, program, year, kind] = /^([A-Za-z]+)-(\d{4})-(upload\.zip|associations\.csv)$/.exec(c.req.param("file"))!;
+    const collection = collectionOf(program!);
+    if (collection === undefined) return errorResponse(c, "notFound");
+    const atlases = await atlasOptions(db);
+    const programs = await scopePrograms(db);
+    const query = parseListingQuery(new URL(c.req.url).searchParams, {
+      atlasCodes: atlases.map((a) => a.code),
+      programCodes: programs.map((a) => a.code),
+    });
+    const state = await uploadStateOf(db, collection, { ecdysisDir: ecdysisDir(), query });
+    if (!state.ok) {
+      const e = m.exports.ecdysis.refused;
+      return c.text(state.reason === "stale" ? e.stale(m.format.dateTime(state.readAt)) : e[state.reason], 409);
+    }
+    const ids = state.plan.years.find((y) => y.year === Number(year))?.specimenIds ?? [];
+    if (ids.length === 0) return c.text(m.exports.ecdysis.noSpecimensForFile, 404);
+    const written = new Date();
+    if (kind === "upload.zip") {
+      return c.body(uploadArchiveStream(db, collection, ids, csvGenerationTiming("ecdysis upload")), 200, {
+        "content-type": "application/zip",
+        "content-disposition": `attachment; filename="${uploadFileName(collection, Number(year), written, "archive")}"`,
+      });
+    }
+    return c.body(await associationsCsv(db, collection, ids), 200, {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${uploadFileName(collection, Number(year), written, "associations")}"`,
+    });
   });
 
   // --- Comparing an edited copy of the specimens download (beeline-kgyd).

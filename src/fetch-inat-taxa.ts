@@ -155,8 +155,11 @@ export async function readInatTaxon(
   if (response.status === 404 && Array.isArray(results) && results.length === 0) return null;
   if (!response.ok) throw new Error(`iNaturalist answered ${response.status}`);
   if (!Array.isArray(results)) throw new Error("iNaturalist's answer had no results list");
+  // An entry with no usable id says nothing about the taxon: try again, never "no such taxon".
+  if ((results as InatTaxonJson[]).some((r) => typeof r?.id !== "number")) throw new Error("iNaturalist's answer held an entry with no usable id");
   const t = (results as InatTaxonJson[]).find((r) => r.id === id);
   if (t === undefined) return null;
+  if (typeof t.is_active !== "boolean") throw new Error("iNaturalist's answer did not say whether the taxon is active");
   // A name or rank Beeline could not write to its overlay file and read back is no answer.
   if (typeof t.name !== "string" || t.name.trim() === "" || typeof t.rank !== "string" || !/^\S+$/.test(t.rank)) {
     throw new Error("iNaturalist's answer had no usable name or rank for the taxon");
@@ -165,7 +168,7 @@ export async function readInatTaxon(
     id,
     name: t.name,
     rank: t.rank,
-    isActive: t.is_active !== false,
+    isActive: t.is_active,
     ancestorIds: (t.ancestor_ids ?? []).map(Number).filter((a) => a !== id),
     replacedBy: [...new Set((t.current_synonymous_taxon_ids ?? []).map(Number))],
   };

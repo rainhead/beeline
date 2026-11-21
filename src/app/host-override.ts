@@ -241,13 +241,15 @@ export async function setStaffHost(
   if (reason === "") return { outcome: "invalid", problem: "reason" };
   const host = input.choice.kind === "taxon" ? input.choice.taxon : null;
   if (!standing) {
-    // Refused as no change: the sample already has this host, or none.
+    // Refused as no change: the sample already has this host, or none and nothing could give it one. On a
+    // sample linked to an observation, saying there is no floral host is a decision: it keeps a later
+    // promotion from giving the sample the plant its observation is identified as.
     const held = (await (
       await conn.run(`SELECT host_inat_taxon_id, host_name_as_observed FROM sample WHERE entity_id = $1`, [sample.entity_id] as never)
     ).getRows()) as unknown[][];
     const id = held[0]?.[0] === null || held[0]?.[0] === undefined ? null : Number(held[0]![0]);
     const hasName = held[0]?.[1] !== null && held[0]?.[1] !== undefined;
-    if (host === null ? id === null && !hasName : id === host.id) return { outcome: "invalid", problem: "unchanged" };
+    if (host === null ? id === null && !hasName && sample.inat_observation_id === null : id === host.id) return { outcome: "invalid", problem: "unchanged" };
   }
   // The grammar reads the rank as one word and the name as the rest of the line, so a rank with a
   // space in it would read back as a different name: it is refused here, where the file cannot say so.

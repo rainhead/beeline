@@ -272,6 +272,25 @@ describe("the host through the API", () => {
     expect(await w.hostOf()).toEqual([47604n, "Rubus", "genus"]);
   });
 
+  it("keeps a sample with no host without one when its observation is identified, and the page says what iNaturalist now gives", async () => {
+    const w = await world();
+    // The observation names no plant and the sample has no host: staff say so, and why.
+    await w.conn.run(`UPDATE sample SET host_inat_taxon_id = NULL, host_name_as_observed = NULL, host_rank = NULL WHERE entity_id = ${w.sampleId}`);
+    await w.conn.run(`UPDATE observation_field SET host_taxon_id = NULL, host_taxon_name = NULL, host_taxon_rank = NULL, host_is_tracheophyte = NULL WHERE inat_id = 998877`);
+    expect((await w.form(`/samples/${w.sampleId}/host`, { none: "1", note: "a bee off the road" })).status).toBe(302);
+    expect(await w.hostOf()).toEqual([null, null, null]);
+    // Then the observation is identified, and a promotion's follow rule runs.
+    await w.conn.run(`UPDATE observation_field SET host_taxon_id = 47604, host_taxon_name = 'Rubus', host_taxon_rank = 'genus', host_is_tracheophyte = true WHERE inat_id = 998877`);
+    const { readFile } = await import("node:fs/promises");
+    const mint = await readFile(new URL("../ingest/mint-samples.sql", import.meta.url), "utf8");
+    const rule = mint.slice(mint.indexOf("UPDATE sample SET\n  host_inat_taxon_id    = f.host_taxon_id"));
+    await w.conn.run(rule.slice(0, rule.indexOf(";") + 1));
+    expect(await w.hostOf()).toEqual([null, null, null]);
+    const page = await (await w.app.request(`/samples/${w.sampleId}`)).text();
+    expect(page).toContain("iNaturalist now gives");
+    expect(page).toContain("Reason: a bee off the road");
+  });
+
   it("shows the taxon number of a host the sample holds with no name, and no host label for it", async () => {
     const w = await world();
     await w.conn.run(`UPDATE sample SET host_name_as_observed = NULL, host_rank = NULL WHERE entity_id = ${w.sampleId}`);

@@ -172,6 +172,16 @@ describe("reading one taxon from iNaturalist", () => {
     expect(await readInatTaxon(5, { fetchImpl: one("Rubus", "genus") })).toMatchObject({ name: "Rubus", rank: "genus" });
   });
 
+  it("treats an entry with no usable id, or no true or false for is_active, as an answer to try again, and an empty list as absent", async () => {
+    await expect(readInatTaxon(5, { fetchImpl: answer(200, { results: [{ name: "Rubus", rank: "genus", is_active: true }] }) })).rejects.toThrow(/usable id/);
+    await expect(readInatTaxon(5, { fetchImpl: answer(200, { results: [{ id: "5", name: "Rubus", rank: "genus", is_active: true }] }) })).rejects.toThrow(/usable id/);
+    await expect(readInatTaxon(5, { fetchImpl: answer(200, { results: [{ id: 5, name: "Rubus", rank: "genus" }] }) })).rejects.toThrow(/active/);
+    await expect(readInatTaxon(5, { fetchImpl: answer(200, { results: [{ id: 5, name: "Rubus", rank: "genus", is_active: "yes" }] }) })).rejects.toThrow(/active/);
+    expect(await readInatTaxon(5, { fetchImpl: answer(200, { results: [] }) })).toBeNull();
+    // An explicit false is the retired taxon's own answer.
+    expect(await readInatTaxon(5, { fetchImpl: answer(200, { results: [{ id: 5, name: "Rubus", rank: "genus", is_active: false }] }) })).toMatchObject({ isActive: false });
+  });
+
   it("answers null for a taxon iNaturalist does not have, and throws for anything that is not an answer", async () => {
     expect(await readInatTaxon(1, { fetchImpl: answer(404, { results: [] }) })).toBeNull();
     expect(await readInatTaxon(1, { fetchImpl: answer(200, { results: [] }) })).toBeNull();
@@ -328,9 +338,10 @@ describe("a floral host staff set stands over the observation's", () => {
     await apply(hostRow(SET));
     await stage(obs(7, { taxon: ERICAMERIA }));
     await promote();
-    await apply(hostRow("", { reason: "" }));
+    await apply(hostRow("", { reason: "", base_value: "" }));
     const live = await host();
     expect(live).toEqual([99999n, "Ericameria nauseosa", "species"]);
+    expect((await readSampleOverlay(overlayPath)).map((r) => [r.field, r.value, r.base_value])).toEqual([["host", "", ""]]);
     const file = await readFile(overlayPath, "utf8");
 
     // A rebuild: a store made from its sources again, which reads the file.
@@ -349,8 +360,9 @@ describe("a floral host staff set stands over the observation's", () => {
     await stage(obs(7, { taxon: null }));
     await promote();
     // Live, removal restores what the sample held before staff set it: the follow rule writes nothing without a plant.
-    await apply(hostRow("", { reason: "" }));
+    await apply(hostRow("", { reason: "", base_value: "" }));
     expect(await host()).toEqual([47604n, "Rubus", "genus"]);
+    expect((await readSampleOverlay(overlayPath)).map((r) => [r.field, r.value, r.base_value])).toEqual([["host", "", ""]]);
     const file = await readFile(overlayPath, "utf8");
 
     await freshStore();
@@ -683,9 +695,23 @@ describe("the correction", () => {
       refusal: "invalid",
       problem: en.record.sample.staffHost.problems.unchanged,
     });
-    // A sample with no host, told it has none, is no change either.
+  });
+
+  it("saves that a sample linked to an observation with no plant has no floral host, which keeps a later promotion from giving it one", async () => {
+    const s = await setup();
     const bare = await insertCleanSample(s.conn, { sample_number: "'A-9'", inat_observation_id: "998880" });
-    expect(await setHost(s.deps, s.sam, bare, s.form({ none: true, taxon: "" }))).toMatchObject({ refusal: "invalid" });
+    await s.conn.run(`INSERT INTO observation_field (inat_id, user_id) VALUES (998880, 1)`);
+    expect(await setHost(s.deps, s.sam, bare, s.form({ none: true, taxon: "", note: "a bee off the road" }))).toMatchObject({ ok: true, outcome: "saved", host: null });
+    expect(await rows(s.conn, "SELECT host_inat_taxon_id, reason FROM sample_host_override")).toEqual([[null, "a bee off the road"]]);
+    expect(await s.file()).toEqual([{ sample_ref: "inat:998880", field: "host", base_value: "", value: "none", author: "samstaff", reason: "a bee off the road" }]);
+    // The observation is identified as a plant, and the promotion's follow rule leaves the sample alone.
+    await s.conn.run(`UPDATE observation_field SET host_taxon_id = 47604, host_taxon_name = 'Rubus', host_taxon_rank = 'genus', host_is_tracheophyte = true WHERE inat_id = 998880`);
+    const { readFile } = await import("node:fs/promises");
+    const mint = await readFile(new URL("../ingest/mint-samples.sql", import.meta.url), "utf8");
+    const followRule = mint.slice(mint.indexOf("UPDATE sample SET\n  host_inat_taxon_id    = f.host_taxon_id"));
+    await s.conn.run(followRule.slice(0, followRule.indexOf(";") + 1));
+    expect(await s.hostOf(bare)).toEqual([null, null, null]);
+    expect(await rows(s.conn, "SELECT observation_host_inat_taxon_id FROM sample_host_override_diverged")).toEqual([[47604n]]);
   });
 
   it("sets, changes, says none and removes: the sample, the file and the change log, each time", async () => {

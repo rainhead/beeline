@@ -26,7 +26,8 @@ const isSpec = (column: Child | TableColumn): column is TableColumn =>
  *
  * The heading row is the table's too. A column is a plain heading, or a
  * TableColumn: the table draws the menu, the one mark that says a menu is
- * there, and the `aria-sort` that says which column orders the rows — so a
+ * there, and the `aria-sort` that says which column orders the rows, and the
+ * `data-filtered` that says which columns narrow them — so a
  * listing describes its columns and cannot draw them differently from the
  * next one.
  */
@@ -49,12 +50,11 @@ export function DataTable({
               if (column.hidden) return <th aria-label={column.label} />;
               if (column.menu === undefined) return <th>{column.label}</th>;
               const current = column.menu.sort?.current ?? null;
-              return current === null ? (
-                <th>
-                  <ColumnMenu label={column.label} spec={column.menu} />
-                </th>
-              ) : (
-                <th aria-sort={current === "asc" ? "ascending" : "descending"}>
+              return (
+                <th
+                  aria-sort={current === null ? undefined : current === "asc" ? "ascending" : "descending"}
+                  data-filtered={column.menu.filtered ? "true" : undefined}
+                >
                   <ColumnMenu label={column.label} spec={column.menu} />
                 </th>
               );

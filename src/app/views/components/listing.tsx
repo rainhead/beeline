@@ -141,6 +141,8 @@ export interface ColumnFilter {
 export interface ColumnMenuSpec {
   /** The accessible name of the toggle: "Date: sort and filter". */
   menuLabel: string;
+  /** A filter in this column is narrowing the list now; the heading is marked. */
+  filtered?: boolean;
   sort?: ColumnSort;
   filter?: ColumnFilter;
 }

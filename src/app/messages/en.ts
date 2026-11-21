@@ -1235,6 +1235,54 @@ export const en = {
           `iNaturalist now gives “${text}” for this observation. The locality set in Beeline is kept until someone chooses iNaturalist's instead.`,
       },
       /**
+       * A floral host set in Beeline over the observation's (beeline-hlay),
+       * in the locality's voice: what stands, who said so, why, and what
+       * iNaturalist now gives where that has moved on. Changed from a pencil
+       * on the Floral host row, where "Follow iNaturalist again" takes it away.
+       */
+      staffHost: {
+        setBy: (name: string) => `Floral host set in Beeline by ${name}.`,
+        setByStaff: "Floral host set in Beeline by staff.",
+        because: (reason: string) => `Reason: ${reason}`,
+        /** The host row's value where staff say the sample has no floral host. */
+        none: "No floral host",
+        /** `name` arrives set by its rank, as hostNow's does. */
+        observationNow: (name: Child): Child[] => [
+          "iNaturalist now gives ",
+          name,
+          " for this observation. The floral host set in Beeline is kept until someone chooses to follow iNaturalist again.",
+        ],
+        /** The pencil, for a screen reader: it has no visible words. */
+        open: "Change the floral host",
+        hint: "The plant the bees were collected from. It replaces the observation's, and stays when iNaturalist changes, until someone chooses to follow iNaturalist again. Say why: the reason is kept with the change.",
+        hintNoObservation: "This sample has no iNaturalist observation, so the floral host set here stands until it is changed here.",
+        taxon: "Plant on iNaturalist",
+        taxonHint: "The address of the plant's iNaturalist page, or its taxon number. For example, https://www.inaturalist.org/taxa/53439-Eriophyllum-lanatum.",
+        noHost: "This sample has no floral host",
+        note: "Reason",
+        save: "Save",
+        remove: "Follow iNaturalist again",
+        /** The refusals, in the order they are checked. */
+        problems: {
+          reason: "A floral host needs a reason. Say why it is being changed.",
+          taxon_needed: "Give the plant's iNaturalist page address or taxon number, or say the sample has no floral host.",
+          both: "Give a plant, or say the sample has no floral host, but not both.",
+          address:
+            "That is not the address of an iNaturalist taxon page, or a taxon number. A name is not accepted: open the plant's page on iNaturalist and paste its address.",
+          unknown: "iNaturalist has no taxon with that number.",
+          inactive: (replacedBy: readonly string[]) =>
+            `iNaturalist no longer uses that taxon${replacedBy.length === 0 ? "" : `. It now gives ${list(replacedBy)} in its place`}. Give the current one.`,
+          not_vascular: "That taxon is not a vascular plant, so it cannot be a floral host.",
+          unchanged: "This sample already has that floral host, so nothing was changed.",
+        },
+        /** Nothing was saved, because iNaturalist could not be asked to check the taxon. */
+        unreachable: "Beeline could not reach iNaturalist to check that plant. Nothing was saved. Try again in a minute.",
+        unavailable: "This can't be done right now. Try again in a minute.",
+        /** A sample with neither an observation nor an old Beeline record has nothing to keep a host against. */
+        noKey:
+          "This sample has no iNaturalist observation and no old Beeline record, so a floral host has nothing to be kept against. A sample entered in Beeline is a trap sample, and a trap's plant is not a floral host.",
+      },
+      /**
        * Staff set the coordinates (beeline-942), on the same terms as the
        * locality. The case that matters most is an obscured observation
        * with no trusted access: it yields no coordinates, cannot print, and

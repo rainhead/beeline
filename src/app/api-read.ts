@@ -260,7 +260,7 @@ export const SAMPLE_PUBLISHED: Publish<SampleDetail> = {
   atlas_code: true, atlas_name: true, program_code: true, program_name: true, latitude: true, longitude: true,
   coordinate_uncertainty_m: true, location_source: true, elevation_m: true, elevation_source: true, elevation_file: true,
   elevation_stale: true, mine: true, location_withheld: true, printed: true, from_old_records: true,
-  locality_override: true, location_override: true, label_diverged: true, locality_suggestion: true,
+  locality_override: true, location_override: true, host_override: true, label_diverged: true, locality_suggestion: true,
   locality_alternatives: true, wildernesses: true, ecoregion: true, place_disagreement: true, collectors: true,
   // What iNaturalist calls the host now (beeline-rfkj.3). The current name, the family and the common name are
   // published, so that a sample's record and the listings' rows (beeline-rfkj.4) say the same about a host. The

@@ -198,6 +198,8 @@ export interface SampleDetail {
   locality_override: LocalityOverride | null;
   /** Coordinates staff set over the observation's (beeline-942), same shape. */
   location_override: LocationOverride | null;
+  /** A floral host staff set over the observation's, or said there is none (beeline-hlay), same shape. */
+  host_override: HostOverride | null;
   /**
    * Where the observation now puts a sample Beeline printed, when that is
    * more than 100 m from where the sample and its labels say
@@ -260,6 +262,13 @@ export interface LocationOverride {
   reason: string | null;
   /** Where the observation now puts it, when that is neither the base nor the override. */
   observation_now: { latitude: number; longitude: number } | null;
+}
+
+export interface HostOverride {
+  set_by: string | null;
+  reason: string;
+  /** Where the observation now names a plant that is neither what the sample held when this was set nor what was set. */
+  observation_now: { name: string; rank: string } | null;
 }
 
 export interface PlaceDisagreement {
@@ -440,6 +449,7 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
   EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id) AS printed,
   o.locality AS override_locality, o.observed_locality AS override_observed,
   ob.display_name AS override_set_by, o.reason AS override_reason,
+  ho.sample_id IS NOT NULL AS host_overridden, hob.display_name AS host_set_by, ho.reason AS host_reason,
   lo.sample_id IS NOT NULL AS location_overridden,
   lob.display_name AS location_set_by, lo.reason AS location_reason,
   ldv.observation_latitude AS location_observation_latitude, ldv.observation_longitude AS location_observation_longitude,
@@ -467,7 +477,9 @@ const sampleJoins = (reader: Reader) => sql`
   LEFT JOIN person ob ON ob.entity_id = o.set_by
   LEFT JOIN sample_location_override lo ON lo.sample_id = s.entity_id
   LEFT JOIN person lob ON lob.entity_id = lo.set_by
-  LEFT JOIN sample_location_override_diverged ldv ON ldv.sample_id = s.entity_id`;
+  LEFT JOIN sample_location_override_diverged ldv ON ldv.sample_id = s.entity_id
+  LEFT JOIN sample_host_override ho ON ho.sample_id = s.entity_id
+  LEFT JOIN person hob ON hob.entity_id = ho.set_by`;
 
 /** Numbers arrive from DuckDB as bigint or string depending on the column. */
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
@@ -477,6 +489,7 @@ type RawSample = Omit<
   | "collectors"
   | "locality_override"
   | "location_override"
+  | "host_override"
   | "label_diverged"
   | "locality_suggestion"
   | "locality_alternatives"
@@ -493,6 +506,9 @@ type RawSample = Omit<
   override_observed: string | null;
   override_set_by: string | null;
   override_reason: string | null;
+  host_overridden: boolean;
+  host_set_by: string | null;
+  host_reason: string | null;
   location_overridden: boolean;
   location_set_by: string | null;
   location_reason: string | null;
@@ -513,6 +529,16 @@ async function localityObservationNow(db: Kysely<Database>, sampleId: number): P
     SELECT observation_locality FROM sample_locality_override_diverged
     WHERE sample_id = ${sampleId}`.execute(db);
   return found.rows[0]?.observation_locality ?? null;
+}
+
+/** What the observation now names as the host, where it has moved on from both what the sample held and what staff set; asked only of a sample with a host set in Beeline. */
+async function hostObservationNow(db: Kysely<Database>, sampleId: number): Promise<{ name: string; rank: string } | null> {
+  const found = await sql<{ observation_host_name: string | null; observation_host_rank: string | null; observation_host_inat_taxon_id: bigint }>`
+    SELECT observation_host_name, observation_host_rank, observation_host_inat_taxon_id
+    FROM sample_host_override_diverged WHERE sample_id = ${sampleId}`.execute(db);
+  const d = found.rows[0];
+  if (d === undefined) return null;
+  return { name: d.observation_host_name ?? `taxon ${d.observation_host_inat_taxon_id}`, rank: d.observation_host_rank ?? "" };
 }
 
 /**
@@ -571,6 +597,9 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
     override_observed,
     override_set_by,
     override_reason,
+    host_overridden,
+    host_set_by,
+    host_reason,
     location_overridden,
     location_set_by,
     location_reason,
@@ -614,6 +643,13 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
             reason: override_reason,
             observation_now: await localityObservationNow(db, Number(row.sample_id)),
           },
+    host_override: !host_overridden
+      ? null
+      : {
+          set_by: host_set_by,
+          reason: host_reason ?? "",
+          observation_now: await hostObservationNow(db, Number(row.sample_id)),
+        },
     label_diverged: hidden || !row.printed ? null : await labelDiverged(db, Number(row.sample_id)),
     place_disagreement: hidden ? null : await placeDisagreement(db, Number(row.sample_id)),
     printed: Boolean(row.printed),

@@ -154,6 +154,9 @@ const SEX_CASTE = [
   { column: "casteVolDet", macro: "legacy_caste_of", with: "sexVolDet" },
 ] as const;
 const IDENTIFICATION_COLUMNS = ["family", "genus", "subgenus", "specificEpithet", "scientificName", "taxonRank", "identifiedBy"];
+/** The plant columns: the sample's floral host as the store holds it, with its lineage (beeline-qpys). */
+const PLANT_COLUMNS = ["phylumPlant", "orderPlant", "familyPlant", "genusPlant", "speciesPlant", "taxonRankPlant"];
+const PLANT_HIGHER_COLUMNS = ["phylumPlant", "orderPlant", "familyPlant"];
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
 const list = (xs: readonly string[]) => xs.map((x) => `'${x}'`).join(", ");
@@ -468,7 +471,21 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *                        the sample's, not each old record's (beeline-kgyd.4.2)
  *   login_renamed        both sides carry the same iNaturalist user id
  *   sample_disagreement  promotion found the legacy rows of this specimen's sample
- *                        disagreeing about this field, and the sample keeps one value
+ *                        disagreeing about this field, and the sample keeps one value;
+ *                        for the plant, the rows of the sample name different plants,
+ *                        or only some name one (the sample has one floral host)
+ *   staff_host           staff set the sample's floral host, or said it has none
+ *                        (sample_host_override), so the plant columns are theirs
+ *   not_a_plant          the old record's plant is not a plant (its phylum is not
+ *                        Tracheophyta), and the store holds no floral host
+ *   host_follows_observation  the sample's floral host follows its iNaturalist
+ *                        observation, which names a plant the old record does not
+ *   plant_form           the same plant, written another way: a whole name in the
+ *                        genus column, an epithet alone, a rank left blank
+ *   taxonomy_moved       the same plant, in another family, order or phylum than
+ *                        the old record gave: the taxon cache's lineage differs
+ *   visit_stated         the old record gave no relationship to the plant and the
+ *                        sample has a floral host, so the file says "visits flowers of"
  */
 async function kindFromStore(conn: DuckDBConnection): Promise<void> {
   const fold = (x: string) => `regexp_replace(lower(${x}), '[^a-z0-9]', '', 'g')`;
@@ -860,6 +877,7 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
     WHERE d."column" = 'userLogin' AND d.kind = 'changed'
       AND EXISTS (SELECT 1 FROM cmp_pairs p
                   WHERE p."e_fieldNumber" = d.field_number AND p."e_userId" <> '' AND p."e_userId" = p."l_userId")`);
+  await plantKinds(conn);
   // Only where Beeline wrote one of the values the merged rows disagreed
   // between: a value from anywhere else, a staff correction say, is not the
   // merge's doing (CodeRabbit on #130). promote-legacy.sql writes the finding
@@ -876,6 +894,77 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
         WHERE sp.field_number = d.field_number AND f.rule_name = 'within_sample_disagreement'
           AND starts_with(f.details, concat(${field}, ': '))
           AND list_contains(string_split(substr(f.details, length(${field}) + 3), ' | '), d.exported))`);
+}
+
+/**
+ * Why the plant columns differ from the old record's (beeline-qpys). The file
+ * writes the sample's floral host as the store holds it, so a difference has
+ * one of a few causes, tried in this order: staff set the host; the old
+ * record's plant is not a plant and the store holds none; the same plant is
+ * written another way, or sits in another family now; the host follows its
+ * observation, which names another plant; or the legacy rows of the sample
+ * disagree about the plant and the sample keeps one. A difference none of
+ * these explains stays `changed`, `filled` or `blanked`, and is reported.
+ */
+async function plantKinds(conn: DuckDBConnection): Promise<void> {
+  const plain = (x: string) => `lower(${squash(x)})`;
+  const hasOverride = (await one(conn, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'sample_host_override'`)) > 0;
+  // The plant as each side names it: the lowest rank it gives, written as old
+  // Beeline wrote it. A whole name in the genus column, or an epithet alone
+  // beside a genus, is the name it spells (src/legacy-export.ts, samePlant).
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE cmp_plant_pair AS
+    SELECT p."e_fieldNumber" AS field_number,
+           p."l_phylumPlant" AS l_phylum, p."e_genusPlant" AS e_genus, p."e_speciesPlant" AS e_species, p."e_taxonRankPlant" AS e_rank,
+           ${plain(`CASE WHEN p."l_speciesPlant" LIKE '% %' THEN p."l_speciesPlant"
+                          WHEN p."l_genusPlant" LIKE '% %' THEN p."l_genusPlant"
+                          WHEN p."l_speciesPlant" <> '' THEN concat_ws(' ', nullif(p."l_genusPlant", ''), p."l_speciesPlant")
+                          ELSE coalesce(nullif(p."l_genusPlant", ''), nullif(p."l_familyPlant", ''), nullif(p."l_orderPlant", ''),
+                                        nullif(p."l_phylumPlant", ''), '') END`)} AS old_plant,
+           ${plain(`coalesce(nullif(p."e_speciesPlant", ''), nullif(p."e_genusPlant", ''), nullif(p."e_familyPlant", ''),
+                             nullif(p."e_orderPlant", ''), nullif(p."e_phylumPlant", ''), '')`)} AS new_plant
+    FROM cmp_pairs p
+    WHERE p."e_fieldNumber" IN (SELECT field_number FROM cmp_value_difference WHERE "column" IN (${list(PLANT_COLUMNS)}))`);
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE cmp_plant_context AS
+    WITH rows AS (
+      SELECT n.sample_id, count(DISTINCT concat_ws('|', nullif(trim(lo."genusPlant"), ''), nullif(trim(lo."speciesPlant"), ''))) AS plants
+      FROM legacy_specimen_number n JOIN legacy_occurrence lo ON lo._id = n._id GROUP BY 1)
+    SELECT sp.field_number,
+           ${hasOverride ? "EXISTS (SELECT 1 FROM sample_host_override o WHERE o.sample_id = s.entity_id)" : "false"} AS staff_host,
+           EXISTS (SELECT 1 FROM observation_field f WHERE f.inat_id = s.inat_observation_id AND f.host_taxon_id IS NOT NULL) AS follows,
+           coalesce(r.plants, 0) > 1 AS rows_disagree
+    FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id LEFT JOIN rows r ON r.sample_id = s.entity_id
+    WHERE sp.field_number IN (SELECT field_number FROM cmp_plant_pair)`);
+  const unsettled = `d."column" IN (${list(PLANT_COLUMNS)}) AND d.kind IN ('changed', 'filled', 'blanked')`;
+  const ctx = (cond: string) => `EXISTS (SELECT 1 FROM cmp_plant_context c WHERE c.field_number = d.field_number AND ${cond})`;
+  const pair = (cond: string) => `EXISTS (SELECT 1 FROM cmp_plant_pair q WHERE q.field_number = d.field_number AND ${cond})`;
+  const sameName = `q.old_plant <> '' AND q.old_plant = q.new_plant`;
+  const set = async (kind: string, where: string) =>
+    conn.run(`UPDATE cmp_value_difference d SET kind = ${sqlString(kind)} WHERE ${where}`);
+  await set("staff_host", `${unsettled} AND ${ctx("c.staff_host")}`);
+  await set(
+    "not_a_plant",
+    `${unsettled} AND ${pair(`q.l_phylum NOT IN ('', 'Tracheophyta') AND q.e_genus = '' AND q.e_species = '' AND q.e_rank = ''`)}`,
+  );
+  await set(
+    "taxonomy_moved",
+    `d."column" IN (${list(PLANT_HIGHER_COLUMNS)}) AND d.kind = 'changed' AND ${pair(sameName)}`,
+  );
+  await set("plant_form", `d."column" IN (${list(PLANT_COLUMNS)}) AND d.kind IN ('changed', 'filled') AND ${pair(sameName)}`);
+  await set("host_follows_observation", `${unsettled} AND ${ctx("c.follows")}`);
+  // Only where the sample holds a plant: the sample keeps one of the plants its
+  // rows name. Where it holds none, a real plant the old rows named was lost.
+  await set(
+    "sample_disagreement",
+    `${unsettled} AND ${ctx("c.rows_disagree")} AND ${pair(`NOT (q.e_genus = '' AND q.e_species = '' AND q.e_rank = '')`)}`,
+  );
+  // The old record said nothing of how the bees came to the plant and the
+  // sample has a host: the file says what it says for every specimen.
+  await set(
+    "visit_stated",
+    `d."column" = 'relationshipOfResource' AND d.kind = 'filled' AND d.exported = 'visits flowers of'`,
+  );
 }
 
 async function buildDifferences(conn: DuckDBConnection): Promise<void> {

@@ -73,7 +73,13 @@ export const VALUE_KINDS = [
   "standin_replaced", // a stand-in point for an obscured observation, replaced by its true point (beeline-b34)
   "staff_point", // a point staff set on the sample, with the place, accuracy and elevation that went with it (beeline-kgyd.4.2)
   "login_renamed", // the same iNaturalist user id under another login
-  "sample_disagreement", // the legacy rows Beeline merged into one sample name different places, and the sample keeps one
+  "sample_disagreement", // the legacy rows Beeline merged into one sample name different places or plants, and the sample keeps one
+  "staff_host", // a floral host staff set on the sample, or their statement that it has none (beeline-hlay)
+  "not_a_plant", // the old record's plant is not a plant (a person, Homo sapiens), and the sample has no floral host (beeline-qpys)
+  "host_follows_observation", // the sample's floral host follows its observation, which names a plant the old record does not (beeline-qpys)
+  "plant_form", // the same plant written another way: a whole name in the genus column, an epithet alone, a rank left blank
+  "taxonomy_moved", // the same plant, in another family, order or phylum than the old record gave
+  "visit_stated", // the old record gave no relationship to the plant; the sample has a floral host, so the file says visits flowers of
 ] as const;
 
 /**

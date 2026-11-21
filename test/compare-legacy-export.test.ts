@@ -556,3 +556,117 @@ describe("identifications, sex and caste, and reprints (beeline-eznn)", () => {
     expect(left).toEqual([]);
   });
 });
+
+describe("why the plant differs from the old record's (beeline-qpys)", () => {
+  // The lineage of the plant the samples below hold as their host.
+  const TAXA: [number, string, string, number[]][] = [
+    [211194, "Tracheophyta", "phylum", []],
+    [711, "Asterales", "order", [211194]],
+    [712, "Asteraceae", "family", [211194, 711]],
+    [714, "Ericameria", "genus", [211194, 711, 712]],
+    [715, "Ericameria nauseosa", "species", [211194, 711, 712, 714]],
+  ];
+  const ERICAMERIA = { genusPlant: "Ericameria", speciesPlant: "Ericameria nauseosa", taxonRankPlant: "species" };
+
+  async function store(): Promise<DuckDBConnection> {
+    const { conn } = await promotedStore("occurrences");
+    for (const [id, name, rank, above] of TAXA) {
+      await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES (${id}, '${name}', '${rank}', 10, true)`);
+      for (const [d, a] of [...above].reverse().entries()) await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${a}, ${d + 1})`);
+      await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${id}, 0)`);
+    }
+    return conn;
+  }
+  const host = (conn: DuckDBConnection, fieldNumber: string, id: number | null) =>
+    conn.run(`UPDATE sample SET host_inat_taxon_id = ${id ?? "NULL"}, host_name_as_observed = ${id === null ? "NULL" : "'Ericameria nauseosa'"},
+                     host_rank = ${id === null ? "NULL" : "'species'"}
+              WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '${fieldNumber}')`);
+  const old = (conn: DuckDBConnection, fieldNumber: string, set: Record<string, string>) =>
+    conn.run(`UPDATE legacy_occurrence SET ${Object.entries(set).map(([k, v]) => `"${k}" = '${v}'`).join(", ")} WHERE "fieldNumber" = '${fieldNumber}'`);
+
+  /** The kind of each plant difference, by record and column, written as the audit file is. */
+  async function kinds(conn: DuckDBConnection, exportPath: string, rulings: Ruling[] = []): Promise<[string, string, string][]> {
+    await compareLegacyExport(conn, exportPath, rulings);
+    const path = `${exportPath}.differences.csv`;
+    await writeDifferences(conn, rulings, path);
+    return (await conn.runAndReadAll(
+      `SELECT field_number, "column", kind FROM read_csv('${path}', header = true, all_varchar = true)
+       WHERE "column" IN ('phylumPlant', 'orderPlant', 'familyPlant', 'genusPlant', 'speciesPlant', 'taxonRankPlant', 'relationshipOfResource')
+       ORDER BY ALL`,
+    )).getRows() as [string, string, string][];
+  }
+
+  test("tells a plant written another way, a family that moved, a host staff set, one that follows its observation, and a sample's rows that disagree", async () => {
+    const conn = await store();
+    // Sample 1 (25000001, 25000003, 25000009) holds Ericameria nauseosa, and so does the staff-set trap sample of
+    // 25000002 and the trap sample of 25000005, which follows observation 888.
+    await host(conn, "25000001", 715);
+    await host(conn, "25000002", 715);
+    await host(conn, "25000005", 715);
+    await conn.run(`INSERT INTO sample_host_override (sample_id, host_inat_taxon_id, host_name, host_rank, set_by, reason)
+      SELECT sp.sample_id, 715, 'Ericameria nauseosa', 'species', (SELECT min(entity_id) FROM person), 'the plant the bees were on'
+      FROM specimen sp WHERE sp.field_number = '25000002'`);
+    await conn.run(`UPDATE sample SET inat_observation_id = 888 WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000005')`);
+    await conn.run(`INSERT INTO observation_field (inat_id, user_id, host_taxon_id, host_taxon_name, host_taxon_rank, host_is_tracheophyte)
+      VALUES (888, 1, 715, 'Ericameria nauseosa', 'species', true)`);
+    const dir = await mkdtemp(join(tmpdir(), "compare-plant-"));
+    const exportPath = join(dir, "occurrences.csv");
+    await writeLegacyExport(conn, exportPath);
+    // The old records as they stood. The same plant, in the family old Beeline then gave it.
+    await old(conn, "25000001", { ...ERICAMERIA, familyPlant: "Compositae", orderPlant: "Asterales", phylumPlant: "Tracheophyta", relationshipOfResource: "visits flowers of" });
+    // The same plant in the genus column whole, with no species and no rank.
+    await old(conn, "25000003", { genusPlant: "Ericameria nauseosa", speciesPlant: "", taxonRankPlant: "", familyPlant: "", orderPlant: "", phylumPlant: "" });
+    // Sample 1's third record names another plant (Salvia, in the fixture): its rows disagree, and the sample holds one.
+    // The two trap samples' records name no plant.
+
+    const found = await kinds(conn, exportPath);
+    const kindsOf = (fieldNumber: string) => found.filter(([f]) => f === fieldNumber).map(([, c, k]) => `${c} ${k}`);
+    expect(kindsOf("25000001")).toEqual(["familyPlant taxonomy_moved"]);
+    expect(kindsOf("25000003")).toEqual([
+      "familyPlant plant_form", "genusPlant plant_form", "orderPlant plant_form", "phylumPlant plant_form",
+      "relationshipOfResource visit_stated", "speciesPlant plant_form", "taxonRankPlant plant_form",
+    ]);
+    expect(kindsOf("25000009")).toEqual([
+      "familyPlant sample_disagreement", "genusPlant sample_disagreement", "orderPlant sample_disagreement", "relationshipOfResource visit_stated",
+      "speciesPlant sample_disagreement",
+    ]);
+    expect(kindsOf("25000002")).toEqual([
+      "familyPlant staff_host", "genusPlant staff_host", "orderPlant staff_host", "phylumPlant staff_host",
+      // A trap's plant is near it: the existing kind, not the one for a visit.
+      "relationshipOfResource filled", "speciesPlant staff_host", "taxonRankPlant staff_host",
+    ]);
+    expect(kindsOf("25000005")).toEqual([
+      "familyPlant host_follows_observation", "genusPlant host_follows_observation", "orderPlant host_follows_observation",
+      "phylumPlant host_follows_observation", "relationshipOfResource filled", "speciesPlant host_follows_observation",
+      "taxonRankPlant host_follows_observation",
+    ]);
+
+    // Every one of them is ruled in the checked-in file, so the comparison reports none as unexplained.
+    const rulings = await readRulings(new URL("../ingest/legacy-export-rulings.csv", import.meta.url).pathname);
+    const r = await compareLegacyExport(conn, exportPath, rulings);
+    const plant = new Set(["phylumPlant", "orderPlant", "familyPlant", "genusPlant", "speciesPlant", "taxonRankPlant", "relationshipOfResource"]);
+    expect(r.unexplained.groups.filter((g) => plant.has(g.column))).toEqual([]);
+  });
+
+  test("calls a plant old Beeline named that is not a plant what it is, and leaves a real plant the store dropped unexplained", async () => {
+    const conn = await store();
+    // Sample 1 holds no host: its observation showed a person, so promotion cleared it.
+    await host(conn, "25000001", null);
+    const dir = await mkdtemp(join(tmpdir(), "compare-plant-"));
+    const exportPath = join(dir, "occurrences.csv");
+    await writeLegacyExport(conn, exportPath);
+    // 25000003's old record names the person its observation showed; 25000001's names Salvia, in Tracheophyta.
+    await old(conn, "25000003", {
+      genusPlant: "Homo", speciesPlant: "Homo sapiens", taxonRankPlant: "species", familyPlant: "Hominidae", orderPlant: "Primates",
+      phylumPlant: "Chordata",
+    });
+    const found = await kinds(conn, exportPath);
+    const kindsOf = (fieldNumber: string) => found.filter(([f]) => f === fieldNumber).map(([, c, k]) => `${c} ${k}`);
+    expect(kindsOf("25000003")).toEqual([
+      "familyPlant not_a_plant", "genusPlant not_a_plant", "orderPlant not_a_plant", "phylumPlant not_a_plant", "speciesPlant not_a_plant", "taxonRankPlant not_a_plant",
+    ]);
+    expect(kindsOf("25000001")).toEqual([
+      "familyPlant blanked", "genusPlant blanked", "orderPlant blanked", "phylumPlant blanked", "speciesPlant blanked", "taxonRankPlant blanked",
+    ]);
+  });
+});

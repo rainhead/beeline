@@ -2845,10 +2845,8 @@ export const en = {
     linkFromExports: "Old Beeline records held back, and why",
     reasonsHeading: "Why they were held back",
     colReason: "Reason",
-    colActive: (since: number) => `Active seasons (${since} on)`,
-    colSettled: "Settled seasons",
-    colNoYear: "No year written",
-    reasonsNote: "A record can be held back for more than one reason.",
+    reasonsNote:
+      "A record can be held back for more than one reason. Each record is counted under the program it belongs to: the atlas its sample is filed under, or for a record Beeline holds no sample for, the atlas of its observation's sample or of the state it wrote. A record under no atlas is At large, and one that wrote no state and has no sample is under No state written.",
     reason: {
       missing_person: "No collector's name",
       missing_sample_number: "No sample number",
@@ -2873,7 +2871,7 @@ export const en = {
     /** Before the field number, as a link, of the specimen whose remark names the record. */
     related: "Beeline's note on specimen",
     download: "Download every held-back record (CSV)",
-    downloadNote: "Every column the old Beeline held for each record, the bare ones included, and why it was held back.",
+    downloadNote: "Every column the old Beeline held for each record, the bare ones included, why it was held back, and its program.",
     none: "No records are held back.",
     /** A held-back record promotion gave no reason for. None had one on 13 November 2026. */
     noReason: "No reason recorded",
@@ -2900,17 +2898,15 @@ export const en = {
         : count === 1
           ? "One field number that old or new Beeline holds more than once is left out, since it names more than one record."
           : `${n(count)} field numbers that old or new Beeline holds more than once are left out, since each names more than one record.`,
-    matched: (active: number, settled: number, since: string) =>
-      `${n(active + settled)} records matched by field number: ${n(active)} from the active seasons (${since} on) and ${n(settled)} from the settled ones.`,
+    matched: (total: number, byProgram: string) => `${n(total)} records matched by field number: ${byProgram}.`,
+    /** A line's records by program: "Records: WABA 12, OBA 3". */
+    records: (byProgram: string) => `Records: ${byProgram}`,
     contents: "Contents",
     colLine: "What new Beeline did",
-    colActive: (since: string) => `Active seasons (${since} on)`,
-    colSettled: "Settled seasons",
-    countsNote: "Counts are records. A record is counted once on each line it is on, so the lines add up to more than the records.",
+    countsNote:
+      "Counts are records, by program: the atlas the record's sample is filed under or, for a record new Beeline does not hold, the atlas of its observation's sample or of the state it wrote. A record under no atlas is At large, and one that wrote no state and has no sample is under No state written. A record is counted once on each line it is on, so the lines add up to more than the records.",
     outcome: "Outcome",
     values: (values: number) => `${n(values)} ${values === 1 ? "value" : "values"} changed.`,
-    /** Records under one outcome, the active seasons first: "12 active, 3,400 settled". */
-    bySeason: (active: number, settled: number) => `${n(active)} active, ${n(settled)} settled`,
     examples: "For example",
     download: (bytes: string) => `Download every value on this line (CSV, ${bytes} MB)`,
     /** A line's own download that is not a value against a value: what it holds, then its size. */

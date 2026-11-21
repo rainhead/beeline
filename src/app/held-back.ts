@@ -2,6 +2,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import type { Messages } from "./messages/index.js";
 import { REMARK_SOURCE } from "../repair-legacy-skipped.js";
+import { orderPrograms, PROGRAM_CTES, PROGRAM_ORDER_SQL } from "../legacy-program.js";
 
 /**
  * The old Beeline's records that new Beeline holds back (beeline-cel0): for
@@ -33,6 +34,11 @@ import { REMARK_SOURCE } from "../repair-legacy-skipped.js";
  * record. The remark is found by the field number it names, among the
  * repair's own remarks only; the repair ran once and its wording is fixed.
  *
+ * Each record has the program it belongs to (src/legacy-program.ts), which is
+ * how the page counts and lists them, not by season: the page describes old
+ * Beeline's records as they stood at cutover, when no season was in progress,
+ * so an active/settled split says nothing (Peter, 2026-11-20).
+ *
  * These are views and tables promotion creates, not the schema's, so a
  * store without old-Beeline staging (a fresh development store, or a test)
  * has none of them, and the page says so rather than failing.
@@ -50,8 +56,8 @@ export interface HeldBackRecord {
   specimenNumber: string | null;
   /** The date as the record wrote it, year-month-day with ? for a blank part, and the end where there is one. */
   date: string | null;
-  /** The year as written, where it reads as a year. */
-  year: number | null;
+  /** The program it belongs to, by the name people read. */
+  program: string;
   observationId: number | null;
   /** The expert's identification as written, else null. */
   expert: string | null;
@@ -74,11 +80,8 @@ export interface BareRecords {
 
 export interface ReasonCount {
   rule: HeldBackRule;
-  /** Records from the active seasons (season.active_since), by the year they give. */
-  active: number;
-  settled: number;
-  /** Records whose year cannot be read. */
-  noYear: number;
+  /** Records with this reason, by program; a program with none is absent. */
+  records: Record<string, number>;
 }
 
 export interface HeldBack {
@@ -86,8 +89,8 @@ export interface HeldBack {
   bare: BareRecords | null;
   /** Each reason with its records, the bare ones left out; a record can have more than one. */
   reasons: ReasonCount[];
-  /** The first year of the active seasons, which the counts split at. */
-  activeSince: number;
+  /** The programs that have a listed record, in the page's order. */
+  programs: string[];
 }
 
 const NEEDS = ["legacy_occurrence", "legacy_parsed", "legacy_specimen_number", "legacy_duplicate_record", "legacy_promotion_finding"];
@@ -114,7 +117,7 @@ type HeldRow = Record<string, unknown> & {
   year2: string | null;
   url: string | null;
   hb_collector: string | null;
-  hb_year: number | null;
+  hb_program: string;
   hb_expert: string | null;
   hb_volunteer: string | null;
   hb_rules: HeldBackRule[];
@@ -146,13 +149,13 @@ type HeldRow = Record<string, unknown> & {
  */
 async function readHeld(db: Kysely<Database>): Promise<HeldRow[]> {
   const { rows } = await sql<HeldRow>`
-    WITH carried AS (
+    WITH ${sql.raw(PROGRAM_CTES)},
+    carried AS (
       SELECT _id FROM legacy_specimen_number UNION SELECT _id FROM legacy_duplicate_record
     ),
     held AS (
       SELECT o.*,
         nullif(trim(concat_ws(' ', nullif(trim(o.firstName), ''), nullif(trim(o.lastName), ''))), '') AS hb_collector,
-        try_cast(o.year AS INTEGER) AS hb_year,
         nullif(trim(coalesce(nullif(o.scientificName, ''), concat_ws(' ', nullif(o.genus, ''), nullif(o.specificEpithet, '')))), '') AS hb_expert,
         nullif(trim(concat_ws(' ', nullif(o.genusVolDet, ''), nullif(o.speciesVolDet, ''))), '') AS hb_volunteer,
         try_cast(regexp_extract(o.url, '/observations/([0-9]+)$', 1) AS BIGINT) AS hb_observation
@@ -200,13 +203,15 @@ async function readHeld(db: Kysely<Database>): Promise<HeldRow[]> {
     )
     SELECT c.* EXCLUDE (hb_observation),
       r.specimen_id AS hb_related_id, r.field_number AS hb_related_field_number, r.remarks AS hb_remark,
+      lp.program AS hb_program,
       ob.sample_id AS hb_sample_id, s.specimen_count AS hb_sample_counts,
       (SELECT count(*) FROM specimen sp WHERE sp.sample_id = ob.sample_id) AS hb_sample_holds
     FROM classed c
     LEFT JOIN remarked r ON r._id = c._id AND r.n = 1
     LEFT JOIN observed ob ON ob.inat_observation_id = c.hb_observation
     LEFT JOIN sample s ON s.entity_id = ob.sample_id
-    ORDER BY c.hb_year NULLS LAST, c.fieldNumber, c._id`.execute(db);
+    LEFT JOIN legacy_program lp ON lp._id = c._id
+    ORDER BY c.fieldNumber, c._id`.execute(db);
   return rows;
 }
 
@@ -214,8 +219,7 @@ async function readHeld(db: Kysely<Database>): Promise<HeldRow[]> {
 export async function heldBackRecords(db: Kysely<Database>): Promise<HeldBack | null> {
   if (!(await hasHeldBackSources(db))) return null;
   const rows = await readHeld(db);
-  const { rows: since } = await sql<{ y: number }>`SELECT CAST(extract(year FROM active_since) AS INTEGER) AS y FROM season`.execute(db);
-  const activeSince = Number(since[0]!.y);
+  const { rows: known } = await sql<{ label: string }>`${sql.raw(PROGRAM_ORDER_SQL)}`.execute(db);
 
   // Year, month, day, as the record wrote each, so 4/5 cannot be read either
   // way round; a part it left blank is a question mark.
@@ -236,7 +240,7 @@ export async function heldBackRecords(db: Kysely<Database>): Promise<HeldBack | 
       sampleNumber: text(r.sampleId),
       specimenNumber: text(r.specimenId),
       date: start === "" && end === "" ? null : end === "" ? start : `${start} to ${end}`,
-      year: r.hb_year === null ? null : Number(r.hb_year),
+      program: r.hb_program,
       observationId: observation === null ? null : Number(observation[1]),
       expert: r.hb_expert,
       volunteer: r.hb_volunteer,
@@ -251,6 +255,9 @@ export async function heldBackRecords(db: Kysely<Database>): Promise<HeldBack | 
           : { sampleId: Number(r.hb_sample_id), counts: r.hb_sample_counts === null ? null : Number(r.hb_sample_counts), holds: Number(r.hb_sample_holds) },
     };
   });
+  const programs = orderPrograms(records.map((r) => r.program), known.map((k) => k.label));
+  // By program in the page's order, then by field number as the query gave them.
+  records.sort((a, b) => programs.indexOf(a.program) - programs.indexOf(b.program));
   const bare = rows.filter((r) => r.hb_bare);
   const numbers = [...new Set(bare.map((r) => r.fieldNumber ?? ""))].sort();
   return {
@@ -259,23 +266,19 @@ export async function heldBackRecords(db: Kysely<Database>): Promise<HeldBack | 
     reasons: HELD_BACK_RULES.flatMap((rule) => {
       const with_ = records.filter((r) => r.rules.includes(rule));
       if (with_.length === 0) return [];
-      return [
-        {
-          rule,
-          active: with_.filter((r) => r.year !== null && r.year >= activeSince).length,
-          settled: with_.filter((r) => r.year !== null && r.year < activeSince).length,
-          noYear: with_.filter((r) => r.year === null).length,
-        },
-      ];
+      const counts: Record<string, number> = {};
+      for (const r of with_) counts[r.program] = (counts[r.program] ?? 0) + 1;
+      return [{ rule, records: counts }];
     }),
-    activeSince,
+    programs,
   };
 }
 
 /**
  * The download: every held-back record, bare ones too, with every column the
  * old system held, then why it was held back in the page's words, the
- * specimen whose note names it, and the sample its observation is in Beeline.
+ * specimen whose note names it, the sample its observation is in Beeline, and
+ * the program the record belongs to.
  */
 export async function heldBackCsvRows(db: Kysely<Database>, m: Messages): Promise<{ header: string[]; rows: unknown[][] } | null> {
   if (!(await hasHeldBackSources(db))) return null;
@@ -291,6 +294,7 @@ export async function heldBackCsvRows(db: Kysely<Database>, m: Messages): Promis
     "beeline_sample_id",
     "beeline_sample_counts",
     "beeline_sample_holds",
+    "beeline_program",
   ];
   return {
     header,
@@ -302,6 +306,7 @@ export async function heldBackCsvRows(db: Kysely<Database>, m: Messages): Promis
       r.hb_sample_id === null ? null : Number(r.hb_sample_id),
       r.hb_sample_counts === null ? null : Number(r.hb_sample_counts),
       r.hb_sample_id === null ? null : Number(r.hb_sample_holds),
+      r.hb_program,
     ]),
   };
 }

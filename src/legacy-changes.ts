@@ -8,6 +8,7 @@ import { compareLegacyExport, DEFAULT_RULINGS, dropComparisonTables } from "./co
 import { openDuckDb } from "./db.js";
 import { legacyExportPath, writeLegacyExport } from "./legacy-export.js";
 import { readRulings, type Ruling } from "./legacy-export-rulings.js";
+import { describePrograms, orderPrograms, PROGRAM_ORDER_SQL } from "./legacy-program.js";
 
 /**
  * What new Beeline did to old Beeline's records, in a taxonomist's words
@@ -271,7 +272,7 @@ export const LINES: readonly ChangeLine[] = [
     // Where each record went, which is what a list naming its field number needs.
     csv: {
       select: `c.field_number AS old_field_number,
-               CASE WHEN c.active_season THEN 'active' ELSE 'settled' END AS season,
+               c.program AS program,
                ${TIED_TO("c.field_number")} AS tied_to_field_number,
                CASE WHEN EXISTS (SELECT 1 FROM chg_line s WHERE s.field_number = ${TIED_TO("c.field_number")} AND s.kind = 'second_print')
                     THEN 'yes' ELSE 'no' END AS specimen_identified_from_a_second_record`,
@@ -479,13 +480,12 @@ export interface ChangeExample {
 
 export interface LineSummary {
   line: string;
-  /** Records, split by season on the record's first collecting day. */
-  active: number;
-  settled: number;
+  /** Records by program (src/legacy-program.ts); a program with none is absent. */
+  records: Record<string, number>;
   /** Values: a record can differ in several columns on one line. */
   values: number;
   /** Records under each outcome, commonest first. */
-  outcomes: { outcome: string; active: number; settled: number }[];
+  outcomes: { outcome: string; records: Record<string, number> }[];
   examples: ChangeExample[];
   /** The line's CSV, every difference on it, in the night's folder; null where the line's download is kept elsewhere. */
   file: string | null;
@@ -494,10 +494,11 @@ export interface LineSummary {
 
 export interface ChangesSummary {
   writtenAt: string;
-  /** The first day of the active seasons, as an ISO date. */
-  activeSince: string;
+  /** The programs that have a record anywhere on the page, in its order. */
+  programs: string[];
   reference: { rows: number; fingerprint: string };
-  matched: { active: number; settled: number };
+  /** Records matched by field number, by program. */
+  matched: Record<string, number>;
   /** Field numbers both sides hold, one of them more than once, which the comparison cannot pair and so leaves off every line. */
   duplicated: number;
   /** When the export compared was written: tonight's, unless the export failed and an older file was read. */
@@ -519,14 +520,31 @@ export const lineFile = (line: string) => `${line}.csv`;
 /** A night's folder, named for the instant it was written: 2026-11-16T12-00-00-000Z. */
 export const GENERATION = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
-/** The summary the job last wrote, or null where none has been. */
+/**
+ * The summary the job last wrote, or null where none has been. A summary
+ * written before the counts were by program (it names no `programs`) is read
+ * as none: after a deploy the page shows the previous night's file until the
+ * job runs again, and the page cannot count it by program.
+ */
 export async function readChangesSummary(exportsDir: string): Promise<ChangesSummary | null> {
   return readSummaryIn(changesDir(exportsDir));
 }
 
 async function readSummaryIn(dir: string): Promise<ChangesSummary | null> {
   try {
-    return JSON.parse(await readFile(join(dir, SUMMARY), "utf8")) as ChangesSummary;
+    const summary = JSON.parse(await readFile(join(dir, SUMMARY), "utf8")) as Partial<ChangesSummary> | null;
+    if (summary === null || !Array.isArray(summary.programs) || !Array.isArray(summary.lines)) return null;
+    return summary as ChangesSummary;
+  } catch {
+    return null;
+  }
+}
+
+/** The night's folder the summary names, whatever shape it is in, or null. */
+async function readGenerationIn(dir: string): Promise<string | null> {
+  try {
+    const g = (JSON.parse(await readFile(join(dir, SUMMARY), "utf8")) as { generation?: unknown } | null)?.generation;
+    return typeof g === "string" && GENERATION.test(g) ? g : null;
   } catch {
     return null;
   }
@@ -575,19 +593,25 @@ export async function writeChanges(
     await conn.run(`CREATE OR REPLACE TEMP TABLE chg_outcome (outcome TEXT, words TEXT)`);
     await conn.run(`INSERT INTO chg_outcome VALUES ${Object.entries(OUTCOME_WORDS).map(([o, w]) => `(${sqlString(o)}, ${sqlString(w)})`).join(", ")}`);
 
-    const counts = new Map(
-      ((await (await conn.run(`
-        SELECT line, count(DISTINCT field_number) FILTER (WHERE active_season),
-               count(DISTINCT field_number) FILTER (WHERE NOT active_season), count(*)
-        FROM chg_line GROUP BY line`)).getRows()) as [string, bigint, bigint, bigint][]).map(([line, a, s, v]) => [
-        line,
-        { active: Number(a), settled: Number(s), values: Number(v) },
-      ]),
-    );
-    const outcomes = (await (await conn.run(`
-      SELECT line, outcome, count(DISTINCT field_number) FILTER (WHERE active_season) AS active,
-             count(DISTINCT field_number) FILTER (WHERE NOT active_season) AS settled
-      FROM chg_line GROUP BY 1, 2 ORDER BY line, active + settled DESC, outcome`)).getRows()) as [string, string, bigint, bigint][];
+    const known = ((await (await conn.run(PROGRAM_ORDER_SQL)).getRows()) as [string][]).map(([p]) => p);
+    const byLine = new Map<string, { records: Record<string, number>; values: number }>();
+    for (const [line, program, records, values] of (await (await conn.run(`
+      SELECT line, program, count(DISTINCT field_number), count(*) FROM chg_line GROUP BY 1, 2`)).getRows()) as [string, string, bigint, bigint][]) {
+      const n = byLine.get(line) ?? { records: {}, values: 0 };
+      n.records[program] = Number(records);
+      n.values += Number(values);
+      byLine.set(line, n);
+    }
+    const outcomes = new Map<string, { outcome: string; records: Record<string, number> }[]>();
+    for (const [line, outcome, program, records] of (await (await conn.run(`
+      SELECT line, outcome, program, count(DISTINCT field_number) FROM chg_line GROUP BY 1, 2, 3`)).getRows()) as [string, string, string, bigint][]) {
+      const mine = outcomes.get(line) ?? [];
+      let o = mine.find((x) => x.outcome === outcome);
+      if (o === undefined) mine.push((o = { outcome, records: {} }));
+      o.records[program] = Number(records);
+      outcomes.set(line, mine);
+    }
+    const total = (r: Record<string, number>) => Object.values(r).reduce((t, x) => t + x, 0);
     // A few records each, one for each of the commonest changes the line
     // makes, so the examples show its range rather than one change three
     // times, and then the lowest field numbers where it makes fewer kinds of
@@ -618,13 +642,14 @@ export async function writeChanges(
       FROM vals v WHERE v.v <= ${VALUES_PER_EXAMPLE}
       ORDER BY v.line, v.r, v."column"`)).getRows()) as [string, string, number | bigint | null, string, string, string, string][];
 
-    const previous = (await readSummaryIn(dir))?.generation ?? null;
+    // Read apart from the shape check: the folder an old-shaped summary names is still being downloaded from.
+    const previous = await readGenerationIn(dir);
     const generation = new Date().toISOString().replace(/[:.]/g, "-");
     await mkdir(join(dir, generation), { recursive: true });
     const lines: LineSummary[] = [];
     for (const l of LINES) {
       const path = join(dir, generation, lineFile(l.id));
-      const n = counts.get(l.id);
+      const n = byLine.get(l.id);
       if (n === undefined) continue;
       const mine: ChangeExample[] = [];
       for (const [line, fieldNumber, specimenId, column, kind, legacy, exported] of examples) {
@@ -641,21 +666,20 @@ export async function writeChanges(
       lines.push({
         line: l.id,
         ...n,
-        outcomes: outcomes
-          .filter(([line]) => line === l.id)
-          .map(([, outcome, active, settled]) => ({ outcome, active: Number(active), settled: Number(settled) })),
+        // Commonest first, then by name.
+        outcomes: (outcomes.get(l.id) ?? []).sort((a, b) => total(b.records) - total(a.records) || a.outcome.localeCompare(b.outcome)),
         examples: mine,
         file: l.download === undefined ? lineFile(l.id) : null,
         bytes: l.download === undefined ? (await stat(path)).size : null,
       });
     }
 
-    const [[activeSince]] = (await (await conn.run(`SELECT strftime(active_since, '%Y-%m-%d') FROM season`)).getRows()) as [[string]];
+    const programs = orderPrograms([...Object.keys(comparison.matchedByProgram), ...lines.flatMap((l) => Object.keys(l.records))], known);
     const summary: ChangesSummary = {
       writtenAt: new Date().toISOString(),
-      activeSince,
+      programs,
       reference: comparison.reference,
-      matched: comparison.matched,
+      matched: comparison.matchedByProgram,
       duplicated: Number(unmatched),
       exportWrittenAt: (await stat(exportPath)).mtime.toISOString(),
       generation,
@@ -684,9 +708,9 @@ export async function writeChanges(
 }
 
 /**
- * Every difference on one line, one row each: the record, its season, the
+ * Every difference on one line, one row each: the record, its program, the
  * column, old Beeline's value and new Beeline's, what new Beeline did and the
- * outcome. Not the ruling's own reason, which is written for whoever keeps
+ * outcome, with the record's program. Not the ruling's own reason, which is written for whoever keeps
  * the comparison (file names, issue numbers). With a byte order mark, so a
  * spreadsheet reads the names in it as UTF-8; replaced only once complete.
  */
@@ -695,7 +719,7 @@ async function writeLineCsv(conn: DuckDBConnection, line: string, path: string, 
   const whole = `${path}.tmp`;
   const query =
     csv === undefined
-      ? `SELECT c.field_number, CASE WHEN c.active_season THEN 'active' ELSE 'settled' END AS season,
+      ? `SELECT c.field_number, c.program,
                c."column", c.legacy AS old_beeline, c.exported AS new_beeline,
                m.title AS what_new_beeline_did, coalesce(o.words, c.outcome) AS outcome
         FROM chg_line c
@@ -719,13 +743,13 @@ async function writeLineCsv(conn: DuckDBConnection, line: string, path: string, 
 
 /** Describe a summary for the job's run detail. */
 export function describeChanges(s: ChangesSummary): string {
-  // Active seasons first, then settled, as every count here is reported.
   const records = (id: string) => {
     const l = s.lines.find((x) => x.line === id);
-    return l === undefined ? "0 / 0" : `${l.active} / ${l.settled}`;
+    const total = l === undefined ? 0 : Object.values(l.records).reduce((t, x) => t + x, 0);
+    return total === 0 ? "0" : `${total} (${describePrograms(l!.records, s.programs)})`;
   };
   const values = s.lines.reduce((t, l) => t + l.values, 0);
-  return `${values} differing values on ${s.lines.length} lines; records (active / settled) not yet explained ${records("unexplained")}, unsorted ${records("other")}`;
+  return `${values} differing values on ${s.lines.length} lines; records not yet explained ${records("unexplained")}, unsorted ${records("other")}`;
 }
 
 // CLI: pnpm legacy:changes [db] [export.csv] [--out dir]
@@ -753,7 +777,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   conn.closeSync();
   console.log(describeChanges(summary));
   for (const l of summary.lines) {
-    console.log(`  ${l.line.padEnd(24)} ${String(l.active).padStart(7)} / ${String(l.settled).padStart(7)}  e.g. ${l.examples.map((e) => e.fieldNumber).join(", ")}`);
+    console.log(`  ${l.line.padEnd(24)} ${describePrograms(l.records, summary.programs).padEnd(40)}  e.g. ${l.examples.map((e) => e.fieldNumber).join(", ")}`);
   }
   console.error(`written to ${out}`);
 }

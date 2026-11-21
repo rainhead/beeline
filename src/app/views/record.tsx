@@ -370,15 +370,16 @@ function HostValue({
   const changed = current !== null && observed !== null && observed !== "" && plantNameKey(current) !== plantNameKey(observed);
   const set = sample.host_override;
   const t = s.staffHost;
+  const name =
+    observed === null ? (
+      set === null ? <Absent label={m.absence.none} spelled /> : t.none
+    ) : (
+      <TaxonName rank={sample.host_rank ?? ""} scientificName={observed} vernacular={sample.host_common_name} />
+    );
   return (
     <>
-      <span class="inline-edit-text">
-        {observed === null ? (
-          set === null ? <Absent label={m.absence.none} spelled /> : t.none
-        ) : (
-          <TaxonName rank={sample.host_rank ?? ""} scientificName={observed} vernacular={sample.host_common_name} />
-        )}
-      </span>
+      {/* The name gives way to the form while the pencil is open; a reader with no pencil gets the name as it always was. */}
+      {edit === null ? name : <span class="inline-edit-text">{name}</span>}
       {edit}
       {changed ? (
         <Meta block>{s.hostNow(<TaxonName rank={sample.host_current_rank ?? ""} scientificName={current} />)}</Meta>

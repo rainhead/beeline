@@ -9,7 +9,7 @@ import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { en } from "../src/app/messages/en.js";
 import { duckdbReader } from "../src/person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
-import { readSampleOverlay } from "../src/sample-overlay.js";
+import { readSampleOverlay, upsertSampleOverlay } from "../src/sample-overlay.js";
 import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
@@ -250,6 +250,34 @@ describe("the host through the API", () => {
       ["", "samstaff", "api", "no flower"],
       ["47604 Rubus", "samstaff", "api", ""],
     ]);
+  });
+
+  it("takes away a host the file holds and the store has not applied, and treats an empty value as nothing standing", async () => {
+    const w = await world();
+    const path = `/samples/${w.sampleId}/host`;
+    // The case of a write that recorded its row and lost the store's conflict: the file says a host stands, the table has none.
+    await upsertSampleOverlay(w.paths.sampleOverlayPath, [
+      { sample_ref: "inat:998877", field: "host", base_value: "47604 genus Rubus", value: "53439 species Eriophyllum lanatum", author: "samstaff", reason: "why" },
+    ]);
+    expect((await rows(w.conn, "SELECT count(*) FROM sample_host_override"))[0]).toEqual([0n]);
+    const dry = await w.send(w.keys.sam, path, { remove: true, dry_run: true });
+    expect(await dry.json()).toMatchObject({ outcome: "would_remove", dry_run: true });
+    expect((await w.overlay()).find((r) => r.field === "host")!.value).toBe("53439 species Eriophyllum lanatum");
+    const removed = await w.send(w.keys.sam, path, { remove: true });
+    expect(await removed.json()).toMatchObject({ outcome: "removed" });
+    expect((await w.overlay()).find((r) => r.field === "host")!.value).toBe("");
+    // Now the file holds only a removal: nothing is standing, so a second removal changes nothing.
+    const again = await w.send(w.keys.sam, path, { remove: true });
+    expect(await again.json()).toMatchObject({ outcome: "unchanged" });
+    expect(await w.hostOf()).toEqual([47604n, "Rubus", "genus"]);
+  });
+
+  it("shows the taxon number of a host the sample holds with no name, and no host label for it", async () => {
+    const w = await world();
+    await w.conn.run(`UPDATE sample SET host_name_as_observed = NULL, host_rank = NULL WHERE entity_id = ${w.sampleId}`);
+    const page = await (await w.app.request(`/samples/${w.sampleId}`)).text();
+    expect(page).toContain("iNaturalist taxon 47604");
+    expect(page).not.toContain(t.none);
   });
 
   it("refuses with the statuses a program can act on", async () => {

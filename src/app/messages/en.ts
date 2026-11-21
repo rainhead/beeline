@@ -1186,6 +1186,8 @@ export const en = {
        * round it in its own order.
        */
       hostNow: (name: Child): Child[] => ["now ", name, " on iNaturalist"],
+      /** A host the sample holds only as an iNaturalist taxon number, whose name nobody has stored. */
+      hostTaxonId: (id: string) => `iNaturalist taxon ${id}`,
       /** iNaturalist replaced the taxon with several, so none is chosen. */
       hostSplit: "split into several names on iNaturalist",
       /** The same, where the new names all lie in one genus or family. `name` is set by its rank. */

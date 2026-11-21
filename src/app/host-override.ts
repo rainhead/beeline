@@ -186,6 +186,25 @@ export async function hostAnchor(
   return ids[0] === undefined ? null : legacyRecordRef(ids[0]);
 }
 
+/** Whether the overlay file holds a host row with a value that names this sample, by the old record keys or the observation's. */
+async function fileHoldsHost(conn: DuckDBConnection, path: string, sample: StaffHostTarget): Promise<boolean> {
+  let ids = new Set<string>();
+  try {
+    const found = (await (await conn.run(`SELECT _id FROM legacy_specimen_number WHERE sample_id = $1`, [sample.entity_id] as never)).getRows()) as unknown[][];
+    ids = new Set(found.map((r) => String(r[0])));
+  } catch {
+    // A store with no old records has no such table, and no such keys.
+  }
+  return (await readSampleOverlay(path)).some((r) => {
+    if (r.field !== "host" || r.value === "") return false;
+    const ref = parseSampleRef(r.sample_ref);
+    if (ref === null) return false;
+    return "legacy_id" in ref
+      ? ids.has(ref.legacy_id)
+      : sample.inat_observation_id !== null && ref.inat_observation_id === String(sample.inat_observation_id);
+  });
+}
+
 /**
  * Set the sample's floral host, say it has none, or take what staff set away.
  * The caller has judged the taxon and holds the sample's turn in its queue.
@@ -211,7 +230,11 @@ export async function setStaffHost(
     ((await (await conn.run(`SELECT 1 FROM sample_host_override WHERE sample_id = $1`, [sample.entity_id] as never)).getRows()) as unknown[][])
       .length > 0;
   if (input.choice.kind === "remove") {
-    if (!standing) return { outcome: "unchanged" };
+    // Standing is the table's row, or a host row in the overlay file that names this
+    // sample (the same matching as hostAnchor): a row the file holds and the store
+    // has not applied yet, as after a write that lost a conflict, is taken away too.
+    // An empty value in the file is a removal already made, not a host standing.
+    if (!standing && !(await fileHoldsHost(conn, deps.sampleOverlayPath, sample))) return { outcome: "unchanged" };
     if (input.dryRun === true) return { outcome: "removed" };
     return write(deps, anchor, { base_value: "", value: "", author: input.author, reason: "" }, { outcome: "removed" });
   }

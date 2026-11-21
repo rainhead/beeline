@@ -287,7 +287,7 @@ export function SampleFacts({
     // A bee taken off no flower has no floral host, and that is complete —
     // so the row is absent rather than reading as something missing. Staff
     // keep the row, for the pencil, and where they said there is none.
-    sample.host_name_as_observed === null && sample.host_override === null && !hostEdit
+    sample.host_name_as_observed === null && sample.host_inat_taxon_id === null && sample.host_override === null && !hostEdit
       ? null
       : {
           // A trap does not say which flower its bees visited, so the plant
@@ -372,7 +372,13 @@ function HostValue({
   const t = s.staffHost;
   const name =
     observed === null ? (
-      set === null ? <Absent label={m.absence.none} spelled /> : t.none
+      sample.host_inat_taxon_id !== null ? (
+        s.hostTaxonId(String(sample.host_inat_taxon_id))
+      ) : set === null ? (
+        <Absent label={m.absence.none} spelled />
+      ) : (
+        t.none
+      )
     ) : (
       <TaxonName rank={sample.host_rank ?? ""} scientificName={observed} vernacular={sample.host_common_name} />
     );

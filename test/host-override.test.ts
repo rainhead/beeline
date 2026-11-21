@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, test, vi } from "vitest";
@@ -186,7 +186,7 @@ describe("reading one taxon from iNaturalist", () => {
 let conn: DuckDBConnection;
 let overlayPath: string;
 
-beforeEach(async () => {
+async function freshStore(): Promise<void> {
   ({ conn } = await createMemoryDb());
   await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector'), ('Sam Staff')");
   await conn.run(
@@ -201,7 +201,8 @@ beforeEach(async () => {
     await conn.run(`INSERT INTO inat_place (inat_place_id, name, admin_level) VALUES (${id}, '${name}', ${level})`);
   }
   overlayPath = join(await mkdtemp(join(tmpdir(), "beeline-host-overlay-")), "sample-overlay.csv");
-});
+}
+beforeEach(freshStore);
 
 const RUBUS = { id: 47604, name: "Rubus", rank: "genus", ancestor_ids: [48460, 47126, TRACHEOPHYTA, 47604] };
 const ERIOPHYLLUM = { id: 53439, name: "Eriophyllum lanatum", rank: "species", ancestor_ids: [48460, 47126, TRACHEOPHYTA, 53439] };
@@ -317,6 +318,52 @@ describe("a floral host staff set stands over the observation's", () => {
     expect(await host()).toEqual([47604n, "Rubus", "genus"]);
     // The file keeps the removal for good and every promotion replays it: with nothing standing it changes nothing.
     expect(await count("SELECT count(*) FROM sample_host_override")).toBe(0);
+  });
+
+  it("ends in the same state when a rebuild replays the file after a removal, which holds no base: the sources are read again", async () => {
+    // Live: set the host, the observation moves on, staff remove it. The file now holds
+    // only the removal row (one row for each reference and field), so the base is gone.
+    await stage(obs(7));
+    await promote();
+    await apply(hostRow(SET));
+    await stage(obs(7, { taxon: ERICAMERIA }));
+    await promote();
+    await apply(hostRow("", { reason: "" }));
+    const live = await host();
+    expect(live).toEqual([99999n, "Ericameria nauseosa", "species"]);
+    const file = await readFile(overlayPath, "utf8");
+
+    // A rebuild: a store made from its sources again, which reads the file.
+    await freshStore();
+    await writeFile(overlayPath, file);
+    await stage(obs(7, { taxon: ERICAMERIA }));
+    await promote();
+    expect(await host()).toEqual(live);
+    expect(await count("SELECT count(*) FROM sample_host_override")).toBe(0);
+  });
+
+  it("gives a rebuilt sample no host where the observation no longer names a plant, as it does one that never had a host set", async () => {
+    await stage(obs(7));
+    await promote();
+    await apply(hostRow(SET));
+    await stage(obs(7, { taxon: null }));
+    await promote();
+    // Live, removal restores what the sample held before staff set it: the follow rule writes nothing without a plant.
+    await apply(hostRow("", { reason: "" }));
+    expect(await host()).toEqual([47604n, "Rubus", "genus"]);
+    const file = await readFile(overlayPath, "utf8");
+
+    await freshStore();
+    await writeFile(overlayPath, file);
+    await stage(obs(7, { taxon: null }));
+    await promote();
+    const rebuilt = await host();
+    // The state a sample that never had a host set is in after a rebuild of such an observation.
+    await freshStore();
+    await stage(obs(7, { taxon: null }));
+    await promote();
+    expect(rebuilt).toEqual(await host());
+    expect(rebuilt).toEqual([null, null, null]);
   });
 
   it("restores what the sample held when the observation names no plant, so nothing staff set is left unrecorded", async () => {

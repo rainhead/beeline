@@ -701,6 +701,21 @@ describe("the plant: the sample's floral host as the store holds it (beeline-qpy
     expect((await plantOf("25000001")).taxonRankPlant).toBe("hybrid");
   });
 
+  test("writes the old record's rank where it names a suborder and the sample holds the order", async () => {
+    await c.run(`UPDATE legacy_occurrence SET "genusPlant" = '', "speciesPlant" = '', "familyPlant" = '', "orderPlant" = 'Asterales',
+                   "phylumPlant" = 'Tracheophyta', "taxonRankPlant" = 'suborder', "relationshipOfResource" = 'visits flowers of'`);
+    await setHost(711, "Asterales", "order");
+    expect((await plantOf("25000001")).taxonRankPlant).toBe("suborder");
+  });
+
+  test("reads a tab or a run of spaces inside the old record's plant name as one space", async () => {
+    await setHost(null, "Salvia officinalis", "species");
+    await c.run(`UPDATE legacy_occurrence SET "genusPlant" = 'Salvia', "speciesPlant" = 'Salvia\tofficinalis', "familyPlant" = 'Oldfamily'
+                 WHERE "fieldNumber" = '25000001'`);
+    // The same plant, so the old family stands in where the cache cannot give the lineage.
+    expect((await plantOf("25000001")).familyPlant).toBe("Oldfamily");
+  });
+
   test("keeps the store's rank where the old record's is a dash or blank, and where a host staff set is the same plant", async () => {
     await oldNamesAsteraceae("-");
     await setHost(712, "Asteraceae", "family");

@@ -68,8 +68,8 @@ export const LEGACY_EXPORT_COLUMNS = [
 /** iNaturalist's order of ranks, finest to broadest: a higher number is a broader rank. Hybrids are species-level. */
 export const RANK_LEVEL: Record<string, number> = {
   form: 5, variety: 5, subspecies: 5, species: 10, hybrid: 10, infrahybrid: 5, complex: 11, subsection: 12, section: 13, subgenus: 15,
-  genus: 20, subtribe: 24, tribe: 25, supertribe: 26, subfamily: 27, family: 30, epifamily: 32, superfamily: 33, order: 40,
-  class: 50, phylum: 60,
+  genus: 20, subtribe: 24, tribe: 25, supertribe: 26, subfamily: 27, family: 30, epifamily: 32, superfamily: 33, infraorder: 35,
+  suborder: 37, order: 40, subclass: 47, class: 50, subphylum: 57, phylum: 60,
 };
 
 /** Staged legacy columns the export reads, when the store holds staging at all. */
@@ -254,8 +254,9 @@ export function legacyExportSql(
   // rows_disagree reads, so two spellings of one plant's lineage are one plant.
   const plain = (x: string) => `lower(trim(regexp_replace(${x}, '\\s+', ' ', 'g')))`;
   const namedPlant = (a: string) => {
-    const g = `trim(${a}."genusPlant")`;
-    const sp = `trim(${a}."speciesPlant")`;
+    // Any run of whitespace, a tab included, is one space in the name; the column values themselves are written as they are.
+    const g = `regexp_replace(trim(${a}."genusPlant"), '\\s+', ' ', 'g')`;
+    const sp = `regexp_replace(trim(${a}."speciesPlant"), '\\s+', ' ', 'g')`;
     return `CASE WHEN ${sp} LIKE '% %' THEN ${sp}
                  WHEN ${g} LIKE '% %' THEN ${g}
                  WHEN nullif(${sp}, '') IS NOT NULL THEN concat_ws(' ', nullif(${g}, ''), ${sp})

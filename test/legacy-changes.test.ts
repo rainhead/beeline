@@ -129,16 +129,14 @@ describe("the line each difference is on", () => {
         ["taxonomy_moved", "orderPlant"],
         ["not_a_plant", "speciesPlant", "reference-wrong"],
         ["plant_form", "speciesPlant"],
-        ["sample_disagreement", "genusPlant", "known-gap"],
         ["sample_disagreement", "locality"],
-        ["coarser_plant_rank", "taxonRankPlant", "known-gap"],
         ["claim_without_plant", "relationshipOfResource", "reference-wrong"],
         ["visit_stated", "relationshipOfResource", "expected", ""],
         ["case", "taxonRankPlant", "reference-wrong"],
       ]),
     ).toEqual([
       "host_set_by_staff", "host_follows_observation", "host_follows_observation", "plant_family_moved", "not_a_plant",
-      "plant_form", "plant_disagreement", "sample_disagreement", "plant_coarser_rank", "claim_without_plant", "visit_stated", "capitals",
+      "plant_form", "sample_disagreement", "claim_without_plant", "visit_stated", "capitals",
     ]);
     expect(LINES.find((l) => l.id === "host_set_by_staff")!.category).toBe("staff");
   });

@@ -596,7 +596,7 @@ describe("why the plant differs from the old record's (beeline-qpys)", () => {
     )).getRows() as [string, string, string][];
   }
 
-  test("tells a plant written another way, a family that moved, a host staff set, one that follows its observation, and a sample's rows that disagree", async () => {
+  test("tells a plant written another way, a family that moved, a host staff set, one that follows its observation", async () => {
     const conn = await store();
     // Sample 1 (25000001, 25000003, 25000009) holds Ericameria nauseosa, and so does the staff-set trap sample of
     // 25000002 and the trap sample of 25000005, which follows observation 888.
@@ -611,12 +611,18 @@ describe("why the plant differs from the old record's (beeline-qpys)", () => {
       VALUES (888, 1, 715, 'Ericameria nauseosa', 'species', true)`);
     const dir = await mkdtemp(join(tmpdir(), "compare-plant-"));
     const exportPath = join(dir, "occurrences.csv");
+    // The old records of the sample name one plant, so that the file writes the sample's host.
+    for (const f of ["25000001", "25000003", "25000009"]) {
+      await old(conn, f, { ...ERICAMERIA, familyPlant: "Asteraceae", orderPlant: "Asterales", phylumPlant: "Tracheophyta", relationshipOfResource: "visits flowers of" });
+    }
     await writeLegacyExport(conn, exportPath);
     // The old records as they stood. The same plant, in the family old Beeline then gave it.
     await old(conn, "25000001", { ...ERICAMERIA, familyPlant: "Compositae", orderPlant: "Asterales", phylumPlant: "Tracheophyta", relationshipOfResource: "visits flowers of" });
     // The same plant in the genus column whole, with no species and no rank.
-    await old(conn, "25000003", { genusPlant: "Ericameria nauseosa", speciesPlant: "", taxonRankPlant: "", familyPlant: "", orderPlant: "", phylumPlant: "" });
-    // Sample 1's third record names another plant (Salvia, in the fixture): its rows disagree, and the sample holds one.
+    await old(conn, "25000003", {
+      genusPlant: "Ericameria nauseosa", speciesPlant: "", taxonRankPlant: "", familyPlant: "", orderPlant: "", phylumPlant: "", relationshipOfResource: "",
+    });
+    // Sample 1's third record still names what the file writes: nothing differs.
     // The two trap samples' records name no plant.
 
     const found = await kinds(conn, exportPath);
@@ -626,10 +632,7 @@ describe("why the plant differs from the old record's (beeline-qpys)", () => {
       "familyPlant plant_form", "genusPlant plant_form", "orderPlant plant_form", "phylumPlant plant_form",
       "relationshipOfResource visit_stated", "speciesPlant plant_form", "taxonRankPlant plant_form",
     ]);
-    expect(kindsOf("25000009")).toEqual([
-      "familyPlant sample_disagreement", "genusPlant sample_disagreement", "orderPlant sample_disagreement", "relationshipOfResource visit_stated",
-      "speciesPlant sample_disagreement",
-    ]);
+    expect(kindsOf("25000009")).toEqual([]);
     expect(kindsOf("25000002")).toEqual([
       "familyPlant staff_host", "genusPlant staff_host", "orderPlant staff_host", "phylumPlant staff_host",
       // A trap's plant is near it: the existing kind, not the one for a visit.
@@ -718,7 +721,7 @@ describe("why the plant differs from the old record's (beeline-qpys)", () => {
     expect(kindsOf(lost, "25000001")).not.toContain("familyPlant host_follows_observation");
   });
 
-  test("tells a rank old Beeline left blank from one the store holds coarser", async () => {
+  test("writes the old record's rank where it is finer than the store's, and tells a rank old Beeline left blank", async () => {
     const conn = await store();
     // Sample 1 holds a family, with no id: the old records name a family and nothing else.
     await conn.run(`UPDATE sample SET host_inat_taxon_id = NULL, host_name_as_observed = 'Asteraceae', host_rank = 'family'
@@ -726,14 +729,15 @@ describe("why the plant differs from the old record's (beeline-qpys)", () => {
     const family = { genusPlant: "", speciesPlant: "", familyPlant: "Asteraceae", orderPlant: "", phylumPlant: "" };
     await old(conn, "25000001", { ...family, taxonRankPlant: "tribe" });
     await old(conn, "25000003", { ...family, taxonRankPlant: "" });
+    await old(conn, "25000009", { ...family, taxonRankPlant: "tribe" });
     const exportPath = await exportOf(conn);
-    await old(conn, "25000001", { taxonRankPlant: "tribe" });
     const found = await kinds(conn, exportPath);
-    expect(kindsOf(found, "25000001").filter((k) => k.startsWith("taxonRankPlant"))).toEqual(["taxonRankPlant coarser_plant_rank"]);
+    // A tribe the store holds as a family is written as the old record gave it: no difference, so no kind.
+    expect(kindsOf(found, "25000001").filter((k) => k.startsWith("taxonRankPlant"))).toEqual([]);
     expect(kindsOf(found, "25000003").filter((k) => k.startsWith("taxonRankPlant"))).toEqual(["taxonRankPlant plant_form"]);
   });
 
-  test("calls a rank coarser only where the store's is broader than the old record's, and sees the rest", async () => {
+  test("leaves a rank unexplained unless the store's is broader than the old record's", async () => {
     const conn = await store();
     await conn.run(`UPDATE sample SET host_inat_taxon_id = NULL, host_name_as_observed = 'Asteraceae', host_rank = 'family'
       WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000001')`);
@@ -744,12 +748,12 @@ describe("why the plant differs from the old record's (beeline-qpys)", () => {
     const exportPath = await exportOf(conn);
     const found = await kinds(conn, exportPath);
     const rank = (n: string) => kindsOf(found, n).filter((k) => k.startsWith("taxonRankPlant"));
-    expect(rank("25000001")).toEqual(["taxonRankPlant coarser_plant_rank"]);
+    expect(rank("25000001")).toEqual([]);
     expect(rank("25000003")).toEqual(["taxonRankPlant changed"]);
     expect(rank("25000009")).toEqual(["taxonRankPlant changed"]);
   });
 
-  test("counts two old rows of one sample naming different families as disagreeing", async () => {
+  test("writes a row's own family where the old rows of its sample name different families", async () => {
     const conn = await store();
     await conn.run(`UPDATE sample SET host_inat_taxon_id = 712, host_name_as_observed = 'Asteraceae', host_rank = 'family'
       WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000001')`);
@@ -759,7 +763,7 @@ describe("why the plant differs from the old record's (beeline-qpys)", () => {
     await old(conn, "25000009", { ...none, familyPlant: "Asteraceae" });
     const exportPath = await exportOf(conn);
     const found = await kinds(conn, exportPath);
-    expect(kindsOf(found, "25000003").filter((k) => k.startsWith("familyPlant"))).toEqual(["familyPlant sample_disagreement"]);
+    expect(kindsOf(found, "25000003").filter((k) => k.startsWith("familyPlant"))).toEqual([]);
   });
 
   test("says a visit claimed to no plant is that, and keeps a number the old record gave", async () => {

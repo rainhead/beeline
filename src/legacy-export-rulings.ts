@@ -79,6 +79,8 @@ export const VALUE_KINDS = [
   "host_follows_observation", // the sample's floral host follows its observation, which names a plant the old record does not (beeline-qpys)
   "plant_form", // the same plant written another way: a whole name in the genus column, an epithet alone, a rank left blank
   "taxonomy_moved", // the same plant, in another family, order or phylum than the old record gave
+  "coarser_plant_rank", // the same plant, held by a sample with no observation at a coarser rank than the old record gave
+  "claim_without_plant", // the old record claimed a visit to a plant or one near the trap, and the sample has no floral host
   "visit_stated", // the old record gave no relationship to the plant; the sample has a floral host, so the file says visits flowers of
 ] as const;
 

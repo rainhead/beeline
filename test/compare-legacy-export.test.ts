@@ -669,4 +669,81 @@ describe("why the plant differs from the old record's (beeline-qpys)", () => {
       "familyPlant blanked", "genusPlant blanked", "orderPlant blanked", "phylumPlant blanked", "speciesPlant blanked", "taxonRankPlant blanked",
     ]);
   });
+
+  const exportOf = async (conn: DuckDBConnection) => {
+    const exportPath = join(await mkdtemp(join(tmpdir(), "compare-plant-")), "occurrences.csv");
+    await writeLegacyExport(conn, exportPath);
+    return exportPath;
+  };
+  const kindsOf = (found: [string, string, string][], fieldNumber: string) => found.filter(([f]) => f === fieldNumber).map(([, c, k]) => `${c} ${k}`);
+
+  test("does not explain a plant the store dropped from a linked sample, though its observation names one", async () => {
+    const conn = await store();
+    // Sample 1's observation names Ericameria nauseosa, but the sample's host was cleared.
+    await host(conn, "25000001", null);
+    await conn.run(`UPDATE sample SET inat_observation_id = 889 WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000001')`);
+    await conn.run(`INSERT INTO observation_field (inat_id, user_id, host_taxon_id, host_taxon_name, host_taxon_rank, host_is_tracheophyte)
+      VALUES (889, 1, 715, 'Ericameria nauseosa', 'species', true)`);
+    const exportPath = await exportOf(conn);
+    await old(conn, "25000001", { ...ERICAMERIA, familyPlant: "Asteraceae", orderPlant: "Asterales", phylumPlant: "Tracheophyta" });
+    const found = await kinds(conn, exportPath);
+    expect(kindsOf(found, "25000001")).toEqual([
+      "familyPlant blanked", "genusPlant blanked", "orderPlant blanked", "phylumPlant blanked", "speciesPlant blanked", "taxonRankPlant blanked",
+    ]);
+    // And nothing in the checked-in rulings explains it either.
+    const rulings = await readRulings(new URL("../ingest/legacy-export-rulings.csv", import.meta.url).pathname);
+    const r = await compareLegacyExport(conn, exportPath, rulings);
+    expect(r.unexplained.groups.filter((g) => g.column === "genusPlant" && g.kind === "blanked")).toHaveLength(1);
+  });
+
+  test("does not explain a family that went blank on a linked sample whose host follows its observation", async () => {
+    const conn = await store();
+    await host(conn, "25000001", 715);
+    await conn.run(`UPDATE sample SET inat_observation_id = 889 WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000001')`);
+    await conn.run(`INSERT INTO observation_field (inat_id, user_id, host_taxon_id, host_taxon_name, host_taxon_rank, host_is_tracheophyte)
+      VALUES (889, 1, 715, 'Ericameria nauseosa', 'species', true)`);
+    // The cache has not read the family: the lineage is unknown, and the old record names another plant.
+    await conn.run(`DELETE FROM inat_taxon WHERE inat_taxon_id = 712`);
+    await old(conn, "25000001", { ...ERICAMERIA, familyPlant: "Asteraceae", orderPlant: "Asterales", phylumPlant: "Tracheophyta" });
+    const exportPath = await exportOf(conn);
+    const found = await kinds(conn, exportPath);
+    // Same plant by name, so the old record's family stands in and nothing differs but the relationship.
+    expect(kindsOf(found, "25000001").filter((k) => !k.startsWith("relationshipOfResource"))).toEqual([]);
+    // With another plant named, the lineage is blank and the blank is nobody's doing but the cache's.
+    await old(conn, "25000001", { genusPlant: "Ericameria", speciesPlant: "Ericameria other", taxonRankPlant: "species" });
+    const another = await exportOf(conn);
+    await old(conn, "25000001", { ...ERICAMERIA, familyPlant: "Asteraceae" });
+    const lost = await kinds(conn, another);
+    expect(kindsOf(lost, "25000001")).toContain("familyPlant blanked");
+    expect(kindsOf(lost, "25000001")).not.toContain("familyPlant host_follows_observation");
+  });
+
+  test("tells a rank old Beeline left blank from one the store holds coarser", async () => {
+    const conn = await store();
+    // Sample 1 holds a family, with no id: the old records name a family and nothing else.
+    await conn.run(`UPDATE sample SET host_inat_taxon_id = NULL, host_name_as_observed = 'Asteraceae', host_rank = 'family'
+      WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000001')`);
+    const family = { genusPlant: "", speciesPlant: "", familyPlant: "Asteraceae", orderPlant: "", phylumPlant: "" };
+    await old(conn, "25000001", { ...family, taxonRankPlant: "tribe" });
+    await old(conn, "25000003", { ...family, taxonRankPlant: "" });
+    const exportPath = await exportOf(conn);
+    await old(conn, "25000001", { taxonRankPlant: "tribe" });
+    const found = await kinds(conn, exportPath);
+    expect(kindsOf(found, "25000001").filter((k) => k.startsWith("taxonRankPlant"))).toEqual(["taxonRankPlant coarser_plant_rank"]);
+    expect(kindsOf(found, "25000003").filter((k) => k.startsWith("taxonRankPlant"))).toEqual(["taxonRankPlant plant_form"]);
+  });
+
+  test("says a visit claimed to no plant is that, and keeps a number the old record gave", async () => {
+    const conn = await store();
+    await host(conn, "25000001", null);
+    await old(conn, "25000001", { relationshipOfResource: "visits flowers of" });
+    await old(conn, "25000003", { relationshipOfResource: "10" });
+    await old(conn, "25000009", { relationshipOfResource: " near " });
+    const exportPath = await exportOf(conn);
+    const found = await kinds(conn, exportPath);
+    const rel = (n: string) => kindsOf(found, n).filter((k) => k.startsWith("relationshipOfResource"));
+    expect(rel("25000001")).toEqual(["relationshipOfResource claim_without_plant"]);
+    expect(rel("25000009")).toEqual(["relationshipOfResource claim_without_plant"]);
+    expect(rel("25000003")).toEqual([]);
+  });
 });

@@ -639,9 +639,41 @@ describe("the plant: the sample's floral host as the store holds it (beeline-qpy
     expect(await plantOf("25000001")).toEqual({
       taxonRankPlant: "", genusPlant: "", speciesPlant: "", familyPlant: "", orderPlant: "", phylumPlant: "", relationshipOfResource: "",
     });
-    // What an old record says that is not blank is its own, even beside no plant.
+    // A claim of a visit, or of a plant near the trap, with no plant to claim it of: blank. Any other value is the old record's own.
     await c.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = 'visits flowers of' WHERE "fieldNumber" = '25000001'`);
-    expect((await plantOf("25000001")).relationshipOfResource).toBe("visits flowers of");
+    expect((await plantOf("25000001")).relationshipOfResource).toBe("");
+    await c.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = ' near ' WHERE "fieldNumber" = '25000001'`);
+    expect((await plantOf("25000001")).relationshipOfResource).toBe("");
+    await c.run(`UPDATE legacy_occurrence SET "relationshipOfResource" = '10' WHERE "fieldNumber" = '25000001'`);
+    expect((await plantOf("25000001")).relationshipOfResource).toBe("10");
+  });
+
+  test("writes a replaced taxon's old name beside today's family", async () => {
+    await c.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES
+      (750, 'Mahonia aquifolium', 'species', 10, false), (751, 'Berberis aquifolium', 'species', 10, true),
+      (752, 'Berberidaceae', 'family', 30, true), (753, 'Ranunculales', 'order', 40, true), (754, 'Berberis', 'genus', 20, true)`);
+    await c.run(`INSERT INTO inat_taxon_ancestor VALUES (751, ${TRACHEOPHYTA}, 4), (751, 753, 3), (751, 752, 2), (751, 754, 1), (751, 751, 0),
+      (752, ${TRACHEOPHYTA}, 2), (752, 753, 1), (752, 752, 0), (753, ${TRACHEOPHYTA}, 1), (753, 753, 0), (754, ${TRACHEOPHYTA}, 3), (754, 753, 2), (754, 752, 1), (754, 754, 0),
+      (750, 750, 0)`);
+    await c.run(`INSERT INTO inat_taxon_replacement VALUES (750, 751)`);
+    await setHost(750, "Mahonia aquifolium", "species");
+    expect(await plantOf("25000001")).toEqual({
+      taxonRankPlant: "species", genusPlant: "Mahonia", speciesPlant: "Mahonia aquifolium",
+      familyPlant: "Berberidaceae", orderPlant: "Ranunculales", phylumPlant: "Tracheophyta", relationshipOfResource: "visits flowers of",
+    });
+  });
+
+  test("writes the lineage of a host with no id that resolves by its name", async () => {
+    await setHost(null, "Ericameria nauseosa", "species");
+    await c.run(`INSERT INTO host_name_taxon_cache (host_name, inat_taxon_id) VALUES ('Ericameria nauseosa', 715)`);
+    // The old record of 25000001 names Salvia: the lineage is the host's, and nothing of the old record's.
+    expect(await plantOf("25000001")).toEqual(ERICAMERIA);
+  });
+
+  test("ignores spaces around the old record's genus and species when it names the same plant", async () => {
+    await setHost(null, "Salvia officinalis", "species");
+    await c.run(`UPDATE legacy_occurrence SET "genusPlant" = ' Salvia ', "speciesPlant" = 'officinalis ' WHERE "fieldNumber" = '25000001'`);
+    expect((await plantOf("25000001")).familyPlant).toBe("Lamiaceae");
   });
 
   test("says what a specimen with no old record is told where the old record's relationship is blank, and keeps one that is not", async () => {

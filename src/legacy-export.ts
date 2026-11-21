@@ -287,11 +287,13 @@ disagreeing AS (
   // in where the taxon cache cannot give the lineage. Never the store's genus
   // beside another plant's family.
   const plain = (x: string) => `lower(trim(regexp_replace(${x}, '\\s+', ' ', 'g')))`;
-  const oldPlantName = `CASE WHEN lo."speciesPlant" LIKE '% %' THEN lo."speciesPlant"
-                              WHEN lo."genusPlant" LIKE '% %' THEN lo."genusPlant"
-                              WHEN nullif(lo."speciesPlant", '') IS NOT NULL THEN concat_ws(' ', nullif(lo."genusPlant", ''), lo."speciesPlant")
-                              ELSE coalesce(nullif(lo."genusPlant", ''), nullif(lo."familyPlant", ''), nullif(lo."orderPlant", ''),
-                                            nullif(lo."phylumPlant", '')) END`;
+  const og = `trim(lo."genusPlant")`;
+  const os = `trim(lo."speciesPlant")`;
+  const oldPlantName = `CASE WHEN ${os} LIKE '% %' THEN ${os}
+                              WHEN ${og} LIKE '% %' THEN ${og}
+                              WHEN nullif(${os}, '') IS NOT NULL THEN concat_ws(' ', nullif(${og}, ''), ${os})
+                              ELSE coalesce(nullif(${og}, ''), nullif(trim(lo."familyPlant"), ''), nullif(trim(lo."orderPlant"), ''),
+                                            nullif(trim(lo."phylumPlant"), '')) END`;
   const samePlant = `(lo._id IS NOT NULL AND ${hostName} IS NOT NULL AND ${plain(oldPlantName)} = ${plain(hostName)})`;
   const lineageOrOld = (lineage: string, col: string) =>
     `CASE WHEN pl.sample_id IS NOT NULL THEN pl.${lineage} WHEN ${samePlant} THEN lo."${col}" END`;
@@ -431,11 +433,14 @@ rows AS (
     -- 16 November 2026), which are not this claim and stay as the old record
     -- had them. Any other value the old record gave stays, and a blank one is
     -- filled with the claim where the sample has a host, as for a specimen
-    -- with no old record.
+    -- with no old record. Where the sample has no host, an old value of exactly
+    -- "visits flowers of" or "near" claimed a plant nobody names: blank.
     ${t(`CASE WHEN ${methodNamesTrapSql(ownRow('"samplingProtocol"', "samplingProtocol", "s.protocol"))}
                AND ${hostName} IS NOT NULL
                AND coalesce(trim(lo."relationshipOfResource"), '') IN ('', 'visits flowers of') THEN 'near'
-               WHEN lo._id IS NOT NULL AND nullif(lo."relationshipOfResource", '') IS NOT NULL THEN lo."relationshipOfResource"
+               WHEN lo._id IS NOT NULL AND nullif(lo."relationshipOfResource", '') IS NOT NULL
+                AND NOT (${hostName} IS NULL AND trim(lo."relationshipOfResource") IN ('visits flowers of', 'near'))
+                 THEN lo."relationshipOfResource"
                WHEN ${hostName} IS NOT NULL THEN 'visits flowers of' END`)} AS "relationshipOfResource",
     ${t(`lo."resourceID"`)} AS "resourceID",
     ${t(`lo."relatedResourceID"`)} AS "relatedResourceID",

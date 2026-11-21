@@ -484,6 +484,10 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *                        genus column, an epithet alone, a rank left blank
  *   taxonomy_moved       the same plant, in another family, order or phylum than
  *                        the old record gave: the taxon cache's lineage differs
+ *   coarser_plant_rank   the same plant, which a sample with no observation holds at a
+ *                        coarser rank than the old record gave (a tribe held as a family)
+ *   claim_without_plant  the old record claimed a visit to a plant, or one near the trap,
+ *                        and the sample has no floral host
  *   visit_stated         the old record gave no relationship to the plant and the
  *                        sample has a floral host, so the file says "visits flowers of"
  */
@@ -915,12 +919,12 @@ async function plantKinds(conn: DuckDBConnection): Promise<void> {
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_plant_pair AS
     SELECT p."e_fieldNumber" AS field_number,
-           p."l_phylumPlant" AS l_phylum, p."e_genusPlant" AS e_genus, p."e_speciesPlant" AS e_species, p."e_taxonRankPlant" AS e_rank,
-           ${plain(`CASE WHEN p."l_speciesPlant" LIKE '% %' THEN p."l_speciesPlant"
-                          WHEN p."l_genusPlant" LIKE '% %' THEN p."l_genusPlant"
-                          WHEN p."l_speciesPlant" <> '' THEN concat_ws(' ', nullif(p."l_genusPlant", ''), p."l_speciesPlant")
-                          ELSE coalesce(nullif(p."l_genusPlant", ''), nullif(p."l_familyPlant", ''), nullif(p."l_orderPlant", ''),
-                                        nullif(p."l_phylumPlant", ''), '') END`)} AS old_plant,
+           p."l_phylumPlant" AS l_phylum, p."l_taxonRankPlant" AS l_rank, p."e_genusPlant" AS e_genus, p."e_speciesPlant" AS e_species, p."e_taxonRankPlant" AS e_rank,
+           ${plain(`CASE WHEN trim(p."l_speciesPlant") LIKE '% %' THEN trim(p."l_speciesPlant")
+                          WHEN trim(p."l_genusPlant") LIKE '% %' THEN trim(p."l_genusPlant")
+                          WHEN trim(p."l_speciesPlant") <> '' THEN concat_ws(' ', nullif(trim(p."l_genusPlant"), ''), trim(p."l_speciesPlant"))
+                          ELSE coalesce(nullif(trim(p."l_genusPlant"), ''), nullif(trim(p."l_familyPlant"), ''), nullif(trim(p."l_orderPlant"), ''),
+                                        nullif(trim(p."l_phylumPlant"), ''), '') END`)} AS old_plant,
            ${plain(`coalesce(nullif(p."e_speciesPlant", ''), nullif(p."e_genusPlant", ''), nullif(p."e_familyPlant", ''),
                              nullif(p."e_orderPlant", ''), nullif(p."e_phylumPlant", ''), '')`)} AS new_plant
     FROM cmp_pairs p
@@ -932,14 +936,28 @@ async function plantKinds(conn: DuckDBConnection): Promise<void> {
       FROM legacy_specimen_number n JOIN legacy_occurrence lo ON lo._id = n._id GROUP BY 1)
     SELECT sp.field_number,
            ${hasOverride ? "EXISTS (SELECT 1 FROM sample_host_override o WHERE o.sample_id = s.entity_id)" : "false"} AS staff_host,
-           EXISTS (SELECT 1 FROM observation_field f WHERE f.inat_id = s.inat_observation_id AND f.host_taxon_id IS NOT NULL) AS follows,
+           -- The sample holds the very taxon its observation names, so the host is the observation's.
+           EXISTS (SELECT 1 FROM observation_host f WHERE f.inat_id = s.inat_observation_id
+                     AND f.host_taxon_id IS NOT NULL AND f.host_taxon_id = s.host_inat_taxon_id) AS follows,
            coalesce(r.plants, 0) > 1 AS rows_disagree
     FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id LEFT JOIN rows r ON r.sample_id = s.entity_id
     WHERE sp.field_number IN (SELECT field_number FROM cmp_plant_pair)`);
   const unsettled = `d."column" IN (${list(PLANT_COLUMNS)}) AND d.kind IN ('changed', 'filled', 'blanked')`;
   const ctx = (cond: string) => `EXISTS (SELECT 1 FROM cmp_plant_context c WHERE c.field_number = d.field_number AND ${cond})`;
-  const pair = (cond: string) => `EXISTS (SELECT 1 FROM cmp_plant_pair q WHERE q.field_number = d.field_number AND ${cond})`;
+  const pair = (cond: string) => `EXISTS (SELECT 1 FROM cmp_plant_pair q WHERE q.field_number = d.field_number AND (${cond}))`;
   const sameName = `q.old_plant <> '' AND q.old_plant = q.new_plant`;
+  // A family, order or phylum that went blank where the plant's rank is at or below that level
+  // is a lineage the cache could not give, nobody's doing but the cache's. Blank above that level
+  // is right: a class has no family, and an epifamily no genus.
+  const FAMILY_RANKS = ["supertribe", "tribe", "subtribe", "subfamily", "family", "genus", "subgenus", "section", "subsection", "complex",
+    "species", "subspecies", "variety", "form", "hybrid", "infrahybrid"];
+  const ORDER_RANKS = [...FAMILY_RANKS, "epifamily", "superfamily", "infraorder", "suborder", "order"];
+  const PHYLUM_RANKS = [...ORDER_RANKS, "class", "subclass", "subphylum", "phylum"];
+  const ranksIn = (rs: string[]) => `q.e_rank IN (${list(rs)})`;
+  const lineageLost = `d.kind = 'blanked' AND ${pair(
+    `(d."column" = 'familyPlant' AND ${ranksIn(FAMILY_RANKS)}) OR (d."column" = 'orderPlant' AND ${ranksIn(ORDER_RANKS)})
+     OR (d."column" = 'phylumPlant' AND ${ranksIn(PHYLUM_RANKS)})`,
+  )}`;
   const set = async (kind: string, where: string) =>
     conn.run(`UPDATE cmp_value_difference d SET kind = ${sqlString(kind)} WHERE ${where}`);
   await set("staff_host", `${unsettled} AND ${ctx("c.staff_host")}`);
@@ -951,19 +969,48 @@ async function plantKinds(conn: DuckDBConnection): Promise<void> {
     "taxonomy_moved",
     `d."column" IN (${list(PLANT_HIGHER_COLUMNS)}) AND d.kind = 'changed' AND ${pair(sameName)}`,
   );
-  await set("plant_form", `d."column" IN (${list(PLANT_COLUMNS)}) AND d.kind IN ('changed', 'filled') AND ${pair(sameName)}`);
-  await set("host_follows_observation", `${unsettled} AND ${ctx("c.follows")}`);
+  // A plant column of the same plant, written another way. The rank only where the
+  // old record left it blank: a rank it gave and the store holds coarser is the next kind.
+  await set(
+    "plant_form",
+    `d."column" IN (${list(PLANT_COLUMNS)}) AND d.kind IN ('changed', 'filled') AND ${pair(
+      `${sameName} AND (d."column" <> 'taxonRankPlant' OR q.l_rank = '')`,
+    )}`,
+  );
+  // Promotion takes the rank of a sample with no observation from whichever old
+  // column was filled (ingest/promote-legacy.sql), so a tribe, subtribe or subfamily
+  // became a family, a section, complex or subgenus a genus, a variety or subspecies
+  // a species, a class a phylum: the same plant, held at a coarser rank.
+  await set(
+    "coarser_plant_rank",
+    `d."column" = 'taxonRankPlant' AND d.kind = 'changed' AND ${pair(`${sameName} AND q.l_rank <> ''`)} AND NOT ${ctx("c.follows")}`,
+  );
+  // The host follows an observation the store holds the taxon of, and writes a
+  // plant. A plant that is gone, or a family, order or phylum that went blank,
+  // is not the observation's doing and stays unexplained.
+  await set(
+    "host_follows_observation",
+    `${unsettled} AND ${ctx("c.follows")} AND ${pair(`NOT (q.e_genus = '' AND q.e_species = '' AND q.e_rank = '')`)}
+     AND NOT (${lineageLost})`,
+  );
   // Only where the sample holds a plant: the sample keeps one of the plants its
   // rows name. Where it holds none, a real plant the old rows named was lost.
   await set(
     "sample_disagreement",
-    `${unsettled} AND ${ctx("c.rows_disagree")} AND ${pair(`NOT (q.e_genus = '' AND q.e_species = '' AND q.e_rank = '')`)}`,
+    `${unsettled} AND ${ctx("c.rows_disagree")} AND ${pair(`NOT (q.e_genus = '' AND q.e_species = '' AND q.e_rank = '')`)}
+     AND NOT (${lineageLost})`,
   );
   // The old record said nothing of how the bees came to the plant and the
   // sample has a host: the file says what it says for every specimen.
   await set(
     "visit_stated",
     `d."column" = 'relationshipOfResource' AND d.kind = 'filled' AND d.exported = 'visits flowers of'`,
+  );
+  // The old record claimed a visit, or a plant near the trap, and named no plant that
+  // the store holds as the sample's host; the file writes no relationship.
+  await set(
+    "claim_without_plant",
+    `d."column" = 'relationshipOfResource' AND d.kind = 'blanked' AND trim(d.legacy) IN ('visits flowers of', 'near')`,
   );
 }
 

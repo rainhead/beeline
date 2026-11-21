@@ -50,6 +50,7 @@ const PLACE = [
   "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "coordinateSource", "verbatimElevation",
   "county", "locality", "geoprivacy", "taxon_geoprivacy", "url",
 ];
+const PLANT = ["phylumPlant", "orderPlant", "familyPlant", "genusPlant", "speciesPlant", "taxonRankPlant"];
 const DAY_OF_YEAR = ["startDayofYear", "endDayofYear"];
 /** Why promotion held a record back (ingest/promote-legacy.sql), as the comparison kinds a record old Beeline alone holds. */
 const HELD_BACK = ["bad_date", "bad_specimen_number", "missing_sample_number", "missing_person", "duplicate_specimen", "not_exported"];
@@ -199,6 +200,27 @@ export const LINES: readonly ChangeLine[] = [
     title: "A floral host that was not a plant",
     did: "Old Beeline wrote as the plant whatever its observation showed, a person (Homo sapiens) or another animal, and flagged the record. New Beeline holds no floral host for such a sample, so it gives no plant.",
     match: [{ kinds: ["not_a_plant"] }],
+  },
+  {
+    id: "plant_disagreement",
+    category: "identifications",
+    title: "One plant for a sample whose records named different ones",
+    did: "Old Beeline's records of one sample named different plants, or only some of them named one, and new Beeline holds one floral host for the sample. This specimen's row carries that plant, not the one its own record named. New Beeline cannot yet hold a plant for each specimen of a sample.",
+    match: [{ kinds: ["sample_disagreement"], columns: PLANT }],
+  },
+  {
+    id: "plant_coarser_rank",
+    category: "identifications",
+    title: "A plant held at a coarser rank than old Beeline gave",
+    did: "The same plant, but new Beeline holds it at a coarser rank than the old record gave: a tribe, subtribe or subfamily as a family, a section, complex or subgenus as a genus, a variety or subspecies as a species, a class as a phylum. The finer rank is not kept.",
+    match: [{ kinds: ["coarser_plant_rank"] }],
+  },
+  {
+    id: "claim_without_plant",
+    category: "identifications",
+    title: "A visit claimed to a plant that was not named",
+    did: "The old record said the bees visited flowers of a plant, or that a plant was near the trap, and the sample has no floral host: most of these records name no plant at all, and some name a person their observation showed. New Beeline writes no relationship.",
+    match: [{ kinds: ["claim_without_plant"] }],
   },
   {
     id: "visit_stated",
@@ -436,7 +458,7 @@ export const LINES: readonly ChangeLine[] = [
     category: "places",
     title: "One value for a sample whose records disagreed",
     did: "Old Beeline's records of one sample disagreed about this, and the sample holds one value.",
-    match: [{ kinds: ["sample_disagreement"] }],
+    match: [{ kinds: ["sample_disagreement"], columns: ["country", "stateProvince", "county", "locality", "samplingProtocol"] }],
   },
   {
     id: "place_filled",

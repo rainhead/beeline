@@ -1,5 +1,5 @@
 import type { Child } from "hono/jsx";
-import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, FilterIcon, SearchIcon } from "../icons.js";
+import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, SearchIcon } from "../icons.js";
 import { Button } from "./button.js";
 
 /**
@@ -169,7 +169,6 @@ export function ColumnMenu({ label, spec }: { label: Child; spec: ColumnMenuSpec
     <details class="menu col-menu">
       <summary aria-label={spec.menuLabel}>
         <span>{label}</span>
-        {spec.filtered === true && <FilterIcon />}
         {sort?.current === "asc" && <ArrowUpIcon />}
         {sort?.current === "desc" && <ArrowDownIcon />}
         <ChevronDownIcon />

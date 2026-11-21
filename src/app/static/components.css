@@ -507,6 +507,21 @@ th details.col-menu > summary:hover, th details.col-menu[open] > summary { backg
    rather than as shrunken text, which is what made the old one unreadable. */
 th details.col-menu > summary .icon { flex: none; }
 th[aria-sort] details.col-menu > summary { color: var(--md-sys-color-on-surface); }
+/* A column whose filter is narrowing the list: its menu chevron is set in an
+   oval with the colours inverted (primary fill, on-primary chevron), and a
+   rule runs under the heading. The oval is as tall as the chevron, so the
+   heading row does not grow. */
+th[data-filtered] details.col-menu > summary > .icon:last-child {
+  box-sizing: content-box;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+th[data-filtered] { box-shadow: inset 0 -2px 0 var(--md-sys-color-primary); }
+th[data-filtered] details.col-menu > summary,
+th[data-filtered] details.col-menu > summary:hover,
+th[data-filtered] details.col-menu[open] > summary { color: var(--md-sys-color-primary); }
 th details.col-menu > .menu-panel {
   position: fixed;
   top: auto;

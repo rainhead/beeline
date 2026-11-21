@@ -363,6 +363,10 @@ export interface SpecimenDetail {
   remarks: string | null;
   remarks_by: string | null;
   remarks_on: Date | null;
+  /** The catalog number Ecdysis reported for the specimen (specimen_catalog_number); null where it has reported none. */
+  catalog_number: string | null;
+  /** The Ecdysis record the number was read from, which the page links to; null where Ecdysis gave none. */
+  ecdysis_record_id: string | null;
   sample: SampleDetail;
 }
 
@@ -791,14 +795,18 @@ export async function loadSpecimen(
       remarks: string | null;
       remarks_by: string | null;
       remarks_on: Date | null;
+      catalog_number: string | null;
+      ecdysis_record_id: string | null;
     }
   >`
     SELECT sp.entity_id AS specimen_id, sp.specimen_number, sp.field_number,
            sd.disposition, sd.remarks, sd.stated_by AS remarks_by, sd.stated_on AS remarks_on,
+           scn.catalog_number, scn.occurrence_id AS ecdysis_record_id,
            ${sampleColumns(personId, reader)}
     ${sampleJoins(reader)}
     JOIN specimen sp ON sp.sample_id = s.entity_id
     LEFT JOIN specimen_disposition sd ON sd.specimen_id = sp.entity_id
+    LEFT JOIN specimen_catalog_number scn ON scn.specimen_id = sp.entity_id
     WHERE sp.entity_id = ${specimenId}`.execute(db);
   const row = found.rows[0];
   if (row === undefined) return null;
@@ -810,6 +818,8 @@ export async function loadSpecimen(
     remarks: row.remarks,
     remarks_by: row.remarks_by,
     remarks_on: row.remarks_on,
+    catalog_number: row.catalog_number,
+    ecdysis_record_id: row.ecdysis_record_id,
     sample: await hydrate(db, row),
   };
 }

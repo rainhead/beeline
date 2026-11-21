@@ -196,6 +196,7 @@ const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir" | "act"
   det: "any",
   year: null,
   labels: "any",
+  ecdysis: "any",
   kind: "any",
   qc: "any",
   flag: "",
@@ -271,6 +272,10 @@ function activeFilters(
           ? f.labelPrinted
           : f.labelsPrinted;
     out.push({ label: f.labels, value, clearHref: clear({ labels: "any" }) });
+  }
+  if (query.ecdysis !== "any") {
+    const value = { in: f.ecdysisIn, not: f.ecdysisNot, expected: f.ecdysisExpected }[query.ecdysis];
+    out.push({ label: f.ecdysis, value, clearHref: clear({ ecdysis: "any" }) });
   }
   if (query.kind !== "any") {
     out.push({
@@ -772,6 +777,26 @@ const detLabel = (f: Messages["listings"]["filters"], det: ListingQuery["det"]):
     from_genus: f.detFromGenus,
   })[det];
 
+/** Whether Ecdysis holds the specimen (beeline-8dx9.11); on samples, a specimen of the sample. */
+function EcdysisSelect({ m, query }: { m: Messages; query: ListingQuery }) {
+  const f = m.listings.filters;
+  return (
+    <SelectField
+      id="ecdysis"
+      name="ecdysis"
+      label={f.ecdysis}
+      value={query.ecdysis}
+      hint={f.ecdysisHint}
+      options={[
+        ["any", f.ecdysisAny],
+        ["in", f.ecdysisIn],
+        ["not", f.ecdysisNot],
+        ["expected", f.ecdysisExpected],
+      ]}
+    />
+  );
+}
+
 function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
   const f = m.listings.filters;
   return (
@@ -852,7 +877,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                 label: copy.colSpecimens,
                 sort: "specimens",
                 kind: "number",
-                fields: ["taxon", "det", "labels"],
+                fields: ["taxon", "det", "labels", "ecdysis"],
                 controls: (
                   <>
                     <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
@@ -869,6 +894,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                         ["printed", f.labelsPrinted],
                       ]}
                     />
+                    <EcdysisSelect m={m} query={query} />
                   </>
                 ),
               }),
@@ -1149,19 +1175,22 @@ export function SpecimenListing(
                 label: copy.colFieldNumber,
                 sort: "field",
                 kind: "number",
-                fields: ["labels"],
+                fields: ["labels", "ecdysis"],
                 controls: (
-                  <SelectField
-                    id="labels"
-                    name="labels"
-                    label={f.labels}
-                    value={query.labels}
-                    options={[
-                      ["any", f.labelsAny],
-                      ["waiting", f.labelWaiting],
-                      ["printed", f.labelPrinted],
-                    ]}
-                  />
+                  <>
+                    <SelectField
+                      id="labels"
+                      name="labels"
+                      label={f.labels}
+                      value={query.labels}
+                      options={[
+                        ["any", f.labelsAny],
+                        ["waiting", f.labelWaiting],
+                        ["printed", f.labelPrinted],
+                      ]}
+                    />
+                    <EcdysisSelect m={m} query={query} />
+                  </>
                 ),
               }),
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),

@@ -32,6 +32,7 @@ import {
   type CountGroup,
   type ExactLookup,
   type ListingQuery,
+  ECDYSIS_FILTERS,
   type Reader,
 } from "./listings.js";
 import type { SampleChange } from "../sample-change.js";
@@ -87,6 +88,7 @@ export const LISTING_FILTERS = [
   "det",
   "year",
   "labels",
+  "ecdysis",
   "kind",
   "qc",
   "flag",
@@ -156,6 +158,7 @@ function readQuery(
   oneOf("flag", QC_RULE_NAMES);
   oneOf("det", DETERMINATION_STATES);
   oneOf("labels", LABEL_FILTERS);
+  oneOf("ecdysis", ECDYSIS_FILTERS);
   oneOf("kind", KIND_FILTERS);
   oneOf("sort", sortKeys);
   oneOf("dir", ["asc", "desc"]);
@@ -276,6 +279,7 @@ export const SAMPLE_PUBLISHED: Publish<SampleDetail> = {
 };
 export const SPECIMEN_PUBLISHED: Publish<Omit<SpecimenDetail, "sample">> = {
   specimen_id: true, specimen_number: true, field_number: true, disposition: true, remarks: true, remarks_by: true, remarks_on: true,
+  catalog_number: true, ecdysis_record_id: true,
 };
 export const SPECIMEN_ROW_PUBLISHED: Publish<SampleSpecimenRow> = {
   specimen_id: true, specimen_number: true, field_number: true, label_state: true, label_at: true, reprint_requested: true,

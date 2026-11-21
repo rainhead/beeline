@@ -243,6 +243,7 @@ import {
   OUTSIDE,
   STAFF_READER,
   parseListingQuery,
+  listingFilterProblems,
   csvStream,
   xlsxStream,
   XLSX_CONTENT_TYPE,
@@ -258,8 +259,8 @@ import {
 import { oregonToday } from "../oregon-today.js";
 import { programArchives } from "./dwc-archive.js";
 import { archiveDir, readArchiveManifest } from "./program-archives.js";
-import { associationsCsv, collectionOf, uploadArchiveStream, uploadFileName, uploadStateOf } from "./ecdysis-upload.js";
-import { ECDYSIS_COLLECTIONS } from "../fetch-ecdysis.js";
+import { associationsCsv, claimDownload, collectionOf, idsOf, recordDownload, recordWhenComplete, releaseDownload, uploadArchiveStream, uploadFileName, uploadStateOf } from "./ecdysis-upload.js";
+import { describeScope, ECDYSIS_COLLECTIONS } from "../fetch-ecdysis.js";
 import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
@@ -2439,37 +2440,78 @@ export function createApp({
 
   // The two files a person uploads to Ecdysis (beeline-8dx9.12), written when asked for, one collection and year at
   // a time, from what the nightly read of Ecdysis last loaded. Admins only, like the page. Refused with a plain
-  // sentence and no file when that read is missing or more than 36 hours old. The Specimens listing's own filters in
-  // the query string narrow the file; the rules of which specimens may go at all are not the query's to change.
+  // sentence and no file when that read is missing or too old, when Beeline reads only a dataset of the collection,
+  // when the year is not one that is offered, and, for the archive, when one has been downloaded since the last read.
+  // The Specimens listing's own filters in the query string narrow the file; one Beeline cannot read is a 400, never
+  // ignored, and the rules of which specimens may go at all are not the query's to change. The choice to include
+  // obscured specimens is two explicit parameters, `includeTaxonObscured=1` and `includeObserverObscured=1`.
   app.get("/exports/ecdysis/:file{[A-Za-z]+-\\d{4}-(upload\\.zip|associations\\.csv)}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
-    const [, program, year, kind] = /^([A-Za-z]+)-(\d{4})-(upload\.zip|associations\.csv)$/.exec(c.req.param("file"))!;
+    const e = m.exports.ecdysis;
+    const refuse = (status: 400 | 404 | 409, text: string) => c.text(text, status, { "cache-control": "no-store" });
+    const [, program, yearText, kind] = /^([A-Za-z]+)-(\d{4})-(upload\.zip|associations\.csv)$/.exec(c.req.param("file"))!;
     const collection = collectionOf(program!);
     if (collection === undefined) return errorResponse(c, "notFound");
+    const year = Number(yearText);
+    const params = new URL(c.req.url).searchParams;
+    const include = { taxonObscured: params.get("includeTaxonObscured") === "1", observerObscured: params.get("includeObserverObscured") === "1" };
+    const own = new Set(["includeTaxonObscured", "includeObserverObscured"]);
+    const filterParams = new URLSearchParams([...params].filter(([key]) => !own.has(key)));
+    const badChoice = [...own].filter((key) => params.has(key) && params.get(key) !== "1");
     const atlases = await atlasOptions(db);
     const programs = await scopePrograms(db);
-    const query = parseListingQuery(new URL(c.req.url).searchParams, {
-      atlasCodes: atlases.map((a) => a.code),
-      programCodes: programs.map((a) => a.code),
-    });
+    const query = parseListingQuery(filterParams, { atlasCodes: atlases.map((a) => a.code), programCodes: programs.map((a) => a.code) });
+    const problems = [...badChoice, ...listingFilterProblems(filterParams, query)];
+    if (problems.length > 0) return refuse(400, e.badQuery(problems.join(", ")));
     const state = await uploadStateOf(db, collection, { ecdysisDir: ecdysisDir(), query });
     if (!state.ok) {
-      const e = m.exports.ecdysis.refused;
-      return c.text(state.reason === "stale" ? e.stale(m.format.dateTime(state.readAt)) : e[state.reason], 409);
+      const text =
+        state.reason === "stale"
+          ? e.refused.stale(m.format.dateTime(state.readAt))
+          : state.reason === "dataset"
+            ? e.refused.dataset(describeScope(collection))
+            : e.refused[state.reason];
+      return refuse(409, text);
     }
-    const ids = state.plan.years.find((y) => y.year === Number(year))?.specimenIds ?? [];
-    if (ids.length === 0) return c.text(m.exports.ecdysis.noSpecimensForFile, 404);
+    const entry = state.plan.years.find((y) => y.year === year);
+    if (entry === undefined) return refuse(404, e.noSpecimensForFile);
+    if (!entry.offered) return refuse(409, e.yearNotOffered);
+    const ids = idsOf(entry, include);
+    if (ids.length === 0) return refuse(404, e.noSpecimensForFile);
+    const rules = { held: state.held, include };
     const written = new Date();
     if (kind === "upload.zip") {
-      return c.body(uploadArchiveStream(db, collection, ids, csvGenerationTiming("ecdysis upload")), 200, {
+      if (state.download !== null) {
+        const d = state.download;
+        return refuse(409, `${e.downloaded(d.by, m.format.dateTime(d.at), d.year, d.specimens)} ${e.downloadedChoice(d.include.taxonObscured, d.include.observerObscured)}`.trim());
+      }
+      if (!claimDownload(collection)) return refuse(409, e.beingWritten);
+      const person = c.get("session").personId;
+      const stream = recordWhenComplete(
+        uploadArchiveStream(db, collection, ids, rules, csvGenerationTiming("ecdysis upload")),
+        () =>
+          recordDownload(db, {
+            collection,
+            year,
+            filters: [...filterParams].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${k}=${v}`).join("&"),
+            include,
+            specimens: ids.length,
+            readAt: state.read.readAt,
+            personId: person ?? null,
+          }),
+        () => releaseDownload(collection),
+      );
+      return c.body(stream, 200, {
         "content-type": "application/zip",
-        "content-disposition": `attachment; filename="${uploadFileName(collection, Number(year), written, "archive")}"`,
+        "content-disposition": `attachment; filename="${uploadFileName(collection, year, written, "archive", ids.length)}"`,
+        "cache-control": "no-store",
       });
     }
-    return c.body(await associationsCsv(db, collection, ids), 200, {
+    return c.body(await associationsCsv(db, collection, ids, rules), 200, {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${uploadFileName(collection, Number(year), written, "associations")}"`,
+      "content-disposition": `attachment; filename="${uploadFileName(collection, year, written, "associations", ids.length)}"`,
+      "cache-control": "no-store",
     });
   });
 

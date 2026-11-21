@@ -1,10 +1,11 @@
 import type { Messages } from "../messages/index.js";
 import type { ProgramArchive } from "../dwc-archive.js";
 import { describeScope, type EcdysisCollection } from "../../fetch-ecdysis.js";
-import { ecdysisFileHref, type UploadState } from "../ecdysis-upload.js";
+import { ecdysisFileHref, idsOf, INCLUDE_NONE, type UploadState, type UploadYear } from "../ecdysis-upload.js";
+import { EMPTY_QUERY, listingHref } from "../listings.js";
 import { sharedLicense, type AllYearsEntry, type ArchiveEntry, type ArchiveManifest, type ChecklistEntry } from "../program-archives.js";
 import { governanceFor, LICENSES, type LicenseId, type ProgramGovernance } from "../../program-governance.js";
-import { Absent, Callout, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
+import { Absent, Button, Callout, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
 
 /** One Ecdysis collection's upload files, or why there are none. */
 export interface EcdysisUploadSection {
@@ -98,9 +99,13 @@ export function Exports({
 
 /**
  * The files a person uploads to Ecdysis (beeline-8dx9.12): the instructions,
- * then for each collection, each year's counts and links to its two files, or
- * where the last read of Ecdysis is too old (or missing) the reason and what to
- * do, and no link. The counts are what the files would hold now.
+ * then for each collection what Beeline will write. Where the last read of
+ * Ecdysis is too old or missing, or Beeline reads only a dataset of the
+ * collection, the reason and what to do, and no link. Where an archive has
+ * been downloaded since the last read, who took it, and no second archive. A
+ * year is a block of its own: the specimens in its file, what was left out and
+ * why, and the choice about obscured specimens with the two downloads. Years
+ * that are not offered are listed with a link to their specimens.
  */
 function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadSection[] }) {
   const e = m.exports.ecdysis;
@@ -110,9 +115,19 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
       <p>{e.intro}</p>
       <h3>{e.instructionsHeading}</h3>
       <ol>
-        {e.steps.map((step) => (
-          <li>{step}</li>
-        ))}
+        <li>
+          {e.steps.readNow}
+          <form method="post" action="/jobs/run/ecdysis-fetch">
+            <Button variant="tonal">{e.readNowButton}</Button>
+          </form>
+        </li>
+        <li>{e.steps.download}</li>
+        <li>{e.steps.collection}</li>
+        <li>{e.steps.uploadPage}</li>
+        <li>{e.steps.report}</li>
+        <li>{e.steps.associations}</li>
+        <li>{e.steps.readAgain}</li>
+        <li>{e.steps.localities}</li>
       </ol>
       <p>
         <Meta>{e.narrowing}</Meta>
@@ -120,50 +135,118 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
       {sections.map(({ collection, programName, state }) => (
         <section>
           <h3>{e.collection(programName, describeScope(collection))}</h3>
+          {collection.collectionId !== undefined && <Meta block>{e.uploadInto(collection.collectionId, collection.catalogPrefix)}</Meta>}
           {!state.ok ? (
             <Callout tone="warning">
-              {state.reason === "stale" ? e.refused.stale(m.format.dateTime(state.readAt)) : e.refused[state.reason]}
+              {state.reason === "stale"
+                ? e.refused.stale(m.format.dateTime(state.readAt))
+                : state.reason === "dataset"
+                  ? e.refused.dataset(describeScope(collection))
+                  : e.refused[state.reason]}
             </Callout>
           ) : (
             <>
               <Meta block>{e.readOn(m.format.dateTime(state.plan.readAt))}</Meta>
-              {state.plan.years.length === 0 ? (
-                <EmptyState>{e.nothing}</EmptyState>
-              ) : (
-                <DataTable columns={[e.colYear, e.colSpecimens, e.colObscured, e.colUnusable, e.colFiles]}>
-                  {state.plan.years.map((y) => (
-                    <tr>
-                      <td>{y.year}</td>
-                      <td>{m.format.number(y.specimenIds.length)}</td>
-                      <td>{m.format.number(y.obscured)}</td>
-                      <td>{m.format.number(y.unusable)}</td>
-                      <td>
-                        {y.specimenIds.length === 0 ? (
-                          <Meta>{e.notAvailable}</Meta>
-                        ) : (
-                          <>
-                            <a href={ecdysisFileHref(collection, y.year, "archive")} aria-label={e.archiveDownload(programName, y.year)}>
-                              {e.archiveLink}
-                            </a>
-                            {" · "}
-                            <a href={ecdysisFileHref(collection, y.year, "associations")} aria-label={e.associationsDownload(programName, y.year)}>
-                              {e.associationsLink}
-                            </a>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </DataTable>
+              {state.download !== null && (
+                <Callout tone="warning">
+                  {e.downloaded(state.download.by, m.format.dateTime(state.download.at), state.download.year, state.download.specimens)}{" "}
+                  {e.downloadedChoice(state.download.include.taxonObscured, state.download.include.observerObscured)}
+                </Callout>
               )}
-              {state.plan.years.some((y) => y.obscured > 0) && <Meta block>{e.obscuredNote}</Meta>}
-              {state.plan.years.some((y) => y.unusable > 0) && <Meta block>{e.unusableNote}</Meta>}
+              {state.plan.years.length === 0 && <EmptyState>{e.nothing}</EmptyState>}
+              {state.plan.years
+                .filter((y) => y.offered)
+                .map((y) => (
+                  <YearOffer m={m} collection={collection} programName={programName} year={y} archiveOpen={state.download === null} />
+                ))}
+              {state.plan.years.some((y) => !y.offered) && (
+                <>
+                  <h4>{e.notOfferedHeading}</h4>
+                  <ul>
+                    {state.plan.years
+                      .filter((y) => !y.offered)
+                      .map((y) => (
+                        <li>
+                          {y.notOffered === "held" ? e.notOfferedHeld(y.year, y.eligible.length) : e.notOfferedOlder(y.year, y.eligible.length)}{" "}
+                          <a href={listingHref("/specimens", { ...EMPTY_QUERY, scope: collection.program, year: y.year, ecdysis: "not" })}>{e.seeThem}</a>
+                        </li>
+                      ))}
+                  </ul>
+                </>
+              )}
               {state.plan.unspelled.length > 0 && <Meta block>{e.unspelled(state.plan.unspelled.join(", "))}</Meta>}
             </>
           )}
         </section>
       ))}
     </>
+  );
+}
+
+/** One offered year: what its file holds, what was left out, and the choice with the downloads. */
+function YearOffer({
+  m,
+  collection,
+  programName,
+  year,
+  archiveOpen,
+}: {
+  m: Messages;
+  collection: EcdysisCollection;
+  programName: string;
+  year: UploadYear;
+  /** No archive has been downloaded since the last read. */
+  archiveOpen: boolean;
+}) {
+  const e = m.exports.ecdysis;
+  const none = idsOf(year, INCLUDE_NONE).length;
+  const left = [
+    year.taxonObscured > 0 && e.leftOutTaxon(year.taxonObscured),
+    year.observerObscured > 0 && e.leftOutObserver(year.observerObscured),
+    year.labelNotDigits > 0 && e.leftOutNotDigits(year.labelNotDigits),
+    year.dispositionHeld > 0 && e.leftOutDisposition(year.dispositionHeld),
+    year.unusable > 0 && e.leftOutUnusable(year.unusable),
+  ].filter((line): line is string => line !== false);
+  return (
+    <section>
+      <h4>{e.yearHeading(year.year, none)}</h4>
+      {left.length > 0 && (
+        <>
+          <Meta block>{e.leftOut}</Meta>
+          <ul>
+            {left.map((line) => (
+              <li>{line}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      <form method="get" action={ecdysisFileHref(collection, year.year, "archive")}>
+        {(year.taxonObscured > 0 || year.observerObscured > 0) && (
+          <fieldset>
+            <legend>{e.choiceLegend}</legend>
+            {year.taxonObscured > 0 && (
+              <label>
+                <input type="checkbox" name="includeTaxonObscured" value="1" /> {e.includeTaxon}
+              </label>
+            )}
+            {year.observerObscured > 0 && (
+              <label>
+                <input type="checkbox" name="includeObserverObscured" value="1" /> {e.includeObserver}
+              </label>
+            )}
+            <Meta block>{e.choiceWarning}</Meta>
+          </fieldset>
+        )}
+        <p>
+          {archiveOpen && (
+            <Button>{e.downloadArchive}</Button>
+          )}{" "}
+          <Button variant="tonal" formaction={ecdysisFileHref(collection, year.year, "associations")}>
+            {e.downloadAssociations}
+          </Button>
+        </p>
+      </form>
+    </section>
   );
 }
 

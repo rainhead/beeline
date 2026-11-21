@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { unzipSync } from "fflate";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadEcdysis, REPORTED_NAMES, type LoadEcdysisResult } from "./load-ecdysis.js";
 
@@ -70,6 +70,57 @@ const scopeKey = (s: EcdysisScope): string => (s.collectionId !== undefined ? `c
 
 /** Where the archive last downloaded for a collection is kept, under the folder the fetch is given. */
 export const cachedArchivePath = (dir: string, collection: EcdysisScope): string => join(dir, `${scopeKey(collection)}.zip`);
+
+/**
+ * What a successful read of a collection leaves beside its cached archive
+ * (`<archive>.read.json`, written after every read that loaded, whether it
+ * downloaded the archive or found it unchanged). The upload files
+ * (src/app/ecdysis-upload.ts) rest on it: it says when Ecdysis was read and
+ * which zip that read loaded, so a zip changed or replaced since is seen.
+ */
+export interface ReadMarker {
+  /** `describeScope`: "dataset 44", "collection 196". */
+  scope: string;
+  /** When the read began: the time the upload's own rules count freshness and "after the last read" from. */
+  readAt: string;
+  source: "downloaded" | "cached";
+  /** The zip the read loaded: its size in bytes and its modification time. */
+  zipBytes: number;
+  zipModifiedAt: string;
+  /** Occurrences in the archive. */
+  records: number;
+}
+
+export const readMarkerPath = (dir: string, collection: EcdysisScope): string => join(dir, `${scopeKey(collection)}.read.json`);
+
+/** The marker of the last successful read, or null where there is none or it cannot be read. */
+export async function readMarkerOf(dir: string, collection: EcdysisScope): Promise<ReadMarker | null> {
+  try {
+    const marker = JSON.parse(await readFile(readMarkerPath(dir, collection), "utf8")) as Partial<ReadMarker>;
+    const ok =
+      typeof marker.scope === "string" && typeof marker.readAt === "string" && !Number.isNaN(Date.parse(marker.readAt)) &&
+      (marker.source === "downloaded" || marker.source === "cached") && typeof marker.zipBytes === "number" &&
+      typeof marker.zipModifiedAt === "string" && typeof marker.records === "number";
+    return ok ? (marker as ReadMarker) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeReadMarker(dir: string, collection: EcdysisScope, zipPath: string, read: { readAt: Date; source: ReadMarker["source"]; records: number }): Promise<void> {
+  const st = await stat(zipPath);
+  const marker: ReadMarker = {
+    scope: describeScope(collection),
+    readAt: read.readAt.toISOString(),
+    source: read.source,
+    zipBytes: st.size,
+    zipModifiedAt: st.mtime.toISOString(),
+    records: read.records,
+  };
+  const path = readMarkerPath(dir, collection);
+  await writeFile(`${path}.tmp`, `${JSON.stringify(marker, null, 2)}\n`);
+  await rename(`${path}.tmp`, path);
+}
 
 export interface EcdysisCredentials {
   username: string;
@@ -293,6 +344,7 @@ export async function fetchEcdysis(
     try {
       const zip = new Uint8Array(await readFile(zipPath));
       const load = await step("load the cached archive", () => loadArchive(conn, zip, opts.dir, collection, now));
+      await writeReadMarker(opts.dir, collection, zipPath, { readAt: now, source: "cached", records: load.occurrences });
       return { scope: describeScope(scope), source: "cached", reason, load };
     } catch (err) {
       // A kept archive that will not load would fail every night until
@@ -315,22 +367,9 @@ export async function fetchEcdysis(
   } else {
     await rm(baselinePath, { force: true }); // no probe, no baseline: tomorrow downloads again
   }
+  await writeReadMarker(opts.dir, collection, zipPath, { readAt: now, source: "downloaded", records: load.occurrences });
   return { scope: describeScope(scope), source: "downloaded", reason, load };
 }
-
-/**
- * Whether the detail of an `ecdysis-fetch` run says the collection was read:
- * `describeFetch` begins its part of the detail with the scope's words and
- * then either "downloaded" or "cached archive reloaded", both of which mean
- * Ecdysis answered and the archive was loaded. A run that failed for another
- * collection still names this one if it was read, and a run that read nothing
- * ("no Ecdysis login") names none.
- */
-export const detailSaysRead = (detail: string | null, collection: EcdysisScope): boolean => {
-  if (detail === null) return false;
-  const scope = describeScope(collection);
-  return detail.split("; ").some((part) => part.startsWith(`${scope} downloaded (`) || part.startsWith(`${scope} cached archive reloaded (`));
-};
 
 /** One line for the job's detail: what was fetched, what loaded, and what is left for a person. */
 export function describeFetch(r: FetchEcdysisResult): string {

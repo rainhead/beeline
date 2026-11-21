@@ -512,6 +512,36 @@ export function listingParams(query: ListingQuery, overrides: Partial<ListingQue
   return params;
 }
 
+/** The listing's filters, which are the query parameters a filter of a file for Ecdysis may take. */
+export const LISTING_FILTER_KEYS = ["q", "from", "to", "place", "area", "collector", "member", "taxon", "host", "det", "kind", "qc", "flag"] as const;
+
+/**
+ * The query parameters that `parseListingQuery` would not honour as given, by
+ * name. The parser is forgiving on purpose, since a listing with a mistyped
+ * filter should still show something: it reads a date that is no date, a
+ * status it does not know or an area that is not one as no filter at all. A
+ * file that goes to a museum must not do that, so a caller that wants an
+ * answer, not a shrug, asks here. A parameter that is not one of
+ * `LISTING_FILTER_KEYS` is a problem too, and so is one given twice; a blank
+ * value, and `any` for a status, are no filter and no problem.
+ */
+export function listingFilterProblems(params: URLSearchParams, parsed: ListingQuery): string[] {
+  const kept = listingParams(parsed, { scope: parsed.scope });
+  const problems = new Set<string>();
+  for (const key of new Set(params.keys())) {
+    if (!(LISTING_FILTER_KEYS as readonly string[]).includes(key)) {
+      problems.add(key);
+      continue;
+    }
+    const values = params.getAll(key);
+    if (values.length > 1) problems.add(key);
+    const given = (values[0] ?? "").trim();
+    if (given === "" || (given === "any" && ["det", "kind", "qc"].includes(key))) continue;
+    if (kept.get(key) !== given) problems.add(key);
+  }
+  return [...problems];
+}
+
 /** The listing's own URL, with some parts changed — paging, scope, reset. */
 export function listingHref(path: string, query: ListingQuery, overrides: Partial<ListingQuery> = {}): string {
   const search = listingParams(query, overrides).toString();
@@ -1907,7 +1937,7 @@ const groupExpression = (group: CountGroup): RawBuilder<string | number | null> 
  * against 1 ms for a bare count, and the roll-up is one of two joins the page's
  * rows need and a count does not.
  */
-const needsRollup = (query: ListingQuery) => query.qc !== "any" && query.qc !== "locality";
+export const needsRollup = (query: ListingQuery) => query.qc !== "any" && query.qc !== "locality";
 
 // The two selections are different query builders over the same sample
 // columns, which the grouping reads as `s` and `a`; the builder's own type
@@ -2127,7 +2157,7 @@ export interface PagedWriter<P> {
  * so the request's own duration sees none of this (src/app/request-timing.ts).
  * `name` says which download failed, in the log and in Sentry.
  */
-export function pagedStream<P extends { rows: readonly unknown[] }>(
+export function pagedStream<P extends { rows: readonly unknown[]; last?: boolean }>(
   name: string,
   fetch: (limit: number, offset: number) => Promise<P>,
   writer: PagedWriter<P>,
@@ -2164,7 +2194,7 @@ export function pagedStream<P extends { rows: readonly unknown[] }>(
         fetchingSince = null;
         fetched = true;
         chunks = writer.page(page);
-        if (page.rows.length < CSV_PAGE_SIZE) chunks.push(...writer.tail());
+        if (page.last ?? page.rows.length < CSV_PAGE_SIZE) chunks.push(...writer.tail());
       } catch (err) {
         if (!fetched) storeMs += performance.now() - t0;
         fetchingSince = null;
@@ -2188,7 +2218,7 @@ export function pagedStream<P extends { rows: readonly unknown[] }>(
       }
       for (const chunk of chunks) if (chunk.byteLength > 0) controller.enqueue(chunk);
       offset += page.rows.length;
-      if (page.rows.length < CSV_PAGE_SIZE) {
+      if (page.last ?? page.rows.length < CSV_PAGE_SIZE) {
         report("complete");
         controller.close();
       }

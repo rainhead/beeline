@@ -1749,6 +1749,20 @@ export interface JobRunTable {
   sla_breaches: Generated<number>;
 }
 
+/** One download of an archive for upload to Ecdysis (beeline-8dx9.12, schema/177). */
+export interface EcdysisUploadDownloadTable {
+  entity_id: Generated<number>;
+  collection: string;
+  year: number;
+  filters: string;
+  include_taxon_obscured: boolean;
+  include_observer_obscured: boolean;
+  specimens: number;
+  read_at: Timestamped;
+  person_id: number | null;
+  downloaded_at: Timestamped;
+}
+
 /** One step of a night job's run (beeline-e1xg). */
 export interface JobStepTable {
   job_run_id: number;
@@ -2113,6 +2127,7 @@ export interface Database {
   sync_run: SyncRunTable;
   observation_field: ObservationFieldTable;
   job_run: JobRunTable;
+  ecdysis_upload_download: EcdysisUploadDownloadTable;
   job_step: JobStepTable;
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;

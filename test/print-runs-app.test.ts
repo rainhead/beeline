@@ -78,7 +78,7 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
   const app = appFor(signedInAs);
   const post = (path: string, body: Record<string, string> = {}) =>
     app.request(path, { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams(body) });
-  return { app, appFor, conn, db, post, dir, paths, ash, birch, ashSample, birchSample };
+  return { app, appFor, conn, instance, db, post, dir, paths, ash, birch, ashSample, birchSample };
 }
 
 /**
@@ -660,9 +660,9 @@ describe("an elevation read at another point (beeline-trl9)", () => {
 
   it("reads a moved sample's elevation again through the route's tile folder", async () => {
     const dem = await tileDir();
-    const { appFor, conn, ashSample } = await printApp();
+    const { appFor, conn, instance, ashSample } = await printApp();
     await conn.run(`UPDATE sample_location SET latitude = 44.6, longitude = -123.2 WHERE sample_id = ${ashSample}`);
-    const app = appFor("staffer", { derivePaths: { demDir: dem } });
+    const app = appFor("staffer", { derivePaths: { demDir: dem }, mintConn: await instance.connect() });
     const res = await app.request("/print-runs", { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams({ atlas_id: "" }) });
     expect(res.headers.get("location")).toMatch(/^\/print-runs\/\d+$/);
     expect(await rows(conn, `SELECT elevation_m FROM sample_location WHERE sample_id = ${ashSample}`)).toEqual([[555]]);
@@ -670,10 +670,11 @@ describe("an elevation read at another point (beeline-trl9)", () => {
 
   it("reads nothing while the nightly runs, and holds the moved sample", async () => {
     const dem = await tileDir();
-    const { appFor, conn, ashSample } = await printApp();
+    const { appFor, conn, instance, ashSample } = await printApp();
     await conn.run(`UPDATE sample_location SET latitude = 44.6, longitude = -123.2 WHERE sample_id = ${ashSample}`);
     const app = appFor("staffer", {
       derivePaths: { demDir: dem },
+      mintConn: await instance.connect(),
       jobs: { list: [], start: async () => false, running: () => "nightly-pipeline" },
     });
     const res = await app.request("/print-runs", { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams({ atlas_id: "" }) });

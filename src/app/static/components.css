@@ -522,13 +522,49 @@ th[data-filtered] { box-shadow: inset 0 -2px 0 var(--md-sys-color-primary); }
 th[data-filtered] details.col-menu > summary,
 th[data-filtered] details.col-menu > summary:hover,
 th[data-filtered] details.col-menu[open] > summary { color: var(--md-sys-color-primary); }
+/* The panel is fixed so the wrapper's sideways scroll cannot clip it, which
+   leaves it with no place of its own. Without anchor positioning it opens
+   where it would have sat in the heading, as before. With it, the panel is
+   tied to its own heading: below it, its left edges aligned, and where that
+   would run off the right of the window, its right edges aligned instead, and
+   above the heading where it would run off the bottom.
+   `anchor-scope` gives every menu its own `--col-menu`, so a panel never
+   anchors to another column's heading; a browser with anchors but without
+   anchor-scope (Chromium 125 to 130) keeps the old placement. */
 th details.col-menu > .menu-panel {
   position: fixed;
   top: auto;
   left: auto;
-  margin-top: var(--space-1);
+  margin: var(--space-1) 0;
   min-width: 14rem;
+  /* A long note in a filter (the Ecdysis one) would otherwise stretch the panel
+     across the whole window. */
+  max-width: min(24rem, calc(100vw - 2 * var(--space-4)));
   z-index: 3;
+}
+@supports (anchor-name: --col-menu) and (anchor-scope: --col-menu) {
+  th details.col-menu { anchor-scope: --col-menu; }
+  th details.col-menu > summary { anchor-name: --col-menu; }
+  th details.col-menu > .menu-panel {
+    position-anchor: --col-menu;
+    top: anchor(bottom);
+    left: anchor(left);
+    position-try-fallbacks: --col-menu-right, --col-menu-above, --col-menu-above-right;
+  }
+  @position-try --col-menu-right {
+    left: auto;
+    right: anchor(right);
+  }
+  @position-try --col-menu-above {
+    top: auto;
+    bottom: anchor(top);
+  }
+  @position-try --col-menu-above-right {
+    top: auto;
+    bottom: anchor(top);
+    left: auto;
+    right: anchor(right);
+  }
 }
 .col-filter {
   padding: var(--space-2) var(--space-4) var(--space-3);

@@ -56,8 +56,9 @@ import type { CsvTiming } from "./request-timing.js";
  *   not in the archive Beeline last downloaded from Ecdysis either, which
  *   also holds the records Beeline could not match to a specimen, and
  * - unless the downloader chooses otherwise, are not obscured: neither the
- *   taxon nor the observer's own observation (the judgment is the
- *   taxonomist's, made before upload: Peter, 2026-10-23), and whose sample's
+ *   plant the bee was collected from nor the observer's own observation is
+ *   obscured on iNaturalist (the judgment is the taxonomist's, made before
+ *   upload: Peter, 2026-10-23), and whose sample's
  *   geoprivacy flags are not out of date.
  * Nothing is built from a read of Ecdysis more than two hours old, because
  * Symbiota replaces a record it matches by catalog number whole. The rules are
@@ -275,7 +276,7 @@ interface Candidate {
   disposition_held: boolean;
   /** The sample's copy of its observation's geoprivacy disagrees with the observation's (`sample_geoprivacy_stale`): which flags are true is not known. */
   geoprivacy_stale: boolean;
-  /** The taxon is obscured or private (`sample.taxon_geoprivacy`). */
+  /** The specimen was collected from a plant whose location iNaturalist obscures (a protected plant; `sample.taxon_geoprivacy`): the observation is of the plant the bee was collected from, and iNaturalist obscures or hides where that plant is. */
   taxon_obscured: boolean;
   /** The observer obscured or hid their own observation (`sample.geoprivacy`). */
   observer_obscured: boolean;

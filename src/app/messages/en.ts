@@ -2873,14 +2873,14 @@ export const en = {
       readOn: (when: string) => `Ecdysis last checked ${when}.`,
       yearHeading: (year: number, specimens: number) => `${year}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"} ready to upload`,
       leftOut: "Not included:",
-      leftOutTaxon: (count: number) => `${n(count)} of rare taxa, whose location iNaturalist hides`,
+      leftOutTaxon: (count: number) => `${n(count)} collected from a protected plant, whose location iNaturalist hides`,
       leftOutObserver: (count: number) => `${n(count)} whose observer hid the location`,
       leftOutNotDigits: (count: number) => `${n(count)} whose label number is not a plain number`,
       leftOutDisposition: (count: number) => `${n(count)} marked missing, or possibly recorded twice`,
       leftOutUnusable: (count: number) => `${n(count)} whose label number is shared with another specimen, or is too long for Ecdysis`,
       leftOutStale: (count: number) => `${n(count)} whose privacy settings changed on iNaturalist recently; they are offered once Beeline has caught up`,
       choiceLegend: "Hidden locations",
-      includeTaxon: "Include specimens of rare taxa",
+      includeTaxon: "Include specimens collected from protected plants",
       includeObserver: "Include specimens whose observer hid the location",
       choiceWarning: "Ecdysis will show their true coordinates to everyone.",
       downloadArchive: "Download specimens file",
@@ -2909,9 +2909,9 @@ export const en = {
             : `${by ?? "Someone"} asked for the ${year} specimens file on ${when}, but it was not made. Check Ecdysis again, then ask for it again.`,
       downloadChoice: (taxon: boolean, observer: boolean) =>
         taxon && observer
-          ? "Includes rare taxa and specimens whose observer hid the location."
+          ? "Includes specimens collected from protected plants, and specimens whose observer hid the location."
           : taxon
-            ? "Includes rare taxa."
+            ? "Includes specimens collected from protected plants."
             : observer
               ? "Includes specimens whose observer hid the location."
               : "",

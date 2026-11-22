@@ -24,7 +24,7 @@ COMMENT ON TABLE ecdysis_upload_download IS 'The start of the preparation of an 
 COMMENT ON COLUMN ecdysis_upload_download.entity_id IS 'The download''s identity, drawn from entity_id_seq (ADR 0002).';
 COMMENT ON COLUMN ecdysis_upload_download.collection IS 'The collection by its program''s code, as ECDYSIS_COLLECTIONS names it: BC.';
 COMMENT ON COLUMN ecdysis_upload_download.year IS 'The collection year of the archive: the calendar year of its samples'' first days.';
-COMMENT ON COLUMN ecdysis_upload_download.include_taxon_obscured IS 'The downloader chose to include specimens whose taxon is obscured: their true coordinates are in the file and go public in Ecdysis.';
+COMMENT ON COLUMN ecdysis_upload_download.include_taxon_obscured IS 'The downloader chose to include specimens collected from a plant whose location iNaturalist obscures (a protected plant; sample.taxon_geoprivacy): their true coordinates are in the file and go public in Ecdysis.';
 COMMENT ON COLUMN ecdysis_upload_download.include_observer_obscured IS 'The downloader chose to include specimens whose observer obscured or hid their own observation: their true coordinates are in the file and go public in Ecdysis.';
 COMMENT ON COLUMN ecdysis_upload_download.planned_specimens IS 'How many specimens the plan said the archive would hold. What it did hold is in ecdysis_upload_download_completed, since each page is checked again as it is written.';
 COMMENT ON COLUMN ecdysis_upload_download.read_at IS 'When the read of Ecdysis the archive rested on began (the cached archive''s read marker), UTC.';

@@ -139,7 +139,7 @@ describe("which specimens go in a file", () => {
     expect(plan.years[0]).toMatchObject({ labelNotDigits: 1, dispositionHeld: 2, unusable: 3 });
   });
 
-  it("counts the specimens whose taxon is obscured, and those whose observer obscured theirs, apart, and leaves them out unless chosen", async () => {
+  it("counts the specimens collected from a plant whose location iNaturalist obscures (a protected plant), and those whose observer obscured theirs, apart, and leaves them out unless chosen", async () => {
     const f = await fixture();
     const plain = await f.specimen({ field: "2500020" });
     const taxon = await f.specimen({ field: "2500022", sample: { taxon_geoprivacy: "'obscured'" } });

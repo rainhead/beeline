@@ -2547,3 +2547,127 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
     });
   });
 });
+
+describe("searching by an iNaturalist observation (beeline-slkv)", () => {
+  // A-1 (Alice's, specimens OBA00001 and OBA00002) cites 12345678; B-1 (Bob's, Alice second, specimen WABA0001)
+  // cites 22222222 and, from the old Beeline's records, also 87654321; B-2 (Bob alone) cites 33333333.
+  const withObservations = async (signedInAs: "alice" | "bob" | "staffer" = "alice") => {
+    const fx = await listingApp(signedInAs);
+    await fx.conn.run(`UPDATE sample SET inat_observation_id = 12345678 WHERE sample_number = 'A-1'`);
+    await fx.conn.run(`UPDATE sample SET inat_observation_id = 22222222 WHERE sample_number = 'B-1'`);
+    await fx.conn.run(`UPDATE sample SET inat_observation_id = 33333333 WHERE sample_number = 'B-2'`);
+    await fx.conn.run(
+      `INSERT INTO sample_legacy_observation (sample_id, inat_observation_id)
+       SELECT entity_id, 87654321 FROM sample WHERE sample_number = 'B-1'`,
+    );
+    return fx;
+  };
+  const samplesFor = async (app: Awaited<ReturnType<typeof listingApp>>["app"], q: string, scope = "all") => {
+    const body = await get(app, `/samples?scope=${scope}&q=${encodeURIComponent(q)}`);
+    return [...new Set([...body.matchAll(/class="pill">([A-C]-\d)</g)].map((m) => m[1]!))].sort();
+  };
+  const specimensFor = async (app: Awaited<ReturnType<typeof listingApp>>["app"], q: string, scope = "all") => {
+    const body = await get(app, `/specimens?scope=${scope}&q=${encodeURIComponent(q)}`);
+    return [...new Set([...body.matchAll(/\b(OBA0000\d|WABA0001)\b/g)].map((m) => m[1]!))].sort();
+  };
+  const www = "https://www.inaturalist.org/observations/";
+
+  it("finds the sample from the address of its observation, in every form", async () => {
+    const { app } = await withObservations();
+    for (const typed of [
+      `${www}12345678`,
+      `http://www.inaturalist.org/observations/12345678`,
+      `https://inaturalist.org/observations/12345678/`,
+      `${www}12345678?locale=fr#activity_comments`,
+      `https://inaturalist.ca/observations/12345678`,
+      `inaturalist.org/observations/12345678`,
+    ]) {
+      expect(await samplesFor(app, typed), typed).toEqual(["A-1"]);
+    }
+  });
+
+  it("finds a sample by a bare observation number, exactly", async () => {
+    const { app } = await withObservations();
+    expect(await samplesFor(app, "12345678")).toEqual(["A-1"]);
+    expect(await samplesFor(app, "33333333")).toEqual(["B-2"]);
+    // A prefix or part of an observation number finds nothing: 1234 is not 12345678.
+    expect(await samplesFor(app, "1234")).toEqual([]);
+    expect(await samplesFor(app, "2345678")).toEqual([]);
+    expect(await samplesFor(app, "123456789")).toEqual([]);
+  });
+
+  it("still matches a bare number against a sample number, a field number and a collector in part", async () => {
+    const { app, conn } = await withObservations();
+    await conn.run(`UPDATE sample SET sample_number = 'T-1234' WHERE sample_number = 'C-1'`);
+    await conn.run(`UPDATE specimen SET field_number = 'X5678' WHERE field_number = 'WABA0001'`);
+    // 1234 is part of a sample number (and of nobody's observation number exactly).
+    expect(await samplesFor(app, "1234")).toEqual([]); // the pill pattern only reads A-C-n numbers
+    expect(await get(app, "/samples?scope=all&q=1234")).toContain("T-1234");
+    // 5678 is part of a field number, found through its sample, and no observation has that number.
+    expect(await samplesFor(app, "5678")).toEqual(["B-1"]);
+    // A number that is one observation's and part of a field number finds both.
+    await conn.run(`UPDATE specimen SET field_number = 'F12345678' WHERE field_number = 'X5678'`);
+    expect(await samplesFor(app, "12345678")).toEqual(["A-1", "B-1"]);
+  });
+
+  it("finds a sample by an observation the old Beeline's records named, as well as the one it cites now", async () => {
+    const { app } = await withObservations();
+    expect(await samplesFor(app, "22222222")).toEqual(["B-1"]);
+    expect(await samplesFor(app, "87654321")).toEqual(["B-1"]);
+    expect(await samplesFor(app, `${www}87654321`)).toEqual(["B-1"]);
+  });
+
+  it("finds each specimen of the sample on the specimens listing", async () => {
+    const { app } = await withObservations();
+    expect(await specimensFor(app, `${www}12345678`)).toEqual(["OBA00001", "OBA00002"]);
+    expect(await specimensFor(app, "12345678")).toEqual(["OBA00001", "OBA00002"]);
+    expect(await specimensFor(app, "87654321")).toEqual(["WABA0001"]);
+    expect(await specimensFor(app, "1234")).toEqual([]);
+  });
+
+  it("does not read an address that is not an observation's as one", async () => {
+    const { app } = await withObservations();
+    for (const typed of [
+      "https://www.example.org/observations/12345678",
+      "https://inaturalist.org.evil.example/observations/12345678",
+      `${www}12345678abc`,
+      `${www}9b2c1a52-5d0f-4a0e-9c1b-0a0b0c0d0e0f`,
+      `${www}1234567890123456789`,
+      "https://www.inaturalist.org/taxa/12345678",
+    ]) {
+      expect(await samplesFor(app, typed), typed).toEqual([]);
+      expect(await specimensFor(app, typed), typed).toEqual([]);
+    }
+  });
+
+  it("finds nothing for an observation no sample cites", async () => {
+    const { app } = await withObservations();
+    expect(await samplesFor(app, `${www}99999999`)).toEqual([]);
+    expect(await get(app, `/samples?scope=all&q=${encodeURIComponent(`${www}99999999`)}`)).toContain("No samples match");
+  });
+
+  it("shows a volunteer who pastes someone else's observation what their scope lists, and no more", async () => {
+    const { app } = await withObservations("alice");
+    const bobsAlone = `${www}33333333`;
+    // B-2 is Bob's alone: it is outside Alice's own records, so the default listing has no row for it, as for its sample number.
+    expect(await samplesFor(app, bobsAlone, "mine")).toEqual([]);
+    expect(await specimensFor(app, bobsAlone, "mine")).toEqual([]);
+    expect(await samplesFor(app, "B-2", "mine")).toEqual([]);
+    // Under "everyone", which every volunteer may choose, it is there, exactly as it is by sample number.
+    expect(await samplesFor(app, bobsAlone)).toEqual(["B-2"]);
+    expect(await samplesFor(app, "B-2")).toEqual(["B-2"]);
+    // A sample she shares with Bob is hers, and so found under her own records.
+    expect(await samplesFor(app, `${www}22222222`, "mine")).toEqual(["B-1"]);
+    // Narrowing by another program's scope stays narrowing: B-1 is in the Washington atlas, not Oregon's.
+    expect(await samplesFor(app, `${www}22222222`, "OBA")).toEqual([]);
+  });
+
+  it("does not let the search find a sample by an observation of a location the reader may not see", async () => {
+    const { app, conn } = await withObservations("alice");
+    // B-2 is Bob's alone, with an obscured observation: Alice finds the row but its place stays withheld, as without the search.
+    await conn.run(`UPDATE sample SET geoprivacy = 'obscured' WHERE sample_number = 'B-2'`);
+    const body = await get(app, `/samples?scope=all&q=${encodeURIComponent(`${www}33333333`)}`);
+    expect(body).toContain("B-2");
+    expect(body).not.toContain("Anacortes");
+  });
+});

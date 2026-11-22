@@ -4,6 +4,7 @@ import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
 import { reportError } from "./error-reporting.js";
 import type { CsvTiming } from "./request-timing.js";
 import { PROGRAM_MEMBERSHIP, type AreaKind, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
+import { observationFromSearch } from "./observation-search.js";
 import { likeContains, likePrefix } from "./like-pattern.js";
 import { labelName } from "../person-name.js";
 import { orcidUrl } from "../orcid.js";
@@ -1076,6 +1077,17 @@ export function specimenOrder(query: ListingQuery, p: PlaceColumns) {
  * collector list counts: asking "show me Michael's samples" and getting only
  * the ones he numbered would be the same mistake the list exists to fix.
  */
+/**
+ * The sample `s` cites this iNaturalist observation: the one it holds now, or
+ * one the old Beeline's records named for it (`sample_legacy_observation`),
+ * so a link to the second of two merged observations still finds it. An exact
+ * match on the number, never LIKE (beeline-slkv).
+ */
+const citesObservation = (id: number) => sql<boolean>`(
+  s.inat_observation_id = ${id}
+  OR EXISTS (SELECT 1 FROM sample_legacy_observation lo WHERE lo.sample_id = s.entity_id AND lo.inat_observation_id = ${id})
+)`;
+
 const collectedBy = (term: string) => sql<boolean>`EXISTS (
   SELECT 1 FROM sample_collector c
   JOIN person p ON p.entity_id = c.person_id
@@ -1442,18 +1454,25 @@ async function filteredSamples(
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {
+    const observation = observationFromSearch(query.q);
     base = base.where(({ or, exists, selectFrom }) =>
       or([
-        likeContains(sql`lower(s.sample_number)`, query.q),
-        // The same match the collector filter makes, so one name behaves the
-        // same way in both boxes.
-        collectedBy(query.q),
-        exists(
-          selectFrom("specimen as sp")
-            .select("sp.entity_id")
-            .whereRef("sp.sample_id", "=", "s.entity_id")
-            .where(likeContains(sql`lower(sp.field_number)`, query.q)),
-        ),
+        ...(observation === null ? [] : [citesObservation(observation.id)]),
+        // An observation's address is nothing else, so it skips the text matches.
+        ...(observation?.fromUrl
+          ? []
+          : [
+              likeContains(sql`lower(s.sample_number)`, query.q),
+              // The same match the collector filter makes, so one name behaves the
+              // same way in both boxes.
+              collectedBy(query.q),
+              exists(
+                selectFrom("specimen as sp")
+                  .select("sp.entity_id")
+                  .whereRef("sp.sample_id", "=", "s.entity_id")
+                  .where(likeContains(sql`lower(sp.field_number)`, query.q)),
+              ),
+            ]),
       ]),
     );
   }
@@ -1752,13 +1771,20 @@ export async function filteredSpecimens(
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {
-    base = base.where(({ or, exists, selectFrom }) =>
+    const observation = observationFromSearch(query.q);
+    base = base.where(({ or }) =>
       or([
-        likeContains(sql`lower(sp.field_number)`, query.q),
-        likeContains(sql`lower(s.sample_number)`, query.q),
-        // The same match the collector filter makes, so one name behaves the
-        // same way in both boxes.
-        collectedBy(query.q),
+        // Every specimen of the sample the observation belongs to.
+        ...(observation === null ? [] : [citesObservation(observation.id)]),
+        ...(observation?.fromUrl
+          ? []
+          : [
+              likeContains(sql`lower(sp.field_number)`, query.q),
+              likeContains(sql`lower(s.sample_number)`, query.q),
+              // The same match the collector filter makes, so one name behaves the
+              // same way in both boxes.
+              collectedBy(query.q),
+            ]),
       ]),
     );
   }

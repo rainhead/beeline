@@ -2570,7 +2570,7 @@ export const en = {
       staffOtherPrograms: "Changes to a specimen's disposition or remarks in another program's records, which Beeline will ask you to confirm once it applies them:",
       /** On the samples page, above the lines for each program and the box that confirms them. */
       samplesOtherPrograms: (programs: number) =>
-        `This file changes records in ${programs === 1 ? "a program" : "programs"} you don't lead, as taxonomists and staff sometimes must. It is applied only if you confirm it.`,
+        `This file changes records in ${programs === 1 ? "a program" : "programs"} you don't lead. Check that you meant to, then tick the box to apply it.`,
       samplesOtherProgramsBox: "I mean to change these programs' records",
       samplesOtherProgramsNotConfirmed:
         "Nothing was applied: the file changes records in programs you don't lead, and the box saying you mean to was not ticked. Tick it to apply.",

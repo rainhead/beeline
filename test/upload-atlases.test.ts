@@ -76,7 +76,7 @@ async function offered(f: UploadFixture, edits: Array<{ id: number; set: Record<
   const html = await (await f.app.request(location)).text();
   return { location, html, digest: digestIn(html) };
 }
-const albany = (f: UploadFixture, sample: number) => [{ id: sample, set: { locality: "Albany" } as Record<string, TestCell> }];
+const albany = (sample: number) => [{ id: sample, set: { locality: "Albany" } as Record<string, TestCell> }];
 const line = (abbreviation: string, count: number, active: number, settled: number) => esc(p.otherProgramSamples(abbreviation, count, p.split(active, settled, 0)));
 
 describe("the samples file", () => {
@@ -84,7 +84,7 @@ describe("the samples file", () => {
     const f = await uploadFixture();
     await fileUnder(f, f.ids.sampleA, "OBA");
     await leads(f, "OBA");
-    const { location, html, digest } = await offered(f, albany(f, f.ids.sampleA));
+    const { location, html, digest } = await offered(f, albany(f.ids.sampleA));
     expect(html).toContain("apply-samples");
     expect(html).not.toContain(BOX);
     expect(html).not.toContain("a program you don&#39;t lead");
@@ -97,7 +97,7 @@ describe("the samples file", () => {
     await fileUnder(f, f.ids.sampleA, "OBA");
     await fileUnder(f, f.ids.sampleB, "WaBA");
     await leads(f, "OBA");
-    const { location, html, digest } = await offered(f, albany(f, f.ids.sampleB));
+    const { location, html, digest } = await offered(f, albany(f.ids.sampleB));
     // Written as people abbreviate it (WABA, not the code WaBA), with the settled season it is in.
     expect(html).toContain(line("WABA", 1, 0, 1));
     expect(html).toContain(BOX);
@@ -115,7 +115,7 @@ describe("the samples file", () => {
   it("asks a staff member who leads no program about every change", async () => {
     const f = await uploadFixture();
     await fileUnder(f, f.ids.sampleA, "OBA");
-    const { location, html, digest } = await offered(f, albany(f, f.ids.sampleA));
+    const { location, html, digest } = await offered(f, albany(f.ids.sampleA));
     expect(html).toContain(line("OBA", 1, 1, 0));
     expect(html).toContain(BOX);
     expect((await applyWith(f, location, digest, false)).status).toBe(409);
@@ -129,7 +129,7 @@ describe("the samples file", () => {
     await inRefuge(f, f.ids.sampleA);
     // Leading the refuges program makes it the person's own although its atlas is another's.
     await leads(f, "NWR");
-    const own = await offered(f, albany(f, f.ids.sampleA));
+    const own = await offered(f, albany(f.ids.sampleA));
     expect(own.html).not.toContain(BOX);
     expect((await applyWith(f, own.location, own.digest, false)).status).toBe(303);
 
@@ -138,7 +138,7 @@ describe("the samples file", () => {
     await fileUnder(g, g.ids.sampleA, "OBA");
     await inRefuge(g, g.ids.sampleA);
     await leads(g, "BC");
-    const neither = await offered(g, albany(g, g.ids.sampleA));
+    const neither = await offered(g, albany(g.ids.sampleA));
     expect(neither.html).toContain(line("NWR", 1, 1, 0));
     expect(neither.html).toContain(line("OBA", 1, 1, 0));
     expect(neither.html).toContain(BOX);

@@ -2670,13 +2670,13 @@ export function createApp({
         const outcomes = await readOutcomes(db, row.entity_id);
         return { kind: "samples" as const, plan: null, outcomes, noted: { notes: new Map<number, string>(), summary: samplesClaimedSummary(m, kept.upload, outcomes) } };
       }
-      const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), today: uploadToday?.(), createAnyway: options.createAnyway, obasChecked: options.obasChecked, kinds: options.kinds, messages: m });
+      const plan = await planSamples(db, conn, kept.upload, { ...(c.get("admin") ? {} : { reader: readerOf(c) }), uploader: row.uploaded_by, today: uploadToday?.(), createAnyway: options.createAnyway, obasChecked: options.obasChecked, kinds: options.kinds, messages: m });
       // What applying did to each row, once the file was applied: the notes and the counts say it.
       const outcomes = row.applied_at === null ? [] : await readOutcomes(db, row.entity_id);
       return { kind: "samples" as const, plan, outcomes, noted: samplesNotes(m, kept.upload, plan, outcomes, !c.get("admin")) };
     }
     if (kept.staffFile) {
-      const plan = await comparePlan(db, kept.upload, c.get("admin") ? {} : { view: { reader: readerOf(c) } });
+      const plan = await comparePlan(db, kept.upload, { uploader: row.uploaded_by, ...(c.get("admin") ? {} : { view: { reader: readerOf(c) } }) });
       return { kind: "staff" as const, plan, noted: staffNotes(m, kept.upload, plan) };
     }
     const drafts = await volunteerDrafts(c, row, kept.upload);
@@ -2690,7 +2690,7 @@ export function createApp({
     kept: { upload: ParsedUpload; bytes: Uint8Array },
     outcome: UploadOutcome,
     changedSince = false,
-    samplesNotice: "changed" | "nothing_ticked" | null = null,
+    samplesNotice: "changed" | "nothing_ticked" | "confirm_elsewhere" | null = null,
   ) => {
     const m = c.get("m");
     const { sha256: _kept, uploaded_by: _by, applied_at, draft_count, stopped_row, ...shown } = row;
@@ -2875,7 +2875,7 @@ export function createApp({
     const kept = await readKept(c, row, layoutFor(true));
     if (kept.problem !== undefined) return kept.problem;
     if (kept.upload.layout.kind !== "samples") return errorResponse(c, "notFound", { message: m.uploads.page.notFound });
-    const showing = async (notice: "changed" | "nothing_ticked") => {
+    const showing = async (notice: "changed" | "nothing_ticked" | "confirm_elsewhere") => {
       // A second submission whose page was worked out after the first claimed the file: told what was done, not that nothing was.
       if ((await db.selectFrom("upload_applied").select("upload_id").where("upload_id", "=", row.entity_id).executeTakeFirst()) !== undefined) {
         return c.redirect(uploadHref(row.entity_id), 303);
@@ -2887,6 +2887,9 @@ export function createApp({
     if (digestOf(outcome.plan) !== asked) return showing("changed");
     // The page is as it was shown, and every new row that could be made waits for a tick that was not given.
     if (rowsToApply(outcome.plan).length === 0 && unitsToApply(outcome.plan).length === 0) return showing("nothing_ticked");
+    // Records of programs the person does not lead are changed only once they have said they know it (beeline-kgyd.13).
+    // The page asks with a box, and this is the check that does not rely on the page.
+    if ((outcome.plan.otherPrograms ?? []).length > 0 && body.get("confirm_elsewhere") !== "1") return showing("confirm_elsewhere");
     const claimed = await claimUpload(db, { uploadId: row.entity_id, appliedBy: c.get("session").personId, plan: outcome.plan, now: new Date(), messages: m });
     // Started now, and if something else is running, by the scheduler's tick as soon as it is done.
     if (claimed !== null) await jobsDep.start(APPLY_JOB);

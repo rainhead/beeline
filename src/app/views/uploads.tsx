@@ -104,7 +104,7 @@ export interface SamplesPreview {
   /** When it was applied and by whom, once it was. */
   applied: { at: Date; by: string } | null;
   /** Applying was asked for, and why nothing was applied. */
-  notice: "changed" | "nothing_ticked" | null;
+  notice: "changed" | "nothing_ticked" | "confirm_elsewhere" | null;
   /** The job stopped at this row of the file because something went wrong; the rest wait. */
   stoppedRow: number | null;
   /** Staff may choose Try again for a stopped upload. */
@@ -223,8 +223,19 @@ export function UploadPreview({
       )}
       {volunteer !== null && volunteer.changedSince && <Callout tone="warning">{p.changedSince}</Callout>}
       {staffSummary !== null && <Callout>{p.staffNothingChanged}</Callout>}
+      {staffSummary !== null && staffSummary.otherPrograms.length > 0 && (
+        <>
+          <p>{p.staffOtherPrograms}</p>
+          <ul>
+            {staffSummary.otherPrograms.map((o) => (
+              <li>{p.otherProgramSpecimens(o.abbreviation, total(o.records), split(o.records))}</li>
+            ))}
+          </ul>
+        </>
+      )}
       {samplesSummary !== null && samples?.notice === "changed" && <Callout tone="warning">{p.samplesChangedSince}</Callout>}
       {samplesSummary !== null && samples?.notice === "nothing_ticked" && <Callout tone="warning">{p.samplesNothingTicked}</Callout>}
+      {samplesSummary !== null && samples?.notice === "confirm_elsewhere" && <Callout tone="warning">{p.samplesOtherProgramsNotConfirmed}</Callout>}
       {samplesSummary !== null && samples?.stoppedRow != null && (
         <Callout tone="warning">
           {p.samplesStopped(samples.stoppedRow)}
@@ -310,6 +321,19 @@ export function UploadPreview({
               </ul>
               {samplesSummary.changes.kinds.some((k) => k.unit === "coordinates") && <Meta block>{p.changeCoordinatesNote}</Meta>}
             </>
+          )}
+          {samplesSummary.otherPrograms.length > 0 && (
+            <Callout tone="warning">
+              <p>{p.samplesOtherPrograms(samplesSummary.otherPrograms.length)}</p>
+              <ul>
+                {samplesSummary.otherPrograms.map((o) => (
+                  <li>{p.otherProgramSamples(o.abbreviation, total(o.records), split(o.records))}</li>
+                ))}
+              </ul>
+              <label>
+                <input type="checkbox" name="confirm_elsewhere" value="1" /> {p.samplesOtherProgramsBox}
+              </label>
+            </Callout>
           )}
           {samplesSummary.obas !== null && (
             <p>

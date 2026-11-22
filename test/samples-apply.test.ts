@@ -51,8 +51,10 @@ const upload = async (f: UploadFixture, file: Uint8Array, app = f.app) => {
 };
 const pageAt = async (f: UploadFixture, location: string, app = f.app) => (await app.request(location)).text();
 const digestIn = (html: string) => /name="digest" value="([0-9a-f]+)"/.exec(html)?.[1];
-const apply = (f: UploadFixture, location: string, fields: { digest?: string; anyway?: number[]; obas?: boolean }, app = f.app) => {
+const apply = (f: UploadFixture, location: string, fields: { digest?: string; anyway?: number[]; obas?: boolean; confirmElsewhere?: boolean }, app = f.app) => {
   const body = new FormData();
+  // The fixture's staff member leads no program, so every record is another program's and applying asks once (beeline-kgyd.13); most tests are not about it, so it is ticked unless a test says not.
+  if (fields.confirmElsewhere !== false) body.set("confirm_elsewhere", "1");
   if (fields.digest !== undefined) body.set("digest", fields.digest);
   // The series' numbers wait for the one box; most tests are not about it, so it is ticked unless a test says not.
   if (fields.obas !== false) body.set("obas", "1");

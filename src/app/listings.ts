@@ -1667,6 +1667,19 @@ export interface ListedFlag {
   details: string[];
 }
 
+/**
+ * Which of the given samples a listing scoped to `scope` finds: the listing's own
+ * meaning of "this program's records" (an atlas by where the sample fell, Master
+ * Melittology as the samples no atlas covers, the refuges by where the point
+ * lies), asked of it rather than worked out a second time. Staff's reader by
+ * default, since this is a fact about the store and shows nobody a location.
+ */
+export async function sampleIdsInScope(db: Kysely<Database>, scope: string, ids: readonly number[], reader: Reader = STAFF_READER): Promise<Set<number>> {
+  if (ids.length === 0) return new Set();
+  const found = await (await filteredSamples(db, { ...EMPTY_QUERY, scope }, 0, reader, {}, false, ids)).select("s.entity_id as sample_id").execute();
+  return new Set(found.map((r) => Number(r.sample_id)));
+}
+
 /** The specimens a query selects, as this reader may see them; see {@link filteredSamples}. */
 async function filteredSpecimens(
   db: Kysely<Database>,

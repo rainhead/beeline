@@ -301,7 +301,7 @@ export function DesignComponents({ m }: { m: Messages }) {
       <DoDont
         dos={[
           "Start each step with what to do: Press, Download, Open, Check.",
-          "Give each step one action. If a step has an “and then” in it, it is two steps.",
+          "Give each step one thing to do, on one screen. If a step moves to another screen, it is two steps.",
           "Put the control under the step it belongs to, and what the control says back under the control.",
           "Put what is good to know about the whole sequence in the note under the list.",
         ]}

@@ -132,7 +132,8 @@ describe("Check Ecdysis now, from the Data tab", () => {
     }
     // The tab's seven steps, the button's step with its control under the text, and the note under the list.
     const list = /<ol class="steps">([^]*?)<\/ol>/.exec(tab)![1]!;
-    expect(list.match(/<li>/g)).toHaveLength(Object.keys(en.programData.ecdysis.steps).length - 1);
+    expect(list.match(/<li>/g)).toHaveLength(10);
+    expect(Object.keys(en.programData.ecdysis.steps).length - 1).toBe(10);
     expect(list).toContain(`<div class="step-below"><form method="post" action="${TAB}/check-ecdysis">`);
     expect(tab).toContain(en.programData.ecdysis.steps.localities);
     expect(list).not.toContain(en.programData.ecdysis.steps.localities);

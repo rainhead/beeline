@@ -204,8 +204,11 @@ function EcdysisUploads({ m, section }: { m: Messages; section: EcdysisUploadSec
         <Step>{e.steps.download}</Step>
         <Step>{e.steps.collection}</Step>
         <Step>{e.steps.uploadPage}</Step>
+        <Step>{e.steps.importChecks}</Step>
         <Step>{e.steps.report}</Step>
         <Step>{e.steps.associations}</Step>
+        <Step>{e.steps.extendedImport}</Step>
+        <Step>{e.steps.hasHost}</Step>
         <Step>{e.steps.readAgain}</Step>
       </Steps>
       <section>

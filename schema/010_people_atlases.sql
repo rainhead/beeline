@@ -105,7 +105,9 @@ INSERT INTO program (code, name) VALUES
 -- How a program is abbreviated wherever a person reads it (beeline-uiar):
 -- pages, print-run titles, and the atlas column of the exports. Usually its
 -- code, but not always: Washington's code is WaBA and the atlas writes WABA
--- (Karla Salp, 2026-11-13). The code cannot simply change, since it is a
+-- (Karla Salp, 2026-11-13), and British Columbia's code is BC and the atlas
+-- writes BCBA (Peter, 2026-11-22; its Ecdysis collection is NBSBC:BCBA and its
+-- catalog numbers begin BCBA_). The code cannot simply change, since it is a
 -- unique column on a row that samples, print runs and memberships refer to,
 -- and DuckDB refuses to update such a column (duckdb/duckdb#20246); nor can
 -- a column be added to program for the same reason. So the abbreviation is a
@@ -116,10 +118,10 @@ CREATE TABLE program_abbreviation (
   program_id   INTEGER PRIMARY KEY REFERENCES program(entity_id),
   abbreviation TEXT UNIQUE NOT NULL
 );
-COMMENT ON TABLE program_abbreviation IS 'How each program is abbreviated wherever a person reads it: pages, print-run titles, the atlas column of the exports (beeline-uiar). Usually its code; Washington''s is WABA where its code is WaBA. A satellite of program because the code, a key, cannot be updated in place (duckdb/duckdb#20246). URLs, cookies, the overlay and file names keep the code.';
-COMMENT ON COLUMN program_abbreviation.abbreviation IS 'The program''s short name as people write it: WABA, OBA, MM.';
+COMMENT ON TABLE program_abbreviation IS 'How each program is abbreviated wherever a person reads it: pages, print-run titles, the atlas column of the exports (beeline-uiar). Usually its code; Washington''s is WABA where its code is WaBA, and British Columbia''s is BCBA where its code is BC. A satellite of program because the code, a key, cannot be updated in place (duckdb/duckdb#20246). URLs, cookies, the overlay and file names keep the code.';
+COMMENT ON COLUMN program_abbreviation.abbreviation IS 'The program''s short name as people write it: WABA, BCBA, OBA, MM.';
 INSERT INTO program_abbreviation (program_id, abbreviation)
-SELECT entity_id, CASE code WHEN 'WaBA' THEN 'WABA' ELSE code END FROM program;
+SELECT entity_id, CASE code WHEN 'WaBA' THEN 'WABA' WHEN 'BC' THEN 'BCBA' ELSE code END FROM program;
 
 -- Which atlases print their own labels: a row is the flag, the way a
 -- person_admin row is. None today — Oregon prints for the whole program, so

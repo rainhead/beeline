@@ -471,10 +471,11 @@ describe("updating a row an incoming foreign key references", () => {
 });
 
 describe("program abbreviations (beeline-uiar)", () => {
-  test("a fresh build gives every program one: its code, or WABA for Washington", async () => {
+  test("a fresh build gives every program one: its code, or WABA for Washington and BCBA for British Columbia", async () => {
     const { conn: fresh } = await createMemoryDb();
     expect(await rows(fresh, "SELECT count(*) FROM program p LEFT JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE a.program_id IS NULL")).toEqual([[0n]]);
-    expect(await rows(fresh, "SELECT count(*) FROM program p JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE a.abbreviation <> p.code")).toEqual([[1n]]);
+    expect(await rows(fresh, "SELECT count(*) FROM program p JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE a.abbreviation <> p.code")).toEqual([[2n]]);
     expect(await rows(fresh, "SELECT a.abbreviation FROM program p JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE p.code = 'WaBA'")).toEqual([["WABA"]]);
+    expect(await rows(fresh, "SELECT a.abbreviation FROM program p JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE p.code = 'BC'")).toEqual([["BCBA"]]);
   });
 });

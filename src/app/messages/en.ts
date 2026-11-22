@@ -2812,7 +2812,7 @@ export const en = {
     archivesIntro:
       "Each program's specimens collected in a calendar year, as a Darwin Core archive: the specimen columns, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got. Each program also has an archive of every year together, which states a licence only when all its years share one, and a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
     archivesCaution:
-      "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including those of rare host plants, which every export carries until an atlas says otherwise.",
+      "These program archives are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including those of rare host plants, which every export carries until an atlas says otherwise. The files for Ecdysis are a different thing, written differently, and are further down this page.",
     archivesMissing:
       "Not written yet. They appear after the next nightly run, or after running the dwc-archives job on Jobs.",
     archiveNone: (code: string) =>
@@ -2848,6 +2848,99 @@ export const en = {
     allYearsDownload: (program: string) => `Download the ${program} archive of every year`,
     /** The file states a licence its years no longer share. */
     allYearsLicenseDropped: (license: string) => `This file states ${license}; it is rewritten with no licence tonight.`,
+    /** The files a person uploads to Ecdysis (beeline-8dx9.12). */
+    ecdysis: {
+      heading: "Upload to Ecdysis",
+      intro:
+        "Two files for each collection: the specimens Ecdysis does not have yet, and the links from those specimens to their iNaturalist observations and host plants. Follow the steps in order.",
+      instructionsHeading: "Steps",
+      readNowButton: "Check Ecdysis now",
+      steps: {
+        readNow: "Check what Ecdysis has. Press the button, wait a few minutes (Jobs shows it running), then reload this page.",
+        download:
+          "Download the specimens file and upload it today, once. Then delete it. Uploading an old file can wipe out identifications made in Ecdysis since.",
+        collection: "In Ecdysis, open the collection named under the heading below.",
+        uploadPage:
+          'Open "DwC-Archive Import", choose the specimens file and press "Analyze File". Check that "Match on Catalog Number" and "Import Identification History" are ticked, then press "Start Upload".',
+        report:
+          'Read the "Pending Data Transfer Report" before going on. It should say "Records to be updated: 0", and "New records" should match the number in the file name. If it does not, or it warns about duplicate catalog numbers, stop: nothing has changed yet. Otherwise press "Transfer Records to Central Specimen Table".',
+        associations:
+          'Reload this page and download the associations file from "Files made" below. In Ecdysis, open "Extended Data Import", choose the file, set Import Type to "Associations" and Association Type to "Occurrence - External Link", and press "Initialize Import". Leave the field mapping as it is, choose the relationship "hasHost", and press "Import Data".',
+        readAgain: "Check Ecdysis again (step 1). Until you do, the counts here stay the same and no new specimens file is offered.",
+        localities: "Good to know: localities go up as the labels have them, and trap samples have no associations, because a plant near a trap is not a host.",
+      },
+      collection: (program: string, scope: string) => `${program} (Ecdysis ${scope})`,
+      uploadInto: (collectionId: number, prefix: string) => `Ecdysis collection ${collectionId}. Catalog numbers start with ${prefix}.`,
+      readOn: (when: string) => `Ecdysis last checked ${when}.`,
+      yearHeading: (year: number, specimens: number) => `${year}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"} ready to upload`,
+      leftOut: "Not included:",
+      leftOutTaxon: (count: number) => `${n(count)} collected from a protected plant, whose location iNaturalist hides`,
+      leftOutObserver: (count: number) => `${n(count)} whose observer hid the location`,
+      leftOutNotDigits: (count: number) => `${n(count)} whose label number is not a plain number`,
+      leftOutDisposition: (count: number) => `${n(count)} marked missing, or possibly recorded twice`,
+      leftOutUnusable: (count: number) => `${n(count)} whose label number is shared with another specimen, or is too long for Ecdysis`,
+      leftOutStale: (count: number) => `${n(count)} whose privacy settings changed on iNaturalist recently; they are offered once Beeline has caught up`,
+      choiceLegend: "Hidden locations",
+      includeTaxon: "Include specimens collected from protected plants",
+      includeObserver: "Include specimens whose observer hid the location",
+      choiceWarning: "Ecdysis will show their true coordinates to everyone.",
+      downloadArchive: "Download specimens file",
+      downloadAssociations: "Download associations file",
+      archiveDownload: (program: string, year: number) => `Download the ${program} specimens file for ${year}`,
+      associationsDownload: (program: string, year: number) => `Download the associations file for ${program} ${year}`,
+      notOfferedHeading: "Other years",
+      /** In three parts so that the view can make the count the link to those specimens in the Specimens listing. */
+      notOfferedYear: {
+        year: (year: number) => `${year}: `,
+        count: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
+        /** `offered` is the years as a list (`format.list`); empty for none. */
+        rest: (count: number, offered: string) =>
+          ` ${count === 1 ? "is" : "are"} not in Ecdysis. Only ${offered === "" ? "no year" : offered} can be uploaded from here for now.`,
+      },
+      unspelled: (values: string) => `Written as Beeline has them, not spelled out: ${values}.`,
+      nothing: "Nothing to upload. Every labelled specimen is already in Ecdysis or listed above.",
+      downloadsHeading: "Files made",
+      downloadsNote:
+        "Upload a specimens file the day it is made. If you find an older one, delete it. If you did not get the file, check Ecdysis again and download a new one.",
+      downloadItem: (by: string | null, when: string, year: number, specimens: number, notKnown: number | null, established: boolean, state: "prepared" | "preparing" | "unfinished") =>
+        state === "prepared"
+          ? `${by ?? "Someone"} made the ${year} specimens file on ${when}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}${notKnown === null ? "" : notKnown === 0 ? ", all now in Ecdysis" : established ? `, ${n(notKnown)} not in Ecdysis yet` : `, ${n(notKnown)} not yet confirmed in Ecdysis; check Ecdysis again to find out`}.`
+          : state === "preparing"
+            ? `${by ?? "Someone"} asked for the ${year} specimens file on ${when}. It is being made now.`
+            : `${by ?? "Someone"} asked for the ${year} specimens file on ${when}, but it was not made. Check Ecdysis again, then ask for it again.`,
+      downloadChoice: (taxon: boolean, observer: boolean) =>
+        taxon && observer
+          ? "Includes specimens collected from protected plants, and specimens whose observer hid the location."
+          : taxon
+            ? "Includes specimens collected from protected plants."
+            : observer
+              ? "Includes specimens whose observer hid the location."
+              : "",
+      downloaded: (by: string | null, when: string, year: number, specimens: number, completed: boolean) =>
+        completed
+          ? `${by ?? "Someone"} made the ${year} specimens file (${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}) on ${when}. After uploading it, check Ecdysis again (step 1) to get another. If you did not get the file, check Ecdysis again and download a new one.`
+          : `${by ?? "Someone"} asked for the ${year} specimens file on ${when}, but it was not made. Check Ecdysis again (step 1), then ask for it again.`,
+      beingWritten: "A specimens file for this collection is being made right now. Reload this page in a moment. If this stays, check Ecdysis again.",
+      postOnly: "Use the Download button on the Exports page to get this file.",
+      superseded: "Ecdysis was checked again while the file was being made, so the file was thrown away. Reload the Exports page and try again. If it says a file was already asked for, check Ecdysis again.",
+      tooLarge: "This file would be too large (over 50 MB), so it was not made. Tell whoever runs Beeline, and check Ecdysis again before trying again.",
+      choiceNeeded: "Every specimen left for this year has a hidden location. Tick a box to include them; otherwise there is nothing to upload.",
+      associationsUnfinished: "That specimens file was not made, so it has no associations file.",
+      refused: {
+        dataset: (scope: string) =>
+          `Not available yet. Beeline reads only part of this collection from Ecdysis (${scope}), so it cannot tell which specimens are already there.`,
+        never: 'Beeline has not checked Ecdysis for this collection yet. Press "Check Ecdysis now" above, then reload this page.',
+        stale: (when: string) => `Ecdysis was last checked ${when}, more than 2 hours ago. Press "Check Ecdysis now" above, then reload this page.`,
+        reloaded: 'The last check did not fetch a fresh copy from Ecdysis. Press "Check Ecdysis now" above, then reload this page.',
+        "no-archive": 'Beeline\'s saved copy of Ecdysis needs refreshing. Press "Check Ecdysis now" above, then reload this page.',
+        changed: 'Beeline\'s saved copy of Ecdysis needs refreshing. Press "Check Ecdysis now" above, then reload this page.',
+        unreadable: 'Beeline could not read its saved copy of Ecdysis. Press "Check Ecdysis now" above. If that does not fix it, tell whoever runs Beeline.',
+        incomplete: 'Beeline\'s saved copy of Ecdysis looks incomplete. Press "Check Ecdysis now" above. If that does not fix it, tell whoever runs Beeline.',
+      },
+      noSpecimensForFile: "There are no specimens to upload for this collection and year.",
+      yearNotOffered: "This year cannot be uploaded from here yet.",
+      badQuery: (names: string) => `That request has something extra in it (${names}). Use the Download button on the Exports page.`,
+    },
   },
   /**
    * The old Beeline's records new Beeline held back, and why (/exports/held-back,
@@ -2965,6 +3058,8 @@ export const en = {
         "Reads the identifications volunteers entered in the old Beeline at old.melittologist.org and adds each new or changed one here, as the collector's. Names Beeline lacks, specimens whose old records disagree, and identifications removed there are listed in the run, not added.",
       "dwc-archives":
         "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
+      "ecdysis-read-now":
+        "Checks Ecdysis and always downloads a fresh copy, which Exports needs before it makes a specimens file for upload. Started from Exports, never by the clock.",
       "ecdysis-fetch":
         "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from Ecdysis's own list of names where it accepts them, and the rest are listed in the run.",
       "ideal-logic-registrants":

@@ -564,6 +564,35 @@ export async function pipelineTail(
   return parts.join("; ");
 }
 
+/**
+ * The read of Ecdysis the nightly job and the manual one share: each collection fetched and loaded on its own, so one
+ * atlas's failure neither stops the next nor hides what the others did, and the run fails, naming each that failed,
+ * after every collection has had its turn. `force` downloads a collection read whole whatever the probe says.
+ */
+async function readEcdysis(config: Partial<Pick<AppConfig, "ecdysis" | "ecdysisDir">>, ctx: JobContext, force: boolean): Promise<string> {
+  if (!config.ecdysis) return "no Ecdysis login (ECDYSIS_USERNAME / ECDYSIS_PASSWORD) — nothing to fetch";
+  const parts: string[] = [];
+  let failed = false;
+  for (const collection of ECDYSIS_COLLECTIONS) {
+    try {
+      const r = await fetchEcdysis(ctx.conn, collection, {
+        dir: config.ecdysisDir ?? deploymentPath("data/ecdysis"),
+        credentials: config.ecdysis,
+        signal: ctx.signal,
+        step: ctx.step,
+        force,
+      });
+      parts.push(describeFetch(r));
+    } catch (err) {
+      if (ctx.signal?.aborted) throw err;
+      failed = true;
+      parts.push(`${collection.program} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (failed) throw new Error(parts.join("; "));
+  return parts.join("; ");
+}
+
 export function buildJobs(
   config: Pick<
     AppConfig,
@@ -811,32 +840,18 @@ export function buildJobs(
       name: "ecdysis-fetch",
       schedule: { kind: "dailyLA", hour: 3 },
       window: "night",
-      async run(ctx) {
-        if (!config.ecdysis) return "no Ecdysis login (ECDYSIS_USERNAME / ECDYSIS_PASSWORD) — nothing to fetch";
-        // Each collection is fetched and loaded on its own, so one atlas's
-        // failure neither stops the next nor hides what the others did: the
-        // run fails, naming each that failed, after every collection has had
-        // its turn.
-        const parts: string[] = [];
-        let failed = false;
-        for (const collection of ECDYSIS_COLLECTIONS) {
-          try {
-            const r = await fetchEcdysis(ctx.conn, collection, {
-              dir: config.ecdysisDir ?? deploymentPath("data/ecdysis"),
-              credentials: config.ecdysis,
-              signal: ctx.signal,
-              step: ctx.step,
-            });
-            parts.push(describeFetch(r));
-          } catch (err) {
-            if (ctx.signal?.aborted) throw err;
-            failed = true;
-            parts.push(`${collection.program} failed: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
-        if (failed) throw new Error(parts.join("; "));
-        return parts.join("; ");
-      },
+      run: (ctx) => readEcdysis(config, ctx, false),
+    },
+    {
+      // The button on Exports (Read Ecdysis now), which the files for Ecdysis wait on: the same read as the nightly one,
+      // except that a collection read whole is downloaded even when the probe says nothing moved, because the upload
+      // must rest on an archive actually downloaded (the probe counts records and records modified since the last
+      // download, so a second change to a modified record leaves both numbers as they were). Never by the clock, and
+      // the nightly run is unchanged.
+      name: "ecdysis-read-now",
+      schedule: { kind: "onDemand" },
+      window: "night",
+      run: (ctx) => readEcdysis(config, ctx, true),
     },
     {
       // Who has registered for Master Melittology, from Ideal Logic

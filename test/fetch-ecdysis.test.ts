@@ -7,6 +7,10 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, test } from "vitest";
 import { configFromEnv } from "../src/app/config.js";
 import { describeFetch, fetchEcdysis, type EcdysisCollection } from "../src/fetch-ecdysis.js";
+import { createKysely } from "../src/db.js";
+import { uploadStateOf } from "../src/app/ecdysis-upload.js";
+import { buildJobs } from "../src/app/jobs/registry.js";
+import { vi } from "vitest";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 /**
@@ -22,11 +26,12 @@ const BC: EcdysisCollection = { collectionId: 196, catalogPrefix: "BCBA_", progr
 const CREDENTIALS = { username: "fetcher", password: "s3cret-never-logged" };
 
 let conn: DuckDBConnection;
+let instance: Awaited<ReturnType<typeof createMemoryDb>>["instance"];
 let dir: string;
 let zip: Uint8Array;
 
 beforeEach(async () => {
-  ({ conn } = await createMemoryDb());
+  ({ conn, instance } = await createMemoryDb());
   await conn.run(`INSERT INTO person (display_name) VALUES ('Ada Collector'), ('Sam Staff')`);
   await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Bombus'), ('genus', 'Andrena'), ('genus', 'Lasioglossum'), ('genus', 'Ceratina')`);
   for (const [genus, species] of [["Bombus", "Bombus vosnesenskii"], ["Andrena", "Andrena sladeni"], ["Lasioglossum", "Lasioglossum cooleyi"], ["Ceratina", "Ceratina acantha"]]) {
@@ -88,8 +93,8 @@ function ecdysis(): Ecdysis {
   return e;
 }
 
-const fetchWith = (e: Ecdysis, now = new Date("2026-10-09T10:00:00Z")) =>
-  fetchEcdysis(conn, WA, { dir, credentials: CREDENTIALS, fetch: e.fetch, now });
+const fetchWith = (e: Ecdysis, now = new Date("2026-10-09T10:00:00Z"), extra: { force?: boolean } = {}) =>
+  fetchEcdysis(conn, WA, { dir, credentials: CREDENTIALS, fetch: e.fetch, now, ...extra });
 
 describe("the nightly Ecdysis fetch", () => {
   test("the first run signs in, downloads, loads, and keeps the archive and the probe's baseline", async () => {
@@ -105,8 +110,35 @@ describe("the nightly Ecdysis fetch", () => {
     expect(existsSync(join(dir, "44.zip"))).toBe(true);
     expect(JSON.parse(await readFile(join(dir, "44.probe.json"), "utf8"))).toEqual({ datasetId: 44, total: 6, since: "2026-10-08", modifiedSince: 2 });
     // Nothing unpacked is left behind.
-    expect((await import("node:fs")).readdirSync(dir).sort()).toEqual(["44.probe.json", "44.zip"]);
+    expect((await import("node:fs")).readdirSync(dir).sort()).toEqual(["44.probe.json", "44.read.json", "44.zip"]);
     expect(describeFetch(r)).not.toContain(CREDENTIALS.password);
+  });
+
+  test("every successful read leaves a marker beside the zip: when it began, which zip it loaded, how many records", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    const marker = async () => JSON.parse(await readFile(join(dir, "44.read.json"), "utf8"));
+    const zipStat = (await import("node:fs")).statSync(join(dir, "44.zip"));
+    expect(await marker()).toEqual({
+      scope: "dataset 44",
+      readAt: "2026-10-09T10:00:00.000Z",
+      source: "downloaded",
+      zipBytes: zipStat.size,
+      zipModifiedAt: zipStat.mtime.toISOString(),
+      records: 6,
+    });
+    // A read that found nothing new still counts, and says so; the zip is the same one.
+    await fetchWith(e, new Date("2026-10-10T10:00:00Z"));
+    expect(await marker()).toMatchObject({ source: "cached", readAt: "2026-10-10T10:00:00.000Z", zipBytes: zipStat.size, zipModifiedAt: zipStat.mtime.toISOString() });
+  });
+
+  test("a read that failed leaves the earlier marker as it was", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    e.apiFails = true;
+    e.acceptLogin = false;
+    await expect(fetchWith(e, new Date("2026-10-11T10:00:00Z"))).rejects.toThrow();
+    expect(JSON.parse(await readFile(join(dir, "44.read.json"), "utf8")).readAt).toBe("2026-10-09T10:00:00.000Z");
   });
 
   test("when Ecdysis says nothing moved, the cached archive is reloaded and nothing is downloaded", async () => {
@@ -131,7 +163,12 @@ describe("the nightly Ecdysis fetch", () => {
   test("a kept archive that cannot be read is downloaded afresh rather than failing every night", async () => {
     const e = ecdysis();
     await fetchWith(e);
-    await (await import("node:fs/promises")).writeFile(join(dir, "44.zip"), "not a zip");
+    const { writeFile, stat } = await import("node:fs/promises");
+    await writeFile(join(dir, "44.zip"), "not a zip");
+    // The marker describes the file as it is now, so that it is the unreadable content and not the mismatch that is found.
+    const st = await stat(join(dir, "44.zip"));
+    const marker = JSON.parse(await readFile(join(dir, "44.read.json"), "utf8"));
+    await writeFile(join(dir, "44.read.json"), JSON.stringify({ ...marker, zipBytes: st.size, zipModifiedAt: st.mtime.toISOString() }));
     const again = await fetchWith(e, new Date("2026-10-10T10:00:00Z"));
     expect(again.source).toBe("downloaded");
     expect(again.reason).toMatch(/^the kept archive could not be loaded \(.+\), so downloading$/);
@@ -174,6 +211,128 @@ describe("the nightly Ecdysis fetch", () => {
   });
 });
 
+describe("the read marker and the upload files", () => {
+  test("a read the fetch has just made is accepted by the upload code, which then knows the catalog numbers Beeline could not match", async () => {
+    const bcOccurrences = (await readFile(`${FIXTURES}occurrences.csv`, "utf8")).replaceAll("WSDA_", "BCBA_");
+    zip = zipSync({
+      "occurrences.csv": new TextEncoder().encode(bcOccurrences),
+      "identifications.csv": new Uint8Array(await readFile(`${FIXTURES}identifications.csv`)),
+    });
+    const e = ecdysis();
+    const db = createKysely(instance);
+    expect(await uploadStateOf(db, BC, { ecdysisDir: dir })).toMatchObject({ ok: false, reason: "never" });
+    await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date() });
+    const state = await uploadStateOf(db, BC, { ecdysisDir: dir });
+    expect(state).toMatchObject({ ok: true });
+    if (!state.ok) return;
+    // Matched to a specimen, and not matched (BCBA_9999999 is no specimen's).
+    expect(state.held.has("bcba_2303966")).toBe(true);
+    expect(state.held.has("bcba_9999999")).toBe(true);
+    // A read that found nothing new reloaded the kept archive and did not download one: the upload does not rest on it.
+    await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date() });
+    expect(await uploadStateOf(db, BC, { ecdysisDir: dir })).toMatchObject({ ok: false, reason: "reloaded" });
+    expect(e.downloads).toBe(1);
+    // The manual read forces a download whatever the probe says, and then the upload has a read to rest on.
+    await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date(), force: true });
+    expect(e.downloads).toBe(2);
+    expect((await uploadStateOf(db, BC, { ecdysisDir: dir })).ok).toBe(true);
+  });
+});
+
+describe("the marker's record count", () => {
+  test("is the archive's own occurrence rows, so a label number on two specimens does not make the upload code refuse for good", async () => {
+    // One Ecdysis record (BCBA_2303966) whose label number is on two Beeline specimens: the loader's join counts it twice.
+    const [[sample]] = (await rows(conn, `SELECT min(entity_id) FROM sample`)) as [[number]];
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sample}, 9, '2303966')`);
+    const bcOccurrences = (await readFile(`${FIXTURES}occurrences.csv`, "utf8")).replaceAll("WSDA_", "BCBA_");
+    const archiveRows = bcOccurrences.trim().split("\n").length - 1;
+    zip = zipSync({
+      "occurrences.csv": new TextEncoder().encode(bcOccurrences),
+      "identifications.csv": new Uint8Array(await readFile(`${FIXTURES}identifications.csv`)),
+    });
+    const e = ecdysis();
+    const r = await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date() });
+    // The loader counted the doubly matched record twice; the marker says the archive's own count.
+    expect(r.load.occurrences).toBe(archiveRows + 1);
+    expect(JSON.parse(await readFile(join(dir, "collection-196.read.json"), "utf8")).records).toBe(archiveRows);
+    const state = await uploadStateOf(createKysely(instance), BC, { ecdysisDir: dir });
+    expect(state.ok, JSON.stringify(state)).toBe(true);
+  });
+});
+
+describe("a forced read", () => {
+  test("downloads a collection read whole though the probe says nothing moved, and the nightly read does not", async () => {
+    const e = ecdysis();
+    await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date("2026-10-09T10:00:00Z") });
+    expect(e.downloads).toBe(1);
+    const nightly = await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date("2026-10-10T10:00:00Z") });
+    expect(nightly.source).toBe("cached");
+    const forced = await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date("2026-10-10T11:00:00Z"), force: true });
+    expect(forced).toMatchObject({ source: "downloaded", reason: "a download was asked for" });
+    expect(e.downloads).toBe(2);
+    expect(JSON.parse(await readFile(join(dir, "collection-196.read.json"), "utf8"))).toMatchObject({ source: "downloaded" });
+  });
+
+  test("leaves a dataset (Washington's) to the probe, as before", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    const again = await fetchWith(e, new Date("2026-10-10T10:00:00Z"), { force: true });
+    expect(again.source).toBe("cached");
+    expect(e.downloads).toBe(1);
+  });
+});
+
+describe("the two jobs that read Ecdysis", () => {
+  test("the nightly one leaves the probe to decide; the one the button runs downloads a collection read whole", async () => {
+    const e = ecdysis();
+    vi.stubGlobal("fetch", e.fetch);
+    try {
+      const jobs = buildJobs({ ecdysis: CREDENTIALS, ecdysisDir: dir } as never);
+      const nightly = jobs.find((j) => j.name === "ecdysis-fetch")!;
+      const readNow = jobs.find((j) => j.name === "ecdysis-read-now")!;
+      expect(nightly.schedule).toEqual({ kind: "dailyLA", hour: 3 });
+      expect(readNow.schedule).toEqual({ kind: "onDemand" });
+      const ctx = { db: createKysely(instance), conn, log: () => undefined, step: <T,>(_: string, fn: () => Promise<T>) => fn(), signal: new AbortController().signal };
+      // The first nightly run downloads both collections; a second, with nothing moved, downloads neither.
+      await nightly.run(ctx);
+      const first = e.downloads;
+      expect(first).toBe(2);
+      await nightly.run(ctx);
+      expect(e.downloads).toBe(first);
+      // The button's run downloads British Columbia, read whole, and leaves Washington's dataset to the probe.
+      const detail = await readNow.run(ctx);
+      expect(e.downloads).toBe(first + 1);
+      expect(String(detail)).toContain("collection 196 downloaded (a download was asked for)");
+      expect(String(detail)).toContain("dataset 44 cached archive reloaded");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("a kept archive that is not the one the last read loaded", () => {
+  test("is downloaded again, though Ecdysis says nothing moved, rather than reloaded", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    const { utimes } = await import("node:fs/promises");
+    // Same size, another time: some other process touched the file, and the marker no longer describes it.
+    await utimes(join(dir, "44.zip"), new Date(Date.now() - 86_400_000), new Date(Date.now() - 86_400_000));
+    const again = await fetchWith(e, new Date("2026-10-10T10:00:00Z"));
+    expect(again).toMatchObject({ source: "downloaded", reason: "the kept archive is not the one the last read loaded, so downloading" });
+    expect(e.downloads).toBe(2);
+    // And once the marker is rewritten the next quiet night reloads it as before.
+    expect((await fetchWith(e, new Date("2026-10-11T10:00:00Z"))).source).toBe("cached");
+  });
+
+  test("a store with no marker yet (deployed before it existed) downloads once", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    const { rm } = await import("node:fs/promises");
+    await rm(join(dir, "44.read.json"));
+    expect((await fetchWith(e, new Date("2026-10-10T10:00:00Z"))).source).toBe("downloaded");
+  });
+});
+
 describe("the Ecdysis login in the environment", () => {
   const base = { BEELINE_ENV: "development" };
   test("is both halves or neither", () => {
@@ -208,7 +367,7 @@ describe("the Ecdysis login in the environment", () => {
     expect(download).toContain("db=196");
     expect(download).not.toContain("datasetid");
     // Kept apart from Washington's, which is 44.zip.
-    expect((await import("node:fs")).readdirSync(dir).sort()).toEqual(["collection-196.probe.json", "collection-196.zip"]);
+    expect((await import("node:fs")).readdirSync(dir).sort()).toEqual(["collection-196.probe.json", "collection-196.read.json", "collection-196.zip"]);
     expect(JSON.parse(await readFile(join(dir, "collection-196.probe.json"), "utf8"))).toEqual({ collectionId: 196, total: 6, since: "2026-10-08", modifiedSince: 2 });
   });
 

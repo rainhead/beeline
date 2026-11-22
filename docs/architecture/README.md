@@ -12,6 +12,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [One record](one-record.md) — `src/app/record.ts`, `src/app/views/record.tsx`
 - [Printing](printing.md) — `schema/035`, `schema/155`, `src/registry-mark.ts`
 - [Determinations from Ecdysis](determinations-from-ecdysis.md) — `src/load-ecdysis.ts`, `src/adopt-ecdysis.ts`
+- [The upload to Ecdysis](the-upload-to-ecdysis.md) — `src/app/ecdysis-upload.ts`, `src/app/dwc-archive.ts`, `src/app/views/exports.tsx`
 - [Volunteers identifying their own specimens](volunteers-identifying-their-own-specimens.md) — `src/app/determine.ts`, `src/app/views/determine.tsx`
 - [Determinations from worksheets](determinations-from-worksheets.md) — `src/fetch-worksheets.ts`, `src/load-worksheets.ts`
 - [Files people send, and expert determination sheets](files-people-send-and-expert-sheets.md) — `src/received-files.ts`, `src/load-determination-sheet.ts`

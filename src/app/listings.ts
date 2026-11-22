@@ -682,6 +682,8 @@ export interface SpecimenRow {
   state_province: string | null;
   country: string | null;
   protocol: string | null;
+  /** How the sample was collected, as the sample says: netted, or the contents of a trap. Unlike `protocol`, which is free text. */
+  sample_kind: SampleKind;
   /** The museum's catalog number, as Ecdysis reports it; null where no museum has said (gh-98). */
   catalog_number: string | null;
   /** What became of the pin, where a staff inventory has said (specimen_disposition, beeline-fud5). */
@@ -1668,7 +1670,7 @@ export interface ListedFlag {
 }
 
 /** The specimens a query selects, as this reader may see them; see {@link filteredSamples}. */
-async function filteredSpecimens(
+export async function filteredSpecimens(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
@@ -1822,6 +1824,7 @@ export async function listSpecimens(
         "s.state_province",
         "s.country",
         "s.protocol",
+        "s.kind as sample_kind",
         sql<string | null>`(SELECT c.catalog_number FROM specimen_catalog_number c WHERE c.specimen_id = sp.entity_id)`.as(
           "catalog_number",
         ),
@@ -2024,6 +2027,21 @@ export function csvCell(value: unknown): string {
   return /[",\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
 }
 
+/**
+ * A cell as the text a program is to read exactly: RFC 4180 quoting and no
+ * formula guard, since the guard writes an apostrophe into the value. For a
+ * file that is loaded into another system and not opened in a spreadsheet
+ * (the associations file for Ecdysis, src/app/ecdysis-upload.ts).
+ */
+export const csvExactLine = (row: readonly unknown[]) =>
+  `${row
+    .map((value) => {
+      if (value === null || value === undefined) return "";
+      const cell = String(value);
+      return /[",\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
+    })
+    .join(",")}\n`;
+
 /** One record, with its terminator. */
 export const csvLine = (row: readonly unknown[]) => `${row.map(csvCell).join(",")}\n`;
 
@@ -2112,7 +2130,7 @@ export interface PagedWriter<P> {
  * so the request's own duration sees none of this (src/app/request-timing.ts).
  * `name` says which download failed, in the log and in Sentry.
  */
-export function pagedStream<P extends { rows: readonly unknown[] }>(
+export function pagedStream<P extends { rows: readonly unknown[]; last?: boolean }>(
   name: string,
   fetch: (limit: number, offset: number) => Promise<P>,
   writer: PagedWriter<P>,
@@ -2131,12 +2149,21 @@ export function pagedStream<P extends { rows: readonly unknown[] }>(
     reported = true;
     timing(storeMs, offset, outcome);
   };
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
+  /**
+   * One step: the header, or one page. True when the stream was given
+   * something, was closed, or ended; false when the page wrote nothing yet (a
+   * compressor holds a short page's bytes back), in which case a stream that
+   * simply returned would never be asked for the next page.
+   */
+  const step = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<boolean> => {
       if (!started) {
         started = true;
-        for (const chunk of writer.head()) controller.enqueue(chunk);
-        return;
+        let any = false;
+        for (const chunk of writer.head()) {
+          controller.enqueue(chunk);
+          any = true;
+        }
+        return any;
       }
       let page: P;
       let chunks: Uint8Array[];
@@ -2149,7 +2176,7 @@ export function pagedStream<P extends { rows: readonly unknown[] }>(
         fetchingSince = null;
         fetched = true;
         chunks = writer.page(page);
-        if (page.rows.length < CSV_PAGE_SIZE) chunks.push(...writer.tail());
+        if (page.last ?? page.rows.length < CSV_PAGE_SIZE) chunks.push(...writer.tail());
       } catch (err) {
         if (!fetched) storeMs += performance.now() - t0;
         fetchingSince = null;
@@ -2161,21 +2188,35 @@ export function pagedStream<P extends { rows: readonly unknown[] }>(
         console.error(`Download of ${name} failed after ${offset} rows: ${(err as Error).stack ?? String(err)}`);
         if (cancelled) {
           report("cancelled"); // nobody is reading any more; there is no stream to fail
-          return;
+          return true;
         }
         report("failed");
         controller.error(err);
-        return;
+        return true;
       }
       if (cancelled) {
         report("cancelled");
-        return;
+        return true;
       }
-      for (const chunk of chunks) if (chunk.byteLength > 0) controller.enqueue(chunk);
+      let any = false;
+      for (const chunk of chunks) {
+        if (chunk.byteLength > 0) {
+          controller.enqueue(chunk);
+          any = true;
+        }
+      }
       offset += page.rows.length;
-      if (page.rows.length < CSV_PAGE_SIZE) {
+      if (page.last ?? page.rows.length < CSV_PAGE_SIZE) {
         report("complete");
         controller.close();
+        return true;
+      }
+      return any;
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      while (!(await step(controller))) {
+        // Nothing was written: fetch the next page rather than wait to be asked.
       }
     },
     // The client went away before the end: what was fetched still cost what
@@ -2189,7 +2230,7 @@ export function pagedStream<P extends { rows: readonly unknown[] }>(
 }
 
 /** Dates go out as ISO, whatever shape the driver handed back. */
-function isoDate(value: Date | string): string {
+export function isoDate(value: Date | string): string {
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
 }
 
@@ -2211,8 +2252,11 @@ export const alpha3Of = (alpha2: string): string | undefined => Object.entries(A
  * where the method names a trap, the plant near the trap ("near":"Ceanothus"),
  * since a trap does not say which flower its bees visited (beeline-vjqy).
  */
-const associatedTaxa = (host: string | null, method: string | null) =>
-  host === null || host === "" ? null : `"${plantRelationship(method)}":"${host.replaceAll('"', "'")}"`;
+const associatedTaxa = (host: string | null, method: string | null) => associatedTaxaFor(host, plantRelationship(method));
+
+/** The same term with the relationship given: the upload to Ecdysis decides it by the sample's kind, not by words in its method. */
+export const associatedTaxaFor = (host: string | null, relationship: "near" | "visits flowers of") =>
+  host === null || host === "" ? null : `"${relationship}":"${host.replaceAll('"', "'")}"`;
 
 /**
  * dwc:geodeticDatum: WGS84 for every point there is. iNaturalist stores

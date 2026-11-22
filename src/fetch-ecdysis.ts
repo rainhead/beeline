@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { unzipSync } from "fflate";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadEcdysis, REPORTED_NAMES, type LoadEcdysisResult } from "./load-ecdysis.js";
 
@@ -68,6 +68,60 @@ export const describeScope = (s: EcdysisScope): string =>
 /** The name its archive and baseline are kept under. A dataset's stays its bare id, as before collections were an option. */
 const scopeKey = (s: EcdysisScope): string => (s.collectionId !== undefined ? `collection-${s.collectionId}` : String(s.datasetId));
 
+/** Where the archive last downloaded for a collection is kept, under the folder the fetch is given. */
+export const cachedArchivePath = (dir: string, collection: EcdysisScope): string => join(dir, `${scopeKey(collection)}.zip`);
+
+/**
+ * What a successful read of a collection leaves beside its cached archive
+ * (`<archive>.read.json`, written after every read that loaded, whether it
+ * downloaded the archive or found it unchanged). The upload files
+ * (src/app/ecdysis-upload.ts) rest on it: it says when Ecdysis was read and
+ * which zip that read loaded, so a zip changed or replaced since is seen.
+ */
+export interface ReadMarker {
+  /** `describeScope`: "dataset 44", "collection 196". */
+  scope: string;
+  /** When the read began: the time the upload's own rules count freshness and "after the last read" from. */
+  readAt: string;
+  source: "downloaded" | "cached";
+  /** The zip the read loaded: its size in bytes and its modification time. */
+  zipBytes: number;
+  zipModifiedAt: string;
+  /** Occurrences in the archive. */
+  records: number;
+}
+
+export const readMarkerPath = (dir: string, collection: EcdysisScope): string => join(dir, `${scopeKey(collection)}.read.json`);
+
+/** The marker of the last successful read, or null where there is none or it cannot be read. */
+export async function readMarkerOf(dir: string, collection: EcdysisScope): Promise<ReadMarker | null> {
+  try {
+    const marker = JSON.parse(await readFile(readMarkerPath(dir, collection), "utf8")) as Partial<ReadMarker>;
+    const ok =
+      typeof marker.scope === "string" && typeof marker.readAt === "string" && !Number.isNaN(Date.parse(marker.readAt)) &&
+      (marker.source === "downloaded" || marker.source === "cached") && typeof marker.zipBytes === "number" &&
+      typeof marker.zipModifiedAt === "string" && typeof marker.records === "number";
+    return ok ? (marker as ReadMarker) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeReadMarker(dir: string, collection: EcdysisScope, zipPath: string, read: { readAt: Date; source: ReadMarker["source"]; records: number }): Promise<void> {
+  const st = await stat(zipPath);
+  const marker: ReadMarker = {
+    scope: describeScope(collection),
+    readAt: read.readAt.toISOString(),
+    source: read.source,
+    zipBytes: st.size,
+    zipModifiedAt: st.mtime.toISOString(),
+    records: read.records,
+  };
+  const path = readMarkerPath(dir, collection);
+  await writeFile(`${path}.tmp`, `${JSON.stringify(marker, null, 2)}\n`);
+  await rename(`${path}.tmp`, path);
+}
+
 export interface EcdysisCredentials {
   username: string;
   password: string;
@@ -100,6 +154,13 @@ export interface FetchEcdysisOptions {
   /** Injected in tests; the global fetch otherwise. */
   fetch?: typeof fetch;
   now?: Date;
+  /**
+   * Download the archive whether or not the probe says Ecdysis changed, for a collection read whole (`collectionId`):
+   * the probe counts records and records modified since the last download, so a second change to a record already
+   * modified leaves both numbers as they were. The upload files rest on a read that downloaded, so the manual read
+   * on the Exports page forces one. The nightly run does not. A dataset (Washington's) is read as before.
+   */
+  force?: boolean;
   /** Run around each phase, as the job framework's ctx.step does; a plain call otherwise. */
   step?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 }
@@ -235,7 +296,7 @@ async function loadArchive(
   dir: string,
   collection: EcdysisCollection,
   now: Date,
-): Promise<LoadEcdysisResult> {
+): Promise<LoadEcdysisResult & { archiveRows: number }> {
   const files = unzipSync(zip, { filter: (f) => /^(occurrences|identifications)\.(tab|csv|txt)$/i.test(f.name) });
   if (Object.keys(files).length < 2) {
     throw new Error(`Ecdysis archive for ${describeScope(collection)} lacks occurrences or identifications (has: ${Object.keys(files).join(", ") || "nothing"})`);
@@ -243,7 +304,15 @@ async function loadArchive(
   const unpacked = await mkdtemp(join(dir, `${scopeKey(collection)}-unpacked-`));
   try {
     for (const [name, data] of Object.entries(files)) await writeFile(join(unpacked, name), data);
-    return await loadEcdysis(conn, { path: unpacked, catalogPrefix: collection.catalogPrefix, now });
+    // The archive's own count of occurrence rows, as the upload code counts them again from the zip. The loader's
+    // `occurrences` is a count over a join to specimens, and an Ecdysis record whose label number is on two
+    // specimens is counted twice there (src/load-ecdysis.ts, beeline-1kb.14): it is not the archive's.
+    const occurrencesFile = Object.keys(files).find((n) => /^occurrences\.(tab|csv|txt)$/i.test(n))!;
+    const counted = await conn.runAndReadAll(
+      `SELECT count(*) FROM read_csv('${join(unpacked, occurrencesFile).replaceAll("'", "''")}', header = true, all_varchar = true)`,
+    );
+    const archiveRows = Number(counted.getRows()[0]![0]);
+    return { ...(await loadEcdysis(conn, { path: unpacked, catalogPrefix: collection.catalogPrefix, now })), archiveRows };
   } finally {
     await rm(unpacked, { recursive: true, force: true });
   }
@@ -259,7 +328,7 @@ export async function fetchEcdysis(
   const step = opts.step ?? (<T>(_: string, fn: () => Promise<T>) => fn());
   const scope: EcdysisScope = collection.collectionId !== undefined ? { collectionId: collection.collectionId } : { datasetId: collection.datasetId };
   await mkdir(opts.dir, { recursive: true });
-  const zipPath = join(opts.dir, `${scopeKey(collection)}.zip`);
+  const zipPath = cachedArchivePath(opts.dir, collection);
   const baselinePath = join(opts.dir, `${scopeKey(collection)}.probe.json`);
 
   // Read the source before anything else, and decide.
@@ -268,9 +337,13 @@ export async function fetchEcdysis(
   let reason: string;
   let fresh: { total: number; modifiedSince: number } | null = null;
   let unchanged = false;
+  const forced = opts.force === true && collection.collectionId !== undefined;
   try {
     fresh = await step("probe Ecdysis", () => probeEcdysis(f, scope, since, opts.signal));
-    if (baseline === null || baseline.datasetId !== scope.datasetId || baseline.collectionId !== scope.collectionId || !existsSync(zipPath)) {
+    if (forced) {
+      // The counts are still taken, for the baseline the nightly run compares with, but they decide nothing.
+      reason = "a download was asked for";
+    } else if (baseline === null || baseline.datasetId !== scope.datasetId || baseline.collectionId !== scope.collectionId || !existsSync(zipPath)) {
       reason = "no archive downloaded before";
     } else {
       const sinceThen = await step("probe since the last download", () =>
@@ -287,9 +360,21 @@ export async function fetchEcdysis(
   }
 
   if (unchanged) {
+    // "Nothing moved" is about Ecdysis, not about the file here: the kept zip must still be the one the last read
+    // loaded (the marker's size and time), or the upload code, which trusts that marker, would be blessing whatever
+    // file happens to be there. A store deployed before the marker existed has none, and downloads once.
+    const marker = await readMarkerOf(opts.dir, collection);
+    const st = await stat(zipPath).catch(() => null);
+    if (marker === null || st === null || st.size !== marker.zipBytes || st.mtime.toISOString() !== marker.zipModifiedAt) {
+      unchanged = false;
+      reason = "the kept archive is not the one the last read loaded, so downloading";
+    }
+  }
+  if (unchanged) {
     try {
       const zip = new Uint8Array(await readFile(zipPath));
-      const load = await step("load the cached archive", () => loadArchive(conn, zip, opts.dir, collection, now));
+      const { archiveRows, ...load } = await step("load the cached archive", () => loadArchive(conn, zip, opts.dir, collection, now));
+      await writeReadMarker(opts.dir, collection, zipPath, { readAt: now, source: "cached", records: archiveRows });
       return { scope: describeScope(scope), source: "cached", reason, load };
     } catch (err) {
       // A kept archive that will not load would fail every night until
@@ -301,7 +386,7 @@ export async function fetchEcdysis(
   }
 
   const zip = await step("download the archive", () => downloadArchive(f, opts.credentials, scope, opts.signal));
-  const load = await step("load the archive", () => loadArchive(conn, zip, opts.dir, collection, now));
+  const { archiveRows, ...load } = await step("load the archive", () => loadArchive(conn, zip, opts.dir, collection, now));
   // Kept only once it has loaded, and the baseline with it: a failed load
   // leaves the previous pair, so the next night downloads again.
   await writeFile(`${zipPath}.tmp`, zip);
@@ -312,6 +397,7 @@ export async function fetchEcdysis(
   } else {
     await rm(baselinePath, { force: true }); // no probe, no baseline: tomorrow downloads again
   }
+  await writeReadMarker(opts.dir, collection, zipPath, { readAt: now, source: "downloaded", records: archiveRows });
   return { scope: describeScope(scope), source: "downloaded", reason, load };
 }
 

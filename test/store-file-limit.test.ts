@@ -10,6 +10,9 @@ import { deriveAreas } from "../src/derive-area.js";
 import { deriveLocalities } from "../src/derive-locality.js";
 import { legacyExportPath, writeLegacyExport } from "../src/legacy-export.js";
 import { loadEcdysis } from "../src/load-ecdysis.js";
+import { catalogNumbersInArchive } from "../src/app/ecdysis-upload.js";
+import { createKysely } from "../src/db.js";
+import { strToU8, zipSync } from "fflate";
 import { loadEcdysisTaxonomy } from "../src/load-ecdysis-taxonomy.js";
 import { snapshotCatalog, verifySnapshot } from "../src/store-snapshot.js";
 import { buildTestGazetteer, insertCleanSample, rows } from "./helpers.js";
@@ -122,6 +125,15 @@ describe("the app's store still reaches", () => {
     // No determinerAliases given, so the file the nightly reads: ingest/determiner-aliases.csv.
     const result = await loadEcdysis(conn, { path: unpacked, catalogPrefix: "WSDA_" });
     expect(result.input).toBe("archive");
+  });
+
+  test("the catalog numbers of the archive Ecdysis was last read into, for the upload files", async () => {
+    // The page reads them with the app's own store, unpacked into a folder of its own under the Ecdysis folder.
+    await mkdir(config.ecdysisDir, { recursive: true });
+    const archive = join(config.ecdysisDir, "44.zip");
+    await writeFile(archive, zipSync({ "occurrences.tab": strToU8("id\tcatalogNumber\n1\tWSDA_1\n2\tWSDA_2\n") }));
+    const held = await catalogNumbersInArchive(createKysely(app.instance), archive, config.ecdysisDir);
+    expect([...held.held].sort()).toEqual(["wsda_1", "wsda_2"]);
   });
 
   test("Ecdysis's taxonomy, fetched into the folder the weekly job uses", async () => {

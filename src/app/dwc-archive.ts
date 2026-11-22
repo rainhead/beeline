@@ -64,6 +64,21 @@ const ARCHIVE_OWN_COLUMNS = SPECIMEN_OWN_COLUMNS.filter((c) => !NOT_IN_ARCHIVE.h
 const CSV_AT = new Map<string, number>(SPECIMEN_CSV_HEADER.map((c, i) => [c, i]));
 
 /**
+ * The staff download's cells for one specimen, read by column name. Both
+ * archives take most of their cells from here, so a cell the download changes
+ * changes in each of them (the upload archive, src/app/ecdysis-upload.ts, is
+ * the second user).
+ */
+export function csvCellsOf(r: SpecimenRow, page: Page<SpecimenRow>): (name: string) => unknown {
+  const csv = specimenCsvRow(r, page);
+  return (name) => {
+    const at = CSV_AT.get(name);
+    if (at === undefined) throw new Error(`the specimens download has no column ${name}`);
+    return csv[at];
+  };
+}
+
+/**
  * One occurrence row. Most cells are the staff download's, taken by name. The
  * numbers follow Darwin Core's definitions here and not in the download
  * (Peter, 2026-11-18):
@@ -190,6 +205,8 @@ export const DWC = "http://rs.tdwg.org/dwc/terms/";
 /** One determination, as the Identification extension carries it. */
 export interface IdentificationRow {
   specimen_id: number;
+  /** The determination's own id (`determination.entity_id`). */
+  determination_id: number;
   scientific_name: string;
   authorship: string | null;
   rank: string;
@@ -205,7 +222,7 @@ export interface IdentificationRow {
   of_record: boolean;
 }
 
-const SYMBIOTA = "https://symbiota.org/terms/";
+export const SYMBIOTA = "https://symbiota.org/terms/";
 
 /**
  * The identification columns meta.xml declares: the header each is written
@@ -254,6 +271,7 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
     .where("d.specimen_id", "in", specimenIds)
     .select((eb) => [
       "d.specimen_id",
+      "d.entity_id as determination_id",
       "an.scientific_name",
       "an.authorship",
       "an.rank",
@@ -275,6 +293,7 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
   return rows.map((r) => ({
     ...r,
     specimen_id: Number(r.specimen_id),
+    determination_id: Number(r.determination_id),
     is_expert: Boolean(r.is_expert),
     of_record: Boolean(r.of_record),
   })) as IdentificationRow[];
@@ -341,29 +360,84 @@ const xmlAttr = (v: string) => v.replaceAll("&", "&amp;").replaceAll('"', "&quot
 
 /**
  * The descriptor: which file is which, and which column holds which term.
- * The licence, where there is one, is a constant every record carries
+ * `coreTerms` and `identificationTerms` are the terms of the columns after
+ * the id, in order; the comments say what follows them undeclared. The
+ * licence, where there is one, is a constant every record carries
  * (`dcterms:license`, a field with a default and no column).
  */
-export const metaXml = (license: string | null = null) => `<?xml version="1.0" encoding="UTF-8"?>
+export const archiveDescriptor = (
+  coreTerms: readonly string[],
+  identificationTerms: readonly string[],
+  opts: { license?: string | null; coreComment?: string; identificationComment?: string } = {},
+) => `<?xml version="1.0" encoding="UTF-8"?>
 <archive xmlns="http://rs.tdwg.org/dwc/text/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://rs.tdwg.org/dwc/text/ http://rs.tdwg.org/dwc/text/tdwg_dwc_text.xsd">
   <core encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Occurrence">
     <files><location>occurrence.txt</location></files>
     <id index="0"/>
-${fields(ARCHIVE_DWC_COLUMNS.map((t) => `${DWC}${t}`))}
-${license === null ? "" : `    <field default="${xmlAttr(license)}" term="http://purl.org/dc/terms/license"/>\n`}    <!-- Columns ${ARCHIVE_DWC_COLUMNS.length + 1} onwards are Beeline's own and have no Darwin Core term: ${ARCHIVE_OWN_COLUMNS.join(", ")}. -->
-  </core>
+${fields(coreTerms)}
+${opts.license == null ? "" : `    <field default="${xmlAttr(opts.license)}" term="http://purl.org/dc/terms/license"/>\n`}${opts.coreComment === undefined ? "" : `    <!-- ${opts.coreComment} -->\n`}  </core>
   <extension encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Identification">
     <files><location>identification.txt</location></files>
     <coreid index="0"/>
-${fields(IDENTIFICATION_TERMS.map(([, term]) => term))}
-    <!-- Columns ${IDENTIFICATION_TERMS.length + 1} onwards are Beeline's own and have no term: ${IDENTIFICATION_OWN_COLUMNS.join(", ")}. -->
-  </extension>
+${fields(identificationTerms)}
+${opts.identificationComment === undefined ? "" : `    <!-- ${opts.identificationComment} -->\n`}  </extension>
 </archive>
 `;
+
+/** The program archives' descriptor. */
+export const metaXml = (license: string | null = null) =>
+  archiveDescriptor(
+    ARCHIVE_DWC_COLUMNS.map((t) => `${DWC}${t}`),
+    IDENTIFICATION_TERMS.map(([, term]) => term),
+    {
+      license,
+      coreComment: `Columns ${ARCHIVE_DWC_COLUMNS.length + 1} onwards are Beeline's own and have no Darwin Core term: ${ARCHIVE_OWN_COLUMNS.join(", ")}.`,
+      identificationComment: `Columns ${IDENTIFICATION_TERMS.length + 1} onwards are Beeline's own and have no term: ${IDENTIFICATION_OWN_COLUMNS.join(", ")}.`,
+    },
+  );
 
 /** A page of specimens with every determination of each. */
 export interface ArchivePage extends Page<SpecimenRow> {
   identifications: IdentificationRow[];
+}
+
+/**
+ * What differs between the archives this module streams: the `meta.xml`, the
+ * header and the rows of each of the two files. The program archives' layout
+ * is the default; the upload to Ecdysis has its own
+ * (src/app/ecdysis-upload.ts). Both files' first cell is the id that joins
+ * them.
+ */
+export interface ArchiveLayout {
+  meta: string;
+  occurrenceHeader: readonly string[];
+  /** The occurrence rows of a page, each starting with the specimen's id. */
+  occurrenceRows(page: ArchivePage): unknown[][];
+  identificationHeader: readonly string[];
+  /** The identification rows of a page, each starting with the id of the specimen it belongs to. */
+  identificationRows(page: ArchivePage): unknown[][];
+}
+
+/** The program archives' layout: every column of `ARCHIVE_DWC_COLUMNS`, then Beeline's own, undeclared. */
+export function programArchiveLayout(opts: {
+  license: string | null;
+  catalogPrefix: string | null;
+  classifications: Map<number, Classification>;
+}): ArchiveLayout {
+  return {
+    meta: metaXml(opts.license),
+    occurrenceHeader: ["id", ...ARCHIVE_DWC_COLUMNS, ...ARCHIVE_OWN_COLUMNS],
+    occurrenceRows: (page) =>
+      page.rows.map((r) => [
+        r.specimen_id,
+        ...archiveRow(r, page, {
+          catalogPrefix: opts.catalogPrefix,
+          classification: r.animal_id === null ? undefined : opts.classifications.get(r.animal_id),
+        }),
+      ]),
+    identificationHeader: ["coreid", ...IDENTIFICATION_TERMS.map(([header]) => header), ...IDENTIFICATION_OWN_COLUMNS],
+    identificationRows: (page) => page.identifications.map(identificationRow),
+  };
 }
 
 /**
@@ -377,11 +451,23 @@ export interface ArchivePage extends Page<SpecimenRow> {
  */
 export function specimenArchiveStream(
   fetch: (limit: number, offset: number) => Promise<ArchivePage>,
-  opts: { license?: string | null; timing?: CsvTiming; catalogPrefix?: string | null; classifications?: Map<number, Classification> } = {},
+  opts: {
+    license?: string | null;
+    timing?: CsvTiming;
+    catalogPrefix?: string | null;
+    classifications?: Map<number, Classification>;
+    /** The files' columns; the program archives' where absent. */
+    layout?: ArchiveLayout;
+  } = {},
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  const catalogPrefix = opts.catalogPrefix ?? null;
-  const classifications = opts.classifications ?? new Map<number, Classification>();
+  const layout =
+    opts.layout ??
+    programArchiveLayout({
+      license: opts.license ?? null,
+      catalogPrefix: opts.catalogPrefix ?? null,
+      classifications: opts.classifications ?? new Map<number, Classification>(),
+    });
   const out: Uint8Array[] = [];
   const zip = new Zip((err, chunk) => {
     if (err) throw err;
@@ -400,20 +486,16 @@ export function specimenArchiveStream(
     fetch,
     {
       head: () => {
-        file("meta.xml").push(encoder.encode(metaXml(opts.license ?? null)), true);
+        file("meta.xml").push(encoder.encode(layout.meta), true);
         core = file("occurrence.txt");
-        core.push(encoder.encode(tabLine(["id", ...ARCHIVE_DWC_COLUMNS, ...ARCHIVE_OWN_COLUMNS])));
+        core.push(encoder.encode(tabLine(layout.occurrenceHeader)));
         identifications = file("identification.txt");
-        identifications.push(
-          encoder.encode(tabLine(["coreid", ...IDENTIFICATION_TERMS.map(([header]) => header), ...IDENTIFICATION_OWN_COLUMNS])),
-        );
+        identifications.push(encoder.encode(tabLine(layout.identificationHeader)));
         return take();
       },
       page: (page) => {
-        core.push(encoder.encode(page.rows
-            .map((r) => tabLine([r.specimen_id, ...archiveRow(r, page, { catalogPrefix, classification: r.animal_id === null ? undefined : classifications.get(r.animal_id) })]))
-            .join("")));
-        identifications.push(encoder.encode(page.identifications.map((r) => tabLine(identificationRow(r))).join("")));
+        core.push(encoder.encode(layout.occurrenceRows(page).map(tabLine).join("")));
+        identifications.push(encoder.encode(layout.identificationRows(page).map(tabLine).join("")));
         return take();
       },
       tail: () => {

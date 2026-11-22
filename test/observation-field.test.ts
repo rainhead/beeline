@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, insertCleanSample, currentSeasonDate, rows } from "./helpers.js";
 import { canonicalJson, syncINat } from "../src/sync-inat.js";
-import { refreshObservationFields } from "../src/refresh-observation-fields.js";
+import { checkObservationFields, refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { promoteObservations } from "../src/promote-observations.js";
 import { schemaDrift } from "../src/migrate.js";
 
@@ -292,6 +292,28 @@ describe("the stored projection", () => {
     await refreshObservationFields(conn);
     expect(await rows(conn, "SELECT inat_id FROM observation_field")).toEqual([[7n]]);
     expect(await count("SELECT count(*) FROM observation_field_stale")).toBe(0);
+  });
+});
+
+describe("the check the nightly ends with (beeline-pw1q.2)", () => {
+  test("passes on a store whose table agrees with its loads", async () => {
+    await stageLoad(obs(7));
+    await refreshObservationFields(conn);
+    await expect(checkObservationFields(conn)).resolves.toBeUndefined();
+  });
+
+  test("throws naming a row edited by hand", async () => {
+    await stageLoad(obs(7));
+    await refreshObservationFields(conn);
+    await conn.run("UPDATE observation_field SET place_guess = 'somewhere else' WHERE inat_id = 7");
+    await expect(checkObservationFields(conn)).rejects.toThrow(/1 observation\(s\).*ids 7\)/);
+  });
+
+  test("throws naming a row whose observation has no load, and caps the ids at five", async () => {
+    for (let i = 1; i <= 7; i++) await stageLoad(obs(i));
+    await refreshObservationFields(conn);
+    await conn.run("DELETE FROM observation_load");
+    await expect(checkObservationFields(conn)).rejects.toThrow(/7 observation\(s\).*ids 1, 2, 3, 4, 5, \.\.\.\)/);
   });
 });
 

@@ -28,6 +28,7 @@ import type { Database } from "../../model.js";
 import { duckdbReader, recordPersonChanges } from "../../person-change.js";
 import { recordSampleChanges, type SampleLogPaths } from "../../sample-change.js";
 import { promoteObservations } from "../../promote-observations.js";
+import { checkObservationFields } from "../../refresh-observation-fields.js";
 import { fetchObservationsById, pruneSightings, syncINat, type FetchByIdOptions } from "../../sync-inat.js";
 import { DEFAULT_QUERY_COPY_PATH, type AppConfig } from "../config.js";
 import { deploymentPath } from "../../deployment-path.js";
@@ -549,6 +550,19 @@ export async function pipelineTail(
   // does not stop the cache filling and the cache cannot make the check
   // late; never fails the run (refreshInatTaxa).
   parts.push(await tolerantStep(ctx, "fetch taxa", (onFailure) => refreshInatTaxa(ctx.conn, { signal: ctx.signal, onFailure })));
+  // Last of all, so a stored copy that disagrees with the loads fails the run
+  // without stopping a step above. Nothing else reads the view that says so
+  // (observation_field_stale), and promotion writes believed-true coordinates
+  // from the table (beeline-pw1q.2). It costs one shred of every load. A
+  // failure is held until the refusal below has been looked at, so one does
+  // not hide the other.
+  let staleFields: Error | null = null;
+  try {
+    await ctx.step("check stored observation fields", () => checkObservationFields(ctx.conn));
+  } catch (err) {
+    if (ctx.signal?.aborted) throw err;
+    staleFields = err instanceof Error ? err : new Error(String(err));
+  }
   // A refused snapshot (beeline-hrw) fails the run — after every store step
   // has done its work, so nothing the nightly is for waits on it — because a
   // refusal is a standing condition that needs a person, and a run marked
@@ -559,8 +573,11 @@ export async function pipelineTail(
   // the carve-out's end; `failing` is what the health check then says, with
   // this message as the detail.
   if (refused !== null) {
-    throw new Error(`sample history not recorded: ${refused} (${parts.join("; ")})`);
+    throw new Error(
+      `sample history not recorded: ${refused} (${parts.join("; ")})` + (staleFields ? `; ${staleFields.message}` : ""),
+    );
   }
+  if (staleFields) throw new Error(`${staleFields.message} (${parts.join("; ")})`);
   return parts.join("; ");
 }
 

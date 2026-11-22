@@ -405,3 +405,22 @@ describe("abbreviating each program (0089)", () => {
   });
 });
 
+describe("British Columbia's abbreviation (0118)", () => {
+  test("changes BC to BCBA on a store that has samples of the program, and nothing else", async () => {
+    // A store from before the migration says BC; a sample refers to the program.
+    await conn.run("UPDATE program_abbreviation SET abbreviation = 'BC' WHERE abbreviation = 'BCBA'");
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    await insertCleanSample(conn, { state_province: "'BC'", atlas_id: "(SELECT entity_id FROM program WHERE code = 'BC')" });
+
+    const name = "0118-british-columbia-abbreviation.sql";
+    await copyFile(join(MIGRATIONS_DIR, name), join(dir, name));
+    expect(await migrate(conn, { dir })).toEqual([name]);
+
+    expect(await rows(conn, "SELECT p.code, a.abbreviation FROM program p JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE a.abbreviation <> p.code ORDER BY p.code")).toEqual([
+      ["BC", "BCBA"],
+      ["WaBA", "WABA"],
+    ]);
+    expect(await rows(conn, "SELECT code FROM program WHERE code = 'BC'")).toEqual([["BC"]]);
+    expect(await schemaDrift(conn)).toEqual([]);
+  });
+});

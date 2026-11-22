@@ -115,7 +115,7 @@ describe("the print-run screens", () => {
     expect(body).not.toContain("Oregon Bee Atlas —");
     expect(body).not.toContain("Washington Bee Atlas —");
     // The hint names the atlases Oregon prints for as people write them: WABA, not the code WaBA (beeline-uiar).
-    expect(body).toContain(en.printRuns.prepare.programCovers(["OBA", "WABA", "BC", "ID", "NM"]).replaceAll("'", "&#39;"));
+    expect(body).toContain(en.printRuns.prepare.programCovers(["OBA", "WABA", "BCBA", "ID", "NM"]).replaceAll("'", "&#39;"));
     await staff.conn.run(`INSERT INTO atlas_printing SELECT entity_id FROM program WHERE code = 'WaBA'`);
     const flagged = await (await staff.app.request("/print-runs")).text();
     expect(flagged).toContain("Washington Bee Atlas — nothing waiting");

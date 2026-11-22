@@ -1112,6 +1112,13 @@ export const checkHref = (collection: EcdysisCollection): string => `${programDa
 /** The jobs that read Ecdysis: the button's, and the nightly one. Only one job runs at a time. */
 export const ECDYSIS_READ_JOBS = ["ecdysis-read-now", "ecdysis-fetch"] as const;
 
+/**
+ * The least time between two checks started from a program's Data tab. The job reads every collection and replaces
+ * every collection's marker, so a check pressed again at once would restart another program's specimens file being
+ * made, and download Ecdysis's whole collections each time (beeline-q8di).
+ */
+export const ECDYSIS_CHECK_MIN_INTERVAL_MS = 5 * 60_000;
+
 /** The job the "Check Ecdysis now" button starts. */
 export const ECDYSIS_CHECK_JOB = "ecdysis-read-now";
 

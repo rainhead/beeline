@@ -1770,16 +1770,16 @@ describe("Darwin Core archives, by program and year", () => {
     expect(page).toContain("none yet");
     expect(page).toContain(`href="/programs/OBA/data/dwca/OBA-2026.zip"`);
     expect(await get(app, "/programs/WaBA/data")).toContain(`href="/programs/WaBA/data/dwca/WaBA-${CURRENT_SEASON}.zip"`);
-    expect(page).not.toContain("This file states");
+    expect(page).not.toContain(en.programData.archiveLicenseNone);
 
     // A licence merged after the night's run shows at once, and the row says
     // the file beside it does not carry it yet.
     await fx.write([OBA_LICENSE], []);
     const after = await get(app, "/programs/OBA/data");
     expect(after).toContain("CC BY-NC 4.0");
-    expect(after).toContain("This file states no licence; it is rewritten with this one tonight.");
+    expect(after).toContain(en.programData.archiveLicenseNone.replaceAll("'", "&#39;"));
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    expect(await get(app, "/programs/OBA/data")).not.toContain("This file states");
+    expect(await get(app, "/programs/OBA/data")).not.toContain(en.programData.archiveLicenseNone);
   });
 
   it("files a sample by the calendar year of its first day, which is its season", async () => {
@@ -1828,9 +1828,9 @@ describe("Darwin Core archives, by program and year", () => {
     expect(page).toContain(`href="https://example.org/oba-privacy"`);
     // The tab is this program's alone: the others' files are not on it.
     expect(page).not.toContain("WaBA-");
-    expect(await get(app, "/programs/BLM/data")).toContain("belong to them by the day they were collected on");
+    expect(await get(app, "/programs/BLM/data")).toContain(en.programData.archiveNone("BLM").replaceAll("'", "&#39;"));
     // The refuge program has no ground either, in its own terms (beeline-8zlh).
-    expect(await get(app, "/programs/NWR/data")).toContain("by the refuge they were collected in");
+    expect(await get(app, "/programs/NWR/data")).toContain(en.programData.archiveNone("NWR").replaceAll("'", "&#39;"));
     expect(await get(app, "/programs/MM/data")).toContain("No specimens yet.");
     // Exports lists every program by name, atlases and the rest together (Peter, 2026-10-26), each with the link to its tab.
     const exportsPage = await get(app, "/exports");
@@ -1846,7 +1846,7 @@ describe("Darwin Core archives, by program and year", () => {
       ["WaBA", "Washington Bee Atlas: Data"],
     ]);
     // And the tab says what the archives are for, and what they are not.
-    expect(page).toContain("Do not upload them");
+    expect(page).toContain("Do not upload these to Ecdysis, GBIF or anywhere else");
     expect(await get(app, "/specimens?scope=OBA")).not.toContain(".zip");
   });
 
@@ -1957,7 +1957,7 @@ describe("Darwin Core archives, by program and year", () => {
     await fx.write([OBA_LICENSE, "OBA,2026,CC-BY-4.0,Test,2026-10-10,https://example.org/oba,Changed"], [OBA_POLICY]);
     const changed = await get(app, "/programs/OBA/data");
     expect(changed).toContain(en.programData.allYearsNoLicense);
-    expect(changed).toContain(en.programData.allYearsLicenseDropped("CC BY-NC 4.0"));
+    expect(changed).toContain(en.programData.allYearsLicenseDropped("CC BY-NC 4.0").replaceAll("'", "&#39;"));
     const after = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     expect(after.allYears!.find((a) => a.program === "OBA")!.license).toBeNull();
     const rewritten = unpack(new Uint8Array(await (await app.request("/programs/OBA/data/dwca/OBA-all.zip")).arrayBuffer()));

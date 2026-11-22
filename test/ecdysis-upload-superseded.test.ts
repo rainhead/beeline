@@ -3,7 +3,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { en } from "../src/app/messages/en.js";
 import { CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
-import { BC, fixture } from "./ecdysis-upload-fixture.js";
+import { BC, fixture, refusalSaid } from "./ecdysis-upload-fixture.js";
 
 /**
  * A newer read of Ecdysis finishing while an archive is being written (beeline-8dx9.12). The read marker is the file
@@ -52,7 +52,7 @@ describe("a read that finishes while the archive is being written", () => {
     const res = await post(app);
     expect(res.status).toBe(409);
     expect(res.headers.get("content-disposition")).toBeNull();
-    expect(await res.text()).toBe(e.superseded);
+    expect(await refusalSaid(res)).toBe(e.superseded);
     expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download`))[0]).toEqual([1n]);
     expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download_completed`))[0]).toEqual([0n]);
     expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download_specimen`))[0]).toEqual([0n]);
@@ -61,7 +61,7 @@ describe("a read that finishes while the archive is being written", () => {
     seen.replaceAfter = 1_000;
     const again = await post(app);
     expect(again.status).toBe(409);
-    expect(await again.text()).toBe(e.beingWritten);
+    expect(await refusalSaid(again)).toBe(e.beingWritten);
     // The next read, which begins after it, lets one through.
     await new Promise((resolve) => setTimeout(resolve, 20));
     await f.cacheArchive(BC, ["BCBA_9999999"], { readHoursAgo: 0 });

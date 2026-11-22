@@ -260,7 +260,7 @@ export interface ProgramDataAccess {
 /**
  * Who may open a program's Data tab, and every route under it: the program's
  * nightly Darwin Core archives and the files made for uploading to Ecdysis
- * (Peter, 2026-11-22, beeline-q8di). These hold collectors' names and true
+ * (Peter, 2026-11-21, beeline-q8di). These hold collectors' names and true
  * coordinates, so they are for the program's leads and for admins, and not
  * for staff generally or for the leads of other programs.
  *

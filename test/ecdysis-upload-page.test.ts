@@ -6,7 +6,7 @@ import { createApp } from "../src/app/server.js";
 import { en } from "../src/app/messages/en.js";
 import { fetchEcdysis } from "../src/fetch-ecdysis.js";
 import { CURRENT_SEASON, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
-import { BC, fixture, WABA } from "./ecdysis-upload-fixture.js";
+import { BC, fixture, refusalSaid, WABA } from "./ecdysis-upload-fixture.js";
 import { cachedArchivePath } from "../src/fetch-ecdysis.js";
 import { downloadsOf } from "../src/app/ecdysis-upload.js";
 
@@ -164,8 +164,8 @@ describe("the Ecdysis section of the Data tab", () => {
   it("keeps the warning that the program archives are not for upload, and says the Ecdysis files are another thing", async () => {
     const { app } = await setup();
     const page = await textOf(await app.request(TAB));
-    expect(page).toContain("Do not upload them");
-    expect(page).toContain("are above");
+    expect(page).toContain("Do not upload these to Ecdysis, GBIF or anywhere else");
+    expect(page).toContain("To upload to Ecdysis, use the files above instead.");
   });
 
   it("says nothing about another program: a program with no Ecdysis collection has no such section", async () => {
@@ -173,7 +173,7 @@ describe("the Ecdysis section of the Data tab", () => {
     const page = await textOf(await app.request("/programs/OBA/data"));
     expect(page).not.toContain(e.heading);
     expect(page).not.toContain("check-ecdysis");
-    expect(page).not.toContain("are above");
+    expect(page).not.toContain("To upload to Ecdysis, use the files above instead.");
   });
 
   it("is not found for a person who is neither a lead of the program nor an admin (the full matrix is in program-data-permission.test.ts)", async () => {
@@ -244,7 +244,7 @@ describe("downloading the archive", () => {
     // Another year: still one archive for each read.
     const second = await ask(app, { year: SETTLED_SEASON });
     expect(second.status).toBe(409);
-    expect(await textOf(second)).toBe(await refusal(f));
+    expect(await refusalSaid(second)).toBe(await refusal(f));
     const page = await textOf(await app.request(TAB));
     expect(page).toContain(await line(f, "prepared", 1, true));
     expect(page).not.toContain(e.downloadArchive);
@@ -308,7 +308,7 @@ describe("downloading the archive", () => {
     expect(twice.status).toBe(400);
     await drain(twice);
     expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download`))[0]).toEqual([0n]);
-    expect(await textOf(await ask(app, { query: "kind=net" }))).toContain("kind");
+    expect(await refusalSaid(await ask(app, { query: "kind=net" }))).toContain("kind");
   });
 
   it("refuses a year that is not offered, and the archive when the read is old", async () => {
@@ -317,12 +317,12 @@ describe("downloading the archive", () => {
     await f.specimen({ field: "2500002" });
     const old = await ask(app, { year: CURRENT_SEASON - 6 });
     expect(old.status).toBe(409);
-    expect(await textOf(old)).toBe(e.yearNotOffered);
+    expect(await refusalSaid(old)).toBe(e.yearNotOffered);
     await f.cacheArchive(BC, ["BCBA_9999999"], { readHoursAgo: 3 });
     const res = await ask(app);
     expect(res.status).toBe(409);
     expect(res.headers.get("content-disposition")).toBeNull();
-    expect(await textOf(res)).toContain("more than 2 hours ago");
+    expect(await refusalSaid(res)).toContain("more than 2 hours ago");
   });
 
   it("refuses when no read has succeeded", async () => {
@@ -332,7 +332,7 @@ describe("downloading the archive", () => {
     await rm(`${f.dir}/collection-196.read.json`);
     const res = await ask(app);
     expect(res.status).toBe(409);
-    expect(await textOf(res)).toBe(e.refused.never);
+    expect(await refusalSaid(res)).toBe(e.refused.never);
   });
 
   it("is 404 for an unknown collection, a year with nothing to write, and a name it does not make", async () => {
@@ -368,7 +368,7 @@ describe("the read the archive rests on, and the copy about it", () => {
     expect(page).toContain(`action="${TAB}/check-ecdysis"`);
     const res = await ask(app);
     expect(res.status).toBe(409);
-    expect(await textOf(res)).toBe(e.refused.reloaded);
+    expect(await refusalSaid(res)).toBe(e.refused.reloaded);
   });
 
   it("says a box must be ticked for a year in which everything eligible is obscured, and answers a request with none with that sentence", async () => {
@@ -379,7 +379,7 @@ describe("the read the archive rests on, and the copy about it", () => {
     expect(page).toContain(html(e.choiceNeeded));
     const res = await ask(app);
     expect(res.status).toBe(400);
-    expect(await textOf(res)).toBe(e.choiceNeeded);
+    expect(await refusalSaid(res)).toBe(e.choiceNeeded);
     expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download`))[0]).toEqual([0n]);
     const chosen = await ask(app, { fields: { includeTaxonObscured: "1" } });
     expect(chosen.status).toBe(200);

@@ -99,6 +99,29 @@ describe("Check Ecdysis now, from the Data tab", () => {
     expect(await (await s.app.request(`${TAB}?check=busy`)).text()).toContain(c.busy);
   });
 
+  it("does not start a check when the last one finished under five minutes ago, and says when Ecdysis was checked", async () => {
+    const s = await setup();
+    await s.run("ecdysis-read-now", "succeeded", 0, "6 records");
+    const res = await s.press();
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`${TAB}?check=recent`);
+    expect(s.started).toEqual([]);
+    const [[at]] = (await rows(s.f.conn, `SELECT completed_at FROM job_run`)) as [[Date]];
+    const page = await (await s.app.request(`${TAB}?check=recent`)).text();
+    expect(page).toContain(c.recent(en.format.dateTime(new Date(at as unknown as string))).replaceAll("'", "&#39;"));
+  });
+
+  it("starts a check once the last one finished more than five minutes ago, and after a failed one", async () => {
+    const s = await setup();
+    await s.run("ecdysis-read-now", "succeeded", 1, "6 records");
+    expect((await s.press()).headers.get("location")).toBe(TAB);
+    expect(s.started).toEqual([ECDYSIS_CHECK_JOB]);
+    const t = await setup();
+    await t.run("ecdysis-read-now", "failed", 0, "x");
+    expect((await t.press()).headers.get("location")).toBe(TAB);
+    expect(t.started).toEqual([ECDYSIS_CHECK_JOB]);
+  });
+
   it("is not offered for a program with no Ecdysis collection", async () => {
     const s = await setup();
     await s.f.conn.run(`INSERT INTO program_lead (program_id, person_id) SELECT p.entity_id, l.person_id FROM program p, program_lead l WHERE p.code = 'OBA' LIMIT 1`);

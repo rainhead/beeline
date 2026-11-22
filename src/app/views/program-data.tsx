@@ -30,6 +30,8 @@ export interface EcdysisUploadSection {
   check: EcdysisCheck;
   /** Set when pressing the button started nothing because another job was running. */
   busy: boolean;
+  /** Set when pressing the button started nothing because Ecdysis was checked a few minutes ago. */
+  recent: boolean;
 }
 
 /** What the page knows about the program's nightly archives. */
@@ -102,6 +104,19 @@ export function ProgramData({
   );
 }
 
+/** A refusal shown at the address of a request that was refused: the sentence, and the way back to the tab. */
+export function ProgramDataRefusal({ m, code, text }: { m: Messages; code: string; text: string }) {
+  return (
+    <>
+      <PageHeader title={m.programData.refusedHeading} />
+      <Callout tone="warning">{text}</Callout>
+      <p>
+        <a href={programDataHref(code)}>{m.programData.backToTab}</a>
+      </p>
+    </>
+  );
+}
+
 /** Where a program's archive file is downloaded from. */
 const dwcaHref = (code: string, file: string) => `${programDataHref(code)}/dwca/${file}`;
 
@@ -144,8 +159,9 @@ function Licences({ m, code, entries, governance }: { m: Messages; code: string;
 }
 
 /** Whether Ecdysis is being checked, or how the last check ended; with the one thing to do about a refusal to start. */
-function CheckState({ m, check, busy }: { m: Messages; check: EcdysisCheck; busy: boolean }) {
+function CheckState({ m, check, busy, recent }: { m: Messages; check: EcdysisCheck; busy: boolean; recent: boolean }) {
   const c = m.programData.ecdysis.check;
+  if (recent && check?.state === "finished") return <Callout tone="warning">{c.recent(m.format.dateTime(check.at))}</Callout>;
   if (busy) return <Callout tone="warning">{c.busy}</Callout>;
   if (check === null) return null;
   if (check.state === "running") return <Meta block>{c.running}</Meta>;
@@ -166,7 +182,7 @@ function CheckState({ m, check, busy }: { m: Messages; check: EcdysisCheck; busy
  */
 function EcdysisUploads({ m, section }: { m: Messages; section: EcdysisUploadSection }) {
   const e = m.programData.ecdysis;
-  const { collection, state, downloads, check, busy } = section;
+  const { collection, state, downloads, check, busy, recent } = section;
   return (
     <>
       <h2>{e.heading}</h2>
@@ -178,7 +194,7 @@ function EcdysisUploads({ m, section }: { m: Messages; section: EcdysisUploadSec
           <form method="post" action={checkHref(collection)}>
             <Button variant="tonal">{e.readNowButton}</Button>
           </form>
-          <CheckState m={m} check={check} busy={busy} />
+          <CheckState m={m} check={check} busy={busy} recent={recent} />
         </li>
         <li>{e.steps.download}</li>
         <li>{e.steps.collection}</li>

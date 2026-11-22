@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { InatClient } from "../src/app/auth.js";
-import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
+import { ACTING_COOKIE, IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { completeDownload, INCLUDE_NONE, startDownload } from "../src/app/ecdysis-upload.js";
 import { en } from "../src/app/messages/en.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
@@ -172,6 +172,8 @@ describe("who may open a program's Data tab", () => {
           // No file bytes: a zip starts with "PK".
           expect((await res.text()).startsWith("PK"), label).toBe(false);
         } else {
+          // Nothing under the tab is kept by a browser or a shared cache: the files hold names and true coordinates.
+          if (res.status === 200 && route !== "Exports") expect(res.headers.get("cache-control"), label).toBe("no-store");
           await res.arrayBuffer();
         }
         // Only the specimens file records a download; only the check starts a job.
@@ -220,6 +222,79 @@ describe("who may open a program's Data tab", () => {
     expect(own.status).toBe(200);
     await own.arrayBuffer();
     expect(await s.counts()).toEqual(before);
+  });
+
+  it("is not found, on every route under the tab, for a household delegate acting for a lead: delegation widens reach to samples and never what may be downloaded", async () => {
+    const s = await setup();
+    const [[dee]] = (await rows(s.f.conn, `INSERT INTO person (display_name) VALUES ('Dee Delegate') RETURNING entity_id`)) as [[number]];
+    await s.f.conn.run(`INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES (${dee}, ${s.who.lead}, 'peter')`);
+    const app = await s.appFor(dee);
+    const cookie = `${ACTING_COOKIE}=${encodeURIComponent("Lena Lead")}`;
+    const before = await s.counts();
+    for (const route of ROUTES.filter((r) => r !== "Exports")) {
+      const [path, init] = request(s, route, { cookie });
+      const res = await app.request(path, init);
+      expect(res.status, route).toBe(404);
+      expect(res.headers.get("content-disposition"), route).toBeNull();
+      await res.text();
+    }
+    expect(await s.counts()).toEqual(before);
+    // The switch really is on, so the sample reach of the lead is what the delegate sees as "mine".
+    const page = await (await app.request("/programs/BC", { headers: { cookie } })).text();
+    expect(page).not.toContain('href="/programs/BC/data"');
+  });
+
+  it("is not found on the next request, in the same session, for a lead who is removed from program_lead", async () => {
+    const s = await setup();
+    const app = await s.appFor(s.who.lead);
+    expect((await app.request("/programs/BC/data")).status).toBe(200);
+    expect(await (await app.request("/programs/BC")).text()).toContain('href="/programs/BC/data"');
+    await s.f.conn.run(`DELETE FROM program_lead WHERE person_id = ${s.who.lead}`);
+    for (const route of ROUTES.filter((r) => r !== "Exports")) {
+      const [path, init] = request(s, route);
+      const res = await app.request(path, init);
+      expect(res.status, route).toBe(404);
+      await res.text();
+    }
+    expect(await (await app.request("/programs/BC")).text()).not.toContain('href="/programs/BC/data"');
+  });
+
+  it("has no catalog sentence under the tab that sends a person to the Exports page, or to 'above' or 'this page' where the sentence is shown at the address of a refused POST", () => {
+    const e = en.programData.ecdysis;
+    const everything = JSON.stringify(en.programData, (_key, value) => (typeof value === "function" ? String(value) : value));
+    expect(everything).not.toMatch(/Exports/);
+    for (const refusalText of [e.beingWritten, e.postOnly, e.superseded, e.tooLarge, e.choiceNeeded, e.associationsUnfinished, ...Object.values(e.refused).map(String)]) {
+      expect(String(refusalText)).not.toMatch(/\babove\b|this page|Exports/);
+    }
+  });
+
+  it("shows a lead who is not staff the same specimens, and as many, at the link on a year that is not offered, with the locations iNaturalist hides left out", async () => {
+    // What the review asked to find out (beeline-q8di): the listing applies the ordinary reader's rule for true coordinates.
+    const s = await setup();
+    const year = CURRENT_SEASON - 6;
+    for (let i = 0; i < 3; i++) await s.f.specimen({ field: String(2500100 + i), year });
+    await s.f.specimen({ field: "2500110", year, sample: { geoprivacy: "'private'" } });
+    await s.f.specimen({ field: "2500111", year, sample: { geoprivacy: "'obscured'" } });
+    await s.f.specimen({ field: "2500112", year, sample: { taxon_geoprivacy: "'obscured'" } });
+    const seen: Record<string, { count: string; rows: number; hidden: number; localities: number }> = {};
+    for (const [who, id] of [["lead", s.who.lead], ["admin", s.who.admin]] as const) {
+      const app = await s.appFor(id);
+      const tab = await (await app.request("/programs/BC/data")).text();
+      const link = /<a href="(\/specimens\?[^"]*ecdysis=not[^"]*)">([^<]+)<\/a>/.exec(tab)!;
+      const listing = await (await app.request(link[1]!.replaceAll("&amp;", "&"))).text();
+      const body = listing.match(/<tbody>[^]*<\/tbody>/)![0];
+      seen[who] = {
+        count: link[2]!,
+        rows: (body.match(/<tr>/g) ?? []).length,
+        hidden: body.split(en.listings.locationHidden).length - 1,
+        localities: body.split("Umtanum Creek").length - 1,
+      };
+    }
+    // The count on the link is the number of rows the lead gets, and the same as the admin's.
+    expect(seen.lead).toMatchObject({ count: "6 specimens", rows: 6 });
+    expect(seen.admin).toMatchObject({ count: "6 specimens", rows: 6, hidden: 0, localities: 6 });
+    // The difference is only the place: three rows, the ones whose location iNaturalist hides, have none for a lead.
+    expect(seen.lead).toMatchObject({ hidden: 3, localities: 3 });
   });
 
   it("answers an unknown program, and any case of a real one, as the rule does", async () => {

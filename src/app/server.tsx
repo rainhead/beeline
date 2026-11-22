@@ -37,7 +37,7 @@ import { Glossary } from "./views/glossary.js";
 import { HowItWorks } from "./views/how-it-works.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { ProgramIndex, ProgramPage, ProgramTabs } from "./views/programs.js";
-import { ProgramData, type EcdysisUploadSection } from "./views/program-data.js";
+import { ProgramData, ProgramDataRefusal, type EcdysisUploadSection } from "./views/program-data.js";
 import { AreaIndex, areasHref } from "./views/areas.js";
 import { AREA_TABS, isAreaTab, listAreas } from "./areas.js";
 import { listPrograms, loadProgram, programDataAccess, programDataHref, programHref, type ProgramDataAccess } from "./programs.js";
@@ -259,7 +259,7 @@ import {
 import { oregonToday } from "../oregon-today.js";
 import { programArchives } from "./dwc-archive.js";
 import { archiveDir, readArchiveManifest } from "./program-archives.js";
-import { ArchiveTooLarge, ECDYSIS_CHECK_JOB, ecdysisCheckOf, associationsCsv, beingWritten, buildArchive, collectionOf, completeDownload, downloadById, downloadSpecimens, downloadViewsOf, idsOf, ReadSuperseded, startDownload, uploadFileName, uploadStateOf, type DownloadRecord } from "./ecdysis-upload.js";
+import { ArchiveTooLarge, ECDYSIS_CHECK_JOB, ECDYSIS_CHECK_MIN_INTERVAL_MS, ecdysisCheckOf, associationsCsv, beingWritten, buildArchive, collectionOf, completeDownload, downloadById, downloadSpecimens, downloadViewsOf, idsOf, ReadSuperseded, startDownload, uploadFileName, uploadStateOf, type DownloadRecord } from "./ecdysis-upload.js";
 import { describeScope, ECDYSIS_COLLECTIONS, readMarkerOf } from "../fetch-ecdysis.js";
 import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
@@ -2454,9 +2454,12 @@ export function createApp({
         downloads: await downloadViewsOf(db, collection, state.ok ? state.held : null, state.ok ? state.read.readAt : marker === null ? null : new Date(marker.readAt)),
         check: await ecdysisCheckOf(db, jobsDep.running?.() ?? null),
         busy: c.req.query("check") === "busy",
+        recent: c.req.query("check") === "recent",
       };
     }
     const scope = (await programArchives(db)).find((p) => p.code === program.code)?.scope ?? null;
+    // Not kept by a browser or a shared cache: the tab names the people who made files that hold true coordinates.
+    c.header("cache-control", "no-store");
     return c.html(
       await page(
         c,
@@ -2474,13 +2477,19 @@ export function createApp({
   });
 
   // The button for step 1. Starts the job the Jobs page's Run button starts, through the same runner (`jobsDep.start`),
-  // unless a check is already running, then goes back to the tab, which says what the check is doing.
+  // unless a check is already running or the last one finished under five minutes ago, then goes back to the tab, which
+  // says what the check is doing. The minimum interval is there because the job reads every collection and replaces
+  // every collection's marker: a lead of one program pressing the button over and over would make another program's
+  // specimens file, being made at that moment, start again (the marker it rested on is replaced, so it is thrown away),
+  // and would download Ecdysis's whole collections each time. The Jobs page, which only admins use, is not limited.
   app.post("/programs/:code/data/check-ecdysis", async (c) => {
     const gate = await dataGate(c, { acts: true });
     if (gate instanceof Response) return gate;
     const back = programDataHref(gate.program.code);
     if (collectionOf(gate.program.code) === undefined) return errorResponse(c, "notFound");
-    if ((await ecdysisCheckOf(db, jobsDep.running?.() ?? null))?.state === "running") return c.redirect(back);
+    const last = await ecdysisCheckOf(db, jobsDep.running?.() ?? null);
+    if (last?.state === "running") return c.redirect(back);
+    if (last?.state === "finished" && Date.now() - last.at.getTime() < ECDYSIS_CHECK_MIN_INTERVAL_MS) return c.redirect(`${back}?check=recent`);
     const started = await jobsDep.start(ECDYSIS_CHECK_JOB);
     return c.redirect(started ? back : `${back}?check=busy`);
   });
@@ -2496,17 +2505,23 @@ export function createApp({
   // specimens is two fields of the form, `includeTaxonObscured=1` and `includeObserverObscured=1`, each at most once.
   // Its start is recorded, with the decision, in one transaction; the whole archive is then built in memory, the
   // completion recorded with the specimens actually written, and only then is it sent, under a name that says how many.
-  const refusing = (c: Context<AppEnv>) => (status: 400 | 404 | 405 | 409 | 413, text: string) => c.text(text, status, { "cache-control": "no-store", ...(status === 405 ? { allow: "POST" } : {}) });
+  // A refusal is shown at the address of the request that was refused, where reloading would repeat the POST, so it is a
+  // page with the sentence and a link back to the program's Data tab, which is where to go next.
+  const refusing = (c: Context<AppEnv>, code: string) => async (status: 400 | 404 | 405 | 409 | 413, text: string) =>
+    c.html(await page(c, c.get("m").programData.refusedHeading, <ProgramDataRefusal m={c.get("m")} code={code} text={text} />), status, {
+      "cache-control": "no-store",
+      ...(status === 405 ? { allow: "POST" } : {}),
+    });
   app.get("/programs/:code/data/ecdysis/:file{\\d{4}-upload\\.zip}", async (c) => {
     const gate = await dataGate(c, { acts: false });
-    return gate instanceof Response ? gate : refusing(c)(405, c.get("m").programData.ecdysis.postOnly);
+    return gate instanceof Response ? gate : refusing(c, gate.program.code)(405, c.get("m").programData.ecdysis.postOnly);
   });
   app.post("/programs/:code/data/ecdysis/:file{\\d{4}-upload\\.zip}", async (c) => {
     const gate = await dataGate(c, { acts: true });
     if (gate instanceof Response) return gate;
     const m = c.get("m");
     const e = m.programData.ecdysis;
-    const refuse = refusing(c);
+    const refuse = refusing(c, gate.program.code);
     const collection = collectionOf(gate.program.code);
     if (collection === undefined) return errorResponse(c, "notFound");
     const year = Number(/^(\d{4})-upload\.zip$/.exec(c.req.param("file"))![1]);
@@ -2581,7 +2596,7 @@ export function createApp({
     const head = headRefused(c);
     if (head) return head;
     const e = c.get("m").programData.ecdysis;
-    const refuse = refusing(c);
+    const refuse = refusing(c, gate.program.code);
     if ([...new URL(c.req.url).searchParams.keys()].length > 0) return refuse(400, e.badQuery([...new URL(c.req.url).searchParams.keys()].join(", ")));
     const download = await downloadById(db, Number(c.req.param("id")));
     // The record must be this program's: a download of another program's collection is not found at this address.
@@ -3175,6 +3190,7 @@ export function createApp({
       "content-type": "application/zip",
       "content-length": String(st.size),
       "content-disposition": `attachment; filename="beeline-${download}-dwca.zip"`,
+      "cache-control": "no-store",
     });
   });
 

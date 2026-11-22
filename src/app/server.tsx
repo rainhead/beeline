@@ -3406,7 +3406,11 @@ export function createApp({
   // Preparing a run reads a stale or empty elevation again from the tiles,
   // as the staff coordinates routes do (deriveMovedPoint): on the promotion
   // connection, behind the promotion lock, and not while the nightly or the
-  // weekly sweep runs, asked inside the lock (beeline-trl9).
+  // weekly sweep runs, asked inside the lock (beeline-trl9). Where the app has
+  // no promotion connection of its own (tests, a store opened with one
+  // connection) the read shares the print connection, so it also takes the
+  // print lock, inside the promotion lock as everywhere else: otherwise its
+  // open transaction would make the freeze's BEGIN fail.
   const printElevationConn = mintConn ?? conn ?? printWriter;
   const printDemDir = derivePaths?.demDir;
   const readElevationsForPrint =
@@ -3415,7 +3419,9 @@ export function createApp({
       : (sampleIds: number[]) =>
           withPromotionLock(async () => {
             if (syncJobRunning()) return;
-            await deriveElevations(printElevationConn, printDemDir, sampleIds);
+            const read = () => deriveElevations(printElevationConn, printDemDir, sampleIds);
+            if (printElevationConn === printWriter) await withPrintRunLock(read);
+            else await read();
           });
   app.post("/print-runs", (c) =>
     printWrite(c, async (personId) => {

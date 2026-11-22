@@ -3256,7 +3256,7 @@ export const en = {
         : refusal.code === "atlas_not_printing"
         ? "No run was prepared: that atlas does not print its own labels, so its samples go in the run for everyone Oregon prints for."
         : refusal.code === "awaiting_elevation"
-        ? `No run was prepared: ${n(refusal.samples)} ${refusal.samples === 1 ? "sample" : "samples"} waiting to print ${refusal.samples === 1 ? "has" : "have"} no elevation for ${refusal.samples === 1 ? "its" : "their"} present place, and it could not be read just now. ${refusal.samples === 1 ? "It waits" : "They wait"} for the nightly update. Try again after it has run.`
+        ? `No run was prepared: ${n(refusal.samples)} ${refusal.samples === 1 ? "sample" : "samples"} waiting to print ${refusal.samples === 1 ? "has" : "have"} no elevation for ${refusal.samples === 1 ? "its" : "their"} present place, and it could not be read just now. ${refusal.samples === 1 ? "It waits" : "They wait"} for the nightly update. Try again after it has run, and if this is still refused, ask staff to look at the ${refusal.samples === 1 ? "sample's place" : "samples' places"}.`
         : refusal.code === "determined"
         ? `This run cannot be canceled: ${n(refusal.specimens)} of its specimens ${refusal.specimens === 1 ? "has" : "have"} already been identified, and canceling would take their field numbers away. Nothing was changed.`
         : refusal.code === "no_location"

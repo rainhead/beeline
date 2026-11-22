@@ -46,6 +46,12 @@ export type PrintRunRefusal =
   | { code: "determined"; printRunId: number; specimens: number }
   | { code: "atlas_not_printing"; atlasId: number }
   /**
+   * Every sample the run would have taken lacks an elevation read at its
+   * present point, and it could not be read just now (beeline-trl9).
+   * `samples` is how many were held out.
+   */
+  | { code: "awaiting_elevation"; samples: number }
+  /**
    * Nothing the request named could be asked for. Of `specimens`, how many
    * have no number to print, are asked for already, or are in a run that
    * has not printed; one specimen is exactly one of the three.
@@ -59,6 +65,8 @@ export class PrintRunRefused extends Error {
         ? `no reprint requested: of ${refusal.specimens} specimen(s), ${refusal.unnumbered} have no number, ${refusal.asked} are asked for already, ${refusal.printing} are in an unprinted run`
         : refusal.code === "atlas_not_printing"
         ? `atlas ${refusal.atlasId} does not print its own labels; a run scoped to it is refused`
+        : refusal.code === "awaiting_elevation"
+        ? `${refusal.samples} sample(s) have no elevation read for their present point, and it could not be read just now; nothing else was pending`
         : refusal.code === "determined"
         ? `print run ${refusal.printRunId} has ${refusal.specimens} determined specimen(s); cancel refused`
         : refusal.code === "no_location"
@@ -84,6 +92,17 @@ export interface PrepareOptions {
    * cannot commit with the mark still behind it.
    */
   beforeCommit?: (conn: DuckDBConnection) => Promise<void>;
+  /**
+   * Reads these samples' elevations again from the tiles on the server's
+   * disk, and writes them (beeline-trl9). Called before the freeze, outside
+   * the print-run lock, with the samples of the run whose elevation is empty
+   * or was read at another point. The app supplies one that runs
+   * deriveElevations on the promotion connection behind the promotion lock,
+   * as the staff coordinates routes do. Absent, nothing is read again and
+   * those samples are held out of the run. A throw is logged and the samples
+   * stay held.
+   */
+  readElevations?: (sampleIds: number[]) => Promise<void>;
 }
 
 export interface PrepareResult {
@@ -93,6 +112,12 @@ export interface PrepareResult {
   reprints: number;
   samples: number;
   sheets: number;
+  /**
+   * Samples left out because their elevation was empty or read at another
+   * point, and could not be read for the present point just now (beeline-trl9).
+   * They wait for the nightly.
+   */
+  heldForElevation: number;
 }
 
 interface PendingRow {
@@ -196,8 +221,45 @@ function compareNatural(a: string, b: string): number {
  * caller's own (see the module note). Returns null, and writes nothing, when
  * the scope has nothing pending.
  */
-export function prepareRun(conn: DuckDBConnection, opts: PrepareOptions): Promise<PrepareResult | null> {
+export async function prepareRun(conn: DuckDBConnection, opts: PrepareOptions): Promise<PrepareResult | null> {
+  // Elevations are read again first, in a lock of their own and not inside
+  // the freeze (beeline-trl9, Peter, 2026-11-21). Reading tiles is file I/O
+  // and deriveElevations runs a transaction, which cannot nest in the
+  // freeze's; the app's reader holds the promotion lock, which elsewhere is
+  // taken before the print-run lock and so cannot be taken inside it; and the
+  // print-run lock is not held across the reads. The split is safe because
+  // the freeze asks the store again which samples still lack a current
+  // elevation and holds those, so a point that moves, or a promotion that
+  // empties an elevation, between the two is held rather than printed.
+  if (opts.readElevations !== undefined) {
+    const ids = await withPrintRunLock(() => samplesNeedingElevation(conn, opts.atlasId));
+    if (ids.length > 0) {
+      try {
+        await opts.readElevations(ids);
+      } catch (err) {
+        console.warn(`[print run] elevations not read again: ${(err as Error).message}`);
+      }
+    }
+  }
   return withPrintRunLock(() => prepareRunUnlocked(conn, opts));
+}
+
+/**
+ * The samples a run in this scope would take, new labels or reprints, whose
+ * elevation is empty or was read at another point and that deserve one
+ * (sample_elevation_pending, schema/170).
+ */
+async function samplesNeedingElevation(conn: DuckDBConnection, atlasId: number | null): Promise<number[]> {
+  const inScope =
+    atlasId === null
+      ? `SELECT sample_id FROM print_scope_sample UNION SELECT sample_id FROM print_scope_reprint`
+      : `SELECT p.sample_id FROM pending_print_sample p JOIN sample_atlas sa ON sa.sample_id = p.sample_id WHERE sa.atlas_id = ${Number(atlasId)}
+         UNION SELECT p.sample_id FROM printable_reprint p JOIN sample_atlas sa ON sa.sample_id = p.sample_id WHERE sa.atlas_id = ${Number(atlasId)}`;
+  const found = await rows<{ sample_id: number }>(
+    conn,
+    `SELECT DISTINCT e.sample_id FROM sample_elevation_pending e WHERE e.sample_id IN (${inScope})`,
+  );
+  return found.map((r) => Number(r.sample_id));
 }
 
 async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions): Promise<PrepareResult | null> {
@@ -289,12 +351,34 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
       await conn.run("ROLLBACK");
       return null;
     }
-    const pending = samplesInRun.filter((s) => s.pending);
+    // No label carries an elevation read at another point, or goes without
+    // one it should have (beeline-trl9). Every promotion empties the stale
+    // elevations it finds, so empty and stale both count: a sample in
+    // sample_elevation_pending is held out of the run until the nightly has
+    // read it. One whose elevation is stale only because its point is too
+    // vague for an elevation (the nightly never reads it) prints none.
+    const heldRows = await rows<{ sample_id: number }>(
+      conn,
+      `SELECT DISTINCT e.sample_id FROM sample_elevation_pending e JOIN freeze_samples fs ON fs.sample_id = e.sample_id`,
+    );
+    const vagueStale = await rows<{ sample_id: number }>(
+      conn,
+      `SELECT st.sample_id
+       FROM sample_elevation_stale st
+       JOIN sample_location loc ON loc.sample_id = st.sample_id
+       JOIN freeze_samples fs ON fs.sample_id = st.sample_id
+       WHERE loc.coordinate_uncertainty_m > (SELECT coordinate_uncertainty_m FROM elevation_derivation_limit)`,
+    );
+    const heldIds = new Set<number>(heldRows.map((r) => Number(r.sample_id)));
+    const vague = new Set<number>(vagueStale.map((r) => Number(r.sample_id)));
+    for (const sample of samplesInRun) if (vague.has(Number(sample.sample_id))) sample.elevation_m = null;
+    const isHeld = (sampleId: number) => heldIds.has(Number(sampleId));
+    const pending = samplesInRun.filter((s) => s.pending && !isHeld(s.sample_id));
     const sampleById = new Map(samplesInRun.map((s) => [Number(s.sample_id), s]));
     // Each reprint with its number and the last label it had, if Beeline
     // printed one, so the proofer is told where the reprint will read
     // differently. An imported specimen has no label to compare against.
-    const reprintRows = await rows<{
+    const allReprintRows = await rows<{
       specimen_id: number;
       sample_id: number;
       specimen_number: number;
@@ -318,6 +402,7 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
          WHERE r.canceled_at IS NULL
        ) last ON last.specimen_id = fr.specimen_id AND last.rn = 1`,
     );
+    const reprintRows = allReprintRows.filter((r) => !isHeld(r.sample_id));
     // The specimen rows these samples already have: individuated ones keep
     // their place in 1..N and are skipped; the rest were left behind by a
     // canceled run and are re-adopted — same row, a fresh number — rather
@@ -395,6 +480,11 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
       reprint: { field_number: string; differs: string[] } | null;
     };
     const toMint: Pending[] = [];
+    // Nothing is left to print, but only because every sample was held: say
+    // so, rather than that nothing was waiting.
+    if (heldIds.size > 0 && pending.length === 0 && reprintRows.length === 0) {
+      throw new PrintRunRefused({ code: "awaiting_elevation", samples: heldIds.size });
+    }
     for (const sample of pending) {
       const have = taken.get(Number(sample.sample_id)) ?? new Set<number>();
       for (let n = 1; n <= Number(sample.specimen_count); n++) {
@@ -564,7 +654,14 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
     await conn.run(`DROP TABLE IF EXISTS freeze_samples`);
     await opts.beforeCommit?.(conn);
     await conn.run("COMMIT");
-    return { printRunId, labels: laidOut.length, reprints: reprints.length, samples: samples.size, sheets };
+    return {
+      printRunId,
+      labels: laidOut.length,
+      reprints: reprints.length,
+      samples: samples.size,
+      sheets,
+      heldForElevation: heldIds.size,
+    };
   } catch (err) {
     await conn.run("ROLLBACK");
     throw err;

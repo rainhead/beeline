@@ -3205,6 +3205,17 @@ export const en = {
         } county and state from ${samples === 1 ? "its" : "their"} coordinates, and ${
           samples === 1 ? "is" : "are"
         } not counted as waiting for labels until then.`,
+      /**
+       * Said above the list while released samples have an elevation read at
+       * a place they have since moved from (beeline-trl9). Preparing a run
+       * reads it again where the server has the elevation map.
+       */
+      staleElevation: (samples: number) =>
+        `${n(samples)} ${samples === 1 ? "sample has" : "samples have"} no elevation for ${
+          samples === 1 ? "its" : "their"
+        } present place. Preparing a run reads ${samples === 1 ? "it" : "them"} where it can; ${
+          samples === 1 ? "a sample" : "samples"
+        } it cannot read ${samples === 1 ? "is" : "are"} left out of the run until the nightly update has.`,
       /** The POST found nothing pending, so no run was made. */
       nothingToPrepare: "Nothing was waiting to print in that scope, so no run was prepared.",
     },
@@ -3229,6 +3240,7 @@ export const en = {
         | { code: "no_primary_collector"; sampleId: number }
         | { code: "determined"; printRunId: number; specimens: number }
         | { code: "atlas_not_printing"; atlasId: number }
+        | { code: "awaiting_elevation"; samples: number }
         | { code: "reprint_refused"; specimens: number; unnumbered: number; asked: number; printing: number },
     ) =>
       refusal.code === "reprint_refused"
@@ -3243,6 +3255,8 @@ export const en = {
           : `No label was asked for: of ${n(refusal.specimens)} specimens, ${n(refusal.asked)} ${refusal.asked === 1 ? "is" : "are"} already waiting, ${n(refusal.printing)} ${refusal.printing === 1 ? "is" : "are"} in a run that has not printed, and ${n(refusal.unnumbered)} ${refusal.unnumbered === 1 ? "has" : "have"} no field number.`
         : refusal.code === "atlas_not_printing"
         ? "No run was prepared: that atlas does not print its own labels, so its samples go in the run for everyone Oregon prints for."
+        : refusal.code === "awaiting_elevation"
+        ? `No run was prepared: ${n(refusal.samples)} ${refusal.samples === 1 ? "sample" : "samples"} waiting to print ${refusal.samples === 1 ? "has" : "have"} no elevation for ${refusal.samples === 1 ? "its" : "their"} present place, and it could not be read just now. ${refusal.samples === 1 ? "It waits" : "They wait"} for the nightly update. Try again after it has run, and if this is still refused, ask staff to look at the ${refusal.samples === 1 ? "sample's place" : "samples' places"}.`
         : refusal.code === "determined"
         ? `This run cannot be canceled: ${n(refusal.specimens)} of its specimens ${refusal.specimens === 1 ? "has" : "have"} already been identified, and canceling would take their field numbers away. Nothing was changed.`
         : refusal.code === "no_location"
@@ -3258,6 +3272,11 @@ export const en = {
       preparedBy: (name: string, when: string) => `Prepared by ${name}, ${when}.`,
       scopeProgram: "Everyone Oregon prints for.",
       scopeAtlas: (name: string) => `${name} only.`,
+      /** Said on a run's page when its Prepare left samples out (beeline-trl9). */
+      heldForElevation: (samples: number) =>
+        `${n(samples)} ${samples === 1 ? "sample was" : "samples were"} left out of this run: its elevation could not be read for ${
+          samples === 1 ? "its" : "their"
+        } present place just now. ${samples === 1 ? "It waits" : "They wait"} for the nightly update.`,
       counts: (labels: number, samples: number, collectors: number, sheets: number, reprints = 0) =>
         `${n(labels)} ${labels === 1 ? "label" : "labels"} for ${n(samples)} ${samples === 1 ? "sample" : "samples"} from ${n(collectors)} ${collectors === 1 ? "collector" : "collectors"}, on ${n(sheets)} ${sheets === 1 ? "sheet" : "sheets"}.` +
         (reprints === 0

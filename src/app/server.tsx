@@ -164,6 +164,8 @@ import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
 import { beesByYear, collectedOf, identificationBatches, taxaFound } from "./your-bees.js";
 import { TaxaFoundPage, YourBeesPage } from "./views/your-bees.js";
+import { withPromotionLock } from "./promotion-lock.js";
+import { deriveElevations } from "../derive-elevation.js";
 import { checkObserver, deriveForObserver, lastChecked, nextCheckAt, SyncJobRunning } from "./inat-check.js";
 import { forgetPipelineJwt } from "../inat-jwt.js";
 import { recordPersonChanges } from "../person-change.js";
@@ -3236,7 +3238,7 @@ export function createApp({
     const run = await loadRun(db, id);
     if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
     const labels = await runLabels(db, id);
-    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_abbreviation), <PrintRun m={m} run={run} labels={labels} canDownloadAddresses={config.idealLogic != null} />));
+    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_abbreviation), <PrintRun m={m} run={run} labels={labels} heldForElevation={Math.max(0, Math.trunc(Number(c.req.query("held"))) || 0)} canDownloadAddresses={config.idealLogic != null} />));
   };
 
   app.get("/print-runs/:id", async (c) => {
@@ -3401,6 +3403,23 @@ export function createApp({
     }
   };
 
+  // Preparing a run reads a stale or empty elevation again from the tiles,
+  // as the staff coordinates routes do (deriveMovedPoint): on the promotion
+  // connection, behind the promotion lock, and not while the nightly or the
+  // weekly sweep runs, asked inside the lock (beeline-trl9). Only on a
+  // promotion connection of the app's own (main.ts always gives one): the read
+  // holds a transaction open across tile reads, and on a connection other
+  // writers share their writes would land inside it. Without one nothing is
+  // read, and a stale or empty elevation holds its sample.
+  const printDemDir = derivePaths?.demDir;
+  const readElevationsForPrint =
+    mintConn === undefined || printDemDir === undefined
+      ? undefined
+      : (sampleIds: number[]) =>
+          withPromotionLock(async () => {
+            if (syncJobRunning()) return;
+            await deriveElevations(mintConn, printDemDir, sampleIds);
+          });
   app.post("/print-runs", (c) =>
     printWrite(c, async (personId) => {
       const form = await c.req.formData();
@@ -3414,11 +3433,14 @@ export function createApp({
       const result = await prepareRun(printWriter!, {
         atlasId,
         personId,
+        readElevations: readElevationsForPrint,
         beforeCommit: async (conn) => {
           await raiseRegistryMark(conn, await currentCatalog(conn), markPath);
         },
       });
-      return result === null ? "/print-runs?prepared=nothing" : `/print-runs/${result.printRunId}`;
+      if (result === null) return "/print-runs?prepared=nothing";
+      // Samples left out for an elevation read at another point are named on the run's page (beeline-trl9).
+      return `/print-runs/${result.printRunId}${result.heldForElevation > 0 ? `?held=${result.heldForElevation}` : ""}`;
     }),
   );
   app.post("/print-runs/:id/approve", (c) =>

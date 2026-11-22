@@ -86,6 +86,14 @@ export interface ScopeCounts {
    * count is where that shows.
    */
   awaiting_place: number;
+  /**
+   * Samples a run would take, new labels or reprints, whose elevation is
+   * empty or was read at another point, and that deserve one
+   * (sample_elevation_pending, schema/170; beeline-trl9). Preparing a run
+   * reads these again and leaves out those it cannot read, so this is the
+   * most a run can leave out for it.
+   */
+  stale_elevation: number;
 }
 
 export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
@@ -122,8 +130,23 @@ export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
     JOIN sample s ON s.entity_id = w.sample_id
     WHERE s.specimen_count > coalesce((SELECT count(*) FROM individuated_specimen i
                                        WHERE i.sample_id = s.entity_id AND i.specimen_number <= s.specimen_count), 0)`.execute(db);
+  // The samples awaiting an elevation are few and usually none, since the
+  // nightly reads them (5 ms on the store of 2026-11-21), while the two views of
+  // what a run would take cost about 250 ms each there. So they are read only
+  // when there is something to look for.
+  const anyPending = await sql<{ n: number }>`
+    SELECT CAST(count(*) AS INTEGER) AS n FROM sample_elevation_pending`.execute(db);
+  const staleElevation =
+    Number(anyPending.rows[0]?.n ?? 0) === 0
+      ? { rows: [{ n: 0 }] }
+      : await sql<{ n: number }>`
+          SELECT CAST(count(*) AS INTEGER) AS n
+          FROM sample_elevation_pending e
+          WHERE e.sample_id IN (SELECT sample_id FROM pending_print_sample)
+             OR e.sample_id IN (SELECT sample_id FROM printable_reprint)`.execute(db);
   return {
     awaiting_place: Number(awaiting.rows[0]?.n ?? 0),
+    stale_elevation: Number(staleElevation.rows[0]?.n ?? 0),
     program: {
       samples: Number(program.samples),
       labels: Number(program.labels ?? 0),
@@ -190,9 +213,14 @@ async function loadOutOfDate(db: Kysely<Database>, printRunId: number): Promise<
              CAST(count(DISTINCT o.specimen_id) AS INTEGER) AS labels
       FROM printed_label_out_of_date o
       JOIN sample s ON s.entity_id = o.sample_id
+      LEFT JOIN sample_location loc ON loc.sample_id = o.sample_id
       JOIN sample_primary_collector pc ON pc.sample_id = o.sample_id
       JOIN person p ON p.entity_id = pc.person_id
       WHERE o.print_run_id = ${printRunId}
+        -- A label printed with no elevation because the point is too vague for
+        -- one (elevation_derivation_limit) is not out of date for having none.
+        AND NOT (o.field = 'elevation' AND o.on_label IS NULL
+                 AND coalesce(loc.coordinate_uncertainty_m > (SELECT coordinate_uncertainty_m FROM elevation_derivation_limit), false))
       GROUP BY o.sample_id, s.sample_number, p.display_name, o.field, o.on_label, o.now
       ORDER BY p.display_name, s.sample_number, o.sample_id, o.field`.execute(db)
   ).rows;

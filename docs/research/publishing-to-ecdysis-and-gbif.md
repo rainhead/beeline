@@ -106,7 +106,8 @@ Fields Beeline owns, which a harvest may overwrite in Ecdysis:
 - the identifiers of Part 2 and Part 3;
 - the collecting data: date, collectors, locality, coordinates, elevation, method;
 - the host plant, as `associatedTaxa` and as an association to the iNaturalist
-  observation (beeline-8dx9.3). The relationship is "visits flowers of", which GloBI
+  observation (beeline-8dx9.3; on 2026-11-22 Peter decided the upload to Ecdysis sends the
+  association only, not `associatedTaxa`, as the architecture document explains). The relationship is "visits flowers of", which GloBI
   reads as a flower visit; "host", which Joel writes, GloBI reads as a parasite's host;
 - the disposition and the occurrence remarks;
 - the fixed values Joel writes (beeline-8dx9.1): the country and state spelled out,
@@ -314,8 +315,8 @@ results file).
    server stores a term it is sent by hand, and exports it as given, but a person
    using the page cannot choose it unless Ecdysis's operators add it to the list.
    The page can match a specimen by occurrenceID as well as by catalog number.
-6. The occurrenceID, the end date in `eventDate2`, and `associatedTaxa` behave as in
-   the archive import.
+6. The occurrenceID and the end date in `eventDate2` behave as in the archive import.
+   (`associatedTaxa` was listed here too; since 2026-11-22 the upload no longer sends it.)
 
 So the files Beeline writes for a person to upload are:
 
@@ -352,7 +353,7 @@ where his are wrong or where a test showed a better form:
 |---|---|---|
 | Rows | every row of old Beeline's export | only specimens Ecdysis has not reported, and only when last night's read of Ecdysis succeeded |
 | `fieldNumber` | sample dot specimen, as a number, so 1.10 reads 1.1 (2,257 rows share a value with another specimen) | the sample's number; `recordNumber` holds sample dot specimen as text |
-| `associatedTaxa` | `host`, species only; 5,942 genus-only hosts dropped | `visits flowers of`, with the host at whatever rank Beeline holds |
+| `associatedTaxa` | `host`, species only; 5,942 genus-only hosts dropped | none since 2026-11-22: the host goes only in the associations file (the program archives still write `visits flowers of`) |
 | Association's `objectID` | the observation's UUID, which Beeline does not store | left out: the export then gives the observation's URL as the related resource, which GloBI recognises |
 | Association's subject | catalog number and an occurrenceID pasted in from a download | catalog number alone, so one round of uploads, with no download between |
 | Relationship | `hasHost`, chosen on the page | the same, until Ecdysis offers "visits flowers of" |

@@ -438,7 +438,6 @@ describe("the upload archive", () => {
     expect(cell("individualCount")).toBe("1");
     expect(cell("samplingProtocol")).toBe("net");
     expect(cell("recordedBy")).toBe("Casey Collector");
-    expect(cell("associatedTaxa")).toBe('"visits flowers of":"Salvia officinalis"');
   });
 
   it("writes the first day in eventDate and the last in eventDate2, for a trap sample", async () => {
@@ -449,7 +448,6 @@ describe("the upload archive", () => {
     });
     const a = await archiveOf(f, [s.id]);
     expect([a.occurrence.cell(0, "eventDate"), a.occurrence.cell(0, "eventDate2")]).toEqual([`${CURRENT_SEASON}-06-01`, `${CURRENT_SEASON}-06-05`]);
-    expect(a.occurrence.cell(0, "associatedTaxa")).toBe('"near":"Ceanothus"');
   });
 
   it("names the record only where the determination of record is an expert's, and writes the caste where Symbiota keeps it", async () => {
@@ -562,12 +560,17 @@ describe("the associations file", () => {
       "BCBA_2500010,https://www.inaturalist.org/observations/669,Aster",
       "BCBA_2500009,https://www.inaturalist.org/observations/668,Salvia",
     ]);
-    // The archive says "near" for the trap whatever its protocol says, and "visits flowers of" for the net.
-    const a = await archiveOf(f, [unnamed.id, netWithTheWord.id]);
-    const col = (row: number) => a.occurrence.cell(row, "associatedTaxa");
-    const byId = (id: number) => a.occurrence.body.findIndex((r) => r[0] === String(id));
-    expect(col(byId(unnamed.id))).toBe('"near":"Rosa"');
-    expect(col(byId(netWithTheWord.id))).toBe('"visits flowers of":"Aster"');
+  });
+
+  it("leaves the host out of the specimens file altogether: no associatedTaxa column in the occurrence file or meta.xml, for a flower visit and a trap alike", async () => {
+    const f = await fixture();
+    const net = await f.specimen({ field: "2500013", sample: { host_name_as_observed: "'Salvia officinalis'" } });
+    const trap = await f.specimen({ field: "2500014", sample: { kind: "'trap'", protocol: "'blue vane trap'", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } });
+    const a = await archiveOf(f, [net.id, trap.id]);
+    expect(a.occurrence.header).not.toContain("associatedTaxa");
+    expect(a.files["meta.xml"]).not.toContain("associatedTaxa");
+    expect(a.files["occurrence.txt"]).not.toContain("Salvia");
+    expect(a.files["occurrence.txt"]).not.toContain("Ceanothus");
   });
 
   it("names the subject by the catalog number the specimen was written under, though the label number was corrected after", async () => {

@@ -19,7 +19,6 @@ import {
 } from "./dwc-archive.js";
 import {
   ALL,
-  associatedTaxaFor,
   csvExactLine,
   dateIdentified,
   EMPTY_QUERY,
@@ -779,7 +778,6 @@ const OCCURRENCE_COLUMNS = [
   ["lifeStage", `${DWC}lifeStage`],
   ["preparations", `${DWC}preparations`],
   ["individualCount", `${DWC}individualCount`],
-  ["associatedTaxa", `${DWC}associatedTaxa`],
   ["disposition", `${DWC}disposition`],
   ["occurrenceRemarks", `${DWC}occurrenceRemarks`],
   // Only where the determination of record is an expert's.
@@ -848,8 +846,6 @@ export function uploadOccurrenceRow(r: SpecimenRow, page: ArchivePage, collectio
     lifeStage: fixed.lifeStage,
     preparations: fixed.preparations,
     individualCount: fixed.individualCount,
-    // A trap does not say which flower its bees visited, so the plant near it is "near" (decided by the sample's kind, not the words of its protocol).
-    associatedTaxa: associatedTaxaFor(r.host_name, r.sample_kind === "trap" ? "near" : "visits flowers of"),
     disposition: cell("disposition"),
     occurrenceRemarks: cell("occurrenceRemarks"),
     scientificName: expert ? r.scientific_name : null,
@@ -1052,12 +1048,14 @@ const ASSOCIATION_PAGE = 5_000;
  * uploaded, and each named by the catalog number it was written under, not one
  * made again from the specimen's label number as it is now. One row for each
  * whose sample has an iNaturalist observation that still exists. The host is
- * named as the observation named it, at whatever rank Beeline holds, as
- * `associatedTaxa` does, and left empty where there is none. A trap sample (the
- * sample's `kind`, not the words of its protocol) has no row at all: Symbiota
- * applies one relationship, `hasHost`, to the whole file, and the plant near a
- * trap is not a host (the archive's `associatedTaxa` says "near" for it, and not
- * "visits flowers of"). UTF-8 with no byte order mark and no formula guard. The
+ * named as the observation named it, at whatever rank Beeline holds, and left
+ * empty where there is none. This file is the only place the host reaches
+ * Ecdysis: the specimens file carries no `associatedTaxa` column, because
+ * loading this file again can correct an association but never the text on a
+ * specimen record, so the two would disagree after a plant is renamed (Peter
+ * decided, 2026-11-22). A trap sample (the sample's `kind`, not the words of its
+ * protocol) has no row at all: Symbiota applies one relationship, `hasHost`, to
+ * the whole file, and the plant near a trap is not a host. UTF-8 with no byte order mark and no formula guard. The
  * program's CSV downloads have both for the sake of spreadsheets; this file is
  * read by Symbiota, which loaded it the same with and without a mark (tried
  * 2026-11-20), so the headers are left as exact bytes, and a guard would write

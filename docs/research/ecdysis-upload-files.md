@@ -208,7 +208,7 @@ Its row exists, with the observation's `objectID` and `resourceUrl`, and `verbat
 - 5,942 have a host named only to genus (the host's rank is genus on 5,701, and complex, section, subgenus or subsection on the rest). This is the case bead 8dx9.5 told Joel about. The sheet says the genus should be used; it is not.
 - 2,249 have no genus at all: the host is named only to tribe, subtribe, family, subfamily, order, class or kingdom, or has no rank (1,434 with no rank recorded in the input).
 
-In the DwC-A archive Beeline sends the host as it holds it, which can be a genus or a higher name, as `"visits flowers of":"<genus or higher name>"` in `associatedTaxa`, so doing what Joel's sheet says costs nothing there.
+The program archives write the host as Beeline holds it, which can be a genus or a higher name, as `"visits flowers of":"<genus or higher name>"` in `associatedTaxa`. Since 2026-11-22 the upload to Ecdysis writes no `associatedTaxa` at all (Peter decided; see `docs/architecture/the-upload-to-ecdysis.md`), so what Joel's sheet says about it no longer applies to that file.
 
 ### Which identifier links it to the specimen
 

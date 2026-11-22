@@ -158,7 +158,7 @@ export interface FetchEcdysisOptions {
    * Download the archive whether or not the probe says Ecdysis changed, for a collection read whole (`collectionId`):
    * the probe counts records and records modified since the last download, so a second change to a record already
    * modified leaves both numbers as they were. The upload files rest on a read that downloaded, so the manual read
-   * on the Exports page forces one. The nightly run does not. A dataset (Washington's) is read as before.
+   * on a program's Data tab forces one. The nightly run does not. A dataset (Washington's) is read as before.
    */
   force?: boolean;
   /** Run around each phase, as the job framework's ctx.step does; a plain call otherwise. */

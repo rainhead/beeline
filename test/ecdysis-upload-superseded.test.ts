@@ -28,9 +28,9 @@ const unusedInat: InatClient = {
   exchangeCode: () => Promise.reject(new Error("not under test")),
   identity: () => Promise.reject(new Error("not under test")),
 };
-const e = en.exports.ecdysis;
+const e = en.programData.ecdysis;
 const post = (app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }) =>
-  app.request(`/exports/ecdysis/BC-${CURRENT_SEASON}-upload.zip`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "" });
+  app.request(`/programs/BC/data/ecdysis/${CURRENT_SEASON}-upload.zip`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "" });
 
 describe("a read that finishes while the archive is being written", () => {
   it("keeps nothing: no completion is recorded and the answer says to start again; the unfinished start blocks until a read", async () => {

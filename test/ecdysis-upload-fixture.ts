@@ -9,7 +9,7 @@ import { CURRENT_SEASON, SETTLED_SEASON, createMemoryDb, insertCleanSample, rows
 
 /**
  * A store with invented people and specimens for the upload to Ecdysis
- * (beeline-8dx9.12), shared by the tests of the files and of the Exports page.
+ * (beeline-8dx9.12), shared by the tests of the files and of the Data tab.
  */
 
 export const WABA = ECDYSIS_COLLECTIONS.find((c) => c.program === "WaBA")!;

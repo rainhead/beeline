@@ -1,6 +1,6 @@
 import type { Messages } from "../messages/index.js";
 import { PROGRAM_PHOTOS } from "../program-photos.js";
-import { programHref, type ProgramDetail, type ProgramLead, type ProgramSummary } from "../programs.js";
+import { programDataHref, programHref, type ProgramDetail, type ProgramLead, type ProgramSummary } from "../programs.js";
 import { EMPTY_ROSTER_QUERY, rosterHref } from "../roster.js";
 import { ATLAS_IDENTITY } from "../theme/atlas.js";
 import {
@@ -14,6 +14,7 @@ import {
   Meta,
   PageHeader,
   PhotoCarousel,
+  Tabs,
   TextField,
 } from "./components/index.js";
 
@@ -172,7 +173,24 @@ function Seasons({ m, program, admin }: { m: Messages; program: ProgramDetail; a
   );
 }
 
-export function ProgramPage({ m, program, admin }: { m: Messages; program: ProgramDetail; admin: boolean }) {
+/**
+ * The program's page and its Data tab, as two links in a row. Drawn only for
+ * a person who may open the Data tab (`programDataAccess`); everybody else
+ * sees the page with no tabs, and is not told the tab exists.
+ */
+export function ProgramTabs({ m, code, current }: { m: Messages; code: string; current: "about" | "data" }) {
+  return (
+    <Tabs
+      label={m.programData.tabsLabel}
+      tabs={[
+        { href: programHref(code), label: m.programData.aboutTab, current: current === "about" },
+        { href: programDataHref(code), label: m.programData.tab, current: current === "data" },
+      ]}
+    />
+  );
+}
+
+export function ProgramPage({ m, program, admin, dataTab }: { m: Messages; program: ProgramDetail; admin: boolean; dataTab: boolean }) {
   const p = m.programs;
   const season = program.currentSeason.season;
   return (
@@ -183,6 +201,7 @@ export function ProgramPage({ m, program, admin }: { m: Messages; program: Progr
         meta={p.meta(program.abbreviation, program.atlasCode !== null)}
         mark={program.atlasCode === null ? undefined : <AtlasMark code={program.atlasCode} name={program.name} href={null} />}
       />
+      {dataTab && <ProgramTabs m={m} code={program.code} current="about" />}
       <PhotoCarousel m={m} photos={PROGRAM_PHOTOS[program.code] ?? []} />
       <h2>{p.summary}</h2>
       <DetailList

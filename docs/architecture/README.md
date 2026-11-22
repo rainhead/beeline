@@ -12,7 +12,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [One record](one-record.md) — `src/app/record.ts`, `src/app/views/record.tsx`
 - [Printing](printing.md) — `schema/035`, `schema/155`, `src/registry-mark.ts`
 - [Determinations from Ecdysis](determinations-from-ecdysis.md) — `src/load-ecdysis.ts`, `src/adopt-ecdysis.ts`
-- [The upload to Ecdysis](the-upload-to-ecdysis.md) — `src/app/ecdysis-upload.ts`, `src/app/dwc-archive.ts`, `src/app/views/exports.tsx`
+- [The upload to Ecdysis](the-upload-to-ecdysis.md) — `src/app/ecdysis-upload.ts`, `src/app/dwc-archive.ts`, `src/app/views/program-data.tsx`, `src/app/views/exports.tsx`
 - [Volunteers identifying their own specimens](volunteers-identifying-their-own-specimens.md) — `src/app/determine.ts`, `src/app/views/determine.tsx`
 - [Determinations from worksheets](determinations-from-worksheets.md) — `src/fetch-worksheets.ts`, `src/load-worksheets.ts`
 - [Files people send, and expert determination sheets](files-people-send-and-expert-sheets.md) — `src/received-files.ts`, `src/load-determination-sheet.ts`
@@ -28,7 +28,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [Registrations, from Ideal Logic](ideal-logic.md) — `src/ideal-logic.ts`, `src/registrations.ts`, `src/link-register-emails.ts`, `schema/014`, `schema/104`
 - [Membership](membership.md)
 - [Events](events.md) — `schema/075_events.sql`, `schema/176_view_event_kind_unlisted.sql`, `src/event.ts`
-- [Programs](programs.md) — `src/app/programs.ts`, `src/app/views/programs.tsx`
+- [Programs](programs.md) — `src/app/programs.ts`, `src/app/views/programs.tsx`, `src/app/views/program-data.tsx`
 - [ORCID](orcid.md) — `schema/103`
 - [Addressing a person, and admin](addressing-a-person-and-admin.md)
 - [Editing and corrections](editing-and-corrections.md) — `src/corrections.ts`, `ingest/legacy-corrections.csv`, `src/app/sample-corrections.ts`, `src/app/sample-collectors.ts`, `src/collector-match.ts`

@@ -2820,13 +2820,32 @@ export const en = {
     size: (megabytes: string) => `${megabytes} MB`,
     download: "Download",
     missing: "Not written yet. It appears after the next nightly run, or after running the legacy-export job on Jobs.",
-    archives: "Darwin Core archives, by program and year",
+    programsHeading: "Files for each program",
+    programsIntro:
+      "A program's archives and the files for uploading to Ecdysis are on its Data tab, which its leads and admins can open.",
+    programData: (program: string) => `${program}: Data`,
+  },
+  /**
+   * A program's Data tab (/programs/:code/data, beeline-q8di): its licence and
+   * privacy policy, the files made for uploading to Ecdysis, and the nightly
+   * Darwin Core archives. For the program's leads and admins.
+   */
+  programData: {
+    tab: "Data",
+    aboutTab: "About",
+    tabsLabel: "This program",
+    title: (program: string) => `${program}: Data`,
+    intro: "Files that leave Beeline for this program. They hold collectors' names, and the true coordinates of hidden locations.",
+    written: (when: string) => `Written ${when}`,
+    licencesHeading: "Licence and privacy policy",
+    licencesNone: "No year has specimens yet, so no licence or privacy policy is needed yet.",
+    archives: "Darwin Core archives",
     archivesIntro:
-      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the specimen columns, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got. Each program also has an archive of every year together, which states a licence only when all its years share one, and a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
-    archivesCaution:
-      "These program archives are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including those of rare host plants, which every export carries until an atlas says otherwise. The files for Ecdysis are a different thing, written differently, and are further down this page.",
+      "This program's specimens collected in a calendar year, as a Darwin Core archive: the specimen columns, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, the program has to say under which licence its records leave it and have a privacy policy for that year; the table of licences and privacy policies above says how far each has got. There is also an archive of every year together, which states a licence only when all its years share one, and a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
+    archivesCaution: (hasEcdysis: boolean) =>
+      `These archives are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until the program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including those of rare host plants, which every export carries until an atlas says otherwise.${hasEcdysis ? " The files for Ecdysis are a different thing, written differently, and are above." : ""}`,
     archivesMissing:
-      "Not written yet. They appear after the next nightly run, or after running the dwc-archives job on Jobs.",
+      "Not written yet. They appear after the next nightly run.",
     archiveNone: (code: string) =>
       code === "BLM"
         ? "No archives: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell."
@@ -2864,11 +2883,11 @@ export const en = {
     ecdysis: {
       heading: "Upload to Ecdysis",
       intro:
-        "Two files for each collection: the specimens Ecdysis does not have yet, and the links from those specimens to their iNaturalist observations and host plants. Follow the steps in order.",
+        "Two files for this program's collection: the specimens Ecdysis does not have yet, and the links from those specimens to their iNaturalist observations and host plants. Follow the steps in order.",
       instructionsHeading: "Steps",
       readNowButton: "Check Ecdysis now",
       steps: {
-        readNow: "Check what Ecdysis has. Press the button, wait a few minutes (Jobs shows it running), then reload this page.",
+        readNow: "Check what Ecdysis has. Press the button, wait a few minutes, then reload this page.",
         download:
           "Download the specimens file and upload it today, once. Then delete it. Uploading an old file can wipe out identifications made in Ecdysis since.",
         collection: "In Ecdysis, open the collection named under the heading below.",
@@ -2881,8 +2900,15 @@ export const en = {
         readAgain: "Check Ecdysis again (step 1). Until you do, the counts here stay the same and no new specimens file is offered.",
         localities: "Good to know: localities go up as the labels have them, and trap samples have no associations, because a plant near a trap is not a host.",
       },
-      collection: (program: string, scope: string) => `${program} (Ecdysis ${scope})`,
-      uploadInto: (collectionId: number, prefix: string) => `Ecdysis collection ${collectionId}. Catalog numbers start with ${prefix}.`,
+      collection: (scope: string) => `Ecdysis ${scope}`,
+      /** Under the button for step 1: whether Ecdysis is being checked now, or how the last check ended. */
+      check: {
+        running: "Checking Ecdysis now. Reload this page in a few minutes.",
+        finished: (when: string) => `The last check finished ${when}.`,
+        failed: (when: string) => `The last check did not work (${when}). Try again. If it fails again, tell whoever runs Beeline.`,
+        busy: "Beeline is busy with something else right now. Try again in a few minutes.",
+      },
+      uploadInto: (prefix: string) => `Catalog numbers start with ${prefix}.`,
       readOn: (when: string) => `Ecdysis last checked ${when}.`,
       yearHeading: (year: number, specimens: number) => `${year}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"} ready to upload`,
       leftOut: "Not included:",
@@ -2899,7 +2925,7 @@ export const en = {
       downloadArchive: "Download specimens file",
       downloadAssociations: "Download associations file",
       archiveDownload: (program: string, year: number) => `Download the ${program} specimens file for ${year}`,
-      associationsDownload: (program: string, year: number) => `Download the associations file for ${program} ${year}`,
+      associationsDownload: (year: number) => `Download the associations file for ${year}`,
       notOfferedHeading: "Other years",
       /** In three parts so that the view can make the count the link to those specimens in the Specimens listing. */
       notOfferedYear: {
@@ -2933,8 +2959,8 @@ export const en = {
           ? `${by ?? "Someone"} made the ${year} specimens file (${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}) on ${when}. After uploading it, check Ecdysis again (step 1) to get another. If you did not get the file, check Ecdysis again and download a new one.`
           : `${by ?? "Someone"} asked for the ${year} specimens file on ${when}, but it was not made. Check Ecdysis again (step 1), then ask for it again.`,
       beingWritten: "A specimens file for this collection is being made right now. Reload this page in a moment. If this stays, check Ecdysis again.",
-      postOnly: "Use the Download button on the Exports page to get this file.",
-      superseded: "Ecdysis was checked again while the file was being made, so the file was thrown away. Reload the Exports page and try again. If it says a file was already asked for, check Ecdysis again.",
+      postOnly: "Use the Download button on the Data tab to get this file.",
+      superseded: "Ecdysis was checked again while the file was being made, so the file was thrown away. Reload this page and try again. If it says a file was already asked for, check Ecdysis again.",
       tooLarge: "This file would be too large (over 50 MB), so it was not made. Tell whoever runs Beeline, and check Ecdysis again before trying again.",
       choiceNeeded: "Every specimen left for this year has a hidden location. Tick a box to include them; otherwise there is nothing to upload.",
       associationsUnfinished: "That specimens file was not made, so it has no associations file.",
@@ -2951,7 +2977,7 @@ export const en = {
       },
       noSpecimensForFile: "There are no specimens to upload for this collection and year.",
       yearNotOffered: "This year cannot be uploaded from here yet.",
-      badQuery: (names: string) => `That request has something extra in it (${names}). Use the Download button on the Exports page.`,
+      badQuery: (names: string) => `That request has something extra in it (${names}). Use the Download button on the Data tab.`,
     },
   },
   /**
@@ -3069,9 +3095,9 @@ export const en = {
       "legacy-volunteer-import":
         "Reads the identifications volunteers entered in the old Beeline at old.melittologist.org and adds each new or changed one here, as the collector's. Names Beeline lacks, specimens whose old records disagree, and identifications removed there are listed in the run, not added.",
       "dwc-archives":
-        "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
+        "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. A program's leads and admins download them from its Data tab.",
       "ecdysis-read-now":
-        "Checks Ecdysis and always downloads a fresh copy, which Exports needs before it makes a specimens file for upload. Started from Exports, never by the clock.",
+        "Checks Ecdysis and always downloads a fresh copy, which a program's Data tab needs before it makes a specimens file for upload. Started from a Data tab by a lead or an admin, never by the clock.",
       "ecdysis-fetch":
         "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from Ecdysis's own list of names where it accepts them, and the rest are listed in the run.",
       "ideal-logic-registrants":
@@ -3553,7 +3579,7 @@ export const en = {
     },
     leadership: "Program leads",
     leadershipHint:
-      "The programs this person leads: their work is this person's to take up, and their questions this person's to answer. A program can have several leads. Leading a program grants no access — that is admin rights, below.",
+      "The programs this person leads: their work is this person's to take up, and their questions this person's to answer. A program can have several leads. Leading a program lets this person open its Data tab, and nothing else. Other access is admin rights, below.",
     leadsNothing: "Leads no program",
     removeLead: (program: string) => `Stop leading ${program}`,
     addLead: "Add a program they lead",

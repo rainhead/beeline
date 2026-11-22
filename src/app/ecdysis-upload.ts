@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
+import { programDataHref } from "./programs.js";
 import { cachedArchivePath, ECDYSIS_COLLECTIONS, readMarkerOf, type EcdysisCollection, type ReadMarker } from "../fetch-ecdysis.js";
 import {
   archiveDescriptor,
@@ -682,7 +683,7 @@ export async function downloadViewsOf(
 
 // --- The state of a collection -----------------------------------------------
 
-/** What the Exports page and the files' routes ask: the plan for a collection, or why there is none. */
+/** What the Data tab and the files' routes ask: the plan for a collection, or why there is none. */
 export type UploadState =
   | {
       ok: true;
@@ -1098,10 +1099,43 @@ export async function associationsCsv(db: Kysely<Database>, recorded: readonly W
 export const uploadFileName = (collection: EcdysisCollection, year: number, written: Date, kind: "archive" | "associations", specimens: number): string =>
   exportFilename(`ecdysis-${kind === "archive" ? "upload" : "associations"}-${collection.program}-${year}-${specimens}-specimens`, written, kind === "archive" ? "zip" : "csv");
 
-/** Where an archive is asked for: `/exports/ecdysis/BC-2026-upload.zip`; the download is given its own, stamped, name in the response. */
-export const archiveHref = (collection: EcdysisCollection, year: number): string => `/exports/ecdysis/${collection.program}-${year}-upload.zip`;
+/** Where an archive is asked for: `/programs/BC/data/ecdysis/2026-upload.zip`; the download is given its own, stamped, name in the response. */
+export const archiveHref = (collection: EcdysisCollection, year: number): string => `${programDataHref(collection.program)}/ecdysis/${year}-upload.zip`;
 
 /** Where the associations file for a completed download is asked for. */
-export const associationsHref = (downloadId: number): string => `/exports/ecdysis/downloads/${downloadId}/associations.csv`;
+export const associationsHref = (collection: EcdysisCollection, downloadId: number): string =>
+  `${programDataHref(collection.program)}/ecdysis/downloads/${downloadId}/associations.csv`;
+
+/** Where the check of Ecdysis is started from the program's Data tab. */
+export const checkHref = (collection: EcdysisCollection): string => `${programDataHref(collection.program)}/check-ecdysis`;
+
+/** The jobs that read Ecdysis: the button's, and the nightly one. Only one job runs at a time. */
+export const ECDYSIS_READ_JOBS = ["ecdysis-read-now", "ecdysis-fetch"] as const;
+
+/** The job the "Check Ecdysis now" button starts. */
+export const ECDYSIS_CHECK_JOB = "ecdysis-read-now";
+
+/**
+ * Whether Ecdysis is being checked, or how the last check ended, for the
+ * tab's sentence about it. `runningJob` is the job running now (the
+ * scheduler's `running`), read from the job registry; the last check is the
+ * latest finished run of either job that reads Ecdysis. Its failure detail is
+ * not returned: the tab says only that it failed.
+ */
+export type EcdysisCheck = { state: "running" } | { state: "finished"; at: Date } | { state: "failed"; at: Date } | null;
+
+export async function ecdysisCheckOf(db: Kysely<Database>, runningJob: string | null): Promise<EcdysisCheck> {
+  if (runningJob !== null && (ECDYSIS_READ_JOBS as readonly string[]).includes(runningJob)) return { state: "running" };
+  const last = await db
+    .selectFrom("job_run")
+    .select(["completed_at", "outcome"])
+    .where("job_name", "in", [...ECDYSIS_READ_JOBS])
+    .where("completed_at", "is not", null)
+    .orderBy("started_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (last === undefined || last.completed_at === null) return null;
+  return { state: last.outcome === "succeeded" ? "finished" : "failed", at: asDate(last.completed_at) };
+}
 
 export const collectionOf = (program: string): EcdysisCollection | undefined => ECDYSIS_COLLECTIONS.find((c) => c.program === program);

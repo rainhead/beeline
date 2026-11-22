@@ -209,8 +209,9 @@ WHERE nullif(trim(modern.value), '') IS NOT NULL
 -- Symmetric: a row shredded differently, a load with no row, and a row whose
 -- observation is gone are all staleness, and EXCEPT treats NULLs as equal,
 -- which is what comparing two projections of the same JSON wants. A test
--- asserts it empty after a sync; nothing reads it at request time, so its
--- cost is the shred it is checking.
+-- asserts it empty after a sync, and the nightly's last step fails the run
+-- when it is not (checkObservationFields, beeline-pw1q.2); nothing reads it
+-- at request time, so its cost is the shred it is checking.
 CREATE VIEW observation_field_stale AS
 SELECT inat_id FROM (
   SELECT * FROM observation_current_fields

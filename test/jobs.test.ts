@@ -829,7 +829,9 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
     // The taxon cache is filled after the store's other steps and before the
     // refusal fails the run, so the refusal neither skips it nor waits on it.
     expect(steps.indexOf("fetch taxa")).toBe(steps.indexOf("name localities") + 1);
-    expect(steps.at(-1)).toBe("fetch taxa");
+    // Then the stored observation fields are checked, last of all.
+    expect(steps.at(-1)).toBe("check stored observation fields");
+    expect(steps.indexOf("check stored observation fields")).toBe(steps.indexOf("fetch taxa") + 1);
     expect(run.detail).toContain("taxa cache complete");
     expect(run.detail).toContain("areas: no gazetteer on this machine");
     expect(run.detail).toContain("localities: no gazetteer on this machine");
@@ -870,6 +872,8 @@ describe("the nightly and a county from the coordinates (beeline-313x)", () => {
     expect(run.outcome).toBe("succeeded");
     expect(run.detail).toContain("1 county(ies) written from the coordinates");
     expect(steps.indexOf("record county changes")).toBe(steps.indexOf("find areas") + 1);
+    // A clean store passes the closing check on the stored observation fields.
+    expect(steps.at(-1)).toBe("check stored observation fields");
     const sample = await deps.db.selectFrom("sample").select("county").where("entity_id", "=", id).executeTakeFirstOrThrow();
     expect(sample.county).toBe("Benton");
     // The first pass baselined the log; the county is the second pass's, and

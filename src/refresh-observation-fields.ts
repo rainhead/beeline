@@ -68,3 +68,21 @@ export async function refreshObservationFields(conn: DuckDBConnection): Promise<
   const [[n]] = (await (await conn.run("SELECT count(*) FROM observation_field")).getRows()) as [[bigint | number]];
   return Number(n);
 }
+
+/**
+ * Fail when the stored `observation_field` disagrees with what shredding the
+ * latest loads gives, by naming `observation_field_stale` (schema/105). The
+ * nightly's last step runs it (src/app/jobs/registry.ts, `pipelineTail`):
+ * nothing else reads the view on production, and an unrefreshed table is not
+ * a visibly broken one (see above). Throws with the number of observations and
+ * up to five of their iNaturalist ids; returns normally when the table agrees.
+ */
+export async function checkObservationFields(conn: DuckDBConnection): Promise<void> {
+  const rows = (await (await conn.run("SELECT inat_id FROM observation_field_stale ORDER BY inat_id")).getRows()) as [bigint | number][];
+  if (rows.length === 0) return;
+  const shown = rows.slice(0, 5).map(([id]) => String(id));
+  throw new Error(
+    `${rows.length} observation(s) have stored fields that disagree with their latest load` +
+      ` (iNaturalist ids ${shown.join(", ")}${rows.length > shown.length ? ", ..." : ""})`,
+  );
+}

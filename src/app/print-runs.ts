@@ -130,11 +130,20 @@ export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
     JOIN sample s ON s.entity_id = w.sample_id
     WHERE s.specimen_count > coalesce((SELECT count(*) FROM individuated_specimen i
                                        WHERE i.sample_id = s.entity_id AND i.specimen_number <= s.specimen_count), 0)`.execute(db);
-  const staleElevation = await sql<{ n: number }>`
-    SELECT CAST(count(*) AS INTEGER) AS n
-    FROM sample_elevation_pending e
-    WHERE e.sample_id IN (SELECT sample_id FROM pending_print_sample)
-       OR e.sample_id IN (SELECT sample_id FROM printable_reprint)`.execute(db);
+  // The samples awaiting an elevation are few and usually none, since the
+  // nightly reads them (5 ms on the store of 2026-11-21), while the two views of
+  // what a run would take cost about 250 ms each there. So they are read only
+  // when there is something to look for.
+  const anyPending = await sql<{ n: number }>`
+    SELECT CAST(count(*) AS INTEGER) AS n FROM sample_elevation_pending`.execute(db);
+  const staleElevation =
+    Number(anyPending.rows[0]?.n ?? 0) === 0
+      ? { rows: [{ n: 0 }] }
+      : await sql<{ n: number }>`
+          SELECT CAST(count(*) AS INTEGER) AS n
+          FROM sample_elevation_pending e
+          WHERE e.sample_id IN (SELECT sample_id FROM pending_print_sample)
+             OR e.sample_id IN (SELECT sample_id FROM printable_reprint)`.execute(db);
   return {
     awaiting_place: Number(awaiting.rows[0]?.n ?? 0),
     stale_elevation: Number(staleElevation.rows[0]?.n ?? 0),

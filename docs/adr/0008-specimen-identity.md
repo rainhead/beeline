@@ -495,6 +495,75 @@ mostly falls away — what Oregon's export carries is beeline-1kb.22, about
 OSAC's identifier rather than one of Beeline's — and so does (2), since
 Ecdysis keeps the UUID it mints.
 
+### Note, 2026-11-21: British Columbia's identifiers, and why Beeline still mints none
+
+The second amendment stands: the museum database assigns the `occurrenceID`
+and Beeline reads it back. This note records what was learned and decided
+when British Columbia's first upload from Beeline was prepared
+([the plan](../research/publishing-to-ecdysis-and-gbif.md),
+[the upload](../architecture/the-upload-to-ecdysis.md)).
+
+**What Ecdysis publishes depends on a setting each collection has**, its GUID
+source ([test results](../research/symbiota-import-test-2026-11-20.md), B2 and
+D4; Symbiota's `DwcArchiverCore.php` 1565-1573):
+
+| The collection's GUID source | What Ecdysis publishes as `occurrenceID` | An `occurrenceID` in an upload |
+|---|---|---|
+| Symbiota's own UUID (Washington, in WSU's shared collection) | the stored `occurrenceID` if there is one, else the record's UUID | ignored |
+| the catalog number (British Columbia today) | the stored `occurrenceID` if there is one, else the catalog number | ignored |
+| the `occurrenceID` | the stored `occurrenceID`; a record with none is left out of the published archive | stored on a new record, and replaces a different one on an existing record |
+
+So "Symbiota assigns a UUID unless the collection supplies one", as the second
+amendment put it, is true of Washington and not of British Columbia. British
+Columbia's records (9,452 in the copy of the collection Beeline read on
+2026-11-20, of which Beeline matches 9,438 to its own specimens) are published
+with the catalog number (`BCBA_` and the label number) as their `occurrenceID`,
+which is the form the original decision set out to avoid: a corrected catalog
+number would become a new record to GBIF. That copy carries each record's
+Symbiota UUID, whether or not Beeline matched the record.
+
+**Decided (Peter, 2026-11-21): proper permanent identifiers for British
+Columbia, assigned by Ecdysis, for now.** British Columbia's collection should
+publish Symbiota's own UUIDs, as Washington's does, so that old and new records
+have one kind of identifier and Beeline builds nothing. The alternative,
+Beeline minting an identifier at the print-run freeze and sending it, was
+drafted and reviewed and not chosen: it needs a table, a repair and a delicate
+change on Ecdysis's side, it leaves the old records on catalog numbers, and it
+brings back the second authority the second amendment removed. What it would
+buy is an identifier that exists before the record reaches Ecdysis and that
+survives a move off Ecdysis; if either comes to matter, this is where to
+start again.
+
+**What the change needs, none of it Beeline's to do alone:**
+
+1. Changing the collection's GUID source to Symbiota's UUID changes the
+   published identifier of every record that has no stored `occurrenceID`, at
+   once. GBIF treats a changed identifier as a new record unless it is given a
+   list of old and new first.
+2. Beeline writes that list (beeline-8dx9.14) from a fresh read of the whole
+   collection, made after the 2026 upload so that the new records are in it:
+   one row for every record in the collection, matched to a Beeline specimen or
+   not, giving the catalog number published today and the record's UUID. A
+   record that does have a stored `occurrenceID` keeps it under either setting,
+   so it is left out of the list and counted.
+3. The list goes to GBIF's helpdesk from the dataset's publisher, the Native
+   Bee Society of British Columbia, before the setting changes.
+4. The setting is changed by whoever administers collection 196, and no record
+   is added to the collection between the read the list was written from and
+   the change.
+
+**The upload of 30 November 2026 does not wait for this.** It sends no
+identifier, so the new records are published under their catalog numbers like
+the old ones until the setting changes, and are then covered by the same list.
+An independent review of the drafted amendment found, from GBIF's registry,
+that GBIF reads British Columbia's Ecdysis archive about weekly, so the new
+records reach GBIF within days of the upload; that reading has not been checked
+again here.
+
+**Still open:** who administers collection 196; whether it is managed as live
+data, which every test assumed; and whether British Columbia wants the change
+at all, which is its society's to say.
+
 ## Consequences
 
 **Downstream identity is stable regardless of what happens to the number.**

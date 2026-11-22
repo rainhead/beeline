@@ -11,7 +11,7 @@ import { SAMPLES_UNITS } from "../src/app/samples-upload-plan.js";
 import { parseSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { duckdbReader } from "../src/person-change.js";
 import { CURRENT_SEASON, buildTestGazetteer, insertCleanSample, rows } from "./helpers.js";
-import { UPLOAD_TODAY, edited, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
+import { UPLOAD_TODAY, edited, everyProgramConfirmed, matrixOf, uploadFixture, type UploadFixture } from "./upload-fixture.js";
 import type { TestCell } from "./workbook.js";
 
 /**
@@ -38,8 +38,10 @@ const upload = async (f: UploadFixture, file: Uint8Array) => {
   return res.headers.get("location")!;
 };
 const digestIn = (html: string) => /name="digest" value="([0-9a-f]+)"/.exec(html)?.[1];
-const apply = (f: UploadFixture, location: string, fields: { digest?: string; kinds?: readonly string[]; anyway?: readonly number[]; obas?: boolean }) => {
+const apply = async (f: UploadFixture, location: string, fields: { digest?: string; kinds?: readonly string[]; anyway?: readonly number[]; obas?: boolean; confirmElsewhere?: boolean }) => {
   const body = new FormData();
+  // The fixture's staff member leads no program, so applying asks once (beeline-kgyd.13); most tests are not about it, so it is ticked unless a test says not.
+  if (fields.confirmElsewhere !== false) body.set("confirm_elsewhere", await everyProgramConfirmed(f));
   if (fields.digest !== undefined) body.set("digest", fields.digest);
   if (fields.obas !== false) body.set("obas", "1");
   for (const r of fields.anyway ?? []) body.append("anyway", String(r));

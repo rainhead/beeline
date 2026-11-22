@@ -6,6 +6,7 @@ import { type OutcomeRow } from "./samples-upload-apply.js";
 import { readQueuedUnit } from "./samples-upload-change.js";
 import { SAMPLES_UNITS, countRows, isHeld, type SampleRowResult, type SamplesCounts, type SamplesPlan, type SamplesUnit, type UnknownCollector } from "./samples-upload-plan.js";
 import { specimenWorkbook, type Audience } from "./specimen-workbook.js";
+import type { OtherProgram } from "./upload-atlases.js";
 import type { DraftPlan } from "./upload-drafts.js";
 import { NOTE_COLUMN, type HeldItem, type ParsedUpload, type SeasonSplit, type UploadPlan } from "./upload-plan.js";
 import { writeXlsx, type XlsxWriterOptions } from "./xlsx.js";
@@ -42,6 +43,8 @@ export interface StaffSummary {
   same: number;
   /** Rows with a difference only in columns Beeline does not read from this file. */
   grey: number;
+  /** Programs the person does not lead whose specimens' disposition or remarks the file changes, with counts. */
+  otherPrograms: OtherProgram[];
 }
 
 /** A new row that looks like an existing sample, which waits for its tick. */
@@ -118,6 +121,8 @@ export interface SamplesSummary {
   changes: ChangesPreview | null;
   /** New rows to be made that are in an active season and have specimens, whose labels can be printed as soon as they are made. */
   labelsReady: number;
+  /** Programs the person does not lead whose records applying would change, with counts: applying asks once to confirm. Empty once the file is applied. */
+  otherPrograms: OtherProgram[];
 }
 
 export interface Noted<S> {
@@ -183,7 +188,7 @@ export function staffNotes(m: Messages, upload: ParsedUpload, plan: UploadPlan):
   for (const d of plan.sampleDifferences) for (const row of d.everyRow) add(row, cellsText(m, d.cells.filter((c) => c.differs)));
   const notRead = new Map<number, Array<{ column: string; was: string; fileSays: string }>>();
   for (const c of plan.notApplied) (notRead.get(c.row) ?? notRead.set(c.row, []).get(c.row)!).push(c);
-  const summary: StaffSummary = { kind: "staff", rows: upload.rows.length, differ: 0, cantUse: 0, same: 0, grey: 0 };
+  const summary: StaffSummary = { kind: "staff", rows: upload.rows.length, differ: 0, cantUse: 0, same: 0, grey: 0, otherPrograms: plan.otherPrograms ?? [] };
   const notes = new Map<number, string>();
   for (const { row } of upload.rows) {
     const parts: string[] = [];
@@ -338,7 +343,7 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
         };
   return {
     notes,
-    summary: { kind: "samples", rows: upload.rows.length, counts: done.size === 0 ? plan.counts : countRows(open), unknownCollectors: plan.unknownCollectors, held, outcomes: summaryOfOutcomes(m, outcomes), obas, labelsReady, changes },
+    summary: { kind: "samples", rows: upload.rows.length, counts: done.size === 0 ? plan.counts : countRows(open), unknownCollectors: plan.unknownCollectors, held, outcomes: summaryOfOutcomes(m, outcomes), obas, labelsReady, changes, otherPrograms: done.size > 0 ? [] : (plan.otherPrograms ?? []) },
   };
 }
 
@@ -389,6 +394,7 @@ export function samplesClaimedSummary(m: Messages, upload: ParsedUpload, outcome
     obas: null,
     labelsReady: 0,
     changes: null,
+    otherPrograms: [],
   };
 }
 

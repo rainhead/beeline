@@ -2562,6 +2562,18 @@ export const en = {
       staffGrey: (count: number) => `${n(count)} ${count === 1 ? "row has" : "rows have"} changes only in columns Beeline doesn't read from this file.`,
       staffNotes: "Each row's note in the file says what differs, or what is wrong.",
       staffNothingChanged: "Beeline doesn't change any record from a staff upload yet.",
+      /** Programs the person does not lead whose records an upload changes (beeline-kgyd.13): one line for each, with its count. A program is named as people abbreviate it. */
+      otherProgramSamples: (abbreviation: string, count: number, split: string) =>
+        `${n(count)} ${count === 1 ? "sample" : "samples"} in ${abbreviation}, a program you don't lead${split}.`,
+      otherProgramSpecimens: (abbreviation: string, count: number, split: string) =>
+        `${n(count)} ${count === 1 ? "specimen's" : "specimens'"} disposition or remarks in ${abbreviation}, a program you don't lead${split}.`,
+      staffOtherPrograms: "Changes to a specimen's disposition or remarks in another program's records, which Beeline will ask you to confirm once it applies them:",
+      /** On the samples page, above the lines for each program and the box that confirms them. */
+      samplesOtherPrograms: (programs: number) =>
+        `This file changes records in ${programs === 1 ? "a program" : "programs"} you don't lead. Check that you meant to, then tick the box to apply it.`,
+      samplesOtherProgramsBox: "I mean to change these programs' records",
+      samplesOtherProgramsNotConfirmed:
+        "Nothing was applied: the file changes records in programs you don't lead, and the box saying you mean to was not ticked. Tick it to apply.",
       downloadStaff: "Download the file with notes",
       /** The samples file's page (beeline-kgyd.4.9): counts, each with how many are in the active seasons and how many in settled ones. */
       samplesNew: (count: number, split: string) => `${n(count)} new trap ${count === 1 ? "sample" : "samples"} can be created${split}.`,

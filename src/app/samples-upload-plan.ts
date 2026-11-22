@@ -9,6 +9,7 @@ import { distanceMetres, effortBecomes, predictRefusals, type AreaValues, type C
 import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, lookalikesAmong, readLookalikeCandidates, readSeriesHolders, readTrapNumbers, seriesNumberHeldProblem, seriesNumberProblem, type Lookalike, type LookalikeCandidate, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
+import { otherPrograms, programsOfNewState, type ChangedRecord, type OtherProgram } from "./upload-atlases.js";
 import {
   MAX_INTEGER,
   SAMPLES_LAYOUT,
@@ -246,6 +247,12 @@ export interface SamplesPlan {
   /** New rows with nothing wrong and no number, which are given the next numbers in the series, from the first to the last of them. */
   numbering: { blank: number; from: string | null; to: string | null };
   changes: ChangesSummary;
+  /**
+   * The programs other than the ones the person leads whose records applying would change (the ticked kinds of change to
+   * existing samples, and the new trap samples that would be made), each with a count: applying asks once to confirm. Null
+   * where the plan was made without saying who is uploading, which asks nothing. See src/app/upload-atlases.ts.
+   */
+  otherPrograms: OtherProgram[] | null;
 }
 
 const emptySplit = (): SeasonSplit => ({ active: 0, settled: 0, unplaced: 0 });
@@ -441,6 +448,8 @@ export interface SamplesPlanOptions {
   kinds?: ReadonlySet<SamplesUnit>;
   /** The catalogue the sentences of predicted refusals come from. */
   messages?: Messages;
+  /** The person uploading, whose programs (the ones they lead) are not asked about. Absent: no question is worked out. */
+  uploader?: number;
 }
 
 /**
@@ -782,5 +791,19 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
       changes.reprint += d.collectors?.reprint ?? 0;
     }
   }
-  return { kind: "samples", counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, rows: results, unknownCollectors, numbering, changes };
+  let others: OtherProgram[] | null = null;
+  if (options.uploader !== undefined) {
+    // The records applying would change: an existing sample with a change of a ticked kind, and each new trap sample that
+    // is not held back as a look-alike. A row waiting only for the OBAS box counts, so that the page asks before the box
+    // is ticked and not after. A new sample's program is the one its state gives, as it is when the sample is made.
+    const stateOf = (r: SampleRowResult) => r.create!.form.state_province.trim().toUpperCase();
+    const made = results.filter((r) => r.create !== null && (r.create.lookalike === null || r.create.anyway));
+    const states = await programsOfNewState(db, [...new Set(made.map(stateOf))]);
+    const changed: ChangedRecord[] = [
+      ...results.filter((r) => r.sampleId !== null && r.differences.some((d) => d.chosen)).map((r): ChangedRecord => ({ sampleId: r.sampleId, season: r.season })),
+      ...made.map((r): ChangedRecord => ({ sampleId: null, programs: states.get(stateOf(r)), season: r.season })),
+    ];
+    others = await otherPrograms(db, options.uploader, changed);
+  }
+  return { kind: "samples", counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, rows: results, unknownCollectors, numbering, changes, otherPrograms: others };
 }

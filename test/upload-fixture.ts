@@ -284,3 +284,12 @@ export function edited(
 }
 
 export const bytesOf = (text: string): Uint8Array => new TextEncoder().encode(text);
+
+/**
+ * The value of the box that confirms changes to programs the person does not lead (beeline-kgyd.13), naming every
+ * program, for tests that are not about it: the box carries the programs the page named, and this covers any.
+ */
+export async function everyProgramConfirmed(f: UploadFixture): Promise<string> {
+  const rows = await (await f.conn.run(`SELECT code FROM program`)).getRows();
+  return rows.map((r) => String(r[0])).join(";");
+}

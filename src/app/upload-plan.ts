@@ -15,6 +15,7 @@ import {
   type Reader,
   type SpecimenRow,
 } from "./listings.js";
+import { otherPrograms, type ChangedRecord, type OtherProgram } from "./upload-atlases.js";
 import { ownIdentifications, ownVersion, withOwnIdentification } from "./own-identification.js";
 import { oregonToday } from "../oregon-today.js";
 import { columnName, type CellType, type XlsxCell, type XlsxRead, type XLSX_REFUSALS } from "./xlsx.js";
@@ -521,6 +522,13 @@ export interface UploadPlan {
   notApplied: CellChange[];
   /** The specimens the file's rows were matched to, in the file's order: every row not held whole. */
   matched: number[];
+  /**
+   * The programs other than the ones the person leads whose specimens' disposition or remarks the file changes, each with
+   * a count (beeline-kgyd.13). A change of identification is not counted: taxonomists identify bees for one another's
+   * atlases. Nothing is applied from this file yet, so this is shown and not asked about; the apply that comes will
+   * ask. Null where the comparison was made without saying who is uploading.
+   */
+  otherPrograms: OtherProgram[] | null;
 }
 
 /**
@@ -985,7 +993,7 @@ interface MatchedRow {
 export async function planUpload(
   db: Kysely<Database>,
   bytes: Uint8Array,
-  options: { today?: string; limits?: Partial<ReadLimits>; layout?: Layout; view?: Viewpoint } = {},
+  options: { today?: string; limits?: Partial<ReadLimits>; layout?: Layout; view?: Viewpoint; uploader?: number } = {},
 ): Promise<PlanResult> {
   const parsed = await parseUpload(bytes, options.limits, options.layout);
   if (!parsed.ok) return parsed;
@@ -996,7 +1004,7 @@ export async function planUpload(
 const heldCells = (cells: UnitCells, columns: string[]): HeldCell[] =>
   columns.map((c) => ({ column: c, was: cells.get(c)!.nowText, fileSays: cells.get(c)!.fileText }));
 
-export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, options: { today?: string; view?: Viewpoint } = {}): Promise<UploadPlan> {
+export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, options: { today?: string; view?: Viewpoint; uploader?: number } = {}): Promise<UploadPlan> {
   const today = options.today ?? oregonToday();
   const { columns, rows, layout } = upload;
   const readHere = new Set(layout.read);
@@ -1022,7 +1030,7 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
   const counts: PlanCounts = { rows: emptySplit(), unchanged: emptySplit(), withDifferences: emptySplit(), held: emptySplit() };
   const season = (sampleId: number | null): keyof SeasonSplit =>
     sampleId === null ? "unplaced" : facts.settled.has(sampleId) ? "settled" : "active";
-  const plan: UploadPlan = { counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, differences: [], sampleDifferences: [], held: [], notApplied: [], matched: [] };
+  const plan: UploadPlan = { counts, unrecognised: upload.unrecognised, otherSheets: upload.otherSheets, differences: [], sampleDifferences: [], held: [], notApplied: [], matched: [], otherPrograms: null };
 
   const hold = (
     item: Pick<HeldItem, "reason" | "row" | "specimenId" | "fieldNumber" | "detail"> &
@@ -1238,6 +1246,13 @@ export async function comparePlan(db: Kysely<Database>, upload: ParsedUpload, op
         printed: facts.printed.has(sampleId),
       });
     }
+  }
+  if (options.uploader !== undefined) {
+    plan.otherPrograms = await otherPrograms(
+      db,
+      options.uploader,
+      plan.differences.filter((d) => d.unit === "disposition").map((d): ChangedRecord => ({ sampleId: d.sampleId, season: season(d.sampleId) })),
+    );
   }
   plan.held.sort((a, b) => a.row - b.row);
   plan.sampleDifferences.sort((a, b) => a.rows[0]! - b.rows[0]! || SAMPLE_UNITS.indexOf(a.unit) - SAMPLE_UNITS.indexOf(b.unit));

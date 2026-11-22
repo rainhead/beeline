@@ -18,7 +18,10 @@ describe("reading an observation out of what was typed (beeline-slkv)", () => {
     ["HTTPS://WWW.INATURALIST.ORG/observations/42", 42],
     ["https://inaturalist.ca/observations/777", 777],
     ["https://www.inaturalist.nz/observations/777", 777],
-    ["https://naturalista.mx/observations/777", 777],
+    ["https://www.naturalista.uy/observations/777", 777],
+    ["https://uk.inaturalist.org/observations/777", 777],
+    ["https://inaturalist.ala.org.au/observations/777", 777],
+    ["https://inaturalist.laji.fi/observations/777", 777],
   ])("reads the address %s", (typed, id) => {
     expect(observationFromSearch(typed)).toEqual(url(id));
   });
@@ -43,6 +46,9 @@ describe("reading an observation out of what was typed (beeline-slkv)", () => {
     "https://www.example.org/observations/123456789",
     "https://inaturalist.org.evil.example/observations/123456789",
     "https://notinaturalist.org/observations/123456789",
+    "https://evilinaturalist.org/observations/123456789",
+    "https://naturalista.mx/observations/123456789",
+    "https://inaturalist.fi/observations/123456789",
     "https://evil.example/https://www.inaturalist.org/observations/123456789",
     // not an observation page
     "https://www.inaturalist.org/observations/123456789abc",

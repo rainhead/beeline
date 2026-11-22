@@ -10,17 +10,30 @@
  * not read, because Beeline keeps only the number.
  */
 
-/** The Network's own domains, a bare name each. A copy of iNaturalist's list: a new member is added here. */
-const NETWORK_DOMAINS = new Set([
-  "inaturalist.org",
-  "inaturalist.ca",
+/**
+ * Sites of the iNaturalist Network that are not under inaturalist.org, a bare
+ * name each (a leading `www.` is dropped before the lookup). From iNaturalist's
+ * own list, `GET https://api.inaturalist.org/v1/sites`, read 2026-11-22. Every
+ * other member is `inaturalist.org` or a subdomain of it (uk.inaturalist.org).
+ * A new member outside that domain is added here.
+ */
+const OTHER_NETWORK_DOMAINS = new Set([
   "inaturalist.nz",
-  "inaturalist.lu",
-  "inaturalist.se",
-  "inaturalist.fi",
-  "naturalista.mx",
+  "inaturalist.ca",
   "biodiversity4all.org",
+  "inaturalist.ala.org.au",
+  "argentinat.org",
+  "inaturalist.mma.gob.cl",
+  "inaturalist.laji.fi",
+  "inaturalist.se",
+  "inaturalist.lu",
+  "naturalista.uy",
 ]);
+
+const onNetwork = (host: string) => {
+  const bare = host.toLowerCase().replace(/^www\./, "");
+  return bare === "inaturalist.org" || bare.endsWith(".inaturalist.org") || OTHER_NETWORK_DOMAINS.has(bare);
+};
 
 /** A number that fits the store's BIGINT with room to spare; a longer run of digits is not an observation number. */
 const MAX_DIGITS = 15;
@@ -41,6 +54,6 @@ export function observationFromSearch(typed: string): ObservationSearch | null {
   const address = ADDRESS.exec(text);
   if (address === null) return null;
   const [, domain, digits] = address;
-  if (!NETWORK_DOMAINS.has(domain!.toLowerCase()) || !ID.test(digits!)) return null;
+  if (!onNetwork(domain!) || !ID.test(digits!)) return null;
   return { id: Number(digits), fromUrl: true };
 }

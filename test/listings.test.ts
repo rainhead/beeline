@@ -2640,6 +2640,12 @@ describe("searching by an iNaturalist observation (beeline-slkv)", () => {
     }
   });
 
+  it("finds nothing, without an error, for the longest number a search reads that no sample cites", async () => {
+    const { app } = await withObservations();
+    expect(await samplesFor(app, "999999999999999")).toEqual([]);
+    expect(await specimensFor(app, `${www}999999999999999`)).toEqual([]);
+  });
+
   it("finds nothing for an observation no sample cites", async () => {
     const { app } = await withObservations();
     expect(await samplesFor(app, `${www}99999999`)).toEqual([]);

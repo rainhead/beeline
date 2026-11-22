@@ -843,7 +843,7 @@ export function buildJobs(
       run: (ctx) => readEcdysis(config, ctx, false),
     },
     {
-      // The button on Exports (Read Ecdysis now), which the files for Ecdysis wait on: the same read as the nightly one,
+      // The button on a program's Data tab (Check Ecdysis now), which the files for Ecdysis wait on: the same read as the nightly one,
       // except that a collection read whole is downloaded even when the probe says nothing moved, because the upload
       // must rest on an archive actually downloaded (the probe counts records and records modified since the last
       // download, so a second change to a modified record leaves both numbers as they were). Never by the clock, and
@@ -963,7 +963,7 @@ export function buildJobs(
       // One Darwin Core archive per calendar year for each atlas and for
       // Master Melittology, for staff to review; none for the BLM surveys,
       // whose samples are not theirs by geography (beeline-rvun). After the
-      // legacy export, so it reads the same store; on Exports.
+      // legacy export, so it reads the same store; on each program's Data tab.
       name: "dwc-archives",
       schedule: { kind: "dailyLA", hour: 4 },
       window: "night",

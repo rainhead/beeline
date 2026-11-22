@@ -1,5 +1,5 @@
 import type { Messages } from "../messages/index.js";
-import { PageHeader } from "./components/index.js";
+import { PageHeader, Step, Steps } from "./components/index.js";
 
 /**
  * The process for volunteers (beeline-kgwd): what happens at each step from
@@ -18,16 +18,13 @@ export function HowItWorks({ m }: { m: Messages }) {
   return (
     <>
       <PageHeader title={h.heading} lede={h.lede} />
-      <ol class="steps">
+      <Steps>
         {h.steps.map((step) => (
-          <li>
-            <h2>{step.heading}</h2>
-            <p>
-              <Text segments={step.body} />
-            </p>
-          </li>
+          <Step title={step.heading}>
+            <Text segments={step.body} />
+          </Step>
         ))}
-      </ol>
+      </Steps>
       <h2>{h.whenHeading}</h2>
       <ul>
         {h.when.map((line) => (

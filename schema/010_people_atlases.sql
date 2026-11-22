@@ -280,9 +280,11 @@ COMMENT ON COLUMN person_delegate.acts_for_id IS 'The person acted for, typicall
 COMMENT ON COLUMN person_delegate.granted_by IS 'iNat login of the staff member who granted it. Not a foreign key: the granter may be gone — same stance as person_admin.granted_by.';
 
 -- Who leads each program: whose work it is, and who to raise its questions
--- with (beeline-7c1). Responsibility, not permission — admin rights stay one
--- global grant (person_admin), and whether staff reach should narrow to their
--- own program is a separate question (beeline-wf3n). A program may have
+-- with (beeline-7c1). Responsibility first, with one access (beeline-q8di): a
+-- lead may open their program's Data tab, whose files hold collectors' names
+-- and true coordinates. Nothing else follows from leading: admin rights stay
+-- one global grant (person_admin), and whether staff reach should narrow to
+-- their own program is a separate question (beeline-wf3n). A program may have
 -- several leads, and a person usually leads one program but can lead more
 -- (Olivia leads both the New Mexico Bee Atlas and the BLM surveys).
 CREATE TABLE program_lead (
@@ -292,7 +294,7 @@ CREATE TABLE program_lead (
   granted_by TEXT,
   PRIMARY KEY (program_id, person_id)
 );
-COMMENT ON TABLE program_lead IS 'person_id leads program_id: the program''s work is theirs to take up, and its questions theirs to answer. Set from /people through the person overlay (field leads). Grants no access.';
+COMMENT ON TABLE program_lead IS 'person_id leads program_id: the program''s work is theirs to take up, and its questions theirs to answer. Set from /people through the person overlay (field leads). A lead may open the program''s Data tab, whose files hold collectors'' names and true coordinates; nothing else follows from leading.';
 COMMENT ON COLUMN program_lead.program_id IS 'The program led.';
 COMMENT ON COLUMN program_lead.person_id IS 'Its lead. Needs no account: a lead is somebody whose work this is, not somebody who signs in.';
 COMMENT ON COLUMN program_lead.granted_at IS 'When this store first recorded it. Replaying the overlay keeps a lead it already holds, so this survives promotion — but not a rebuild, which starts every lead afresh; when a decision was made is the person change log''s to say.';

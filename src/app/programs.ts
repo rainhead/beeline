@@ -246,3 +246,52 @@ export async function loadProgram(
 }
 
 export const programHref = (code: string): string => `/programs/${encodeURIComponent(code)}`;
+
+/** Where a program's Data tab is, and the routes under it (`/programs/:code/data/...`). */
+export const programDataHref = (code: string): string => `${programHref(code)}/data`;
+
+/** A program whose Data tab a person may open, as `programDataAccess` names it. */
+export interface ProgramDataAccess {
+  /** The program's code as the store spells it, whatever case the address used. */
+  code: string;
+  name: string;
+}
+
+/**
+ * Who may open a program's Data tab, and every route under it: the program's
+ * nightly Darwin Core archives and the files made for uploading to Ecdysis
+ * (Peter, 2026-11-21, beeline-q8di). These hold collectors' names and true
+ * coordinates, so they are for the program's leads and for admins, and not
+ * for staff generally or for the leads of other programs.
+ *
+ * The rule: the person is an admin, or is one of this program's leads
+ * (`program_lead`). Anyone else gets the app's not-found answer, so that the
+ * tab's existence is not revealed.
+ *
+ * Every route under the tab calls this, and so does the program page that
+ * decides whether to draw the link, so the link and the routes cannot
+ * disagree. `personId` is the person the page is being drawn for: the
+ * signed-in person, or, while an admin is impersonating somebody, the
+ * impersonated person, so that the tab is seen as that person would see it.
+ * `admin` is the request's `admin` flag, which is already false while
+ * impersonating. Delegation (acting for a household member) is not used:
+ * it widens whose samples a person reaches, never what they may download.
+ * Whether a download or an action is allowed while impersonating is for the
+ * route to refuse (the read-only rule), not for this function.
+ *
+ * Returns the program (its code as stored), or null when there is no such
+ * program or the person may not open its tab.
+ */
+export async function programDataAccess(
+  db: Kysely<Database>,
+  { code, personId, admin }: { code: string; personId: number | null; admin: boolean },
+): Promise<ProgramDataAccess | null> {
+  const { rows } = await sql<{ code: string; name: string; lead: boolean }>`
+    SELECT p.code, p.name,
+           coalesce(${personId} IN (SELECT pl.person_id FROM program_lead pl WHERE pl.program_id = p.entity_id), false) AS lead
+    FROM program p
+    WHERE lower(p.code) = lower(${code})`.execute(db);
+  const program = rows[0];
+  if (program === undefined) return null;
+  return admin || program.lead ? { code: program.code, name: program.name } : null;
+}

@@ -31,6 +31,7 @@ export {
 } from "./listing.js";
 export { LocalityAlternatives, SuggestedLocality, type SuggestedLocalityAction } from "./suggested-locality.js";
 export { DataTable, type TableColumn } from "./table.js";
+export { Steps, Step } from "./steps.js";
 export { Tabs, type Tab } from "./tabs.js";
 export {
   TaxonName,

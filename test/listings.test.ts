@@ -209,6 +209,9 @@ async function listingApp(
   return { app, db, conn, ...people };
 }
 
+/** Catalog text as the page's markup spells it: a notice with an apostrophe in it is found by its escaped form, never its raw one. */
+const inPage = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+
 const get = async (app: Awaited<ReturnType<typeof listingApp>>["app"], path: string) => {
   const res = await app.request(path);
   expect(res.status, path).toBe(200);
@@ -289,7 +292,7 @@ describe("sample listing", () => {
     expect(all).toContain("6 samples");
     expect(all).toContain("B-2");
     // And they are told why some of them say less about where.
-    expect(all).toContain(en.listings.scope.withheldNote.replaceAll("'", "&#39;"));
+    expect(all).toContain(en.listings.scope.withheldNote);
   });
 
   it("lets staff scope to an atlas, or to all of them", async () => {
@@ -305,7 +308,7 @@ describe("sample listing", () => {
     const all = await get(app, "/samples?scope=all");
     expect(all).toContain("6 samples");
     // Staff see every location, so the note about hidden ones is not theirs.
-    expect(all).not.toContain(en.listings.scope.withheldNote.replaceAll("'", "&#39;"));
+    expect(all).not.toContain(en.listings.scope.withheldNote);
   });
 
   // The two axes, and the point is that they disagree: B-3 is outside every
@@ -1174,7 +1177,7 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     await writeFile(governance.policies, "program,from_year,url,decided_by,decided_on,reason\nOBA,2026,https://example.org/oba-privacy,Test,2026-10-10,Agreed\n");
     const { app, db } = await hostApp({ dir, governance });
     await writeProgramArchives(db, dir, { governance });
-    const res = await app.request("/exports/dwca/OBA-2026.zip");
+    const res = await app.request("/programs/OBA/data/dwca/OBA-2026.zip");
     expect(res.status).toBe(200);
     const files = Object.fromEntries(
       Object.entries(unzipSync(new Uint8Array(await res.arrayBuffer()))).map(([n, d]) => [n, strFromU8(d)]),
@@ -1654,7 +1657,7 @@ describe("Darwin Core archives, by program and year", () => {
     // Washington has specimens and no licence: written all the same, for review.
     expect(manifest.entries.find((e) => e.program === "WaBA")).toMatchObject({ license: null, file: `WaBA-${CURRENT_SEASON}.zip` });
 
-    const res = await app.request("/exports/dwca/OBA-2026.zip");
+    const res = await app.request("/programs/OBA/data/dwca/OBA-2026.zip");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/zip");
     expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-2026-dwca.zip"`);
@@ -1727,7 +1730,7 @@ describe("Darwin Core archives, by program and year", () => {
     );
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     const read = async (file: string) => {
-      const files = unpack(new Uint8Array(await (await app.request(`/exports/dwca/${file}`)).arrayBuffer()));
+      const files = unpack(new Uint8Array(await (await app.request(`/programs/${file.split("-")[0]}/data/dwca/${file}`)).arrayBuffer()));
       const [header, ...rows] = table(files["occurrence.txt"]!);
       return { header: header!, rows, meta: files["meta.xml"]! };
     };
@@ -1761,25 +1764,25 @@ describe("Darwin Core archives, by program and year", () => {
       policy: false,
       file: "OBA-2026.zip",
     });
-    const res = await app.request("/exports/dwca/OBA-2026.zip");
+    const res = await app.request("/programs/OBA/data/dwca/OBA-2026.zip");
     expect(res.status).toBe(200);
     // No licence is in force, so the archive states none.
     expect(unpack(new Uint8Array(await res.arrayBuffer()))["meta.xml"]).not.toContain("dc/terms/license");
-    const page = await get(app, "/exports");
+    const page = await get(app, "/programs/OBA/data");
     expect(page).toContain("no licence");
     expect(page).toContain("none yet");
-    expect(page).toContain(`href="/exports/dwca/OBA-2026.zip"`);
-    expect(page).toContain(`href="/exports/dwca/WaBA-${CURRENT_SEASON}.zip"`);
-    expect(page).not.toContain("This file states");
+    expect(page).toContain(`href="/programs/OBA/data/dwca/OBA-2026.zip"`);
+    expect(await get(app, "/programs/WaBA/data")).toContain(`href="/programs/WaBA/data/dwca/WaBA-${CURRENT_SEASON}.zip"`);
+    expect(page).not.toContain(inPage(en.programData.archiveLicenseNone));
 
     // A licence merged after the night's run shows at once, and the row says
     // the file beside it does not carry it yet.
     await fx.write([OBA_LICENSE], []);
-    const after = await get(app, "/exports");
+    const after = await get(app, "/programs/OBA/data");
     expect(after).toContain("CC BY-NC 4.0");
-    expect(after).toContain("This file states no licence; it is rewritten with this one tonight.");
+    expect(after).toContain(inPage(en.programData.archiveLicenseNone));
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    expect(await get(app, "/exports")).not.toContain("This file states");
+    expect(await get(app, "/programs/OBA/data")).not.toContain(inPage(en.programData.archiveLicenseNone));
   });
 
   it("files a sample by the calendar year of its first day, which is its season", async () => {
@@ -1800,7 +1803,7 @@ describe("Darwin Core archives, by program and year", () => {
 
     const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     expect(manifest.entries.filter((e) => e.program === "OBA").map((e) => [e.year, e.specimens])).toEqual([[2026, 3]]);
-    const files = unpack(new Uint8Array(await (await app.request("/exports/dwca/OBA-2026.zip")).arrayBuffer()));
+    const files = unpack(new Uint8Array(await (await app.request("/programs/OBA/data/dwca/OBA-2026.zip")).arrayBuffer()));
     const [header, ...occurrences] = table(files["occurrence.txt"]!);
     expect(occurrences.map((r) => r[header!.indexOf("recordNumber")]).sort()).toEqual(["A-1.1", "A-1.2", "A-3.1"]);
   });
@@ -1811,42 +1814,42 @@ describe("Darwin Core archives, by program and year", () => {
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     // As a year whose specimens have all gone would leave it.
     await writeFile(join(fx.dir, "dwca", "OBA-2019.zip"), "stale");
-    expect((await app.request("/exports/dwca/OBA-2019.zip")).status).toBe(404);
+    expect((await app.request("/programs/OBA/data/dwca/OBA-2019.zip")).status).toBe(404);
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     expect(await readdir(join(fx.dir, "dwca"))).not.toContain("OBA-2019.zip");
   });
 
-  it("lists every program by year, Master Melittology's included, and none for the BLM surveys", async () => {
+  it("lists every program by year on its own Data tab, Master Melittology's included, and none for the BLM surveys", async () => {
     const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
     const { app, db } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
-    // Before the first run the page says when they appear.
-    expect(await get(app, "/exports")).toContain("Not written yet");
+    // Before the first run the tab says when they appear.
+    expect(await get(app, "/programs/OBA/data")).toContain("Not written yet");
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    const page = await get(app, "/exports");
-    expect(page).toContain(`href="/exports/dwca/OBA-2026.zip"`);
+    const page = await get(app, "/programs/OBA/data");
+    expect(page).toContain(`href="/programs/OBA/data/dwca/OBA-2026.zip"`);
     expect(page).toContain(`aria-label="Download the Oregon Bee Atlas archive for 2026"`);
     expect(page).toContain(`href="https://example.org/oba-privacy"`);
-    expect(page).toContain("Washington Bee Atlas");
-    expect(page).toContain("Master Melittology");
-    expect(page).toContain("BLM surveys");
-    expect(page).toContain("belong to them by the day they were collected on");
+    // The tab is this program's alone: the others' files are not on it.
+    expect(page).not.toContain("WaBA-");
+    expect(await get(app, "/programs/BLM/data")).toContain(inPage(en.programData.archiveNone("BLM")));
     // The refuge program has no ground either, in its own terms (beeline-8zlh).
-    expect(page).toContain("by the refuge they were collected in");
-    // By name, atlases and the rest together (Peter, 2026-10-26).
-    // Only the program archives' section: the files for Ecdysis below it have headings of their own.
-    const programs = [...page.split(`<h2>${en.exports.ecdysis.heading}</h2>`)[0]!.matchAll(/<h3>([^<]+)<\/h3>/g)].map(([, name]) => name);
-    expect(programs).toEqual([
-      "BLM surveys",
-      "British Columbia Bee Atlas",
-      "Idaho Bee Atlas",
-      "Master Melittology",
-      "National Wildlife Refuges",
-      "New Mexico Bee Atlas",
-      "Oregon Bee Atlas",
-      "Washington Bee Atlas",
+    expect(await get(app, "/programs/NWR/data")).toContain(inPage(en.programData.archiveNone("NWR")));
+    expect(await get(app, "/programs/MM/data")).toContain(en.programData.noSpecimens);
+    // Exports lists every program by name, atlases and the rest together (Peter, 2026-10-26), each with the link to its tab.
+    const exportsPage = await get(app, "/exports");
+    const linked = [...exportsPage.matchAll(/<a href="\/programs\/([A-Za-z]+)\/data">([^<]+)<\/a>/g)].map(([, code, name]) => [code, name]);
+    expect(linked).toEqual([
+      ["BLM", "BLM surveys: Data"],
+      ["BC", "British Columbia Bee Atlas: Data"],
+      ["ID", "Idaho Bee Atlas: Data"],
+      ["MM", "Master Melittology: Data"],
+      ["NWR", "National Wildlife Refuges: Data"],
+      ["NM", "New Mexico Bee Atlas: Data"],
+      ["OBA", "Oregon Bee Atlas: Data"],
+      ["WaBA", "Washington Bee Atlas: Data"],
     ]);
-    // And says what it is for, and what it is not.
-    expect(page).toContain("Do not upload them");
+    // And the tab says what the archives are for, and what they are not.
+    expect(page).toContain("Do not upload these to Ecdysis, GBIF or anywhere else");
     expect(await get(app, "/specimens?scope=OBA")).not.toContain(".zip");
   });
 
@@ -1867,7 +1870,7 @@ describe("Darwin Core archives, by program and year", () => {
     // list, and the surveys have no scope at all.
     expect(manifest.checklists!.map((c) => c.program).sort()).toEqual(["OBA", "WaBA"]);
 
-    const res = await app.request("/exports/dwca/OBA-checklist.zip");
+    const res = await app.request("/programs/OBA/data/dwca/OBA-checklist.zip");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-checklist-dwca.zip"`);
     const files = unpack(new Uint8Array(await res.arrayBuffer()));
@@ -1904,15 +1907,15 @@ describe("Darwin Core archives, by program and year", () => {
     });
     expect(byName.get("Andrena")).toMatchObject({ specimens: "1", specimensByExperts: "0" });
     // Washington's list is its own specimens' names, not Oregon's.
-    const waba = table(unpack(new Uint8Array(await (await app.request("/exports/dwca/WaBA-checklist.zip")).arrayBuffer()))["taxon.txt"]!);
+    const waba = table(unpack(new Uint8Array(await (await app.request("/programs/WaBA/data/dwca/WaBA-checklist.zip")).arrayBuffer()))["taxon.txt"]!);
     expect(waba.slice(1).map((r) => r[header!.indexOf("scientificName")])).toEqual(["Andrena"]);
 
     // On the page, with each program's years.
-    const page = await get(app, "/exports");
-    expect(page).toContain(en.exports.checklist(4));
-    expect(page).toContain(`href="/exports/dwca/OBA-checklist.zip"`);
+    const page = await get(app, "/programs/OBA/data");
+    expect(page).toContain(en.programData.checklist(4));
+    expect(page).toContain(`href="/programs/OBA/data/dwca/OBA-checklist.zip"`);
     // Only a file the manifest names is served.
-    expect((await app.request("/exports/dwca/BLM-checklist.zip")).status).toBe(404);
+    expect((await app.request("/programs/BLM/data/dwca/BLM-checklist.zip")).status).toBe(404);
   });
 
   it("writes each program an archive of every year, with a licence only where its years share one (beeline-9bnm)", async () => {
@@ -1937,7 +1940,7 @@ describe("Darwin Core archives, by program and year", () => {
     // Beside the years, which are still written one by one.
     expect(manifest.entries.filter((e) => e.program === "OBA").map((e) => e.year).sort()).toEqual([2024, 2026]);
 
-    const res = await app.request("/exports/dwca/OBA-all.zip");
+    const res = await app.request("/programs/OBA/data/dwca/OBA-all.zip");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-all-years-dwca.zip"`);
     const files = unpack(new Uint8Array(await res.arrayBuffer()));
@@ -1947,35 +1950,36 @@ describe("Darwin Core archives, by program and year", () => {
     // Every identification of every year's specimens.
     expect(table(files["identification.txt"]!).length).toBeGreaterThan(1);
 
-    const page = await get(app, "/exports");
-    expect(page).toContain(en.exports.allYears(3, 2024, 2026));
-    expect(page).toContain(en.exports.allYearsLicense("CC BY-NC 4.0"));
-    expect(page).toContain(`aria-label="${en.exports.allYearsDownload("Oregon Bee Atlas")}"`);
+    const page = await get(app, "/programs/OBA/data");
+    expect(page).toContain(inPage(en.programData.allYears(3, 2024, 2026)));
+    expect(page).toContain(en.programData.allYearsLicense("CC BY-NC 4.0"));
+    expect(page).toContain(`aria-label="${en.programData.allYearsDownload("Oregon Bee Atlas")}"`);
 
     // A licence that changes in 2026 leaves the years without a shared
     // one: the page says so at once, and the next night's file states none.
     await fx.write([OBA_LICENSE, "OBA,2026,CC-BY-4.0,Test,2026-10-10,https://example.org/oba,Changed"], [OBA_POLICY]);
-    const changed = await get(app, "/exports");
-    expect(changed).toContain(en.exports.allYearsNoLicense);
-    expect(changed).toContain(en.exports.allYearsLicenseDropped("CC BY-NC 4.0"));
+    const changed = await get(app, "/programs/OBA/data");
+    expect(changed).toContain(inPage(en.programData.allYearsNoLicense));
+    expect(changed).toContain(inPage(en.programData.allYearsLicenseDropped("CC BY-NC 4.0")));
     const after = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     expect(after.allYears!.find((a) => a.program === "OBA")!.license).toBeNull();
-    const rewritten = unpack(new Uint8Array(await (await app.request("/exports/dwca/OBA-all.zip")).arrayBuffer()));
+    const rewritten = unpack(new Uint8Array(await (await app.request("/programs/OBA/data/dwca/OBA-all.zip")).arrayBuffer()));
     expect(rewritten["meta.xml"]).not.toContain("dc/terms/license");
     // A program with no specimens has none, and only a file the manifest names is served.
     expect(after.allYears!.map((a) => a.program).sort()).toEqual(["OBA", "WaBA"]);
-    expect((await app.request("/exports/dwca/MM-all.zip")).status).toBe(404);
+    expect((await app.request("/programs/MM/data/dwca/MM-all.zip")).status).toBe(404);
   });
 
   it("is refused to a volunteer, and an archive nobody wrote is not found", async () => {
     const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
     const { app: volunteer, db } = await listingApp("alice", { dir: fx.dir, governance: fx.governance });
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    expect((await volunteer.request("/exports/dwca/OBA-2026.zip")).status).toBe(403);
+    // Not found rather than forbidden: a person who may not open the tab is not told it exists.
+    expect((await volunteer.request("/programs/OBA/data/dwca/OBA-2026.zip")).status).toBe(404);
     const { app: staff } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
-    expect((await staff.request("/exports/dwca/OBA-2025.zip")).status).toBe(404);
-    expect((await staff.request("/exports/dwca/WaBA-2019.zip")).status).toBe(404);
-    expect((await staff.request("/exports/dwca/manifest.json")).status).toBe(404);
+    expect((await staff.request("/programs/OBA/data/dwca/OBA-2025.zip")).status).toBe(404);
+    expect((await staff.request("/programs/WaBA/data/dwca/WaBA-2019.zip")).status).toBe(404);
+    expect((await staff.request("/programs/OBA/data/dwca/manifest.json")).status).toBe(404);
   });
 
   it("holds every page's identifications until the core is written", async () => {

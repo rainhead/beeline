@@ -13,6 +13,8 @@ import {
   FilterBar,
   LinkButton,
   Pager,
+  Step,
+  Steps,
   CheckboxField,
   Combobox,
   SelectField,
@@ -258,6 +260,58 @@ export function DesignComponents({ m }: { m: Messages }) {
           ]}
         />
       </Specimen>
+
+      <h2>Steps</h2>
+      <p>
+        A sequence of things a person does, in order: how a sample gets from the field to a taxonomist, or the files to
+        upload to Ecdysis. A real <code>&lt;ol&gt;</code>, so the numbers come from the list and a screen reader says
+        which step it is on. Never type a number into a step's text. Steps sit with room between them so that each
+        reads as its own thing, and the list is set in from the margin so the numbers hang beside the text.
+      </p>
+      <Specimen>
+        <Steps note="Good to know: you can leave and come back. Nothing is lost until you press Save.">
+          <Step
+            below={
+              <form method="post" action="/design/components">
+                <Button variant="tonal">Check now</Button>
+              </form>
+            }
+          >
+            Check what the museum has. Press the button, wait a few minutes, then reload this page.
+          </Step>
+          <Step>Download the file and upload it today, once. Then delete it.</Step>
+          <Step>
+            Read the report before going on. If it does not say "Records to be updated: 0", stop: nothing has changed
+            yet.
+          </Step>
+        </Steps>
+      </Specimen>
+      <Specimen>
+        <Steps>
+          <Step title="Collect">
+            Catch bees and note where you caught them. <a href="/glossary">The glossary</a> says what a sample is.
+          </Step>
+          <Step title="Label">Print the labels for the season's samples and pin one beside each bee.</Step>
+        </Steps>
+      </Specimen>
+      <p>
+        The second list shows a step with a title, which is for steps that are stages with something to read, as on How
+        Beeline works. A step that is only an instruction has no title.
+      </p>
+      <DoDont
+        dos={[
+          "Start each step with what to do: Press, Download, Open, Check.",
+          "Give each step one thing to do, on one screen. If a step moves to another screen, it is two steps.",
+          "Put the control under the step it belongs to, and what the control says back under the control.",
+          "Put what is good to know about the whole sequence in the note under the list.",
+        ]}
+        donts={[
+          "Don't use steps for a list of facts. That is a plain list, or a detail list.",
+          "Don't use steps for a ranked list. The order there is a result, not something to follow.",
+          "Don't use steps for a single action. Say it, and give it a button.",
+          "Don't number the steps in their own text, or write “Step 1:”. The list numbers them.",
+        ]}
+      />
 
       <h2>Callouts</h2>
       <p>An aside: why this screen behaves as it does, when the data was last refreshed. Never an interruption.</p>

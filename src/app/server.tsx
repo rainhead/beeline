@@ -36,10 +36,11 @@ import { countListingView, listingAttributes, rosterAttributes, type Viewer } fr
 import { Glossary } from "./views/glossary.js";
 import { HowItWorks } from "./views/how-it-works.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
-import { ProgramIndex, ProgramPage } from "./views/programs.js";
+import { ProgramIndex, ProgramPage, ProgramTabs } from "./views/programs.js";
+import { ProgramData, ProgramDataRefusal, type EcdysisUploadSection } from "./views/program-data.js";
 import { AreaIndex, areasHref } from "./views/areas.js";
 import { AREA_TABS, isAreaTab, listAreas } from "./areas.js";
-import { listPrograms, loadProgram, programHref } from "./programs.js";
+import { listPrograms, loadProgram, programDataAccess, programDataHref, programHref, type ProgramDataAccess } from "./programs.js";
 import { readProgramContacts, recordProgramContact, programContactProblem } from "../program-contacts.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomyCsv, taxonomySummary } from "./taxonomy.js";
 import {
@@ -260,7 +261,7 @@ import {
 import { oregonToday } from "../oregon-today.js";
 import { programArchives } from "./dwc-archive.js";
 import { archiveDir, readArchiveManifest } from "./program-archives.js";
-import { ArchiveTooLarge, associationsCsv, beingWritten, buildArchive, collectionOf, completeDownload, downloadById, downloadSpecimens, downloadViewsOf, idsOf, ReadSuperseded, startDownload, uploadFileName, uploadStateOf, type DownloadRecord } from "./ecdysis-upload.js";
+import { ArchiveTooLarge, ECDYSIS_CHECK_JOB, ECDYSIS_CHECK_MIN_INTERVAL_MS, ecdysisCheckOf, associationsCsv, beingWritten, buildArchive, collectionOf, completeDownload, downloadById, downloadSpecimens, downloadViewsOf, idsOf, ReadSuperseded, startDownload, uploadFileName, uploadStateOf, type DownloadRecord } from "./ecdysis-upload.js";
 import { describeScope, ECDYSIS_COLLECTIONS, readMarkerOf } from "../fetch-ecdysis.js";
 import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
@@ -2157,7 +2158,9 @@ export function createApp({
     const m = c.get("m");
     const program = await loadProgram(db, c.req.param("code"), { contacts: await readProgramContacts(programContacts) });
     if (program === null) return errorResponse(c, "notFound", { message: m.programs.notFound });
-    return c.html(await page(c, program.name, <ProgramPage m={m} program={program} admin={c.get("admin")} />));
+    // The Data tab is linked only for a person who may open it (programDataAccess), so the link and the routes agree.
+    const dataTab = (await programDataAccess(db, { code: program.code, personId: dataPersonOf(c), admin: c.get("admin") })) !== null;
+    return c.html(await page(c, program.name, <ProgramPage m={m} program={program} admin={c.get("admin")} dataTab={dataTab} />));
   });
 
   // Staff set the address a program gives for questions. Admin-gated, and
@@ -2417,35 +2420,83 @@ export function createApp({
   app.get("/exports", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
+    return c.html(await page(c, m.exports.title, <Exports m={m} occurrences={await occurrencesFile()} programs={await programArchives(db)} />));
+  });
+
+  // --- A program's Data tab (beeline-q8di): its licence and privacy policy, the files for uploading to Ecdysis and its
+  // nightly Darwin Core archives. Every route under /programs/:code/data answers to `programDataAccess`
+  // (src/app/programs.ts): the program's leads and admins, and nobody else, who get the not-found answer so the tab's
+  // existence is not revealed. The tab is drawn as the person being impersonated would see it; a download or an action is
+  // refused while impersonating, after the access check, so that a non-lead's impersonated view still gets not-found.
+  // Each file is checked to belong to the program in the address.
+  /** The person the tab is drawn for: the signed-in person, or the impersonated one, whom an admin sees the app as. */
+  const dataPersonOf = (c: Context<AppEnv>): number | null => (c.get("acting").impersonating ? c.get("acting").personId : (c.get("session").personId ?? null));
+  /** The program's Data tab if this person may open it and, for a download or an action, may also do it now; otherwise the answer to send. */
+  const dataGate = async (c: Context<AppEnv>, { acts }: { acts: boolean }): Promise<{ program: ProgramDataAccess } | Response> => {
+    const program = await programDataAccess(db, { code: c.req.param("code") ?? "", personId: dataPersonOf(c), admin: c.get("admin") });
+    if (program === null) return errorResponse(c, "notFound");
+    if (acts && c.get("acting").impersonating) return c.text(c.get("m").errors.readOnlyImpersonating, 403, { "cache-control": "no-store" });
+    return { program };
+  };
+
+  app.get("/programs/:code/data", async (c) => {
+    const gate = await dataGate(c, { acts: false });
+    if (gate instanceof Response) return gate;
+    const { program } = gate;
+    const m = c.get("m");
+    const collection = ECDYSIS_COLLECTIONS.find((x) => x.program === program.code);
+    let ecdysis: EcdysisUploadSection | null = null;
+    if (collection !== undefined) {
+      const state = await uploadStateOf(db, collection, { ecdysisDir: ecdysisDir() });
+      // The finished downloads are listed whatever the state of the read: the freshness check governs only starting a new archive.
+      const marker = await readMarkerOf(ecdysisDir(), collection);
+      ecdysis = {
+        collection,
+        state,
+        downloads: await downloadViewsOf(db, collection, state.ok ? state.held : null, state.ok ? state.read.readAt : marker === null ? null : new Date(marker.readAt)),
+        check: await ecdysisCheckOf(db, jobsDep.running?.() ?? null),
+        busy: c.req.query("check") === "busy",
+        recent: c.req.query("check") === "recent",
+      };
+    }
+    const scope = (await programArchives(db)).find((p) => p.code === program.code)?.scope ?? null;
+    // Not kept by a browser or a shared cache: the tab names the people who made files that hold true coordinates.
+    c.header("cache-control", "no-store");
     return c.html(
       await page(
         c,
-        m.exports.title,
-        <Exports
+        m.programData.title(program.name),
+        <ProgramData
           m={m}
-          occurrences={await occurrencesFile()}
-          programs={await programArchives(db)}
-          archives={await readArchiveManifest(exportsDir())}
+          program={program}
+          tabs={<ProgramTabs m={m} code={program.code} current="data" />}
+          archives={{ scope, manifest: await readArchiveManifest(exportsDir()) }}
           governance={await readProgramGovernance(programGovernance)}
-          ecdysis={await Promise.all(
-            ECDYSIS_COLLECTIONS.map(async (collection) => {
-              const state = await uploadStateOf(db, collection, { ecdysisDir: ecdysisDir() });
-              // The finished downloads are listed whatever the state of the read: the freshness check governs only starting a new archive.
-              const marker = await readMarkerOf(ecdysisDir(), collection);
-              return {
-                collection,
-                programName: (await programArchives(db)).find((p) => p.code === collection.program)?.name ?? collection.program,
-                state,
-                downloads: await downloadViewsOf(db, collection, state.ok ? state.held : null, state.ok ? state.read.readAt : marker === null ? null : new Date(marker.readAt)),
-              };
-            }),
-          )}
+          ecdysis={ecdysis}
         />,
       ),
     );
   });
 
-  // The two files a person uploads to Ecdysis (beeline-8dx9.12). Admins only, like the page.
+  // The button for step 1. Starts the job the Jobs page's Run button starts, through the same runner (`jobsDep.start`),
+  // unless a check is already running or the last one, failed or not, ended under five minutes ago, then goes back to the tab, which
+  // says what the check is doing. The minimum interval is there because the job reads every collection and replaces
+  // every collection's marker: a lead of one program pressing the button over and over would make another program's
+  // specimens file, being made at that moment, start again (the marker it rested on is replaced, so it is thrown away),
+  // and would download Ecdysis's whole collections each time. A failed check counts too: it can fail for one collection after refreshing another, and an immediate retry would download everything again. The Jobs page, which only admins use, is not limited.
+  app.post("/programs/:code/data/check-ecdysis", async (c) => {
+    const gate = await dataGate(c, { acts: true });
+    if (gate instanceof Response) return gate;
+    const back = programDataHref(gate.program.code);
+    if (collectionOf(gate.program.code) === undefined) return errorResponse(c, "notFound");
+    const last = await ecdysisCheckOf(db, jobsDep.running?.() ?? null);
+    if (last?.state === "running") return c.redirect(back);
+    if (last !== null && Date.now() - last.at.getTime() < ECDYSIS_CHECK_MIN_INTERVAL_MS) return c.redirect(`${back}?check=recent`);
+    const started = await jobsDep.start(ECDYSIS_CHECK_JOB);
+    return c.redirect(started ? back : `${back}?check=busy`);
+  });
+
+  // The two files a person uploads to Ecdysis (beeline-8dx9.12). For the program's leads and admins, under its Data tab (beeline-q8di).
   //
   // The archive is asked for with POST, because asking records a start and uses up the read (so no link, and no GET or
   // HEAD, which answer 405). It is written when asked for, one collection and year at a time, from what the nightly read
@@ -2456,17 +2507,26 @@ export function createApp({
   // specimens is two fields of the form, `includeTaxonObscured=1` and `includeObserverObscured=1`, each at most once.
   // Its start is recorded, with the decision, in one transaction; the whole archive is then built in memory, the
   // completion recorded with the specimens actually written, and only then is it sent, under a name that says how many.
-  const refusing = (c: Context<AppEnv>) => (status: 400 | 404 | 405 | 409 | 413, text: string) => c.text(text, status, { "cache-control": "no-store", ...(status === 405 ? { allow: "POST" } : {}) });
-  app.get("/exports/ecdysis/:file{[A-Za-z]+-\\d{4}-upload\\.zip}", (c) => (c.get("admin") ? refusing(c)(405, c.get("m").exports.ecdysis.postOnly) : c.text("Admins only.", 403)));
-  app.post("/exports/ecdysis/:file{[A-Za-z]+-\\d{4}-upload\\.zip}", async (c) => {
-    if (!c.get("admin")) return c.text("Admins only.", 403);
+  // A refusal is shown at the address of the request that was refused, where reloading would repeat the POST, so it is a
+  // page with the sentence and a link back to the program's Data tab, which is where to go next.
+  const refusing = (c: Context<AppEnv>, code: string) => async (status: 400 | 404 | 405 | 409 | 413, text: string) =>
+    c.html(await page(c, c.get("m").programData.refusedHeading, <ProgramDataRefusal m={c.get("m")} code={code} text={text} />), status, {
+      "cache-control": "no-store",
+      ...(status === 405 ? { allow: "POST" } : {}),
+    });
+  app.get("/programs/:code/data/ecdysis/:file{\\d{4}-upload\\.zip}", async (c) => {
+    const gate = await dataGate(c, { acts: false });
+    return gate instanceof Response ? gate : refusing(c, gate.program.code)(405, c.get("m").programData.ecdysis.postOnly);
+  });
+  app.post("/programs/:code/data/ecdysis/:file{\\d{4}-upload\\.zip}", async (c) => {
+    const gate = await dataGate(c, { acts: true });
+    if (gate instanceof Response) return gate;
     const m = c.get("m");
-    const e = m.exports.ecdysis;
-    const refuse = refusing(c);
-    const [, program, yearText] = /^([A-Za-z]+)-(\d{4})-upload\.zip$/.exec(c.req.param("file"))!;
-    const collection = collectionOf(program!);
+    const e = m.programData.ecdysis;
+    const refuse = refusing(c, gate.program.code);
+    const collection = collectionOf(gate.program.code);
     if (collection === undefined) return errorResponse(c, "notFound");
-    const year = Number(yearText);
+    const year = Number(/^(\d{4})-upload\.zip$/.exec(c.req.param("file"))![1]);
     const own = ["includeTaxonObscured", "includeObserverObscured"];
     const body = await c.req.parseBody({ all: true });
     const sent = (key: string) => (body[key] === undefined ? [] : Array.isArray(body[key]) ? body[key] : [body[key]]);
@@ -2532,15 +2592,17 @@ export function createApp({
 
   // The associations file of a completed archive download: exactly the specimens that archive held, so it takes no
   // filters or choices of its own, and it stays available for as long as the record does.
-  app.get("/exports/ecdysis/downloads/:id{\\d+}/associations.csv", async (c) => {
+  app.get("/programs/:code/data/ecdysis/downloads/:id{\\d+}/associations.csv", async (c) => {
+    const gate = await dataGate(c, { acts: true });
+    if (gate instanceof Response) return gate;
     const head = headRefused(c);
     if (head) return head;
-    if (!c.get("admin")) return c.text("Admins only.", 403);
-    const e = c.get("m").exports.ecdysis;
-    const refuse = refusing(c);
+    const e = c.get("m").programData.ecdysis;
+    const refuse = refusing(c, gate.program.code);
     if ([...new URL(c.req.url).searchParams.keys()].length > 0) return refuse(400, e.badQuery([...new URL(c.req.url).searchParams.keys()].join(", ")));
     const download = await downloadById(db, Number(c.req.param("id")));
-    const collection = download === null ? undefined : collectionOf(download.collection);
+    // The record must be this program's: a download of another program's collection is not found at this address.
+    const collection = download === null || download.collection !== gate.program.code ? undefined : collectionOf(download.collection);
     if (download === null || collection === undefined) return errorResponse(c, "notFound");
     if (download.completedAt === null) return refuse(409, e.associationsUnfinished);
     const recorded = await downloadSpecimens(db, download.id);
@@ -3091,16 +3153,18 @@ export function createApp({
   // One program-year's Darwin Core archive, as the dwc-archives job wrote
   // it (src/app/program-archives.ts), whether or not its program has the
   // licence and privacy policy publishing it would need: these are for staff
-  // to review (Peter, 2026-10-23). Only a file the manifest names is served.
+  // to review (Peter, 2026-10-23). Only a file the manifest names for this program is served: the name starts with the
+  // program's code, so that one program's lead cannot fetch another's by its name.
   // A program's checklist (beeline-024a) and its archive of every year
   // (beeline-9bnm) are served the same way, each by its own name.
-  app.get("/exports/dwca/:file{[A-Za-z0-9]+-(\\d{4}|checklist|all)\\.zip}", async (c) => {
-    if (!c.get("admin")) return c.text("Admins only.", 403);
+  app.get("/programs/:code/data/dwca/:file{[A-Za-z0-9]+-(\\d{4}|checklist|all)\\.zip}", async (c) => {
+    const gate = await dataGate(c, { acts: true });
+    if (gate instanceof Response) return gate;
     const name = c.req.param("file");
     const manifest = await readArchiveManifest(exportsDir());
-    const year = manifest?.entries.find((e) => e.file === name);
-    const checklist = manifest?.checklists?.find((e) => e.file === name);
-    const allYears = manifest?.allYears?.find((e) => e.file === name);
+    const year = manifest?.entries.find((e) => e.file === name && e.program === gate.program.code);
+    const checklist = manifest?.checklists?.find((e) => e.file === name && e.program === gate.program.code);
+    const allYears = manifest?.allYears?.find((e) => e.file === name && e.program === gate.program.code);
     const download =
       year !== undefined
         ? `${year.program}-${year.year}`
@@ -3128,6 +3192,7 @@ export function createApp({
       "content-type": "application/zip",
       "content-length": String(st.size),
       "content-disposition": `attachment; filename="beeline-${download}-dwca.zip"`,
+      "cache-control": "no-store",
     });
   });
 

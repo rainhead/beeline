@@ -9,7 +9,7 @@ import { CURRENT_SEASON, SETTLED_SEASON, createMemoryDb, insertCleanSample, rows
 
 /**
  * A store with invented people and specimens for the upload to Ecdysis
- * (beeline-8dx9.12), shared by the tests of the files and of the Exports page.
+ * (beeline-8dx9.12), shared by the tests of the files and of the Data tab.
  */
 
 export const WABA = ECDYSIS_COLLECTIONS.find((c) => c.program === "WaBA")!;
@@ -104,4 +104,16 @@ export async function fixture() {
     );
   };
   return { instance, conn, db, dir, casey, eva, vic, specimen, determine, cacheArchive, writeMarker };
+}
+
+/**
+ * What a refusal at a POST's address says, from the page it is shown in, which must also link back to the program's
+ * Data tab (reloading that address would repeat the POST). Exact: the sentence is the callout's whole text.
+ */
+export async function refusalSaid(res: Response, code = "BC"): Promise<string> {
+  const page = await res.text();
+  if (!page.includes(`<a href="/programs/${code}/data">Go back to the Data tab</a>`)) throw new Error("the refusal does not link back to the Data tab");
+  const callout = /<div class="callout warning">([^]*?)<\/div>/.exec(page);
+  if (callout === null) throw new Error("no refusal on the page");
+  return callout[1]!.replaceAll("&#39;", "'").replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }

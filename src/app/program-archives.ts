@@ -22,7 +22,7 @@ import { EMPTY_QUERY, hostNamesOnce, listSpecimens, OUTSIDE, STAFF_READER } from
 /**
  * The program archives, one per program per year, written nightly
  * (beeline-rvun, Peter 2026-10-10) into `<exportsDir>/dwca/`, with a manifest
- * the Exports page reads.
+ * each program's Data tab reads.
  *
  * A year is the calendar year a sample was collected in, by its first day,
  * because that is how the taxonomists who receive these records count

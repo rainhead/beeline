@@ -529,7 +529,8 @@ th[data-filtered] details.col-menu[open] > summary { color: var(--md-sys-color-p
    would run off the right of the window, its right edges aligned instead, and
    above the heading where it would run off the bottom.
    `anchor-scope` gives every menu its own `--col-menu`, so a panel never
-   anchors to another column's heading. */
+   anchors to another column's heading; a browser with anchors but without
+   anchor-scope (Chromium 125 to 130) keeps the old placement. */
 th details.col-menu > .menu-panel {
   position: fixed;
   top: auto;
@@ -541,7 +542,7 @@ th details.col-menu > .menu-panel {
   max-width: min(24rem, calc(100vw - 2 * var(--space-4)));
   z-index: 3;
 }
-@supports (anchor-name: --col-menu) {
+@supports (anchor-name: --col-menu) and (anchor-scope: --col-menu) {
   th details.col-menu { anchor-scope: --col-menu; }
   th details.col-menu > summary { anchor-name: --col-menu; }
   th details.col-menu > .menu-panel {

@@ -14,7 +14,7 @@ describe("column menu panel", () => {
     // Each menu names its own anchor, so a panel never anchors to another column's heading.
     expect(css).toMatch(/th details\.col-menu \{ anchor-scope: --col-menu; \}/);
     expect(css).toMatch(/th details\.col-menu > summary \{ anchor-name: --col-menu; \}/);
-    const panel = css.match(/@supports \(anchor-name: --col-menu\) \{[\s\S]*?position-anchor: --col-menu;[\s\S]*?\n  \}/);
+    const panel = css.match(/@supports \(anchor-name: --col-menu\) and \(anchor-scope: --col-menu\) \{[\s\S]*?position-anchor: --col-menu;[\s\S]*?\n  \}/);
     expect(panel, "the anchored panel rule").not.toBeNull();
     expect(panel![0]).toContain("top: anchor(bottom)");
     expect(panel![0]).toContain("left: anchor(left)");

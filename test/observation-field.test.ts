@@ -70,6 +70,53 @@ describe("the stored projection", () => {
   });
 
   /**
+   * The refresh is a MERGE that writes only the rows that differ (beeline-pw1q.1),
+   * so each of its three branches needs a row, and a row nothing happened to
+   * must come out as it went in.
+   */
+  test("corrects a hand-edited row, picks up a newer load, drops a row with no load, and leaves the rest", async () => {
+    for (const id of [1, 2, 3, 4]) await stageLoad(obs(id));
+    await refreshObservationFields(conn);
+    const before = await rows(conn, "SELECT * FROM observation_field WHERE inat_id IN (1, 2) ORDER BY inat_id");
+
+    // 3: the stored row was made wrong by hand, including a NULL that should be a value.
+    await conn.run("UPDATE observation_field SET place_guess = 'WRONG', quality_grade = 'x', notes = 'edited' WHERE inat_id = 3");
+    await conn.run("UPDATE observation_field SET geoprivacy = 'private' WHERE inat_id = 4");
+    // 4 has no load any more: only its stored row remains.
+    await conn.run("DELETE FROM observation_load WHERE inat_id = 4");
+    await conn.run("INSERT INTO observation_field (inat_id) VALUES (99)");
+    // 2 got a newer load with different content.
+    await conn.run("INSERT INTO sync_run (source, authenticated, completed_at) VALUES ('test', true, now() + INTERVAL 1 SECOND)");
+    await conn.run(
+      `INSERT INTO observation_load (inat_id, sync_run_id, fetched_at, content, content_hash)
+       VALUES (2, (SELECT max(entity_id) FROM sync_run), now() + INTERVAL 1 SECOND, $1, 'newer')`,
+      [canonicalJson(obs(2, { place_guess: "Moved Meadow" }))] as never,
+    );
+    expect(await count("SELECT count(*) FROM observation_field_stale")).toBeGreaterThan(0);
+
+    const n = await refreshObservationFields(conn);
+
+    expect(n).toBe(3);
+    expect(await count("SELECT count(*) FROM observation_field_stale")).toBe(0);
+    expect(await rows(conn, "SELECT inat_id FROM observation_field ORDER BY inat_id")).toEqual([[1n], [2n], [3n]]);
+    expect(await rows(conn, "SELECT place_guess FROM observation_field WHERE inat_id = 2")).toEqual([["Moved Meadow"]]);
+    expect(await rows(conn, "SELECT place_guess, quality_grade, notes FROM observation_field WHERE inat_id = 3")).toEqual(
+      await rows(conn, "SELECT place_guess, quality_grade, notes FROM observation_field WHERE inat_id = 1"),
+    );
+    // Row 1 was untouched; it is equal to what it was.
+    expect(await rows(conn, "SELECT * FROM observation_field WHERE inat_id = 1")).toEqual([before[0]]);
+  });
+
+  test("a refresh with nothing changed leaves the table equal", async () => {
+    for (const id of [1, 2]) await stageLoad(obs(id));
+    await refreshObservationFields(conn);
+    const before = await rows(conn, "SELECT * FROM observation_field ORDER BY inat_id");
+    expect(await refreshObservationFields(conn)).toBe(2);
+    expect(await rows(conn, "SELECT * FROM observation_field ORDER BY inat_id")).toEqual(before);
+    expect(await count("SELECT count(*) FROM observation_field_stale")).toBe(0);
+  });
+
+  /**
    * The observer's free text (beeline-hza). Kept verbatim, blank treated as
    * absent, and last in the column order — which is the property the
    * positional refresh and observation_field_stale both depend on.

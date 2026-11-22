@@ -121,7 +121,8 @@ CREATE TABLE observation_field (
   quality_grade              TEXT,
   sample_number_raw          TEXT,
   specimen_count_raw         TEXT,
-  -- Append only. The refresh inserts positionally and observation_field_stale
+  -- Append only. The refresh matches columns by name but decides whether a row
+  -- changed by comparing whole rows by position, and observation_field_stale
   -- compares with EXCEPT, so column ORDER here is load-bearing and must match
   -- observation_current_fields exactly (schema/105 says the same thing there).
   collection_method_raw      TEXT,

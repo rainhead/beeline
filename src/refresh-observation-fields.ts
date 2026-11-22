@@ -37,16 +37,34 @@ import type { DuckDBConnection } from "@duckdb/node-api";
  * night-window job and removes the whole class of "the store looked fine and
  * had promoted nothing".
  *
- * Whole-table, not incremental. A load can change any row, deletion
- * detection means rows also go away, and the whole refresh costs about as
- * much as one scan of the view it replaces — so the bookkeeping an
- * incremental refresh would need buys nothing and could be wrong.
+ * Every row is compared, but only changed rows are written. A load can
+ * change any row and deletion detection means rows also go away, so the
+ * refresh reads the whole projection each time; the bookkeeping an
+ * incremental refresh would need buys nothing and could be wrong. What it
+ * writes is another matter. Deleting every row and inserting them again
+ * while a page request holds a read transaction open leaves about 3.4 MB
+ * (12 to 16 blocks of 256 KB) in use in the file that no checkpoint frees,
+ * every night: production grew about 21 MB a day (beeline-kh13). Measured on
+ * the backup of 2026-11-22 (66,047 rows), four refreshes under an open reader
+ * with nothing changed took used blocks from 1,440 to 1,496 that way, and
+ * leave them at 1,440 with MERGE. MERGE also took about 280 ms against about
+ * 600 ms.
  */
 export async function refreshObservationFields(conn: DuckDBConnection): Promise<number> {
-  // DELETE + INSERT rather than CREATE OR REPLACE TABLE: the QC rule views
-  // depend on this table, and replacing it would drop them.
-  await conn.run("DELETE FROM observation_field");
-  await conn.run("INSERT INTO observation_field SELECT * FROM observation_current_fields");
+  // MERGE rather than DELETE + INSERT (see above), and rather than CREATE OR
+  // REPLACE TABLE, which would drop the QC rule views that depend on this
+  // table. `f IS DISTINCT FROM s` compares the two rows as structs, field by
+  // field in column order, and treats NULL as equal to NULL, so a row is
+  // rewritten only when some column differs, including a change from NULL to a
+  // value. `UPDATE SET *` and `INSERT *` match columns by name; the struct
+  // comparison still goes by position, which is why new columns go last and in
+  // the same order in both places (schema/060, schema/105).
+  await conn.run(
+    `MERGE INTO observation_field f USING observation_current_fields s ON f.inat_id = s.inat_id
+     WHEN MATCHED AND f IS DISTINCT FROM s THEN UPDATE SET *
+     WHEN NOT MATCHED THEN INSERT *
+     WHEN NOT MATCHED BY SOURCE THEN DELETE`,
+  );
   const [[n]] = (await (await conn.run("SELECT count(*) FROM observation_field")).getRows()) as [[bigint | number]];
   return Number(n);
 }

@@ -44,11 +44,11 @@ import type { DuckDBConnection } from "@duckdb/node-api";
  * writes is another matter. Deleting every row and inserting them again
  * while a page request holds a read transaction open leaves about 3.4 MB
  * (12 to 16 blocks of 256 KB) in use in the file that no checkpoint frees,
- * every night: production grew about 21 MB a day (beeline-kh13). Measured on
- * the backup of 2026-11-22 (66,047 rows), four refreshes under an open reader
- * with nothing changed took used blocks from 1,440 to 1,496 that way, and
- * leave them at 1,440 with MERGE. MERGE also took about 280 ms against about
- * 600 ms.
+ * on every refresh: production's store grew about 21 MB a day (beeline-kh13).
+ * Measured on the backup of 2026-11-22 (66,047 rows): four refreshes under an
+ * open reader with nothing changed took the blocks in use from 1,440 to 1,496
+ * that way, and left them at 1,440 with MERGE, which also took about 280 ms
+ * against about 600 ms.
  */
 export async function refreshObservationFields(conn: DuckDBConnection): Promise<number> {
   // MERGE rather than DELETE + INSERT (see above), and rather than CREATE OR

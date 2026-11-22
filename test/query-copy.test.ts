@@ -553,8 +553,10 @@ describe("the copy file", () => {
       })
       .catch((e: unknown) => e)) as QueryCopyError;
     expect(err).toBeInstanceOf(QueryCopyError);
-    expect(err.code).toBe("sql");
-    expect(err.message).toMatch(/temp|memory|director/i);
+    expect(err.code).toBe("memory");
+    expect(err.message).toMatch(/64MB of memory/);
+    expect(err.message).toMatch(/spill|temporary files/i);
+    expect(err.message).not.toMatch(/no-spill|Not a directory/);
     expect((await readdir(join(path, ".."))).sort()).toEqual(listing);
     expect((await small.run("SELECT count(*) FROM animal")).rows).toEqual([[2]]);
     await liveConn.run(`INSERT INTO person (display_name) VALUES ('Still writing')`);

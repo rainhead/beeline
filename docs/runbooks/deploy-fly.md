@@ -349,6 +349,15 @@ without running the statement. The query runs in a process of its own that is
 killed at the time limit and at 768 MB of memory, so a heavy one cannot take
 the app down with it; it then answers `timeout` or `memory`.
 
+A query that needs more than the 256 MB DuckDB is given (a large sort, or a join
+that builds big intermediate results) also answers `memory`, saying it would
+have to spill. That is deliberate: DuckDB would otherwise write temporary files
+beside the copy, its size cap is not enforced, and the volume is the one the
+live store writes to. So `store:query` never spills (its temporary directory is
+a path that cannot be created, `openQueryCopy` in `src/db.ts`) and nothing is
+written. Make the query smaller: select fewer columns, filter or aggregate
+before joining, or run the pieces as separate queries.
+
 There is no way to do this over HTTP, on purpose (Peter, 2026-11-13): a server
 that accepts SQL from the internet has one key between a stranger and a copy
 of everything, and whoever needs a lookup already has this shell.

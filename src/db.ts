@@ -107,6 +107,8 @@ export interface QueryCopyBudget {
  * directory below the copy file itself, which is not a folder, makes a query
  * that needs more than the memory limit fail with an ordinary error saying it
  * could not create the directory, and writes nothing.
+ * The worker turns that error into a `memory` answer that says so in plain words
+ * (`needsToSpill` in src/query-copy-worker.ts), so keep the directory's name `no-spill`.
  *
  * Even so, DuckDB keeps the database file and its `.wal`, `.wal.checkpoint`
  * and `.wal.recovery` paths open to statements with external access off, so

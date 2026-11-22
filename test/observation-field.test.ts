@@ -79,7 +79,7 @@ describe("the stored projection", () => {
     await refreshObservationFields(conn);
     const before = await rows(conn, "SELECT * FROM observation_field WHERE inat_id IN (1, 2) ORDER BY inat_id");
 
-    // 3: the stored row was made wrong by hand, including a NULL that should be a value.
+    // 3: the stored row was made wrong by hand.
     await conn.run("UPDATE observation_field SET place_guess = 'WRONG', quality_grade = 'x', notes = 'edited' WHERE inat_id = 3");
     await conn.run("UPDATE observation_field SET geoprivacy = 'private' WHERE inat_id = 4");
     // 4 has no load any more: only its stored row remains.

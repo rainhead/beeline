@@ -2864,7 +2864,7 @@ export const en = {
         report:
           'Read the "Pending Data Transfer Report" before going on. It should say "Records to be updated: 0", and "New records" should match the number in the file name. If it does not, or it warns about duplicate catalog numbers, stop: nothing has changed yet. Otherwise press "Transfer Records to Central Specimen Table".',
         associations:
-          'Reload this page and download the associations file, listed beside the specimens file. In Ecdysis, open "Import extended data", choose the file, set Import Type to "Associations" and Association Type to "Occurrence - External Link", and press "Initialize Import". Leave the field mapping as it is, choose the relationship "hasHost", and press "Import Data".',
+          'Reload this page and download the associations file from "Files made" below. In Ecdysis, open "Import extended data", choose the file, set Import Type to "Associations" and Association Type to "Occurrence - External Link", and press "Initialize Import". Leave the field mapping as it is, choose the relationship "hasHost", and press "Import Data".',
         readAgain: "Check Ecdysis again (step 1). Until you do, the counts here stay the same and no new specimens file is offered.",
         localities: "Good to know: localities go up as the labels have them, and trap samples have no associations, because a plant near a trap is not a host.",
       },
@@ -2873,12 +2873,12 @@ export const en = {
       readOn: (when: string) => `Ecdysis last checked ${when}.`,
       yearHeading: (year: number, specimens: number) => `${year}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"} ready to upload`,
       leftOut: "Not included:",
-      leftOutTaxon: (count: number) => `${n(count)} of a rare taxon, whose location iNaturalist hides`,
+      leftOutTaxon: (count: number) => `${n(count)} of rare taxa, whose location iNaturalist hides`,
       leftOutObserver: (count: number) => `${n(count)} whose observer hid the location`,
       leftOutNotDigits: (count: number) => `${n(count)} whose label number is not a plain number`,
       leftOutDisposition: (count: number) => `${n(count)} marked missing, or possibly recorded twice`,
       leftOutUnusable: (count: number) => `${n(count)} whose label number is shared with another specimen, or is too long for Ecdysis`,
-      leftOutStale: (count: number) => `${n(count)} whose privacy settings changed on iNaturalist recently; the next sync sorts them out`,
+      leftOutStale: (count: number) => `${n(count)} whose privacy settings changed on iNaturalist recently; they are offered once Beeline has caught up`,
       choiceLegend: "Hidden locations",
       includeTaxon: "Include specimens of rare taxa",
       includeObserver: "Include specimens whose observer hid the location",
@@ -2903,10 +2903,10 @@ export const en = {
         "Upload a specimens file the day it is made. If you find an older one, delete it. If you did not get the file, check Ecdysis again and download a new one.",
       downloadItem: (by: string | null, when: string, year: number, specimens: number, notKnown: number | null, established: boolean, state: "prepared" | "preparing" | "unfinished") =>
         state === "prepared"
-          ? `${by ?? "Someone"} made the ${year} specimens file on ${when}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}${notKnown === null ? "" : notKnown === 0 ? ", all now in Ecdysis" : established ? `, ${n(notKnown)} not in Ecdysis yet` : `, ${n(notKnown)} not confirmed in Ecdysis (check Ecdysis to update)`}.`
+          ? `${by ?? "Someone"} made the ${year} specimens file on ${when}: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}${notKnown === null ? "" : notKnown === 0 ? ", all now in Ecdysis" : established ? `, ${n(notKnown)} not in Ecdysis yet` : `, ${n(notKnown)} not yet confirmed in Ecdysis; check Ecdysis again to find out`}.`
           : state === "preparing"
             ? `${by ?? "Someone"} asked for the ${year} specimens file on ${when}. It is being made now.`
-            : `${by ?? "Someone"} asked for the ${year} specimens file on ${when}, but it was not made. Check Ecdysis again to try again.`,
+            : `${by ?? "Someone"} asked for the ${year} specimens file on ${when}, but it was not made. Check Ecdysis again, then ask for it again.`,
       downloadChoice: (taxon: boolean, observer: boolean) =>
         taxon && observer
           ? "Includes rare taxa and specimens whose observer hid the location."
@@ -2918,23 +2918,23 @@ export const en = {
       downloaded: (by: string | null, when: string, year: number, specimens: number, completed: boolean) =>
         completed
           ? `${by ?? "Someone"} made the ${year} specimens file (${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}) on ${when}. After uploading it, check Ecdysis again (step 1) to get another. If you did not get the file, check Ecdysis again and download a new one.`
-          : `${by ?? "Someone"} asked for the ${year} specimens file on ${when}, but it was not made. Check Ecdysis again (step 1) to try again.`,
+          : `${by ?? "Someone"} asked for the ${year} specimens file on ${when}, but it was not made. Check Ecdysis again (step 1), then ask for it again.`,
       beingWritten: "A specimens file for this collection is being made right now. Reload this page in a moment. If this stays, check Ecdysis again.",
       postOnly: "Use the Download button on the Exports page to get this file.",
-      superseded: "Ecdysis was checked again while the file was being made, so the file was thrown away. Reload the Exports page and download it again.",
-      tooLarge: "This file would be too large (over 50 MB), so it was not made. Tell whoever runs Beeline.",
-      choiceNeeded: "Every specimen ready for this year has a hidden location. Tick a box to include them; otherwise there is nothing to upload.",
+      superseded: "Ecdysis was checked again while the file was being made, so the file was thrown away. Reload the Exports page and try again. If it says a file was already asked for, check Ecdysis again.",
+      tooLarge: "This file would be too large (over 50 MB), so it was not made. Tell whoever runs Beeline, and check Ecdysis again before trying again.",
+      choiceNeeded: "Every specimen left for this year has a hidden location. Tick a box to include them; otherwise there is nothing to upload.",
       associationsUnfinished: "That specimens file was not made, so it has no associations file.",
       refused: {
         dataset: (scope: string) =>
-          `Not available yet. Beeline can see only part of this collection in Ecdysis (${scope}), so it cannot tell which specimens are already there.`,
+          `Not available yet. Beeline reads only part of this collection from Ecdysis (${scope}), so it cannot tell which specimens are already there.`,
         never: 'Beeline has not checked Ecdysis for this collection yet. Press "Check Ecdysis now" above, then reload this page.',
         stale: (when: string) => `Ecdysis was last checked ${when}, more than 2 hours ago. Press "Check Ecdysis now" above, then reload this page.`,
         reloaded: 'The last check did not fetch a fresh copy from Ecdysis. Press "Check Ecdysis now" above, then reload this page.',
-        "no-archive": 'Beeline\'s copy of this collection is missing. Press "Check Ecdysis now" above, then reload this page.',
-        changed: 'Beeline\'s copy of this collection changed since the last check. Press "Check Ecdysis now" above, then reload this page.',
-        unreadable: 'Beeline could not read its copy of this collection. Press "Check Ecdysis now" above. If that does not fix it, tell whoever runs Beeline.',
-        incomplete: 'Beeline\'s copy of this collection looks incomplete. Press "Check Ecdysis now" above. If that does not fix it, tell whoever runs Beeline.',
+        "no-archive": 'Beeline\'s saved copy of Ecdysis needs refreshing. Press "Check Ecdysis now" above, then reload this page.',
+        changed: 'Beeline\'s saved copy of Ecdysis needs refreshing. Press "Check Ecdysis now" above, then reload this page.',
+        unreadable: 'Beeline could not read its saved copy of Ecdysis. Press "Check Ecdysis now" above. If that does not fix it, tell whoever runs Beeline.',
+        incomplete: 'Beeline\'s saved copy of Ecdysis looks incomplete. Press "Check Ecdysis now" above. If that does not fix it, tell whoever runs Beeline.',
       },
       noSpecimensForFile: "There are no specimens to upload for this collection and year.",
       yearNotOffered: "This year cannot be uploaded from here yet.",
@@ -3058,7 +3058,7 @@ export const en = {
       "dwc-archives":
         "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
       "ecdysis-read-now":
-        "The read of Ecdysis that the Exports page asks for before an archive is prepared: the same as the nightly one, except that a collection Beeline reads whole is downloaded even if Ecdysis says nothing changed. Started from Exports, never by the clock.",
+        "Checks Ecdysis and always downloads a fresh copy, which Exports needs before it makes a specimens file for upload. Started from Exports, never by the clock.",
       "ecdysis-fetch":
         "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from Ecdysis's own list of names where it accepts them, and the rest are listed in the run.",
       "ideal-logic-registrants":

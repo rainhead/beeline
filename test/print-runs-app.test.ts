@@ -63,7 +63,7 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
   const db = createKysely(instance);
   const paths = await scratchPaths();
   /** The same store, seen by somebody else. */
-  const appFor = (who: "ash" | "staffer") =>
+  const appFor = (who: "ash" | "staffer", extra: Partial<Parameters<typeof createApp>[0]> = {}) =>
     createApp({
       ...paths,
       db,
@@ -72,6 +72,7 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
       resolveSession: async () => ({ personId: people[who], login: who, iconUrl: null }),
       printConn: conn,
       printRunsDir: dir,
+      ...extra,
     });
   const app = appFor(signedInAs);
   const post = (path: string, body: Record<string, string> = {}) =>
@@ -628,5 +629,24 @@ describe("reprints (gh-218)", () => {
     expect((await post(`/specimens/${specimenId}/reprint`, { withdraw: "1" })).status).toBe(302);
     expect(await (await app.request(`/samples/${ashSample}`)).text()).not.toContain("reprint requested");
     expect(await (await app.request(`/specimens/${specimenId}`)).text()).toContain("Reprint this label");
+  });
+});
+
+describe("an elevation read at another point (beeline-trl9)", () => {
+  it("is said on the list, and on the run's page when a Prepare left samples out", async () => {
+    const { app, conn, post, ashSample, birchSample } = await printApp();
+    // Both samples moved from where their elevations were read; no tiles on this server.
+    await conn.run(`UPDATE sample_location SET latitude = 40.5, longitude = -120.5 WHERE sample_id IN (${ashSample}, ${birchSample})`);
+    expect(await (await app.request("/print-runs")).text()).toContain(en.printRuns.prepare.staleElevation(2));
+    // Nothing else to print: the run is refused, in words.
+    const refused = await post("/print-runs", { atlas_id: "" });
+    expect(refused.status).toBe(409);
+    expect(await refused.text()).toContain(en.printRuns.refused({ code: "awaiting_elevation", samples: 2 }));
+    // One of them is fresh again; the other stays out, and the run's page says so.
+    await conn.run(`UPDATE sample_location SET latitude = 44.5646, longitude = -123.262 WHERE sample_id = ${birchSample}`);
+    const prepared = await post("/print-runs", { atlas_id: "" });
+    const location = prepared.headers.get("location")!;
+    expect(location).toMatch(/^\/print-runs\/\d+\?held=1$/);
+    expect(await (await app.request(location)).text()).toContain(en.printRuns.run.heldForElevation(1));
   });
 });

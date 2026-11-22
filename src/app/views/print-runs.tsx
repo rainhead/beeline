@@ -78,6 +78,7 @@ export function PrintRuns({
       <PageHeader title={p.heading} lede={p.intro} />
       {nothingPrepared && <Callout>{p.prepare.nothingToPrepare}</Callout>}
       {scope.awaiting_place > 0 && <Callout>{p.prepare.awaitingPlace(scope.awaiting_place)}</Callout>}
+      {scope.stale_elevation > 0 && <Callout>{p.prepare.staleElevation(scope.stale_elevation)}</Callout>}
 
       <Card>
         <h2>{p.prepare.heading}</h2>
@@ -195,10 +196,13 @@ export function PrintRun({
   run,
   labels,
   canDownloadAddresses = false,
+  heldForElevation = 0,
 }: {
   m: Messages;
   run: RunDetail;
   labels: RunLabelRow[];
+  /** Samples this run's Prepare left out for an elevation read at another point (beeline-trl9); shown only on the page the Prepare lands on. */
+  heldForElevation?: number;
   /** Whether Beeline holds a key for Ideal Logic, which is where the addresses come from. */
   canDownloadAddresses?: boolean;
 }) {
@@ -223,6 +227,8 @@ export function PrintRun({
           </>
         }
       />
+
+      {heldForElevation > 0 && <Callout tone="warning">{r.heldForElevation(heldForElevation)}</Callout>}
 
       {/* Above the actions: the printer reads it before approving. */}
       {run.held.length > 0 && (

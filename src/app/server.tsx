@@ -3236,7 +3236,7 @@ export function createApp({
     const run = await loadRun(db, id);
     if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
     const labels = await runLabels(db, id);
-    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_abbreviation), <PrintRun m={m} run={run} labels={labels} canDownloadAddresses={config.idealLogic != null} />));
+    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_abbreviation), <PrintRun m={m} run={run} labels={labels} heldForElevation={Math.max(0, Math.trunc(Number(c.req.query("held"))) || 0)} canDownloadAddresses={config.idealLogic != null} />));
   };
 
   app.get("/print-runs/:id", async (c) => {
@@ -3414,11 +3414,15 @@ export function createApp({
       const result = await prepareRun(printWriter!, {
         atlasId,
         personId,
+        demDir: derivePaths?.demDir,
+        jobRunning: syncJobRunning,
         beforeCommit: async (conn) => {
           await raiseRegistryMark(conn, await currentCatalog(conn), markPath);
         },
       });
-      return result === null ? "/print-runs?prepared=nothing" : `/print-runs/${result.printRunId}`;
+      if (result === null) return "/print-runs?prepared=nothing";
+      // Samples left out for an elevation read at another point are named on the run's page (beeline-trl9).
+      return `/print-runs/${result.printRunId}${result.heldForElevation > 0 ? `?held=${result.heldForElevation}` : ""}`;
     }),
   );
   app.post("/print-runs/:id/approve", (c) =>

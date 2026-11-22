@@ -86,6 +86,14 @@ export interface ScopeCounts {
    * count is where that shows.
    */
   awaiting_place: number;
+  /**
+   * Samples a run would take, new labels or reprints, whose elevation was
+   * read at a point they have since moved from and whose point is not too
+   * vague for an elevation (beeline-trl9). Preparing a run reads these again
+   * where the server has the elevation map and leaves out the rest, so this
+   * is the most a run can leave out for it.
+   */
+  stale_elevation: number;
 }
 
 export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
@@ -122,8 +130,16 @@ export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
     JOIN sample s ON s.entity_id = w.sample_id
     WHERE s.specimen_count > coalesce((SELECT count(*) FROM individuated_specimen i
                                        WHERE i.sample_id = s.entity_id AND i.specimen_number <= s.specimen_count), 0)`.execute(db);
+  const staleElevation = await sql<{ n: number }>`
+    SELECT CAST(count(*) AS INTEGER) AS n
+    FROM sample_elevation_stale st
+    JOIN sample_location loc ON loc.sample_id = st.sample_id
+    WHERE (st.sample_id IN (SELECT sample_id FROM pending_print_sample)
+        OR st.sample_id IN (SELECT sample_id FROM printable_reprint))
+      AND NOT coalesce(loc.coordinate_uncertainty_m > (SELECT coordinate_uncertainty_m FROM elevation_derivation_limit), false)`.execute(db);
   return {
     awaiting_place: Number(awaiting.rows[0]?.n ?? 0),
+    stale_elevation: Number(staleElevation.rows[0]?.n ?? 0),
     program: {
       samples: Number(program.samples),
       labels: Number(program.labels ?? 0),

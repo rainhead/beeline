@@ -1,4 +1,5 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
+import { deriveElevations } from "./derive-elevation.js";
 import { composeLabel, layoutSheets, type LabelInput } from "./label-text.js";
 import type { ReprintReason } from "./model.js";
 import type { PersonNameParts } from "./person-name.js";
@@ -46,6 +47,12 @@ export type PrintRunRefusal =
   | { code: "determined"; printRunId: number; specimens: number }
   | { code: "atlas_not_printing"; atlasId: number }
   /**
+   * Every sample the run would have taken has an elevation read at a point it
+   * has since moved from, and no elevation map on this server's disk covers
+   * the new point (beeline-trl9). `samples` is how many were held out.
+   */
+  | { code: "awaiting_elevation"; samples: number }
+  /**
    * Nothing the request named could be asked for. Of `specimens`, how many
    * have no number to print, are asked for already, or are in a run that
    * has not printed; one specimen is exactly one of the three.
@@ -59,6 +66,8 @@ export class PrintRunRefused extends Error {
         ? `no reprint requested: of ${refusal.specimens} specimen(s), ${refusal.unnumbered} have no number, ${refusal.asked} are asked for already, ${refusal.printing} are in an unprinted run`
         : refusal.code === "atlas_not_printing"
         ? `atlas ${refusal.atlasId} does not print its own labels; a run scoped to it is refused`
+        : refusal.code === "awaiting_elevation"
+        ? `${refusal.samples} sample(s) have an elevation read at another point and no elevation tile covers their point; nothing else was pending`
         : refusal.code === "determined"
         ? `print run ${refusal.printRunId} has ${refusal.specimens} determined specimen(s); cancel refused`
         : refusal.code === "no_location"
@@ -84,6 +93,16 @@ export interface PrepareOptions {
    * cannot commit with the mark still behind it.
    */
   beforeCommit?: (conn: DuckDBConnection) => Promise<void>;
+  /**
+   * The elevation tiles on the server's disk (beeline-trl9). Before the
+   * freeze, every elevation read at a point its sample has since moved from
+   * is read again from them, the way the staff coordinates routes do it
+   * (src/derive-elevation.ts). Absent, nothing is re-read, and every sample
+   * with such an elevation is held out of the run.
+   */
+  demDir?: string;
+  /** True while the nightly or the weekly sweep runs: it may be writing the same rows, so nothing is re-read now. */
+  jobRunning?: () => boolean;
 }
 
 export interface PrepareResult {
@@ -93,6 +112,11 @@ export interface PrepareResult {
   reprints: number;
   samples: number;
   sheets: number;
+  /**
+   * Samples left out because their elevation was read at another point and
+   * could not be read again here (beeline-trl9). They wait for the nightly.
+   */
+  heldForElevation: number;
 }
 
 interface PendingRow {
@@ -203,6 +227,21 @@ export function prepareRun(conn: DuckDBConnection, opts: PrepareOptions): Promis
 async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions): Promise<PrepareResult | null> {
   const now = opts.now ?? new Date();
   const nowSql = now.toISOString();
+  // Elevations read at another point are read again before the freeze, not
+  // inside it (beeline-trl9, Peter, 2026-11-21). deriveElevations reads tile
+  // files and runs a transaction of its own, which cannot nest in this one,
+  // and the freeze holds the print-run lock and should not wait on file reads
+  // it could have done first. Which samples are still stale is decided inside
+  // the transaction below, from what the store holds then, so a point that
+  // moves between the two is held rather than printed. A failed or skipped
+  // read leaves its samples stale, and they are held: never printed.
+  if (opts.demDir !== undefined && !opts.jobRunning?.()) {
+    try {
+      await deriveElevations(conn, opts.demDir);
+    } catch (err) {
+      console.warn(`[print run] elevations not read again: ${(err as Error).message}`);
+    }
+  }
   await conn.run("BEGIN TRANSACTION");
   try {
     // The scope, materialised once so the two reads below see the same set.
@@ -289,12 +328,34 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
       await conn.run("ROLLBACK");
       return null;
     }
-    const pending = samplesInRun.filter((s) => s.pending);
+    // An elevation read at another point never reaches a label (beeline-trl9).
+    // One the nightly will not read again, because the point is too vague to
+    // deserve an elevation (schema/170), is printed as none; the rest are
+    // held out of the run until the nightly has read them again.
+    const staleRows = await rows<{ sample_id: number; too_vague: boolean }>(
+      conn,
+      `SELECT st.sample_id,
+              coalesce(loc.coordinate_uncertainty_m > (SELECT coordinate_uncertainty_m FROM elevation_derivation_limit), false) AS too_vague
+       FROM sample_elevation_stale st
+       JOIN sample_location loc ON loc.sample_id = st.sample_id
+       JOIN freeze_samples fs ON fs.sample_id = st.sample_id`,
+    );
+    const heldIds = new Set<number>();
+    for (const st of staleRows) {
+      if (st.too_vague) {
+        const sample = samplesInRun.find((x) => Number(x.sample_id) === Number(st.sample_id));
+        if (sample) sample.elevation_m = null;
+      } else {
+        heldIds.add(Number(st.sample_id));
+      }
+    }
+    const isHeld = (sampleId: number) => heldIds.has(Number(sampleId));
+    const pending = samplesInRun.filter((s) => s.pending && !isHeld(s.sample_id));
     const sampleById = new Map(samplesInRun.map((s) => [Number(s.sample_id), s]));
     // Each reprint with its number and the last label it had, if Beeline
     // printed one, so the proofer is told where the reprint will read
     // differently. An imported specimen has no label to compare against.
-    const reprintRows = await rows<{
+    const allReprintRows = await rows<{
       specimen_id: number;
       sample_id: number;
       specimen_number: number;
@@ -318,6 +379,7 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
          WHERE r.canceled_at IS NULL
        ) last ON last.specimen_id = fr.specimen_id AND last.rn = 1`,
     );
+    const reprintRows = allReprintRows.filter((r) => !isHeld(r.sample_id));
     // The specimen rows these samples already have: individuated ones keep
     // their place in 1..N and are skipped; the rest were left behind by a
     // canceled run and are re-adopted — same row, a fresh number — rather
@@ -395,6 +457,11 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
       reprint: { field_number: string; differs: string[] } | null;
     };
     const toMint: Pending[] = [];
+    // Nothing is left to print, but only because every sample was held: say
+    // so, rather than that nothing was waiting.
+    if (heldIds.size > 0 && pending.length === 0 && reprintRows.length === 0) {
+      throw new PrintRunRefused({ code: "awaiting_elevation", samples: heldIds.size });
+    }
     for (const sample of pending) {
       const have = taken.get(Number(sample.sample_id)) ?? new Set<number>();
       for (let n = 1; n <= Number(sample.specimen_count); n++) {
@@ -564,7 +631,14 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
     await conn.run(`DROP TABLE IF EXISTS freeze_samples`);
     await opts.beforeCommit?.(conn);
     await conn.run("COMMIT");
-    return { printRunId, labels: laidOut.length, reprints: reprints.length, samples: samples.size, sheets };
+    return {
+      printRunId,
+      labels: laidOut.length,
+      reprints: reprints.length,
+      samples: samples.size,
+      sheets,
+      heldForElevation: heldIds.size,
+    };
   } catch (err) {
     await conn.run("ROLLBACK");
     throw err;

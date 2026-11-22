@@ -937,6 +937,29 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(await find("woolly", "specimens")).toEqual(["A-1"]);
   });
 
+  it("reads a typed % or _ as the character itself, not as a wildcard (beeline-2k2s)", async () => {
+    const { app, conn } = await hostApp();
+    await conn.run(`UPDATE sample SET host_name_as_observed = 'Snake_plant', host_inat_taxon_id = NULL WHERE sample_number = 'B-2'`);
+    await conn.run(`UPDATE sample SET host_name_as_observed = '50% plant', host_inat_taxon_id = NULL WHERE sample_number = 'C-1'`);
+    const find = async (term: string, listing = "samples") => numbers(await get(app, `/${listing}?scope=all&host=${encodeURIComponent(term)}`));
+    // Underscore and percent each match only the name that holds them.
+    expect(await find("_")).toEqual(["B-2"]);
+    expect(await find("e_p")).toEqual(["B-2"]);
+    expect(await find("%")).toEqual(["C-1"]);
+    expect(await find("0% p")).toEqual(["C-1"]);
+    // A wildcard in the middle of a term finds nothing: "s_ake" is not "snake".
+    expect(await find("s_ake")).toEqual([]);
+    expect(await find("p%t")).toEqual([]);
+    // A backslash, the escape character, is literal too.
+    expect(await find("\\")).toEqual([]);
+    // The sample-number search is escaped the same way.
+    await conn.run(`UPDATE sample SET sample_number = 'A_9' WHERE sample_number = 'A-1'`);
+    const byNumber = async (q: string) => get(app, `/samples?scope=all&q=${encodeURIComponent(q)}`);
+    expect(await byNumber("a_9")).toContain("1 sample");
+    expect(await byNumber("a-9")).toContain("No samples match");
+    expect(await byNumber("_")).toContain("1 sample");
+  });
+
   it("gives a trap's plant as near the trap, not visited, and still finds it by name (beeline-vjqy)", async () => {
     const { app, conn } = await hostApp();
     await conn.run(`UPDATE sample SET protocol = 'pan traps' WHERE sample_number = 'C-1'`);

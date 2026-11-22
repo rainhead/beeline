@@ -369,6 +369,14 @@ describe("the roster screen", () => {
     expect(await (await ctx.app.request("/people?q=adacollects")).text()).toContain("Ada Collector");
   });
 
+  it("reads a typed % or _ as the character itself (beeline-2k2s)", async () => {
+    for (const q of ["_", "%", "a_a", "b%o"]) {
+      const body = await (await ctx.app.request(`/people?q=${encodeURIComponent(q)}`)).text();
+      expect(body, q).not.toContain(">Ada Collector<");
+      expect(body, q).not.toContain("Bo Netter");
+    }
+  });
+
   /**
    * A person is reachable by login as well as by entity_id, and links prefer
    * the login. Neither handle is permanent, but an entity_id is a per-store

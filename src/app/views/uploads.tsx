@@ -331,7 +331,8 @@ export function UploadPreview({
                 ))}
               </ul>
               <label>
-                <input type="checkbox" name="confirm_elsewhere" value="1" /> {p.samplesOtherProgramsBox}
+                {/* The box names the programs it was shown with: a program that comes in later (a look-alike ticked to be made anyway, a lead given up) asks again. */}
+                <input type="checkbox" name="confirm_elsewhere" value={samplesSummary.otherPrograms.map((o) => o.code).join(";")} /> {p.samplesOtherProgramsBox}
               </label>
             </Callout>
           )}

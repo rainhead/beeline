@@ -61,11 +61,14 @@ const upload = async (f: UploadFixture, file: Uint8Array) => {
   return res.headers.get("location")!;
 };
 const digestIn = (html: string) => /name="digest" value="([0-9a-f]+)"/.exec(html)?.[1];
-const applyWith = (f: UploadFixture, location: string, digest: string | undefined, confirm: boolean) => {
+/** What the page's box carries: the codes of the programs it named. */
+const boxIn = (html: string) => /name="confirm_elsewhere" value="([^"]*)"/.exec(html)?.[1] ?? "";
+/** Apply, ticking the box with what it carries (`confirm` true: the page's own; a string: those codes). */
+const applyWith = (f: UploadFixture, location: string, digest: string | undefined, confirm: boolean | string, html = "") => {
   const body = new FormData();
   body.set("digest", digest ?? "");
   body.set("obas", "1");
-  if (confirm) body.set("confirm_elsewhere", "1");
+  if (confirm !== false) body.set("confirm_elsewhere", confirm === true ? boxIn(html) : confirm);
   return f.app.request(`${location}/apply-samples`, { method: "POST", headers: { origin: ORIGIN }, body });
 };
 const queued = async (f: UploadFixture) => Number((await f.conn.run(`SELECT count(*) FROM upload_sample_outcome`).then((r) => r.getRows()))[0]![0]);
@@ -108,7 +111,26 @@ describe("the samples file", () => {
     expect(await refused.text()).toContain(esc(p.samplesOtherProgramsNotConfirmed));
     expect(await queued(f)).toBe(0);
     // Confirmed: applied.
-    expect((await applyWith(f, location, digest, true)).status).toBe(303);
+    expect((await applyWith(f, location, digest, true, html)).status).toBe(303);
+    expect(await queued(f)).toBeGreaterThan(0);
+  });
+
+  it("asks again about a program that was not on the page the confirmation was ticked on", async () => {
+    const f = await uploadFixture();
+    await fileUnder(f, f.ids.sampleA, "OBA");
+    await fileUnder(f, f.ids.sampleB, "WaBA");
+    await leads(f, "OBA");
+    const { location, html, digest } = await offered(f, [...albany(f.ids.sampleA), ...albany(f.ids.sampleB)]);
+    expect(boxIn(html)).toBe("WaBA");
+    // They stop leading OBA before pressing Apply: the box they ticked named WABA only, so OBA is asked about.
+    await f.conn.run(`DELETE FROM program_lead WHERE person_id = ${f.staffer}`);
+    const again = await applyWith(f, location, digest, true, html);
+    expect(again.status).toBe(409);
+    const shown = await again.text();
+    expect(shown).toContain(line("OBA", 1, 1, 0));
+    expect(await queued(f)).toBe(0);
+    // Ticked on the page that names both: applied.
+    expect((await applyWith(f, location, digest, true, shown)).status).toBe(303);
     expect(await queued(f)).toBeGreaterThan(0);
   });
 
@@ -120,7 +142,7 @@ describe("the samples file", () => {
     expect(html).toContain(BOX);
     expect((await applyWith(f, location, digest, false)).status).toBe(409);
     expect(await queued(f)).toBe(0);
-    expect((await applyWith(f, location, digest, true)).status).toBe(303);
+    expect((await applyWith(f, location, digest, true, html)).status).toBe(303);
   });
 
   it("does not ask about a sample that is in two programs when the person leads one of them, and names both when they lead neither", async () => {
@@ -152,7 +174,7 @@ describe("the samples file", () => {
     expect(other.html).toContain(line("OBA", 1, 1, 0));
     expect((await applyWith(f, other.location, other.digest, false)).status).toBe(409);
     expect(await queued(f)).toBe(0);
-    expect((await applyWith(f, other.location, other.digest, true)).status).toBe(303);
+    expect((await applyWith(f, other.location, other.digest, true, other.html)).status).toBe(303);
 
     const g = await uploadFixture();
     await leads(g, "OBA");

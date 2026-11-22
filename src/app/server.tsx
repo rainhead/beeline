@@ -2889,7 +2889,11 @@ export function createApp({
     if (rowsToApply(outcome.plan).length === 0 && unitsToApply(outcome.plan).length === 0) return showing("nothing_ticked");
     // Records of programs the person does not lead are changed only once they have said they know it (beeline-kgyd.13).
     // The page asks with a box, and this is the check that does not rely on the page.
-    if ((outcome.plan.otherPrograms ?? []).length > 0 && body.get("confirm_elsewhere") !== "1") return showing("confirm_elsewhere");
+    // The box carries the codes of the programs the page named (codes are letters and digits, so `;` joins them): every
+    // program applying would change outside the person's own must be among them, so one that comes in after the page was
+    // shown is asked about again.
+    const confirmed = new Set(String(body.get("confirm_elsewhere") ?? "").split(";"));
+    if ((outcome.plan.otherPrograms ?? []).some((o) => !confirmed.has(o.code))) return showing("confirm_elsewhere");
     const claimed = await claimUpload(db, { uploadId: row.entity_id, appliedBy: c.get("session").personId, plan: outcome.plan, now: new Date(), messages: m });
     // Started now, and if something else is running, by the scheduler's tick as soon as it is done.
     if (claimed !== null) await jobsDep.start(APPLY_JOB);

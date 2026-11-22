@@ -37,7 +37,7 @@ import type { CsvTiming } from "./request-timing.js";
  * The two files a person uploads to Ecdysis by hand (beeline-8dx9.12, Peter,
  * 2026-11-20): a Darwin Core archive of the specimens Ecdysis does not hold,
  * and a CSV of associations (the iNaturalist observation and the host plant)
- * for Symbiota's "Import extended data" page. What Symbiota does with them is
+ * for Symbiota's "Extended Data Import" page. What Symbiota does with them is
  * measured in docs/research/symbiota-import-test-2026-11-20.md; the reasons
  * for each choice below are in docs/architecture/the-upload-to-ecdysis.md.
  *
@@ -1032,7 +1032,7 @@ export async function buildArchive(
 // --- The associations file -----------------------------------------------------
 
 /**
- * The headers Symbiota's "Import extended data" page maps by name for an
+ * The headers Symbiota's "Extended Data Import" page maps by name for an
  * external link: the subject by catalog number, the iNaturalist observation as
  * the resource's address, and the host plant as a name (OccurrenceImport.php
  * 440-485). There is no objectID, so Symbiota's own export gives the address

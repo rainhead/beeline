@@ -2860,11 +2860,12 @@ export const en = {
         download:
           "Download the specimens file and upload it today, once. Then delete it. Uploading an old file can wipe out identifications made in Ecdysis since.",
         collection: "In Ecdysis, open the collection named under the heading below.",
-        uploadPage: 'On its Upload page, choose Darwin Core Archive. Tick "Match on Catalog Number" and "Import Identification History".',
+        uploadPage:
+          'Open "DwC-Archive Import", choose the specimens file and press "Analyze File". Check that "Match on Catalog Number" and "Import Identification History" are ticked, then press "Start Upload".',
         report:
           'Read the "Pending Data Transfer Report" before going on. It should say "Records to be updated: 0", and "New records" should match the number in the file name. If it does not, or it warns about duplicate catalog numbers, stop: nothing has changed yet. Otherwise press "Transfer Records to Central Specimen Table".',
         associations:
-          'Reload this page and download the associations file from "Files made" below. In Ecdysis, open "Import extended data", choose the file, set Import Type to "Associations" and Association Type to "Occurrence - External Link", and press "Initialize Import". Leave the field mapping as it is, choose the relationship "hasHost", and press "Import Data".',
+          'Reload this page and download the associations file from "Files made" below. In Ecdysis, open "Extended Data Import", choose the file, set Import Type to "Associations" and Association Type to "Occurrence - External Link", and press "Initialize Import". Leave the field mapping as it is, choose the relationship "hasHost", and press "Import Data".',
         readAgain: "Check Ecdysis again (step 1). Until you do, the counts here stay the same and no new specimens file is offered.",
         localities: "Good to know: localities go up as the labels have them, and trap samples have no associations, because a plant near a trap is not a host.",
       },

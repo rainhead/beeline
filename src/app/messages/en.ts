@@ -3401,6 +3401,7 @@ export const en = {
         coordinates: "coordinates",
         elevation: "elevation",
         dates: "dates",
+        method: "method",
       } satisfies Record<OutOfDateField, string>,
       outOfDateChange: (field: string, onLabel: string | null, now: string | null) =>
         `${field} ${onLabel ?? "none"} on the labels, ${now ?? "none"} now`,

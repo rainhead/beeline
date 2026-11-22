@@ -1888,7 +1888,7 @@ export interface PrintedLabelReprintView {
 }
 
 /** A field a label in an unprinted run shows differently from its sample now (printed_label_out_of_date). */
-export type OutOfDateField = "locality" | "county" | "state_province" | "country" | "coordinates" | "elevation" | "dates";
+export type OutOfDateField = "locality" | "county" | "state_province" | "country" | "coordinates" | "elevation" | "dates" | "method";
 
 export interface PrintedLabelOutOfDateView {
   print_run_id: number;

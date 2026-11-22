@@ -438,12 +438,15 @@ function ProgramSeasons({
  */
 function AllYears({ m, code, entry, name, license }: { m: Messages; code: string; entry: AllYearsEntry; name: string; license: LicenseId | null }) {
   const d = m.programData;
+  // The notice is a paragraph of its own, so it follows the download's paragraph and is not inside it.
   return (
-    <p>
-      {d.allYears(entry.specimens, entry.firstYear, entry.lastYear)} {license === null ? d.allYearsNoLicense : d.allYearsLicense(LICENSES[license].name)}{" "}
-      <a href={dwcaHref(code, entry.file)} aria-label={d.allYearsDownload(name)}>
-        {d.downloadSized(fileSize(entry.bytes))}
-      </a>
+    <>
+      <p>
+        {d.allYears(entry.specimens, entry.firstYear, entry.lastYear)} {license === null ? d.allYearsNoLicense : d.allYearsLicense(LICENSES[license].name)}{" "}
+        <a href={dwcaHref(code, entry.file)} aria-label={d.allYearsDownload(name)}>
+          {d.downloadSized(fileSize(entry.bytes))}
+        </a>
+      </p>
       {entry.license !== license && (
         <Meta block>
           {entry.license === null
@@ -453,6 +456,6 @@ function AllYears({ m, code, entry, name, license }: { m: Messages; code: string
               : d.archiveLicenseWas(LICENSES[entry.license].name)}
         </Meta>
       )}
-    </p>
+    </>
   );
 }

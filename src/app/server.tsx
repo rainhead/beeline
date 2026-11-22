@@ -2477,11 +2477,11 @@ export function createApp({
   });
 
   // The button for step 1. Starts the job the Jobs page's Run button starts, through the same runner (`jobsDep.start`),
-  // unless a check is already running or the last one finished under five minutes ago, then goes back to the tab, which
+  // unless a check is already running or the last one, failed or not, ended under five minutes ago, then goes back to the tab, which
   // says what the check is doing. The minimum interval is there because the job reads every collection and replaces
   // every collection's marker: a lead of one program pressing the button over and over would make another program's
   // specimens file, being made at that moment, start again (the marker it rested on is replaced, so it is thrown away),
-  // and would download Ecdysis's whole collections each time. The Jobs page, which only admins use, is not limited.
+  // and would download Ecdysis's whole collections each time. A failed check counts too: it can fail for one collection after refreshing another, and an immediate retry would download everything again. The Jobs page, which only admins use, is not limited.
   app.post("/programs/:code/data/check-ecdysis", async (c) => {
     const gate = await dataGate(c, { acts: true });
     if (gate instanceof Response) return gate;
@@ -2489,7 +2489,7 @@ export function createApp({
     if (collectionOf(gate.program.code) === undefined) return errorResponse(c, "notFound");
     const last = await ecdysisCheckOf(db, jobsDep.running?.() ?? null);
     if (last?.state === "running") return c.redirect(back);
-    if (last?.state === "finished" && Date.now() - last.at.getTime() < ECDYSIS_CHECK_MIN_INTERVAL_MS) return c.redirect(`${back}?check=recent`);
+    if (last !== null && Date.now() - last.at.getTime() < ECDYSIS_CHECK_MIN_INTERVAL_MS) return c.redirect(`${back}?check=recent`);
     const started = await jobsDep.start(ECDYSIS_CHECK_JOB);
     return c.redirect(started ? back : `${back}?check=busy`);
   });

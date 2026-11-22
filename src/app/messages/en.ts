@@ -2840,7 +2840,7 @@ export const en = {
     intro: "Files that leave Beeline for this program. They hold collectors' names, and the true coordinates of hidden locations.",
     written: (when: string) => `Written ${when}`,
     licencesHeading: "Licence and privacy policy",
-    licencesNone: "No specimens yet, so there is nothing to license.",
+    licencesNone: "No specimens as of the last nightly run, so there is nothing to license yet.",
     archives: "Darwin Core archives",
     archivesIntro:
       "One archive for each year's specimens, written every night. Download one to look it over. There is also an archive of every year together, and a checklist of the names this program's specimens are identified to.",
@@ -2854,7 +2854,7 @@ export const en = {
         : code === "NWR"
           ? "No archives of its own. Refuge samples are in their atlases' archives."
           : "No archives. Beeline does not yet record which samples belong to this program.",
-    noSpecimens: "No specimens yet.",
+    noSpecimens: "No specimens as of the last nightly run.",
     colYear: "Year",
     colSpecimens: "Specimens",
     colLicense: "Licence",
@@ -2902,14 +2902,14 @@ export const en = {
           'In Ecdysis, open "Extended Data Import", choose the file, set Import Type to "Associations" and Association Type to "Occurrence - External Link", and press "Initialize Import".',
         hasHost: 'Leave the field mapping as it is, choose the relationship "hasHost", and press "Import Data".',
         readAgain: "Check Ecdysis again (step 1). Until you do, the counts here stay the same and no new specimens file is offered.",
-        localities: "Good to know: localities go up as the labels have them, and trap samples have no associations, because a plant near a trap is not a host.",
+        localities: "Good to know: only one person should upload to a collection at a time. Localities go up as the labels have them, and trap samples have no associations, because a plant near a trap is not a host.",
       },
       collection: (scope: string) => `Ecdysis ${scope}`,
       /** Under the button for step 1: whether Ecdysis is being checked now, or how the last check ended. */
       check: {
         running: "Checking Ecdysis now. Reload this page in a few minutes.",
         finished: (when: string) => `The last check finished ${when}.`,
-        failed: (when: string) => `The last check did not work (${when}). Try again. If it fails again, tell whoever runs Beeline.`,
+        failed: (when: string) => `The last check did not work (${when}). Try again in five minutes. If it fails again, tell whoever runs Beeline.`,
         busy: "Beeline is busy with something else right now. Try again in a few minutes.",
         recent: (when: string) => `Ecdysis was just checked (${when}). Wait five minutes, then check again if you need to.`,
       },

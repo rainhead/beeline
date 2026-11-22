@@ -209,6 +209,9 @@ async function listingApp(
   return { app, db, conn, ...people };
 }
 
+/** Catalog text as the page's markup spells it: a notice with an apostrophe in it is found by its escaped form, never its raw one. */
+const inPage = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+
 const get = async (app: Awaited<ReturnType<typeof listingApp>>["app"], path: string) => {
   const res = await app.request(path);
   expect(res.status, path).toBe(200);
@@ -289,7 +292,7 @@ describe("sample listing", () => {
     expect(all).toContain("6 samples");
     expect(all).toContain("B-2");
     // And they are told why some of them say less about where.
-    expect(all).toContain(en.listings.scope.withheldNote.replaceAll("'", "&#39;"));
+    expect(all).toContain(en.listings.scope.withheldNote);
   });
 
   it("lets staff scope to an atlas, or to all of them", async () => {
@@ -305,7 +308,7 @@ describe("sample listing", () => {
     const all = await get(app, "/samples?scope=all");
     expect(all).toContain("6 samples");
     // Staff see every location, so the note about hidden ones is not theirs.
-    expect(all).not.toContain(en.listings.scope.withheldNote.replaceAll("'", "&#39;"));
+    expect(all).not.toContain(en.listings.scope.withheldNote);
   });
 
   // The two axes, and the point is that they disagree: B-3 is outside every
@@ -1770,16 +1773,16 @@ describe("Darwin Core archives, by program and year", () => {
     expect(page).toContain("none yet");
     expect(page).toContain(`href="/programs/OBA/data/dwca/OBA-2026.zip"`);
     expect(await get(app, "/programs/WaBA/data")).toContain(`href="/programs/WaBA/data/dwca/WaBA-${CURRENT_SEASON}.zip"`);
-    expect(page).not.toContain(en.programData.archiveLicenseNone);
+    expect(page).not.toContain(inPage(en.programData.archiveLicenseNone));
 
     // A licence merged after the night's run shows at once, and the row says
     // the file beside it does not carry it yet.
     await fx.write([OBA_LICENSE], []);
     const after = await get(app, "/programs/OBA/data");
     expect(after).toContain("CC BY-NC 4.0");
-    expect(after).toContain(en.programData.archiveLicenseNone.replaceAll("'", "&#39;"));
+    expect(after).toContain(inPage(en.programData.archiveLicenseNone));
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    expect(await get(app, "/programs/OBA/data")).not.toContain(en.programData.archiveLicenseNone);
+    expect(await get(app, "/programs/OBA/data")).not.toContain(inPage(en.programData.archiveLicenseNone));
   });
 
   it("files a sample by the calendar year of its first day, which is its season", async () => {
@@ -1828,10 +1831,10 @@ describe("Darwin Core archives, by program and year", () => {
     expect(page).toContain(`href="https://example.org/oba-privacy"`);
     // The tab is this program's alone: the others' files are not on it.
     expect(page).not.toContain("WaBA-");
-    expect(await get(app, "/programs/BLM/data")).toContain(en.programData.archiveNone("BLM").replaceAll("'", "&#39;"));
+    expect(await get(app, "/programs/BLM/data")).toContain(inPage(en.programData.archiveNone("BLM")));
     // The refuge program has no ground either, in its own terms (beeline-8zlh).
-    expect(await get(app, "/programs/NWR/data")).toContain(en.programData.archiveNone("NWR").replaceAll("'", "&#39;"));
-    expect(await get(app, "/programs/MM/data")).toContain("No specimens yet.");
+    expect(await get(app, "/programs/NWR/data")).toContain(inPage(en.programData.archiveNone("NWR")));
+    expect(await get(app, "/programs/MM/data")).toContain(en.programData.noSpecimens);
     // Exports lists every program by name, atlases and the rest together (Peter, 2026-10-26), each with the link to its tab.
     const exportsPage = await get(app, "/exports");
     const linked = [...exportsPage.matchAll(/<a href="\/programs\/([A-Za-z]+)\/data">([^<]+)<\/a>/g)].map(([, code, name]) => [code, name]);
@@ -1948,7 +1951,7 @@ describe("Darwin Core archives, by program and year", () => {
     expect(table(files["identification.txt"]!).length).toBeGreaterThan(1);
 
     const page = await get(app, "/programs/OBA/data");
-    expect(page).toContain(en.programData.allYears(3, 2024, 2026));
+    expect(page).toContain(inPage(en.programData.allYears(3, 2024, 2026)));
     expect(page).toContain(en.programData.allYearsLicense("CC BY-NC 4.0"));
     expect(page).toContain(`aria-label="${en.programData.allYearsDownload("Oregon Bee Atlas")}"`);
 
@@ -1956,8 +1959,8 @@ describe("Darwin Core archives, by program and year", () => {
     // one: the page says so at once, and the next night's file states none.
     await fx.write([OBA_LICENSE, "OBA,2026,CC-BY-4.0,Test,2026-10-10,https://example.org/oba,Changed"], [OBA_POLICY]);
     const changed = await get(app, "/programs/OBA/data");
-    expect(changed).toContain(en.programData.allYearsNoLicense);
-    expect(changed).toContain(en.programData.allYearsLicenseDropped("CC BY-NC 4.0").replaceAll("'", "&#39;"));
+    expect(changed).toContain(inPage(en.programData.allYearsNoLicense));
+    expect(changed).toContain(inPage(en.programData.allYearsLicenseDropped("CC BY-NC 4.0")));
     const after = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     expect(after.allYears!.find((a) => a.program === "OBA")!.license).toBeNull();
     const rewritten = unpack(new Uint8Array(await (await app.request("/programs/OBA/data/dwca/OBA-all.zip")).arrayBuffer()));

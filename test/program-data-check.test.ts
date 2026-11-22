@@ -111,15 +111,28 @@ describe("Check Ecdysis now, from the Data tab", () => {
     expect(page).toContain(c.recent(en.format.dateTime(new Date(at as unknown as string))).replaceAll("'", "&#39;"));
   });
 
-  it("starts a check once the last one finished more than five minutes ago, and after a failed one", async () => {
+  it("starts a check once the last one, failed or not, ended more than five minutes ago", async () => {
+    for (const outcome of ["succeeded", "failed"] as const) {
+      const s = await setup();
+      await s.run("ecdysis-read-now", outcome, 1, "x");
+      expect((await s.press()).headers.get("location"), outcome).toBe(TAB);
+      expect(s.started, outcome).toEqual([ECDYSIS_CHECK_JOB]);
+    }
+  });
+
+  it("does not start a check within five minutes of a failed one either, and shows the failure's own message", async () => {
+    // A check can fail for one collection after refreshing another, and an immediate retry would download everything again.
     const s = await setup();
-    await s.run("ecdysis-read-now", "succeeded", 1, "6 records");
-    expect((await s.press()).headers.get("location")).toBe(TAB);
-    expect(s.started).toEqual([ECDYSIS_CHECK_JOB]);
-    const t = await setup();
-    await t.run("ecdysis-read-now", "failed", 0, "x");
-    expect((await t.press()).headers.get("location")).toBe(TAB);
-    expect(t.started).toEqual([ECDYSIS_CHECK_JOB]);
+    await s.run("ecdysis-read-now", "failed", 0, "ECONNRESET secret-internal-detail");
+    const res = await s.press();
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`${TAB}?check=recent`);
+    expect(s.started).toEqual([]);
+    const [[at]] = (await rows(s.f.conn, `SELECT completed_at FROM job_run`)) as [[Date]];
+    const page = await (await s.app.request(`${TAB}?check=recent`)).text();
+    expect(page).toContain(c.failed(en.format.dateTime(new Date(at as unknown as string))));
+    expect(c.failed("when")).toContain("Try again in five minutes. If it fails again, tell whoever runs Beeline.");
+    expect(page).not.toContain("secret-internal-detail");
   });
 
   it("sets its steps in the same component as How Beeline works and the design page: one ordered list, class steps, numbered by the list", async () => {

@@ -100,14 +100,15 @@ export function Exports({
 }
 
 /**
- * The files a person uploads to Ecdysis (beeline-8dx9.12): the instructions,
- * then for each collection what Beeline will write. Where the last read of
- * Ecdysis is too old or missing, or Beeline reads only a dataset of the
- * collection, the reason and what to do, and no link. Where an archive has
- * been downloaded since the last read, who took it, and no second archive. A
- * year is a block of its own: the specimens in its file, what was left out and
- * why, and the choice about obscured specimens with the two downloads. Years
- * that are not offered are listed with a link to their specimens.
+ * Uploading to Ecdysis (beeline-8dx9.12): the steps, with the button for the
+ * first and the note after the last, then for each collection what can be
+ * made. Where the last check of Ecdysis is too old or missing, or Beeline sees
+ * only a dataset of the collection, the reason and what to do, and no button.
+ * A year is a block of its own: the specimens ready, what is not included and
+ * why, and the choice about hidden locations with the button for the file.
+ * Files already made are listed under "Files made", each with its associations
+ * file. Years that cannot be uploaded from here are listed with their count as
+ * the link to those specimens.
  */
 function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadSection[] }) {
   const e = m.exports.ecdysis;
@@ -129,8 +130,10 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
         <li>{e.steps.report}</li>
         <li>{e.steps.associations}</li>
         <li>{e.steps.readAgain}</li>
-        <li>{e.steps.localities}</li>
       </ol>
+      <p>
+        <Meta>{e.steps.localities}</Meta>
+      </p>
       {sections.map(({ collection, programName, state, downloads }) => (
         <section>
           <h3>{e.collection(programName, describeScope(collection))}</h3>
@@ -173,8 +176,11 @@ function EcdysisUploads({ m, sections }: { m: Messages; sections: EcdysisUploadS
                       .filter((y) => !y.offered)
                       .map((y) => (
                         <li>
-                          {e.notOfferedYear(y.year, y.eligible.length, UPLOAD_CONSTANTS[collection.program]?.years.join(", ") || "no year")}{" "}
-                          <a href={listingHref("/specimens", { ...EMPTY_QUERY, scope: collection.program, year: y.year, ecdysis: "not", labels: "printed" })}>{e.seeThem}</a>
+                          {e.notOfferedYear.year(y.year)}
+                          <a href={listingHref("/specimens", { ...EMPTY_QUERY, scope: collection.program, year: y.year, ecdysis: "not", labels: "printed" })}>
+                            {e.notOfferedYear.count(y.eligible.length)}
+                          </a>
+                          {e.notOfferedYear.rest(y.eligible.length, m.format.list((UPLOAD_CONSTANTS[collection.program]?.years ?? []).map(String)))}
                         </li>
                       ))}
                   </ul>

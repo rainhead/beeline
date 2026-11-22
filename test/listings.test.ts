@@ -1834,7 +1834,7 @@ describe("Darwin Core archives, by program and year", () => {
     expect(page).toContain("by the refuge they were collected in");
     // By name, atlases and the rest together (Peter, 2026-10-26).
     // Only the program archives' section: the files for Ecdysis below it have headings of their own.
-    const programs = [...page.split("<h2>Files to upload to Ecdysis</h2>")[0]!.matchAll(/<h3>([^<]+)<\/h3>/g)].map(([, name]) => name);
+    const programs = [...page.split(`<h2>${en.exports.ecdysis.heading}</h2>`)[0]!.matchAll(/<h3>([^<]+)<\/h3>/g)].map(([, name]) => name);
     expect(programs).toEqual([
       "BLM surveys",
       "British Columbia Bee Atlas",

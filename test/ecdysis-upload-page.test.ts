@@ -8,6 +8,7 @@ import { fetchEcdysis } from "../src/fetch-ecdysis.js";
 import { CURRENT_SEASON, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
 import { BC, fixture, WABA } from "./ecdysis-upload-fixture.js";
 import { cachedArchivePath } from "../src/fetch-ecdysis.js";
+import { downloadsOf } from "../src/app/ecdysis-upload.js";
 
 /** The Ecdysis section of the Exports page, and the routes that serve its files (beeline-8dx9.12). */
 
@@ -67,6 +68,16 @@ const ask = (app: { request: (input: string, init?: RequestInit) => Response | P
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(opts.fields ?? {}).toString(),
   });
+/** The newest recorded download of British Columbia, as the page's history line words it (through the catalog, with the same date formatting). */
+const line = async (f: Awaited<ReturnType<typeof fixture>>, state: "prepared" | "preparing" | "unfinished", notKnown: number | null, established: boolean, which = 0) => {
+  const d = (await downloadsOf(f.db, BC, 1000))[which]!;
+  return html(e.downloadItem(d.by, en.format.dateTime(d.startedAt), d.year, d.specimens ?? d.planned, notKnown, established, state));
+};
+/** What the refusal after a recorded download says, through the catalog. */
+const refusal = async (f: Awaited<ReturnType<typeof fixture>>, which = 0) => {
+  const d = (await downloadsOf(f.db, BC, 1000))[which]!;
+  return e.downloaded(d.by, en.format.dateTime(d.startedAt), d.year, d.specimens ?? d.planned, d.completedAt !== null);
+};
 const drain = async (res: Response) => void (await res.arrayBuffer());
 const textOf = async (res: Response) => res.text();
 
@@ -105,7 +116,9 @@ describe("the Ecdysis section of the Exports page", () => {
     // The associations file is for a finished download, and there is none yet.
     expect(page).not.toContain("associations.csv");
     expect(page).toContain(e.notOfferedHeading);
-    expect(page).toContain(html(e.notOfferedYear(CURRENT_SEASON - 6, 1, `${CURRENT_SEASON}, ${SETTLED_SEASON}`)));
+    const listing = `/specimens?scope=BC&amp;year=${CURRENT_SEASON - 6}&amp;labels=printed&amp;ecdysis=not`;
+    expect(page).toContain(html(e.notOfferedYear.year(CURRENT_SEASON - 6)) + `<a href="${listing}">${e.notOfferedYear.count(1)}</a>` + html(e.notOfferedYear.rest(1, en.format.list([String(CURRENT_SEASON), String(SETTLED_SEASON)]))));
+    expect(page).not.toContain("See them");
     // The count there is the listing's: its link carries the labels filter the plan uses.
     expect(page).toContain(`/specimens?scope=BC&amp;year=${CURRENT_SEASON - 6}&amp;labels=printed&amp;ecdysis=not`);
   });
@@ -127,18 +140,19 @@ describe("the Ecdysis section of the Exports page", () => {
     const { f, app } = await setup();
     await f.specimen({ field: "2500001" });
     await f.cacheArchive(BC, [], { readHoursAgo: 5 });
-    expect(await textOf(await app.request("/exports"))).toContain("more than 2 hours ago");
+    const readAt = new Date(JSON.parse(await (await import("node:fs/promises")).readFile(`${f.dir}/collection-196.read.json`, "utf8")).readAt);
+    expect(await textOf(await app.request("/exports"))).toContain(html(e.refused.stale(en.format.dateTime(readAt))));
     const { rm, writeFile } = await import("node:fs/promises");
     await rm(`${f.dir}/collection-196.read.json`);
     expect(await textOf(await app.request("/exports"))).toContain(html(e.refused.never));
     await f.cacheArchive(BC, []);
     await rm(cachedArchivePath(f.dir, BC));
     const gone = await textOf(await app.request("/exports"));
-    expect(gone).toContain("no longer has the archive it downloaded");
+    expect(gone).toContain(html(e.refused["no-archive"]));
     expect(gone).not.toContain("/exports/ecdysis/BC-");
     await writeFile(cachedArchivePath(f.dir, BC), "not a zip");
     await f.writeMarker(BC, 1);
-    expect(await textOf(await app.request("/exports"))).toContain("could not read it");
+    expect(await textOf(await app.request("/exports"))).toContain(html(e.refused.unreadable));
   });
 
   it("says there is nothing to upload when Ecdysis holds everything", async () => {
@@ -221,9 +235,9 @@ describe("downloading the archive", () => {
     // Another year: still one archive for each read.
     const second = await ask(app, { year: SETTLED_SEASON });
     expect(second.status).toBe(409);
-    expect(await textOf(second)).toContain("Sam Staff prepared the archive");
+    expect(await textOf(second)).toBe(await refusal(f));
     const page = await textOf(await app.request("/exports"));
-    expect(page).toContain("Sam Staff prepared the archive");
+    expect(page).toContain(await line(f, "prepared", 1, true));
     expect(page).not.toContain(e.downloadArchive);
     expect(page).toMatch(/\/exports\/ecdysis\/downloads\/\d+\/associations\.csv/);
     expect(page).toContain(e.downloadsHeading);
@@ -254,7 +268,7 @@ describe("downloading the archive", () => {
     expect(res.status).toBe(200);
     await res.body!.cancel();
     expect((await rows(f.conn, `SELECT count(*) FROM ecdysis_upload_download_completed`))[0]).toEqual([1n]);
-    expect(await textOf(await app.request("/exports"))).toContain("Sam Staff prepared the archive");
+    expect(await textOf(await app.request("/exports"))).toContain(await line(f, "prepared", 1, true));
   });
 
   it("lets only one of two simultaneous requests for an archive through", async () => {
@@ -364,7 +378,7 @@ describe("the read the archive rests on, and the copy about it", () => {
     await drain(chosen);
   });
 
-  it("describes an archive being prepared without saying it did not finish, and one that was not prepared as such", async () => {
+  it("describes a file being made as being made, and one that was not made as not made, each in its own words", async () => {
     const { f, app } = await setup();
     await f.specimen({ field: "2500001" });
     const { startDownload, INCLUDE_NONE } = await import("../src/app/ecdysis-upload.js");
@@ -372,16 +386,16 @@ describe("the read the archive rests on, and the copy about it", () => {
     const r = await startDownload(f.db, { collection: BC, year: CURRENT_SEASON, include: INCLUDE_NONE, planned: 1, readAt, personId: null });
     expect(r.ok).toBe(true);
     const preparing = await textOf(await app.request("/exports"));
-    expect(preparing).toContain("Beeline is preparing it now");
-    expect(preparing).not.toContain("was not prepared");
+    expect(preparing).toContain(await line(f, "preparing", null, true));
+    expect(preparing).not.toContain(await line(f, "unfinished", null, true));
     await f.conn.run(`UPDATE ecdysis_upload_download SET started_at = now() - INTERVAL '20 minutes'`);
     const unfinished = await textOf(await app.request("/exports"));
-    expect(unfinished).toContain("and it was not prepared");
-    expect(unfinished).not.toContain("did not finish");
-    // The record is described as prepared, and tells a person who did not receive the file what to do.
-    expect(e.downloaded("Sam", "today", 2026, 1, true)).toContain("If you did not receive the file, read Ecdysis again and ask for it again.");
-    expect(e.downloadsNote).toContain("if you did not receive the file, read Ecdysis again and ask for it again");
-    expect(e.tooLarge).toContain("until Ecdysis has been read again");
+    expect(unfinished).toContain(await line(f, "unfinished", null, true));
+    expect(unfinished).not.toContain(await line(f, "preparing", null, true));
+    // What a person who did not get the file is told, in the words they read.
+    expect(e.downloaded("Sam", "today", 2026, 1, true)).toContain("If you did not get the file, check Ecdysis again and download a new one.");
+    expect(e.downloadsNote).toContain("If you did not get the file, check Ecdysis again and download a new one.");
+    expect(e.tooLarge).toContain("50 MB");
   });
 });
 
@@ -393,13 +407,11 @@ describe("finished downloads on the page, whatever the state of the read", () =>
     const { rm } = await import("node:fs/promises");
     await f.cacheArchive(BC, ["BCBA_9999999"], { readHoursAgo: 5 });
     const stale = await textOf(await app.request("/exports"));
-    expect(stale).toContain("more than 2 hours ago");
-    expect(stale).toContain("Sam Staff prepared the archive");
+    expect(stale).toContain(await line(f, "prepared", 1, false));
     expect(stale).toMatch(/\/exports\/ecdysis\/downloads\/\d+\/associations\.csv/);
     expect(stale).not.toContain(e.downloadArchive);
-    // With no recent read, absence from Ecdysis cannot be established: "not known", not "not in Ecdysis yet".
-    expect(stale).toContain("not known to be in Ecdysis");
-    expect(stale).not.toContain("not in Ecdysis yet");
+    // With no recent read, absence from Ecdysis cannot be established, and the line says so in its own words.
+    expect(await line(f, "prepared", 1, false)).not.toBe(await line(f, "prepared", 1, true));
     await rm(`${f.dir}/collection-196.read.json`);
     const never = await textOf(await app.request("/exports"));
     expect(never).toContain(html(e.refused.never));
@@ -407,7 +419,7 @@ describe("finished downloads on the page, whatever the state of the read", () =>
     // Ecdysis now holds the specimen: still listed, and says so.
     const [[specimen]] = (await rows(f.conn, `SELECT specimen_id FROM ecdysis_upload_download_specimen`)) as [[number]];
     await f.conn.run(`INSERT INTO specimen_catalog_number (specimen_id, catalog_number, loaded_at) VALUES (${specimen}, 'BCBA_2500001', now() - INTERVAL '30 days')`);
-    expect(await textOf(await app.request("/exports"))).toContain("all in Ecdysis since the last read");
+    expect(await textOf(await app.request("/exports"))).toContain(await line(f, "prepared", 0, false));
   });
 
   it("list the ten most recent, newest first, with an older one that is still outstanding after them", async () => {
@@ -424,7 +436,8 @@ describe("finished downloads on the page, whatever the state of the read", () =>
     await f.conn.run(`INSERT INTO specimen_catalog_number (specimen_id, catalog_number, loaded_at) VALUES (${spec.id}, 'BCBA_2500001', now() - INTERVAL '30 days')`);
     const page = await textOf(await app.request("/exports"));
     expect([...page.matchAll(/downloads\/(\d+)\/associations\.csv/g)]).toHaveLength(11);
-    expect(page).toContain("1 of them not in Ecdysis yet");
+    // The oldest of the twelve is the one still outstanding, listed after the ten most recent.
+    expect(page).toContain(await line(f, "prepared", 1, true, 11));
   });
 });
 
@@ -479,6 +492,7 @@ describe("the associations file of a finished download", () => {
     await drain(await ask(app));
     const after = await textOf(await app.request("/exports"));
     expect(after).toContain(`>${e.downloadAssociations}</a>`);
-    expect(after).toMatch(/<li>[^<]*Sam Staff prepared the archive[^]*associations\.csv/);
+    const items = [...after.matchAll(/<li>([^]*?)<\/li>/g)].map((m) => m[1]!);
+    expect(items.some((li) => li.includes("Sam Staff") && li.includes("associations.csv"))).toBe(true);
   });
 });

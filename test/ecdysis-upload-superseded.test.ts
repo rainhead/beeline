@@ -61,7 +61,7 @@ describe("a read that finishes while the archive is being written", () => {
     seen.replaceAfter = 1_000;
     const again = await post(app);
     expect(again.status).toBe(409);
-    expect(await again.text()).toContain("Reading Ecdysis again clears it");
+    expect(await again.text()).toBe(e.beingWritten);
     // The next read, which begins after it, lets one through.
     await new Promise((resolve) => setTimeout(resolve, 20));
     await f.cacheArchive(BC, ["BCBA_9999999"], { readHoursAgo: 0 });

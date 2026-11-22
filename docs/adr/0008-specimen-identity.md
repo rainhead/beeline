@@ -515,10 +515,12 @@ D4; Symbiota's `DwcArchiverCore.php` 1565-1573):
 
 So "Symbiota assigns a UUID unless the collection supplies one", as the second
 amendment put it, is true of Washington and not of British Columbia. British
-Columbia's 9,438 records are published with the catalog number (`BCBA_` and the
-label number) as their `occurrenceID`, which is the form the original decision
-set out to avoid: a corrected catalog number would become a new record to GBIF.
-Beeline holds the Symbiota UUID of each of those records.
+Columbia's records (9,452 in the copy of the collection Beeline read on
+2026-11-20, of which Beeline matches 9,438 to its own specimens) are published
+with the catalog number (`BCBA_` and the label number) as their `occurrenceID`,
+which is the form the original decision set out to avoid: a corrected catalog
+number would become a new record to GBIF. That copy carries each record's
+Symbiota UUID, whether or not Beeline matched the record.
 
 **Decided (Peter, 2026-11-21): proper permanent identifiers for British
 Columbia, assigned by Ecdysis, for now.** British Columbia's collection should
@@ -535,13 +537,20 @@ start again.
 **What the change needs, none of it Beeline's to do alone:**
 
 1. Changing the collection's GUID source to Symbiota's UUID changes the
-   published identifier of every existing record at once. GBIF treats a changed
-   identifier as a new record unless it is given a list of old and new first.
-   Beeline can write that list, since it holds each record's catalog number and
-   UUID.
-2. The list goes to GBIF's helpdesk from the dataset's publisher, the Native
+   published identifier of every record that has no stored `occurrenceID`, at
+   once. GBIF treats a changed identifier as a new record unless it is given a
+   list of old and new first.
+2. Beeline writes that list (beeline-8dx9.14) from a fresh read of the whole
+   collection, made after the 2026 upload so that the new records are in it:
+   one row for every record in the collection, matched to a Beeline specimen or
+   not, giving the catalog number published today and the record's UUID. A
+   record that does have a stored `occurrenceID` keeps it under either setting,
+   so it is left out of the list and counted.
+3. The list goes to GBIF's helpdesk from the dataset's publisher, the Native
    Bee Society of British Columbia, before the setting changes.
-3. The setting is changed by whoever administers collection 196.
+4. The setting is changed by whoever administers collection 196, and no record
+   is added to the collection between the read the list was written from and
+   the change.
 
 **The upload of 30 November 2026 does not wait for this.** It sends no
 identifier, so the new records are published under their catalog numbers like

@@ -2885,7 +2885,7 @@ export const en = {
     ecdysis: {
       heading: "Upload to Ecdysis",
       intro:
-        "Two files for this program's collection: the specimens Ecdysis does not have yet, and the links from those specimens to their iNaturalist observations and host plants. Follow the steps in order.",
+        "Two files for this program's collection: the specimens Ecdysis does not have yet, and the links from those specimens to their iNaturalist observations and host plants. Beeline checks Ecdysis first so that it sends only new records: uploading a record Ecdysis already has would replace what is there. Follow the steps in order.",
       instructionsHeading: "Steps",
       readNowButton: "Check Ecdysis now",
       steps: {

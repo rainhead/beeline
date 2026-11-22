@@ -3211,9 +3211,9 @@ export const en = {
        * reads it again where the server has the elevation map.
        */
       staleElevation: (samples: number) =>
-        `${n(samples)} ${samples === 1 ? "sample has" : "samples have"} an elevation that was read at a place ${
-          samples === 1 ? "it has" : "they have"
-        } since moved from. Preparing a run reads ${samples === 1 ? "it" : "them"} again where Beeline has the elevation map; ${
+        `${n(samples)} ${samples === 1 ? "sample has" : "samples have"} no elevation for ${
+          samples === 1 ? "its" : "their"
+        } present place. Preparing a run reads ${samples === 1 ? "it" : "them"} where it can; ${
           samples === 1 ? "a sample" : "samples"
         } it cannot read ${samples === 1 ? "is" : "are"} left out of the run until the nightly update has.`,
       /** The POST found nothing pending, so no run was made. */
@@ -3256,7 +3256,7 @@ export const en = {
         : refusal.code === "atlas_not_printing"
         ? "No run was prepared: that atlas does not print its own labels, so its samples go in the run for everyone Oregon prints for."
         : refusal.code === "awaiting_elevation"
-        ? `No run was prepared: ${n(refusal.samples)} ${refusal.samples === 1 ? "sample" : "samples"} waiting to print ${refusal.samples === 1 ? "has" : "have"} an elevation that was read at a place the sample has since moved from, and Beeline has no elevation map for the new place. They wait until the nightly update has read the elevation again.`
+        ? `No run was prepared: ${n(refusal.samples)} ${refusal.samples === 1 ? "sample" : "samples"} waiting to print ${refusal.samples === 1 ? "has" : "have"} no elevation for ${refusal.samples === 1 ? "its" : "their"} present place, and it could not be read just now. ${refusal.samples === 1 ? "It waits" : "They wait"} for the nightly update. Try again after it has run.`
         : refusal.code === "determined"
         ? `This run cannot be canceled: ${n(refusal.specimens)} of its specimens ${refusal.specimens === 1 ? "has" : "have"} already been identified, and canceling would take their field numbers away. Nothing was changed.`
         : refusal.code === "no_location"
@@ -3274,11 +3274,9 @@ export const en = {
       scopeAtlas: (name: string) => `${name} only.`,
       /** Said on a run's page when its Prepare left samples out (beeline-trl9). */
       heldForElevation: (samples: number) =>
-        `${n(samples)} ${samples === 1 ? "sample was" : "samples were"} left out of this run: ${
+        `${n(samples)} ${samples === 1 ? "sample was" : "samples were"} left out of this run: its elevation could not be read for ${
           samples === 1 ? "its" : "their"
-        } elevation was read at a place ${samples === 1 ? "it has" : "they have"} since moved from, and Beeline has no elevation map for the new place. ${
-          samples === 1 ? "It waits" : "They wait"
-        } until the nightly update has read the elevation again.`,
+        } present place just now. ${samples === 1 ? "It waits" : "They wait"} for the nightly update.`,
       counts: (labels: number, samples: number, collectors: number, sheets: number, reprints = 0) =>
         `${n(labels)} ${labels === 1 ? "label" : "labels"} for ${n(samples)} ${samples === 1 ? "sample" : "samples"} from ${n(collectors)} ${collectors === 1 ? "collector" : "collectors"}, on ${n(sheets)} ${sheets === 1 ? "sheet" : "sheets"}.` +
         (reprints === 0

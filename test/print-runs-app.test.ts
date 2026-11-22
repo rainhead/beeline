@@ -10,6 +10,7 @@ import { createKysely } from "../src/db.js";
 import { sha256 } from "../src/label-pdf.js";
 import { runPdf } from "../src/app/print-runs.js";
 import { withPrintRunLock } from "../src/print-run.js";
+import { tinyTiff } from "./tiff.js";
 import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
 
 /**
@@ -247,7 +248,6 @@ describe("the print-run screens", () => {
     expect(specimen).toContain(`href="${runPath}"`);
     expect(specimen).toContain("Mailed");
     expect(specimen).not.toMatch(/<td><\/td>/);
-    void birchSample;
   });
 
   // The first production run (2026-11-04): localities were corrected during
@@ -648,5 +648,52 @@ describe("an elevation read at another point (beeline-trl9)", () => {
     const location = prepared.headers.get("location")!;
     expect(location).toMatch(/^\/print-runs\/\d+\?held=1$/);
     expect(await (await app.request(location)).text()).toContain(en.printRuns.run.heldForElevation(1));
+  });
+
+  /** A tile folder with one tile covering 44.x, -123.x (every cell 555 m). */
+  const tileDir = async () => {
+    const dir = await mkdtemp(join(tmpdir(), "beeline-print-dem-"));
+    dirs.push(dir);
+    await writeFile(join(dir, "n44_w124_1arc_v3.tif"), tinyTiff(new Int16Array(100).fill(555), 10, 10));
+    return dir;
+  };
+
+  it("reads a moved sample's elevation again through the route's tile folder", async () => {
+    const dem = await tileDir();
+    const { appFor, conn, ashSample } = await printApp();
+    await conn.run(`UPDATE sample_location SET latitude = 44.6, longitude = -123.2 WHERE sample_id = ${ashSample}`);
+    const app = appFor("staffer", { derivePaths: { demDir: dem } });
+    const res = await app.request("/print-runs", { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams({ atlas_id: "" }) });
+    expect(res.headers.get("location")).toMatch(/^\/print-runs\/\d+$/);
+    expect(await rows(conn, `SELECT elevation_m FROM sample_location WHERE sample_id = ${ashSample}`)).toEqual([[555]]);
+  });
+
+  it("reads nothing while the nightly runs, and holds the moved sample", async () => {
+    const dem = await tileDir();
+    const { appFor, conn, ashSample } = await printApp();
+    await conn.run(`UPDATE sample_location SET latitude = 44.6, longitude = -123.2 WHERE sample_id = ${ashSample}`);
+    const app = appFor("staffer", {
+      derivePaths: { demDir: dem },
+      jobs: { list: [], start: async () => false, running: () => "nightly-pipeline" },
+    });
+    const res = await app.request("/print-runs", { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams({ atlas_id: "" }) });
+    expect(res.headers.get("location")).toMatch(/^\/print-runs\/\d+\?held=1$/);
+    expect(await rows(conn, `SELECT elevation_m FROM sample_location WHERE sample_id = ${ashSample}`)).toEqual([[72]]);
+    expect(await rows(conn, `SELECT sample_id FROM pending_print_sample`)).toEqual([[ashSample]]);
+  });
+
+  it("does not call a label out of date for lacking an elevation its vague point never had", async () => {
+    const { app, conn, post, ashSample } = await printApp();
+    const first = (await post("/print-runs", { atlas_id: "" })).headers.get("location")!;
+    await post(`${first}/approve`);
+    await post(`${first}/printed`);
+    const [[specimen]] = (await rows(conn, `SELECT min(entity_id) FROM specimen WHERE sample_id = ${ashSample}`)) as [[number]];
+    await conn.run(`UPDATE sample_location SET latitude = 40.5, longitude = -120.5, coordinate_uncertainty_m = 5000 WHERE sample_id = ${ashSample}`);
+    await post(`/specimens/${specimen}/reprint`, { reason: "damaged" });
+    const second = (await post("/print-runs", { atlas_id: "" })).headers.get("location")!;
+    expect(second).toMatch(/^\/print-runs\/\d+$/);
+    const page = await (await app.request(second)).text();
+    expect(page).not.toContain(en.printRuns.run.outOfDate(1));
+    expect(await rows(conn, `SELECT elevation_m FROM printed_label WHERE print_run_id = ${second.split("/")[2]}`)).toEqual([[null]]);
   });
 });

@@ -100,13 +100,22 @@ export async function locateTile(
   return null;
 }
 
+/**
+ * `sampleIds` narrows the work to those samples (a print run reads again only
+ * the ones it is about to print, beeline-trl9); absent, every pending sample
+ * is read, as the nightly and the staff coordinates routes do.
+ */
 export async function deriveElevations(
   conn: DuckDBConnection,
   demDir = "data/dem",
+  sampleIds?: readonly number[],
 ): Promise<ElevationResult> {
-  const gaps = (await (
-    await conn.run(`SELECT sample_id, latitude, longitude FROM sample_elevation_pending`)
-  ).getRows()) as Array<[number, number, number]>;
+  const only = sampleIds === undefined ? null : new Set(sampleIds.map(Number));
+  const gaps = (
+    (await (
+      await conn.run(`SELECT sample_id, latitude, longitude FROM sample_elevation_pending`)
+    ).getRows()) as Array<[number, number, number]>
+  ).filter((row) => only === null || only.has(Number(row[0])));
 
   const byTile = new Map<string, Array<[number, number, number]>>();
   for (const row of gaps) {

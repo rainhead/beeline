@@ -164,6 +164,8 @@ import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
 import { beesByYear, collectedOf, identificationBatches, taxaFound } from "./your-bees.js";
 import { TaxaFoundPage, YourBeesPage } from "./views/your-bees.js";
+import { withPromotionLock } from "./promotion-lock.js";
+import { deriveElevations } from "../derive-elevation.js";
 import { checkObserver, deriveForObserver, lastChecked, nextCheckAt, SyncJobRunning } from "./inat-check.js";
 import { forgetPipelineJwt } from "../inat-jwt.js";
 import { recordPersonChanges } from "../person-change.js";
@@ -3401,6 +3403,20 @@ export function createApp({
     }
   };
 
+  // Preparing a run reads a stale or empty elevation again from the tiles,
+  // as the staff coordinates routes do (deriveMovedPoint): on the promotion
+  // connection, behind the promotion lock, and not while the nightly or the
+  // weekly sweep runs, asked inside the lock (beeline-trl9).
+  const printElevationConn = mintConn ?? conn ?? printWriter;
+  const printDemDir = derivePaths?.demDir;
+  const readElevationsForPrint =
+    printElevationConn === undefined || printDemDir === undefined
+      ? undefined
+      : (sampleIds: number[]) =>
+          withPromotionLock(async () => {
+            if (syncJobRunning()) return;
+            await deriveElevations(printElevationConn, printDemDir, sampleIds);
+          });
   app.post("/print-runs", (c) =>
     printWrite(c, async (personId) => {
       const form = await c.req.formData();
@@ -3414,8 +3430,7 @@ export function createApp({
       const result = await prepareRun(printWriter!, {
         atlasId,
         personId,
-        demDir: derivePaths?.demDir,
-        jobRunning: syncJobRunning,
+        readElevations: readElevationsForPrint,
         beforeCommit: async (conn) => {
           await raiseRegistryMark(conn, await currentCatalog(conn), markPath);
         },

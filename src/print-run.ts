@@ -1,5 +1,4 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { deriveElevations } from "./derive-elevation.js";
 import { composeLabel, layoutSheets, type LabelInput } from "./label-text.js";
 import type { ReprintReason } from "./model.js";
 import type { PersonNameParts } from "./person-name.js";
@@ -47,9 +46,9 @@ export type PrintRunRefusal =
   | { code: "determined"; printRunId: number; specimens: number }
   | { code: "atlas_not_printing"; atlasId: number }
   /**
-   * Every sample the run would have taken has an elevation read at a point it
-   * has since moved from, and no elevation map on this server's disk covers
-   * the new point (beeline-trl9). `samples` is how many were held out.
+   * Every sample the run would have taken lacks an elevation read at its
+   * present point, and it could not be read just now (beeline-trl9).
+   * `samples` is how many were held out.
    */
   | { code: "awaiting_elevation"; samples: number }
   /**
@@ -67,7 +66,7 @@ export class PrintRunRefused extends Error {
         : refusal.code === "atlas_not_printing"
         ? `atlas ${refusal.atlasId} does not print its own labels; a run scoped to it is refused`
         : refusal.code === "awaiting_elevation"
-        ? `${refusal.samples} sample(s) have an elevation read at another point and no elevation tile covers their point; nothing else was pending`
+        ? `${refusal.samples} sample(s) have no elevation read for their present point, and it could not be read just now; nothing else was pending`
         : refusal.code === "determined"
         ? `print run ${refusal.printRunId} has ${refusal.specimens} determined specimen(s); cancel refused`
         : refusal.code === "no_location"
@@ -94,15 +93,16 @@ export interface PrepareOptions {
    */
   beforeCommit?: (conn: DuckDBConnection) => Promise<void>;
   /**
-   * The elevation tiles on the server's disk (beeline-trl9). Before the
-   * freeze, every elevation read at a point its sample has since moved from
-   * is read again from them, the way the staff coordinates routes do it
-   * (src/derive-elevation.ts). Absent, nothing is re-read, and every sample
-   * with such an elevation is held out of the run.
+   * Reads these samples' elevations again from the tiles on the server's
+   * disk, and writes them (beeline-trl9). Called before the freeze, outside
+   * the print-run lock, with the samples of the run whose elevation is empty
+   * or was read at another point. The app supplies one that runs
+   * deriveElevations on the promotion connection behind the promotion lock,
+   * as the staff coordinates routes do. Absent, nothing is read again and
+   * those samples are held out of the run. A throw is logged and the samples
+   * stay held.
    */
-  demDir?: string;
-  /** True while the nightly or the weekly sweep runs: it may be writing the same rows, so nothing is re-read now. */
-  jobRunning?: () => boolean;
+  readElevations?: (sampleIds: number[]) => Promise<void>;
 }
 
 export interface PrepareResult {
@@ -113,8 +113,9 @@ export interface PrepareResult {
   samples: number;
   sheets: number;
   /**
-   * Samples left out because their elevation was read at another point and
-   * could not be read again here (beeline-trl9). They wait for the nightly.
+   * Samples left out because their elevation was empty or read at another
+   * point, and could not be read for the present point just now (beeline-trl9).
+   * They wait for the nightly.
    */
   heldForElevation: number;
 }
@@ -220,28 +221,50 @@ function compareNatural(a: string, b: string): number {
  * caller's own (see the module note). Returns null, and writes nothing, when
  * the scope has nothing pending.
  */
-export function prepareRun(conn: DuckDBConnection, opts: PrepareOptions): Promise<PrepareResult | null> {
+export async function prepareRun(conn: DuckDBConnection, opts: PrepareOptions): Promise<PrepareResult | null> {
+  // Elevations are read again first, in a lock of their own and not inside
+  // the freeze (beeline-trl9, Peter, 2026-11-21). Reading tiles is file I/O
+  // and deriveElevations runs a transaction, which cannot nest in the
+  // freeze's; the app's reader holds the promotion lock, which elsewhere is
+  // taken before the print-run lock and so cannot be taken inside it; and the
+  // print-run lock is not held across the reads. The split is safe because
+  // the freeze asks the store again which samples still lack a current
+  // elevation and holds those, so a point that moves, or a promotion that
+  // empties an elevation, between the two is held rather than printed.
+  if (opts.readElevations !== undefined) {
+    const ids = await withPrintRunLock(() => samplesNeedingElevation(conn, opts.atlasId));
+    if (ids.length > 0) {
+      try {
+        await opts.readElevations(ids);
+      } catch (err) {
+        console.warn(`[print run] elevations not read again: ${(err as Error).message}`);
+      }
+    }
+  }
   return withPrintRunLock(() => prepareRunUnlocked(conn, opts));
+}
+
+/**
+ * The samples a run in this scope would take, new labels or reprints, whose
+ * elevation is empty or was read at another point and that deserve one
+ * (sample_elevation_pending, schema/170).
+ */
+async function samplesNeedingElevation(conn: DuckDBConnection, atlasId: number | null): Promise<number[]> {
+  const inScope =
+    atlasId === null
+      ? `SELECT sample_id FROM print_scope_sample UNION SELECT sample_id FROM print_scope_reprint`
+      : `SELECT p.sample_id FROM pending_print_sample p JOIN sample_atlas sa ON sa.sample_id = p.sample_id WHERE sa.atlas_id = ${Number(atlasId)}
+         UNION SELECT p.sample_id FROM printable_reprint p JOIN sample_atlas sa ON sa.sample_id = p.sample_id WHERE sa.atlas_id = ${Number(atlasId)}`;
+  const found = await rows<{ sample_id: number }>(
+    conn,
+    `SELECT DISTINCT e.sample_id FROM sample_elevation_pending e WHERE e.sample_id IN (${inScope})`,
+  );
+  return found.map((r) => Number(r.sample_id));
 }
 
 async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions): Promise<PrepareResult | null> {
   const now = opts.now ?? new Date();
   const nowSql = now.toISOString();
-  // Elevations read at another point are read again before the freeze, not
-  // inside it (beeline-trl9, Peter, 2026-11-21). deriveElevations reads tile
-  // files and runs a transaction of its own, which cannot nest in this one,
-  // and the freeze holds the print-run lock and should not wait on file reads
-  // it could have done first. Which samples are still stale is decided inside
-  // the transaction below, from what the store holds then, so a point that
-  // moves between the two is held rather than printed. A failed or skipped
-  // read leaves its samples stale, and they are held: never printed.
-  if (opts.demDir !== undefined && !opts.jobRunning?.()) {
-    try {
-      await deriveElevations(conn, opts.demDir);
-    } catch (err) {
-      console.warn(`[print run] elevations not read again: ${(err as Error).message}`);
-    }
-  }
   await conn.run("BEGIN TRANSACTION");
   try {
     // The scope, materialised once so the two reads below see the same set.
@@ -328,27 +351,27 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
       await conn.run("ROLLBACK");
       return null;
     }
-    // An elevation read at another point never reaches a label (beeline-trl9).
-    // One the nightly will not read again, because the point is too vague to
-    // deserve an elevation (schema/170), is printed as none; the rest are
-    // held out of the run until the nightly has read them again.
-    const staleRows = await rows<{ sample_id: number; too_vague: boolean }>(
+    // No label carries an elevation read at another point, or goes without
+    // one it should have (beeline-trl9). Every promotion empties the stale
+    // elevations it finds, so empty and stale both count: a sample in
+    // sample_elevation_pending is held out of the run until the nightly has
+    // read it. One whose elevation is stale only because its point is too
+    // vague for an elevation (the nightly never reads it) prints none.
+    const heldRows = await rows<{ sample_id: number }>(
       conn,
-      `SELECT st.sample_id,
-              coalesce(loc.coordinate_uncertainty_m > (SELECT coordinate_uncertainty_m FROM elevation_derivation_limit), false) AS too_vague
+      `SELECT DISTINCT e.sample_id FROM sample_elevation_pending e JOIN freeze_samples fs ON fs.sample_id = e.sample_id`,
+    );
+    const vagueStale = await rows<{ sample_id: number }>(
+      conn,
+      `SELECT st.sample_id
        FROM sample_elevation_stale st
        JOIN sample_location loc ON loc.sample_id = st.sample_id
-       JOIN freeze_samples fs ON fs.sample_id = st.sample_id`,
+       JOIN freeze_samples fs ON fs.sample_id = st.sample_id
+       WHERE loc.coordinate_uncertainty_m > (SELECT coordinate_uncertainty_m FROM elevation_derivation_limit)`,
     );
-    const heldIds = new Set<number>();
-    for (const st of staleRows) {
-      if (st.too_vague) {
-        const sample = samplesInRun.find((x) => Number(x.sample_id) === Number(st.sample_id));
-        if (sample) sample.elevation_m = null;
-      } else {
-        heldIds.add(Number(st.sample_id));
-      }
-    }
+    const heldIds = new Set<number>(heldRows.map((r) => Number(r.sample_id)));
+    const vague = new Set<number>(vagueStale.map((r) => Number(r.sample_id)));
+    for (const sample of samplesInRun) if (vague.has(Number(sample.sample_id))) sample.elevation_m = null;
     const isHeld = (sampleId: number) => heldIds.has(Number(sampleId));
     const pending = samplesInRun.filter((s) => s.pending && !isHeld(s.sample_id));
     const sampleById = new Map(samplesInRun.map((s) => [Number(s.sample_id), s]));

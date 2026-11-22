@@ -122,6 +122,24 @@ describe("Check Ecdysis now, from the Data tab", () => {
     expect(t.started).toEqual([ECDYSIS_CHECK_JOB]);
   });
 
+  it("sets its steps in the same component as How Beeline works and the design page: one ordered list, class steps, numbered by the list", async () => {
+    const s = await setup();
+    const tab = await (await s.app.request(TAB)).text();
+    const how = await (await s.app.request("/how-it-works")).text();
+    const design = await (await s.app.request("/design/components")).text();
+    for (const [name, html] of [["the Data tab", tab], ["How Beeline works", how], ["the design page", design]] as const) {
+      expect(html, name).toContain('<ol class="steps">');
+    }
+    // The tab's seven steps, the button's step with its control under the text, and the note under the list.
+    const list = /<ol class="steps">([^]*?)<\/ol>/.exec(tab)![1]!;
+    expect(list.match(/<li>/g)).toHaveLength(Object.keys(en.programData.ecdysis.steps).length - 1);
+    expect(list).toContain(`<div class="step-below"><form method="post" action="${TAB}/check-ecdysis">`);
+    expect(tab).toContain(en.programData.ecdysis.steps.localities);
+    expect(list).not.toContain(en.programData.ecdysis.steps.localities);
+    // Nothing numbers a step in its own text.
+    expect(list).not.toMatch(/<p>\s*(Step )?\d+[.:)]/);
+  });
+
   it("is not offered for a program with no Ecdysis collection", async () => {
     const s = await setup();
     await s.f.conn.run(`INSERT INTO program_lead (program_id, person_id) SELECT p.entity_id, l.person_id FROM program p, program_lead l WHERE p.code = 'OBA' LIMIT 1`);

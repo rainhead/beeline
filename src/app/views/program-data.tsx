@@ -18,7 +18,7 @@ import { EMPTY_QUERY, listingHref } from "../listings.js";
 import { programDataHref, type ProgramDataAccess } from "../programs.js";
 import { sharedLicense, type AllYearsEntry, type ArchiveEntry, type ArchiveManifest, type ChecklistEntry } from "../program-archives.js";
 import { governanceFor, LICENSES, type LicenseId, type ProgramGovernance } from "../../program-governance.js";
-import { Absent, Button, Callout, DataTable, EmptyState, Meta, PageHeader } from "./components/index.js";
+import { Absent, Button, Callout, DataTable, EmptyState, Meta, PageHeader, Step, Steps } from "./components/index.js";
 
 /** The program's collection in Ecdysis, and what can be made for it, or why nothing can. */
 export interface EcdysisUploadSection {
@@ -188,24 +188,26 @@ function EcdysisUploads({ m, section }: { m: Messages; section: EcdysisUploadSec
       <h2>{e.heading}</h2>
       <p>{e.intro}</p>
       <h3>{e.instructionsHeading}</h3>
-      <ol>
-        <li>
+      <Steps note={e.steps.localities}>
+        <Step
+          below={
+            <>
+              <form method="post" action={checkHref(collection)}>
+                <Button variant="tonal">{e.readNowButton}</Button>
+              </form>
+              <CheckState m={m} check={check} busy={busy} recent={recent} />
+            </>
+          }
+        >
           {e.steps.readNow}
-          <form method="post" action={checkHref(collection)}>
-            <Button variant="tonal">{e.readNowButton}</Button>
-          </form>
-          <CheckState m={m} check={check} busy={busy} recent={recent} />
-        </li>
-        <li>{e.steps.download}</li>
-        <li>{e.steps.collection}</li>
-        <li>{e.steps.uploadPage}</li>
-        <li>{e.steps.report}</li>
-        <li>{e.steps.associations}</li>
-        <li>{e.steps.readAgain}</li>
-      </ol>
-      <p>
-        <Meta>{e.steps.localities}</Meta>
-      </p>
+        </Step>
+        <Step>{e.steps.download}</Step>
+        <Step>{e.steps.collection}</Step>
+        <Step>{e.steps.uploadPage}</Step>
+        <Step>{e.steps.report}</Step>
+        <Step>{e.steps.associations}</Step>
+        <Step>{e.steps.readAgain}</Step>
+      </Steps>
       <section>
         <h3>{e.collection(describeScope(collection))}</h3>
         <Meta block>{e.uploadInto(collection.catalogPrefix)}</Meta>

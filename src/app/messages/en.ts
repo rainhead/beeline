@@ -2877,7 +2877,7 @@ export const en = {
         ? `Every year together: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}, all from ${first}.`
         : `Every year together: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}, ${first} to ${last}.`,
     allYearsLicense: (license: string) => `Every year is under ${license}.`,
-    allYearsNoLicense: "Its years do not all have the same licence, so none is stated for them together.",
+    allYearsNoLicense: "The years have different licences, so this file states none.",
     allYearsDownload: (program: string) => `Download the ${program} archive of every year`,
     /** The file states a licence its years no longer share. */
     allYearsLicenseDropped: (license: string) => `This file still says ${license}. Tonight's copy will state no licence.`,
@@ -2938,7 +2938,7 @@ export const en = {
         rest: (count: number, offered: string) =>
           ` ${count === 1 ? "is" : "are"} not in Ecdysis. Only ${offered === "" ? "no year" : offered} can be uploaded from here for now.`,
       },
-      unspelled: (values: string) => `Written as Beeline has them, not spelled out: ${values}.`,
+      unspelled: (values: string) => `These places go up as Beeline has them, not spelled out: ${values}.`,
       nothing: "Nothing to upload. Every labelled specimen is already in Ecdysis or listed above.",
       downloadsHeading: "Files made",
       downloadsNote:

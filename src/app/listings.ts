@@ -1045,6 +1045,13 @@ export function sampleOrder(query: ListingQuery, p: PlaceColumns) {
   }
 }
 
+/** The specimens' sorts that read the name of record or who gave it, which a page's choice of rows must then join. */
+export const sortsOnDetermination = (query: ListingQuery) =>
+  query.sort === "determination" || query.sort === "determiner" || query.sort === "determined";
+
+/** The specimens' filters that read the name of record: a taxon, and any state of being named. */
+export const filtersOnDetermination = (query: ListingQuery) => query.taxon !== "" || query.det !== "any";
+
 export function specimenOrder(query: ListingQuery, p: PlaceColumns) {
   const dir = query.dir === "desc" ? sql`DESC` : sql`ASC`;
   const nulls = sql`NULLS LAST`;
@@ -1714,10 +1721,11 @@ export async function filteredSpecimens(
   exact: ExactLookup = {},
   rollup = true,
   ids?: readonly number[],
+  determination = true,
 ) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   const place = placeColumns(reader);
-  let base = db
+  const core = db
     .selectFrom("specimen as sp")
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
     .leftJoin("host_name_taxon_cache as hnt", (join) =>
@@ -1746,11 +1754,17 @@ export async function filteredSpecimens(
             .as("qc"),
         (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
       ),
-    )
+    );
+  const withDetermination = core
     .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
     .leftJoin("animal as an", "an.entity_id", "d.animal_id")
     .leftJoin("person as det", "det.entity_id", "d.determiner_id")
     .leftJoin("person_orcid_of_record as det_orcid", "det_orcid.person_id", "d.determiner_id");
+  // The name of record and who gave it: the page's rows select them, and the choice of the page needs them only for
+  // the filters and sorts that name a determination (`filtersOnDetermination` and `sortsOnDetermination`), so a caller that selects none of them
+  // says `determination = false` and does not pay for the window that finds each specimen's name of record. A query
+  // whose filters read them gets them whatever the caller says, so a caller cannot leave out one a filter needs.
+  let base = determination || filtersOnDetermination(query) ? withDetermination : (core as unknown as typeof withDetermination);
 
   if (query.scope === MINE) {
     base = base.where(({ exists, selectFrom }) =>
@@ -1851,8 +1865,40 @@ export async function listSpecimens(
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
+  // The page is chosen first, from the specimens' own keys and whatever the filters and the order read, and only
+  // then are the rest of each row's columns looked up, for those rows alone: the five subqueries and the name
+  // of record were computed for every specimen in the store before the sort took its fifty (beeline-amdt.5).
+  // A new column goes in the outer query below, unless a filter or a sort reads it, which puts it here.
+  const pageKeys = (
+    await filteredSpecimens(db, query, personId, reader, opts.year, opts.exact, needsRollup(query), opts.ids, sortsOnDetermination(query))
+  )
+    .select("sp.entity_id as specimen_id")
+    .orderBy(specimenOrder(query, place))
+    .orderBy("sp.sample_id")
+    .orderBy("sp.specimen_number")
+    .limit(limit)
+    .offset(offset);
   const [rows, count] = await Promise.all([
-    base
+    db
+      .selectFrom(pageKeys.as("pg"))
+      .innerJoin("specimen as sp", "sp.entity_id", "pg.specimen_id")
+      .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
+      .leftJoin("host_name_taxon_cache as hnt", (join) =>
+        join.onRef("hnt.host_name", "=", "s.host_name_as_observed").on("s.host_inat_taxon_id", "is", null),
+      )
+      .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
+      .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
+      .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
+      .$if(!reader.staff, (qb) =>
+        qb
+          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
+          .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+      )
+      .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
+      .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
+      .leftJoin("animal as an", "an.entity_id", "d.animal_id")
+      .leftJoin("person as det", "det.entity_id", "d.determiner_id")
+      .leftJoin("person_orcid_of_record as det_orcid", "det_orcid.person_id", "d.determiner_id")
       .select([
         "sp.entity_id as specimen_id",
         "sp.specimen_number",
@@ -1909,11 +1955,10 @@ export async function listSpecimens(
         sql<string | null>`coalesce(det.display_name, d.determiner_name)`.as("determiner"),
         "det_orcid.orcid as determiner_orcid",
       ])
+      // The chosen rows in the order they were chosen in: the same total order, over fifty rows.
       .orderBy(specimenOrder(query, place))
       .orderBy("sp.sample_id")
       .orderBy("sp.specimen_number")
-      .limit(limit)
-      .offset(offset)
       .execute(),
     // A streamed download pages through everything and never shows a total.
     opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),

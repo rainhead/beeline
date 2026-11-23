@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,9 +22,15 @@ const gapAt = (latitude: string, longitude: string) =>
     { latitude, longitude, elevation_m: "NULL" },
   );
 
-beforeAll(async () => {
+// A store of its own per test: derivation writes elevations, sources and
+// refusals, and a test must not depend on what another left behind. The tile
+// directory is only read, so it is built once.
+beforeEach(async () => {
   ({ conn } = await createMemoryDb());
   await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+});
+
+beforeAll(async () => {
   demDir = await mkdtemp(join(tmpdir(), "beeline-dem-"));
 
   // n44_w124, SRTM only: 10×10, cell value = row*100 + column, except one

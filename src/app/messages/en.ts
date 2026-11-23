@@ -781,7 +781,7 @@ export const en = {
 
     filters: {
       search: "Search",
-      searchHint: "Sample number, collector, or field number",
+      searchHint: "Sample number, collector, field number, or iNaturalist observation",
       from: "Collected from",
       to: "Collected to",
       place: "Place",

@@ -279,7 +279,14 @@ describe("the listings", () => {
     expect(first.url).toBe(`${ORIGIN}/specimens/${first.id}`);
   });
 
-  it("hold the downloads' values: the JSON and the samples CSV or the specimens Excel file cannot disagree", async () => {
+  // One test per person and kind of record: the 56 pairs of requests took about
+  // 25 s in one test and ran past its 30 s limit on slow CI runners (beeline-tl4q.1).
+  it.each([
+    ["alice", "samples"],
+    ["alice", "specimens"],
+    ["sam", "samples"],
+    ["sam", "specimens"],
+  ] as const)("hold the downloads' values for %s's %s: the JSON and the samples CSV or the specimens Excel file cannot disagree", async (person, kind) => {
     const w = await world();
     const queries = [
       "",
@@ -297,44 +304,40 @@ describe("the listings", () => {
       "scope=all&from=2025-01-01&to=2025-12-31",
       "scope=all&collector=Barnes&member=WaBA",
     ];
-    for (const person of ["alice", "sam"] as const) {
-      for (const kind of ["samples", "specimens"] as const) {
-        const header: readonly string[] = kind === "samples" ? SAMPLE_CSV_HEADER : SPECIMEN_CSV_HEADER;
-        for (const q of queries) {
-          const api = await w.json(w.keys[person], `/${kind}?${q}&page_size=500`);
-          if (kind === "specimens") {
-            // The specimens' one download is the Excel file for editing (beeline-kgyd.5): its columns, in its order.
-            w.who.current = person;
-            const res = await w.app.request(`/specimens.xlsx?${q}`);
-            expect(res.status, `${person} ${q}`).toBe(200);
-            const read = readXlsxHere(new Uint8Array(await res.arrayBuffer()));
-            if (!read.ok) throw new Error(read.refusal);
-            const [head, ...body] = read.sheet.rows.map((r) => [...r.cells.entries()].sort((a, b) => a[0] - b[0]));
-            // Someone who is not staff gets their own file (beeline-kgyd.7): the same columns to recognise the bee, and
-            // their own identification, not the record's that the API gives, which test/volunteer-uploads.test.ts checks.
-            const layout = person === "sam" ? SPECIMENS_LAYOUT : VOLUNTEER_LAYOUT;
-            expect(head!.map(([, c]) => c.text), `${kind} ${q}`).toEqual([...layout.headings]);
-            expect(api.rows.length, `${person} ${kind} ${q}`).toBe(body.length);
-            expect(api.total).toBe(body.length);
-            const compared = person === "sam" ? layout.headings : [...layout.recognise, "specimenId"];
-            body.forEach((cells, i) => {
-              const text = new Map(cells.map(([at, c]) => [at, c.text]));
-              layout.headings.forEach((name, j) => {
-                if (compared.includes(name)) expect(String(api.rows[i][name] ?? ""), `${person} ${kind} ${q} row ${i} ${name}`).toBe(text.get(j) ?? "");
-              });
-            });
-            continue;
-          }
-          const csv = parseCsv(await w.page(person, `/${kind}.csv?${q}`));
-          expect(csv[0], `${kind} ${q}`).toEqual(header);
-          const body = csv.slice(1).filter((r) => r.length > 1);
-          expect(api.rows.length, `${person} ${kind} ${q}`).toBe(body.length);
-          expect(api.total).toBe(body.length);
-          body.forEach((cells, i) => {
-            header.forEach((name, j) => expect(String(api.rows[i][name] ?? ""), `${person} ${kind} ${q} row ${i} ${name}`).toBe(cells[j]));
+    const header: readonly string[] = kind === "samples" ? SAMPLE_CSV_HEADER : SPECIMEN_CSV_HEADER;
+    for (const q of queries) {
+      const api = await w.json(w.keys[person], `/${kind}?${q}&page_size=500`);
+      if (kind === "specimens") {
+        // The specimens' one download is the Excel file for editing (beeline-kgyd.5): its columns, in its order.
+        w.who.current = person;
+        const res = await w.app.request(`/specimens.xlsx?${q}`);
+        expect(res.status, `${person} ${q}`).toBe(200);
+        const read = readXlsxHere(new Uint8Array(await res.arrayBuffer()));
+        if (!read.ok) throw new Error(read.refusal);
+        const [head, ...body] = read.sheet.rows.map((r) => [...r.cells.entries()].sort((a, b) => a[0] - b[0]));
+        // Someone who is not staff gets their own file (beeline-kgyd.7): the same columns to recognise the bee, and
+        // their own identification, not the record's that the API gives, which test/volunteer-uploads.test.ts checks.
+        const layout = person === "sam" ? SPECIMENS_LAYOUT : VOLUNTEER_LAYOUT;
+        expect(head!.map(([, c]) => c.text), `${kind} ${q}`).toEqual([...layout.headings]);
+        expect(api.rows.length, `${person} ${kind} ${q}`).toBe(body.length);
+        expect(api.total).toBe(body.length);
+        const compared = person === "sam" ? layout.headings : [...layout.recognise, "specimenId"];
+        body.forEach((cells, i) => {
+          const text = new Map(cells.map(([at, c]) => [at, c.text]));
+          layout.headings.forEach((name, j) => {
+            if (compared.includes(name)) expect(String(api.rows[i][name] ?? ""), `${person} ${kind} ${q} row ${i} ${name}`).toBe(text.get(j) ?? "");
           });
-        }
+        });
+        continue;
       }
+      const csv = parseCsv(await w.page(person, `/${kind}.csv?${q}`));
+      expect(csv[0], `${kind} ${q}`).toEqual(header);
+      const body = csv.slice(1).filter((r) => r.length > 1);
+      expect(api.rows.length, `${person} ${kind} ${q}`).toBe(body.length);
+      expect(api.total).toBe(body.length);
+      body.forEach((cells, i) => {
+        header.forEach((name, j) => expect(String(api.rows[i][name] ?? ""), `${person} ${kind} ${q} row ${i} ${name}`).toBe(cells[j]));
+      });
     }
   });
 

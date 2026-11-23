@@ -50,8 +50,10 @@ the sync's paging loop stops at its next request, and a DuckDB query in flight
 is cancelled so its transaction rolls back. The failure is recorded in
 `job_run` like any other and the daily schedule retries it after its usual
 pause. Only then is the store checkpointed — both catalogs, explicitly, with a
-failure said out loud — and closed, and the close is reached whatever happened
-before it. The whole thing fits inside the 120s `kill_timeout` with room to
+failure said out loud — and closed. A step that throws does not stop the later ones, but time does:
+the app waits without a limit for the interrupted job to end, and if shutdown as
+a whole runs past 110 seconds the process exits with status 1 without
+checkpointing. Normally the whole thing fits inside the 120s `kill_timeout` with room to
 spare, which is the point: host maintenance restarts a machine with little
 warning and can land inside the 2am window, and the version that closed a busy
 connection from an async callback could lose the checkpoint to an unhandled
@@ -348,6 +350,15 @@ limits (5,000 rows and 10 seconds by default), and `--explain` prints the plan
 without running the statement. The query runs in a process of its own that is
 killed at the time limit and at 768 MB of memory, so a heavy one cannot take
 the app down with it; it then answers `timeout` or `memory`.
+
+A query that needs more than the 256 MB DuckDB is given (a large sort, or a join
+that builds big intermediate results) also answers `memory`, saying it would
+have to spill. That is deliberate: DuckDB would otherwise write temporary files
+beside the copy, its size cap is not enforced, and the volume is the one the
+live store writes to. So `store:query` never spills (its temporary directory is
+a path that cannot be created, `openQueryCopy` in `src/db.ts`) and nothing is
+written. Make the query smaller: select fewer columns, filter or aggregate
+before joining, or run the pieces as separate queries.
 
 There is no way to do this over HTTP, on purpose (Peter, 2026-11-13): a server
 that accepts SQL from the internet has one key between a stranger and a copy

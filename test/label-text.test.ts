@@ -155,8 +155,10 @@ describe("the six label fields", () => {
   it("prints a net sample's method that names none of the three as itself, when it is short plain ASCII that always fits the box", () => {
     expect(methodText({ kind: "net", protocol: "vacuum" })).toBe("vacuum");
     expect(methodText({ kind: "net", protocol: " Vacuum " })).toBe("vacuum");
-    expect(methodText({ kind: "net", protocol: "x".repeat(12) })).toBe("x".repeat(12));
-    expect(methodText({ kind: "net", protocol: "x".repeat(13) })).toBe("net");
+    expect(methodText({ kind: "net", protocol: "x".repeat(6) })).toBe("x".repeat(6));
+    expect(methodText({ kind: "net", protocol: "x".repeat(7) })).toBe("net");
+    expect(methodText({ kind: "net", protocol: "pollen traps" })).toBe("trap");
+    expect(methodText({ kind: "net", protocol: "hand collecting by eye" })).toBe("net");
     expect(methodText({ kind: "net", protocol: "aspiración" })).toBe("net");
     expect(methodText({ kind: "net", protocol: "\tVacuum\n" })).toBe("vacuum");
     expect(methodText({ kind: "net", protocol: "\u00a0vacuum\u00a0" })).toBe("vacuum");

@@ -198,8 +198,8 @@ COMMENT ON VIEW minted_field_number_collision IS 'Minted numbers that some other
 -- "trap nest" where this says "nest"; for every other text production holds
 -- the two agree. A text that names none of the three is the word itself
 -- ("vacuum") only for a sample of kind net, when it is plain ASCII (tested
--- before lowercasing) of at most 12 characters, which always fits the label's
--- method box (METHOD_WORD_LIMIT, src/label-text.ts); otherwise, and where the
+-- before lowercasing) of at most 6 characters (Peter's limit for legibility; up to 12 would fit the label's
+-- method box, METHOD_WORD_LIMIT, src/label-text.ts); otherwise, and where the
 -- text is empty, the word is the sample's kind. Tabs, line breaks and
 -- no-break spaces count as spaces and the outer spaces are removed, as
 -- methodText does. So a change of kind or protocol that leaves the word alone
@@ -234,7 +234,7 @@ pair AS (
               WHEN lower(now_raw) LIKE '%nest%' THEN 'nest'
               WHEN lower(now_raw) LIKE '%trap%' THEN 'trap'
               WHEN lower(now_raw) LIKE '%net%' THEN 'net'
-              WHEN now_kind = 'net' AND length(now_raw) <= 12 AND regexp_full_match(now_raw, '[ -~]+') THEN lower(now_raw)
+              WHEN now_kind = 'net' AND length(now_raw) <= 6 AND regexp_full_match(now_raw, '[ -~]+') THEN lower(now_raw)
               ELSE now_kind END AS now_method
   FROM joined j
 )

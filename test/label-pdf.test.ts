@@ -162,13 +162,20 @@ describe("the method word", () => {
     return { font: await doc.embedFont(bytes), characters: (fontkit.create(bytes) as unknown as { characterSet: number[] }).characterSet };
   };
 
-  it("has a length limit that is the most letters of the widest letter that fit the box at the 1 pt floor", async () => {
+  /** The most characters of the widest letter that fit the box at the 1 pt floor, measured in the font. */
+  const measuredMaximum = async () => {
     const { font, characters } = await embed();
     const letters = characters.map((c) => String.fromCodePoint(c)).filter((c) => /\p{L}/u.test(c));
     const widest = letters.reduce((a, c) => (font.widthOfTextAtSize(c, 1) > font.widthOfTextAtSize(a, 1) ? c : a));
     let n = 0;
     while (font.widthOfTextAtSize(widest.repeat(n + 1), 1) <= LABEL_BOXES.method.width) n += 1;
-    expect(n).toBe(METHOD_WORD_LIMIT);
+    return { n, widest };
+  };
+
+  it("has a length limit no more than the most letters of the widest letter that fit the box at the 1 pt floor (12)", async () => {
+    const { n } = await measuredMaximum();
+    expect(n).toBe(12);
+    expect(METHOD_WORD_LIMIT).toBeLessThanOrEqual(n);
   });
 
   it("is drawn inside its box at every length the rule allows, in every printable ASCII character, and for the common words", async () => {
@@ -186,11 +193,12 @@ describe("the method word", () => {
     }
   });
 
-  it("is not clipped by the drawing, which is why the rule keeps the text short: one more letter runs past the box at the floor", async () => {
+  it("is not clipped by the drawing, which is why a limit must exist: one more letter than fits runs past the box at the floor", async () => {
     const { font } = await embed();
-    const fit = fitText(font, "m".repeat(METHOD_WORD_LIMIT + 1), LABEL_BOXES.method);
+    const { n } = await measuredMaximum();
+    const fit = fitText(font, "m".repeat(n + 1), LABEL_BOXES.method);
     expect(fit.fontSize).toBe(1);
-    expect(font.widthOfTextAtSize("m".repeat(METHOD_WORD_LIMIT + 1), 1)).toBeGreaterThan(LABEL_BOXES.method.width);
+    expect(font.widthOfTextAtSize("m".repeat(n + 1), 1)).toBeGreaterThan(LABEL_BOXES.method.width);
   });
 });
 

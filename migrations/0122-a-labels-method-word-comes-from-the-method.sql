@@ -7,8 +7,8 @@
 -- first match winning, so it printed "trap" for "trap nest" where Beeline says
 -- "nest"; for every other text production holds the two agree. A text naming
 -- none of the three is the word itself ("vacuum") only for a sample of kind
--- net, when it is plain ASCII of at most 12 characters, which always fits the
--- label's method box; otherwise, and where the text is empty, the word is the
+-- net, when it is plain ASCII of at most 6 characters (Peter's limit for legibility; up to 12 would fit the
+-- label's method box); otherwise, and where the text is empty, the word is the
 -- sample's kind. It mirrors methodText (src/label-text.ts), making tabs, line
 -- breaks and no-break spaces spaces with translate() before trimming. The
 -- view is replaced in place; no table changes and no column does, and nothing
@@ -46,7 +46,7 @@ pair AS (
               WHEN lower(now_raw) LIKE '%nest%' THEN 'nest'
               WHEN lower(now_raw) LIKE '%trap%' THEN 'trap'
               WHEN lower(now_raw) LIKE '%net%' THEN 'net'
-              WHEN now_kind = 'net' AND length(now_raw) <= 12 AND regexp_full_match(now_raw, '[ -~]+') THEN lower(now_raw)
+              WHEN now_kind = 'net' AND length(now_raw) <= 6 AND regexp_full_match(now_raw, '[ -~]+') THEN lower(now_raw)
               ELSE now_kind END AS now_method
   FROM joined j
 )

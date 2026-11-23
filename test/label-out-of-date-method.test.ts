@@ -116,6 +116,8 @@ describe("labels out of date for their method", () => {
       ...PRODUCTION_PROTOCOLS, ...TRAP_METHODS,
       // The longest text printed as itself, and one character more, which prints the kind.
       "x".repeat(METHOD_WORD_LIMIT), "x".repeat(METHOD_WORD_LIMIT + 1), "ab cd ef gh ij", "abcdefghijk l",
+      // The old limit of what fits the box and one more: both print the kind now.
+      "x".repeat(12), "x".repeat(13), "abcdef", "abcdefg",
       // Whitespace that JavaScript's trim strips and SQL's trim does not: tab, line breaks, no-break space.
       "\tvacuum\n", "vacuum\u00a0", "\u00a0vacuum\r\n", "\t \n", "\u00a0", "aerial\tnet", "vacu\num",
       // Not plain ASCII: the kind, whatever the length.

@@ -216,7 +216,10 @@ export function collectorText(collectors: PersonNameParts[]): string {
 }
 
 /**
- * The longest method text that is printed as itself: 12 characters. The
+ * The longest method text that is printed as itself: 6 characters, so
+ * "vacuum" is the longest word printed as itself (Peter's choice, 2026-11-23,
+ * for legibility: six characters print at 2.09 pt). The limit that fits the
+ * box is larger, 12, and it is the reason a limit must exist at all. The
  * method box is 7.56 pt wide and a label's text is shrunk to fit it, but never
  * below 1 pt (`fitText`, src/label-pdf.ts); a longer single word would then
  * run past the box and onto the DataMatrix. In the label's font (Oxygen Mono)
@@ -225,9 +228,9 @@ export function collectorText(collectors: PersonNameParts[]): string {
  * "A", at the same width as "m"; the only other width is U+2015 at 2 em, which
  * is why the text must also be ASCII), so at 1 pt a word of 12 is 7.20 pt and
  * one of 13 is 7.80 pt, past 7.56. test/label-pdf.test.ts repeats the
- * measurement and fails if the font or the box changes this number.
+ * measurement and fails if this limit is ever more than what fits.
  */
-export const METHOD_WORD_LIMIT = 12;
+export const METHOD_WORD_LIMIT = 6;
 
 /**
  * The word a label's method box prints, worked out from the sample's method

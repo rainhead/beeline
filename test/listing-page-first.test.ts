@@ -4,15 +4,17 @@ import { createKysely } from "../src/db.js";
 import type { Database } from "../src/model.js";
 import {
   EMPTY_QUERY,
+  SAMPLE_SORT_KEYS,
   SPECIMEN_SORT_KEYS,
   STAFF_READER,
+  listSamples,
   listSpecimens,
   parseListingQuery,
   type ListingQuery,
   type Reader,
 } from "../src/app/listings.js";
 import { CURRENT_SEASON, SETTLED_SEASON, createMemoryDb, insertCleanSample } from "./helpers.js";
-import { referenceSpecimenRows } from "./reference-listings.js";
+import { referenceSampleRows, referenceSpecimenRows } from "./reference-listings.js";
 
 /**
  * Both listings choose their page of rows first and look up the rest of each row's columns for those rows alone
@@ -184,6 +186,22 @@ const flagsSorted = <T extends object>(rows: T[]) =>
 /** Offsets of the first page, the second and the last, for a total: the last is where the page is short. */
 const offsets = (n: number) => [...new Set([0, PAGE, Math.max(0, Math.floor((n - 1) / PAGE) * PAGE)])].sort((a, b) => a - b);
 
+async function sameSamples(search: string, who: Who): Promise<number> {
+  const query = parse(search);
+  const first = await listSamples(db, query, who.personId, who.reader, { limit: PAGE, offset: 0, hostNames: new Map() });
+  let seen = 0;
+  for (const offset of offsets(first.total)) {
+    const opts = { limit: PAGE, offset, hostNames: new Map() as never };
+    const now = await listSamples(db, query, who.personId, who.reader, opts);
+    const before = await referenceSampleRows(db, query, who.personId, who.reader, { limit: PAGE, offset });
+    expect(flagsSorted(now.rows), `${who.name}, samples ${search} at ${offset}`).toEqual(flagsSorted(withoutHostNames(before)));
+    expect(now.total).toBe(first.total);
+    seen += now.rows.length;
+    total.samples++;
+  }
+  return first.total;
+}
+
 async function sameSpecimens(search: string, who: Who): Promise<number> {
   const query = parse(search);
   const first = await listSpecimens(db, query, who.personId, who.reader, { limit: PAGE, offset: 0, hostNames: new Map() });
@@ -244,6 +262,68 @@ const FILTERS: Array<[search: string, atLeastSamples: number, atLeastSpecimens: 
   ["scope=all&place=Corvallis&kind=net&qc=flagged&taxon=Bombus", 0, 0],
   ["scope=all&collector=bob&host=salvia&from=2026-01-01", 0, 0],
 ];
+
+describe("the samples listing chooses its page first and returns what it returned before", () => {
+  for (const who of ["staff", "volunteer reading others' obscured samples", "another volunteer"]) {
+    it(`every sort, both ways, for ${who}`, async () => {
+      const w = readers().find((r) => r.name === who)!;
+      for (const sort of SAMPLE_SORT_KEYS) {
+        for (const dir of ["asc", "desc"]) {
+          const n = await sameSamples(`scope=all&sort=${sort}&dir=${dir}`, w);
+          expect(n, `${sort} ${dir}`).toBeGreaterThanOrEqual(PAGE * 3);
+        }
+      }
+    }, 300_000);
+
+    if (who !== "another volunteer") it(`every filter, for ${who}`, async () => {
+      const w = readers().find((r) => r.name === who)!;
+      for (const [search, atLeast] of FILTERS) {
+        const n = await sameSamples(search, w);
+        // A volunteer's own samples are fewer, and staff have none of their own.
+        if (search !== "scope=mine") expect(n, search).toBeGreaterThanOrEqual(atLeast);
+      }
+    }, 300_000);
+
+    if (who !== "another volunteer") it(`a filter with each sort, for ${who}`, async () => {
+      const w = readers().find((r) => r.name === who)!;
+      for (const sort of SAMPLE_SORT_KEYS) {
+        for (const search of ["scope=all&qc=flagged", "scope=all&place=Corvallis", "scope=all&kind=trap", "scope=all&taxon=Bombus"]) {
+          await sameSamples(`${search}&sort=${sort}`, w);
+        }
+      }
+    }, 300_000);
+  }
+
+  it("withholds another volunteer's locality and coordinates exactly as before, and the choices of the names offered", async () => {
+    const alice = readers()[1]!;
+    const page = await listSamples(db, parse("scope=all"), alice.personId, alice.reader, { limit: 30, offset: 0, hostNames: new Map() });
+    const hidden = page.rows.filter((r) => r.location_withheld);
+    expect(hidden.length).toBeGreaterThan(3);
+    for (const r of hidden) {
+      expect(r.latitude).toBeNull();
+      expect(r.locality).toBeNull();
+      expect(r.locality_choices).toBeNull();
+    }
+    expect(page.rows.some((r) => !r.location_withheld && r.locality_choices !== null)).toBe(true);
+    const staff = await listSamples(db, parse("scope=all"), people.staff!, STAFF_READER, { limit: 30, offset: 0, hostNames: new Map() });
+    expect(staff.rows.every((r) => !r.location_withheld)).toBe(true);
+    expect(staff.rows.filter((r) => r.locality_choices !== null).length).toBeGreaterThan(3);
+  });
+
+  it("has an order that cannot tie, so a page cannot differ between runs", async () => {
+    // Every key in the order ends in the sample's own id: no two samples compare equal.
+    for (const sort of SAMPLE_SORT_KEYS) {
+      const all = await listSamples(db, { ...EMPTY_QUERY, scope: "all", sort }, people.staff!, STAFF_READER, { limit: 1000, offset: 0, hostNames: new Map() });
+      const paged: number[] = [];
+      for (let offset = 0; offset < all.rows.length; offset += PAGE) {
+        const p = await listSamples(db, { ...EMPTY_QUERY, scope: "all", sort }, people.staff!, STAFF_READER, { limit: PAGE, offset, hostNames: new Map() });
+        paged.push(...p.rows.map((r) => r.sample_id));
+      }
+      expect(paged, sort).toEqual(all.rows.map((r) => r.sample_id));
+      expect(new Set(paged).size, sort).toBe(paged.length);
+    }
+  });
+});
 
 describe("the specimens listing chooses its page first and returns what it returned before", () => {
   for (const who of ["staff", "volunteer reading others' obscured samples", "another volunteer"]) {

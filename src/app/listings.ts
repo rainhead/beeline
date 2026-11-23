@@ -1379,7 +1379,7 @@ function qcPredicate(status: QcStatus) {
  * download, and the API's counts and groupings, so a count cannot be made
  * from a second copy of the filters and disagree with the listing.
  */
-async function filteredSamples(
+export async function filteredSamples(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
@@ -1561,6 +1561,24 @@ async function filteredSamples(
   return base;
 }
 
+/**
+ * The names Beeline offers for each sample's point, for the page's samples alone: one 'name<TAB>basis' per line,
+ * best first (`SampleRow.locality_choices`), and null where there are none or the location is withheld from this
+ * reader. Asked for after the page is chosen, by the page's ids: as a column of the rows statement it was a
+ * string_agg over every sample's candidates, 113 to 231 ms, against 6.5 ms for fifty ids (beeline-amdt.4).
+ */
+async function nameLocalityChoices(db: Kysely<Database>, rows: Array<Pick<SampleRow, "sample_id" | "location_withheld" | "locality_choices">>) {
+  const ids = rows.filter((r) => !r.location_withheld).map((r) => r.sample_id);
+  const found = new Map<number, string | null>();
+  if (ids.length > 0) {
+    const choices = await sql<{ sample_id: number; choices: string | null }>`
+      SELECT g.sample_id, string_agg(concat(g.locality, chr(9), g.basis), chr(10) ORDER BY g.rank) AS choices
+      FROM sample_locality_candidate_current g WHERE g.sample_id IN (${sql.join(ids)}) GROUP BY g.sample_id`.execute(db);
+    for (const c of choices.rows) found.set(Number(c.sample_id), c.choices);
+  }
+  for (const r of rows) r.locality_choices = found.get(r.sample_id) ?? null;
+}
+
 export async function listSamples(
   db: Kysely<Database>,
   query: ListingQuery,
@@ -1570,13 +1588,61 @@ export async function listSamples(
 ): Promise<Page<SampleRow>> {
   const hidden = withheld(reader);
   const place = placeColumns(reader);
-  const base = await filteredSamples(db, query, personId, reader, opts.exact, true, opts.ids);
+  // The flag roll-up is read to choose the page only by a status filter and by the Flags sort. When it was, the page
+  // carries the three columns it gave and the rows take them from there, rather than computing it a second time.
+  const rolled = needsRollup(query) || query.sort === "flags";
+  const base = await filteredSamples(db, query, personId, reader, opts.exact, rolled, opts.ids);
   const countQuery = opts.withTotal === false ? undefined : await samplesCountQuery(db, query, personId, reader, opts, base);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
+  // The page is chosen first, from the samples' own keys and whatever the filters and the order read, and only then
+  // are the rest of each row's columns looked up, for those rows alone: every per-row subquery and joined view was
+  // computed for every sample in the store before the sort took its fifty (beeline-amdt.6). A new column goes in the
+  // outer query below, unless a filter or a sort reads it, which puts it here.
+  const pageKeys = base
+    .select([
+      "s.entity_id as sample_id",
+      rolled ? sql<number | null>`qc.blocking`.as("blocking") : sql<number | null>`CAST(NULL AS INTEGER)`.as("blocking"),
+      rolled ? sql<number | null>`qc.warning`.as("warning") : sql<number | null>`CAST(NULL AS INTEGER)`.as("warning"),
+      rolled ? sql<string | null>`qc.flag_list`.as("flag_list") : sql<string | null>`CAST(NULL AS TEXT)`.as("flag_list"),
+    ])
+    .orderBy(sampleOrder(query, place))
+    .orderBy("s.entity_id")
+    .limit(limit)
+    .offset(offset);
   const [rows, count] = await Promise.all([
-    base
+    db
+      .with("pg", () => pageKeys)
+      .selectFrom("pg")
+      .innerJoin("sample as s", "s.entity_id", "pg.sample_id")
+      .leftJoin("host_name_taxon_cache as hnt", (join) =>
+        join.onRef("hnt.host_name", "=", "s.host_name_as_observed").on("s.host_inat_taxon_id", "is", null),
+      )
+      .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
+      .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
+      .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
+      .$if(!reader.staff, (qb) =>
+        qb
+          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
+          .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+      )
+      .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
+      // The flag roll-up, as `qc`: the page's own copy of it where the page was chosen by it, else computed here.
+      .$if(rolled, (qb) => qb.leftJoin("pg as qc", "qc.sample_id", "s.entity_id"))
+      .$if(!rolled, (qb) =>
+        qb.leftJoin(
+          (eb) =>
+            eb
+              .selectFrom("sample_qc_finding as f")
+              .innerJoin("qc_rule as r", "r.name", "f.rule_name")
+              .where("f.sample_id", "is not", null)
+              .groupBy("f.sample_id")
+              .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS, FLAG_LIST])
+              .as("qc"),
+          (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+        ),
+      )
       .select([
         "s.entity_id as sample_id",
         "s.sample_number",
@@ -1616,11 +1682,6 @@ export async function listSamples(
         ),
         located(
           hidden,
-          sql<string | null>`(SELECT string_agg(concat(g.locality, chr(9), g.basis), chr(10) ORDER BY g.rank)
-                              FROM sample_locality_candidate_current g WHERE g.sample_id = s.entity_id)`,
-        ).as("locality_choices"),
-        located(
-          hidden,
           sql<string | null>`(SELECT ol.locality FROM observation_locality ol WHERE ol.inat_id = s.inat_observation_id)`,
         ).as("observed_locality"),
         sql<boolean>`EXISTS (SELECT 1 FROM sample_locality_override lo
@@ -1633,10 +1694,9 @@ export async function listSamples(
         ),
         sql<boolean>`EXISTS (SELECT 1 FROM sample_entry e JOIN settled_sample ss ON ss.sample_id = e.sample_id WHERE e.sample_id = s.entity_id)`.as("entered_settled"),
       ])
+      // The chosen rows in the order they were chosen in: the same total order, over fifty rows.
       .orderBy(sampleOrder(query, place))
       .orderBy("s.entity_id")
-      .limit(limit)
-      .offset(offset)
       .execute(),
     // A streamed download pages through everything and never shows a total.
     countQuery === undefined ? Promise.resolve(undefined) : countQuery.executeTakeFirst(),
@@ -1644,6 +1704,7 @@ export async function listSamples(
   const sampleRows = rows as unknown as Array<SampleRow & { flag_list: string | null }>;
   await nameHosts(db, sampleRows, opts.hostNames ?? "all");
   const ids = sampleRows.map((r) => r.sample_id);
+  await nameLocalityChoices(db, sampleRows);
   const findings = new Map(sampleRows.map((r) => [r.sample_id, parseFlags(r.flag_list)] as const));
   // Where the location is withheld from this reader, a finding's words go,
   // as on the sample page (visibleFindings, src/app/record.ts): a hold's

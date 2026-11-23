@@ -2,6 +2,7 @@ import { sql, type Kysely } from "kysely";
 import { REPRINT_BLOCKER, type ReprintBlocker } from "../src/print-run.js";
 import type { Database } from "../src/model.js";
 import {
+  filteredSamples,
   filteredSpecimens,
   needsRollup,
   observationGone,
@@ -27,6 +28,83 @@ const located = <T>(hidden: ReturnType<typeof withheld>, column: ReturnType<type
   sql<T | null>`CASE WHEN ${hidden} THEN NULL ELSE ${column} END`;
 const blockingCount = sql<number>`coalesce(qc.blocking, 0)`;
 const warningCount = sql<number>`coalesce(qc.warning, 0)`;
+
+/** The page's rows as the old statement chose them, before the host's names are looked up. */
+export async function referenceSampleRows(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  opts: ListingPageOptions = {},
+) {
+  const hidden = withheld(reader);
+  const place = placeColumns(reader);
+  const base = await filteredSamples(db, query, personId, reader, opts.exact, true, opts.ids);
+  const limit = opts.limit ?? PAGE_SIZE;
+  const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
+  return await base
+      .select([
+        "s.entity_id as sample_id",
+        "s.sample_number",
+        "s.kind",
+        "s.date_start",
+        "s.date_end",
+        place.locality.as("locality"),
+        place.county.as("county"),
+        "s.state_province",
+        "s.country",
+        "s.protocol",
+        "s.sampling_effort",
+        "s.specimen_count",
+        "s.inat_observation_id",
+        observationGone.as("observation_gone"),
+        sql<string | null>`coalesce(pab.abbreviation, a.code)`.as("atlas_abbreviation"),
+        "s.host_name_as_observed as host_name",
+        "s.host_rank",
+        "s.host_inat_taxon_id",
+        "hnt.inat_taxon_id as host_name_taxon_id",
+        located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
+        located(hidden, sql<number | null>`loc.longitude`).as("longitude"),
+        located(hidden, sql<number | null>`loc.coordinate_uncertainty_m`).as("coordinate_uncertainty_m"),
+        located(hidden, sql<number | null>`loc.elevation_m`).as("elevation_m"),
+        located(hidden, sql<string | null>`loc.source`).as("location_source"),
+        "s.geoprivacy",
+        "s.taxon_geoprivacy",
+        hidden.as("location_withheld"),
+        blockingCount.as("blocking"),
+        warningCount.as("warning"),
+        sql<string | null>`qc.flag_list`.as("flag_list"),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
+                             WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
+        sql<boolean>`EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)`.as("printed"),
+        sql<number>`coalesce((SELECT w.waiting FROM sample_labels_waiting w WHERE w.sample_id = s.entity_id), 0)`.as(
+          "labels_waiting",
+        ),
+        located(
+          hidden,
+          sql<string | null>`(SELECT string_agg(concat(g.locality, chr(9), g.basis), chr(10) ORDER BY g.rank)
+                              FROM sample_locality_candidate_current g WHERE g.sample_id = s.entity_id)`,
+        ).as("locality_choices"),
+        located(
+          hidden,
+          sql<string | null>`(SELECT ol.locality FROM observation_locality ol WHERE ol.inat_id = s.inat_observation_id)`,
+        ).as("observed_locality"),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_locality_override lo
+                             WHERE lo.sample_id = s.entity_id AND lo.set_by IS DISTINCT FROM ${personId})`.as(
+          "locality_set_by_other",
+        ),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id)`.as("entered"),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id AND e.entered_by = ${personId})`.as(
+          "entered_by_me",
+        ),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_entry e JOIN settled_sample ss ON ss.sample_id = e.sample_id WHERE e.sample_id = s.entity_id)`.as("entered_settled"),
+      ])
+      .orderBy(sampleOrder(query, place))
+      .orderBy("s.entity_id")
+      .limit(limit)
+      .offset(offset)
+      .execute();
+}
 
 /** The page's rows as the old statement chose them, before the host's names are looked up. */
 export async function referenceSpecimenRows(

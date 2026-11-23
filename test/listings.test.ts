@@ -2245,6 +2245,64 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
     }
   });
 
+  /** A specimen's row of the Excel file as its heading's text, the cells left out being nothing. */
+  const fileRow = async (app: Awaited<ReturnType<typeof listingApp>>["app"], fieldNumber: string) => {
+    const sheet = await sheetOf(await app.request(`${IDENTIFYING}?scope=all`));
+    const heads = [...sheet.rows[0]!.cells.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c.text);
+    const row = sheet.rows.slice(1).find((r) => r.cells.get(heads.indexOf("fieldNumber"))?.text === fieldNumber)!;
+    return (heading: string) => {
+      expect(heads, heading).toContain(heading);
+      return row.cells.get(heads.indexOf(heading))?.text ?? "";
+    };
+  };
+  const SAMPLE_CONTEXT = [
+    "samplingProtocol",
+    "decimalLatitude",
+    "decimalLongitude",
+    "coordinateUncertaintyInMeters",
+    "minimumElevationInMeters",
+    "maximumElevationInMeters",
+    "hostFamily",
+  ];
+  const withHost = async (as: "alice" | "bob" | "staffer") => {
+    const fx = await listingApp(as);
+    await fx.conn.run(
+      `INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active, preferred_common_name)
+       VALUES (100, 'Familia alpha', 'family', 30, NULL, true, NULL), (110, 'Alpha', 'genus', 20, 100, true, NULL), (1, 'Alpha lanata', 'species', 10, 110, true, NULL)`,
+    );
+    await fx.conn.run(`INSERT INTO inat_taxon_ancestor VALUES (100, 100, 0), (110, 110, 0), (110, 100, 1), (1, 1, 0), (1, 110, 1), (1, 100, 2)`);
+    await refreshPlantCommonNames(fx.conn);
+    await fx.conn.run(`UPDATE sample SET host_inat_taxon_id = 1, host_name_as_observed = 'Alpha lanata', host_rank = 'species' WHERE sample_number = 'A-1'`);
+    return fx;
+  };
+
+  it("carries the sample's method, coordinates, elevation and the host's family, as the specimens listing gives them (beeline-okn9)", async () => {
+    const fx = await withHost("staffer");
+    const [header, ...rows] = await specimenTable(fx, "scope=all");
+    const mine = rows.find((r) => r[header!.indexOf("fieldNumber")] === "OBA00001")!;
+    const cell = await fileRow(fx.app, "OBA00001");
+    for (const heading of SAMPLE_CONTEXT) expect(cell(heading), heading).toBe(mine[header!.indexOf(heading)]);
+    // Not blank by accident: the fixture's sample has all of them.
+    expect(cell("samplingProtocol")).toBe("net");
+    expect(cell("decimalLatitude")).toBe("44.5646");
+    expect(cell("decimalLongitude")).toBe("-123.262");
+    expect(cell("coordinateUncertaintyInMeters")).toBe("30");
+    expect(cell("minimumElevationInMeters")).toBe("72");
+    expect(cell("hostFamily")).toBe("Familia alpha");
+  });
+
+  it("leaves the coordinates, uncertainty and elevation blank for a reader who may not see the sample's location, with the host's family and method still there", async () => {
+    const fx = await withHost("bob");
+    // Alice's A-1, made obscured by Alice: Bob, who is not its collector, is not told where it is.
+    await fx.conn.run(`UPDATE sample SET geoprivacy = 'obscured' WHERE sample_number = 'A-1'`);
+    const cell = await fileRow(fx.app, "OBA00001");
+    for (const heading of ["locality", "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "minimumElevationInMeters", "maximumElevationInMeters"]) {
+      expect(cell(heading), heading).toBe("");
+    }
+    expect(cell("samplingProtocol")).toBe("net");
+    expect(cell("hostFamily")).toBe("Familia alpha");
+  });
+
   it("is a text cell everywhere, header included, and a leading = is only text", async () => {
     const { app, conn } = await listingApp("staffer");
     await conn.run(`UPDATE determination SET determiner_name = '=Dee Determiner' WHERE determiner_name IS NOT NULL AND determiner_id IS NULL`);
@@ -2490,8 +2548,9 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
         expect(validation![2]!.length).toBeLessThanOrEqual(255);
         expect(validation![2]).toContain(column);
       }
-      // A column of the CSV that this file does not carry has no warning.
-      expect(head).not.toContain("samplingProtocol");
+      // A column the file carries only for reference has no warning, though the CSV's has a vocabulary for it.
+      expect(head).toContain("samplingProtocol");
+      expect(xml).not.toContain(`sqref="${columnName(head.indexOf("samplingProtocol"))}2:`);
     });
 
     it("shades exactly the recognising and bookkeeping columns, and bolds the headings it reads", async () => {
@@ -2503,7 +2562,8 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       const grey = head.filter((c, at) => ["3", "5"].includes(styleOf(`${columnName(at)}1`)!));
       const bold = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "2");
       expect(head).toEqual([
-        "fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa",
+        "fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "samplingProtocol", "locality", "county", "stateProvince",
+        "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "minimumElevationInMeters", "maximumElevationInMeters", "associatedTaxa", "hostFamily",
         "scientificName", "identificationQualifier", "sex", "caste", "identifiedBy", "dateIdentified", "disposition", "occurrenceRemarks",
         "specimenId", "specimenVersion",
       ]);

@@ -155,11 +155,12 @@ export interface SpecimenWorkbook {
  * any length, so these columns wrap: a long value makes its row taller and
  * never reaches the next cell.
  */
-export const WRAPPED_COLUMNS: readonly string[] = ["recordedBy", "locality", "county", "associatedTaxa", "scientificName", "identifiedBy", "occurrenceRemarks"];
+export const WRAPPED_COLUMNS: readonly string[] = ["recordedBy", "samplingProtocol", "locality", "county", "associatedTaxa", "scientificName", "identifiedBy", "occurrenceRemarks"];
 
 /** How wide each wrapped column is drawn, in characters (the rest are 16): wide enough that most rows stay one line, narrow enough to leave the sheet readable. */
 export const COLUMN_WIDTHS: Readonly<Record<string, number>> = {
   recordedBy: 26,
+  samplingProtocol: 20,
   locality: 32,
   county: 18,
   associatedTaxa: 56,

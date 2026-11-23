@@ -1,4 +1,5 @@
 import { sql, type Kysely } from "kysely";
+import { likeContains } from "./like-pattern.js";
 import { PROGRAM_MEMBERSHIP, type Database, type MembershipKind } from "../model.js";
 import type { PersonChange } from "../person-change.js";
 import { splitCodes } from "../person-overlay.js";
@@ -311,7 +312,6 @@ export async function listRoster(
   const lastLogin = lastLoginSql;
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
-  const term = `%${query.search.toLowerCase()}%`;
 
   // Without legacy staging every evidence column is null and the verdict
   // collapses to bound/unbound; the screen says so rather than implying the
@@ -418,7 +418,7 @@ export async function listRoster(
         : sql`concat(';', leads, ';') LIKE ${`%;${query.lead};%`}`;
   const base = sql`
     SELECT * FROM (${judged})
-    WHERE (${query.search === ""} OR lower(display_name) LIKE ${term} OR lower(coalesce(login, '')) LIKE ${term})
+    WHERE (${query.search === ""} OR ${likeContains(sql`lower(display_name)`, query.search)} OR ${likeContains(sql`lower(coalesce(login, ''))`, query.search)})
       AND (${!query.suspect} OR verdict IN ('outweighed', 'unattested'))
       AND ${activity}
       AND ${member}

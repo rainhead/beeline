@@ -1,25 +1,26 @@
 // Smoke test for the intended app toolchain: Kysely + kysely-duckdb on
 // @duckdb/node-api (roadmap phase 1: prove it while switching is cheap).
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import type { Kysely } from "kysely";
 import { createMemoryDb } from "./helpers.js";
 import { createKysely } from "../src/db.js";
 import type { Database } from "../src/model.js";
 
 let db: Kysely<Database>;
-let sampleId: number;
 
-beforeAll(async () => {
+// A store of its own per test: the later tests read what the first one
+// inserts, so each inserts it for itself through `seed`.
+beforeEach(async () => {
   const { instance, conn } = await createMemoryDb();
   conn.closeSync(); // schema applied; hand the instance to Kysely
   db = createKysely(instance);
 });
 
-afterAll(async () => {
+afterEach(async () => {
   await db.destroy();
 });
 
-test("insert returning generated ids", async () => {
+async function seed(): Promise<number> {
   const person = await db
     .insertInto("person")
     .values({ display_name: "Ada Collector" })
@@ -43,7 +44,6 @@ test("insert returning generated ids", async () => {
     .returning("entity_id")
     .executeTakeFirstOrThrow();
   expect(sample.entity_id).toBeGreaterThan(person.entity_id); // one global entity sequence
-  sampleId = sample.entity_id;
 
   // The primary collector is the head of the list, not a column (beeline-6e9).
   await db
@@ -71,9 +71,15 @@ test("insert returning generated ids", async () => {
       source: "inat_public",
     })
     .execute();
+  return sample.entity_id;
+}
+
+test("insert returning generated ids", async () => {
+  await seed();
 });
 
 test("typed joins over tables", async () => {
+  await seed();
   const row = await db
     .selectFrom("sample")
     .innerJoin("sample_primary_collector as pc", "pc.sample_id", "sample.entity_id")
@@ -84,6 +90,7 @@ test("typed joins over tables", async () => {
 });
 
 test("views are queryable through Kysely", async () => {
+  const sampleId = await seed();
   const printable = await db.selectFrom("printable_sample").selectAll().execute();
   expect(printable).toEqual([{ sample_id: sampleId }]);
 

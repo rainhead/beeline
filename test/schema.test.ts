@@ -1,11 +1,12 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 import { isItalicRank } from "../src/app/views/components/taxon.js";
 
 let conn: DuckDBConnection;
 
-beforeAll(async () => {
+// A store of its own per test, so none depends on what another inserted.
+beforeEach(async () => {
   ({ conn } = await createMemoryDb());
   await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector'), ('Bea Printer')");
 });
@@ -89,7 +90,7 @@ describe("schema application", () => {
     // drone, the museum databases' vocabulary. A CHECK cannot be added to a
     // deployed store (ADR 0006), so this is pinned before cutover.
     await conn.run(`INSERT INTO person (display_name) VALUES ('Dee Determiner')`);
-    // A genus of its own, since this file shares one store and a later test seeds Bombus.
+    // A genus of its own, so that it cannot be mistaken for one another test seeds.
     await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Castebombus')`);
     const sample = await insertCleanSample(conn, { sample_number: "'41'" });
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sample}, 1)`);
@@ -263,6 +264,8 @@ describe("schema application", () => {
     // animal_rank — so the engine cannot hold it and the view does
     // (schema/115). Nothing produces this today; the determination UI will be
     // the first writer that can (beeline-tgu).
+    // The genus the determination names; each test has a store of its own, so it adds it.
+    await conn.run("INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Bombus')");
     expect(await rows(conn, "SELECT entity_id FROM determination_misplaced_qualifier")).toEqual([]);
 
     await conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end)
@@ -284,6 +287,8 @@ describe("schema application", () => {
     // record of what was said (beeline-45v). Legacy import is exempt: most of
     // it arrives as parted columns with no whole name to keep, and promotion
     // invents none.
+    // The genus the determination names; each test has a store of its own, so it adds it.
+    await conn.run("INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Bombus')");
     await conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end)
                     VALUES ('net', 'v1', DATE '2026-07-01', DATE '2026-07-01')`);
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number)
@@ -357,7 +362,7 @@ describe("schema application", () => {
 describe("updating a row an incoming foreign key references", () => {
   let db: DuckDBConnection;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     ({ conn: db } = await createMemoryDb());
     // The shape sample used to have: an indexed column (the FK to person
     // makes owner_id indexed), an unindexed one, and a child table pointing

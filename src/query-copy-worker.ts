@@ -326,12 +326,30 @@ export async function executeQuery(req: WorkerRequest, opts: { bypassKindCheck?:
     return { ok: true, columns, rows, truncatedBy, copiedAt };
   } catch (err) {
     if (err instanceof Refusal) return { ok: false, code: err.code, message: err.message };
+    if (needsToSpill(err)) {
+      return {
+        ok: false,
+        code: "memory",
+        message:
+          `The query needs more than the ${req.memoryLimit} of memory it is allowed, and would have to spill to temporary files, which this command never writes (so it cannot fill the volume the store lives on). ` +
+          "Select fewer columns, filter or aggregate before joining or sorting, or add a LIMIT.",
+      };
+    }
     return { ok: false, code: "sql", message: messageOf(err) };
   } finally {
     result?.closeSync();
     conn?.closeSync();
     instance.closeSync();
   }
+}
+
+/**
+ * DuckDB's error when it tries to spill into the unusable temporary directory
+ * that {@link openQueryCopy} sets on purpose (src/db.ts): the path ends in
+ * `no-spill`, and its message says only that a directory could not be made.
+ */
+function needsToSpill(err: unknown): boolean {
+  return /Failed to create directory ".*[/\\]no-spill"/.test(messageOf(err));
 }
 
 function messageOf(err: unknown): string {

@@ -56,7 +56,13 @@ async function specimen(sampleId: number, n: number, fieldNumber: string | null)
   return ((await result.getRows()) as [[number]])[0][0];
 }
 
-beforeAll(async () => {
+/**
+ * A store of its own for each test: copying records what it sent in
+ * legacy_copy, and the tests change the sample and the old system's records
+ * from one step to the next, so none may start from what another left.
+ */
+async function seedStore(): Promise<void> {
+  printed.clear();
   // The legacy fixture's specimens are imported: the old system has them already.
   ({ conn } = await promotedStore("occurrences"));
   // One sample minted here and printed, with enough specimens that the copy
@@ -72,19 +78,35 @@ beforeAll(async () => {
   // Not copied either: an imported specimen Beeline printed again under its own number.
   [[reprintedImport]] = (await rows(conn, `SELECT entity_id FROM specimen WHERE field_number = '25000001'`)) as [[number]];
   await printRun([reprintedImport], "printed");
+}
 
+beforeAll(async () => {
   old = new FakeOldBeeline();
   creds = await old.start();
 });
 
 afterAll(() => old.server.close());
 
-beforeEach(() => {
+beforeEach(async () => {
+  // The old system as the test finds it: no records, nothing sent, nothing set to misbehave.
+  old.records = new Map();
+  old.reads = [];
+  old.beforeNextWrite = null;
+  old.dropOnWrite = null;
   old.posts = [];
   old.logins = 0;
 });
 
+/** The first night's copy, for a test about what the second does; forgets what it sent. */
+async function copiedOnce(): Promise<void> {
+  await copyToOldBeeline(conn, creds);
+  old.posts = [];
+  old.logins = 0;
+}
+
 describe("copying printed specimens into the old Beeline", () => {
+  beforeEach(seedStore);
+
   test("a dry run reads the old system and says what it would send, and sends and records nothing", async () => {
     const r = await copyToOldBeeline(conn, creds, { dryRun: true });
     expect(r).toMatchObject({ printed: 120, unchanged: 0, inserted: 120, updated: 0, dryRun: true });
@@ -111,7 +133,8 @@ describe("copying printed specimens into the old Beeline", () => {
     }
   });
 
-  test("writes the export's row: all 63 template columns, the print date, the collector's login, the host", () => {
+  test("writes the export's row: all 63 template columns, the print date, the collector's login, the host", async () => {
+    await copiedOnce();
     const record = old.records.get(legacyCopyId(printed.get("26090007")!))!;
     for (const c of COPIED_COLUMNS) expect(record).toHaveProperty(c);
     expect(record).not.toHaveProperty("occurrenceRemarks");
@@ -129,6 +152,7 @@ describe("copying printed specimens into the old Beeline", () => {
   });
 
   test("sends exactly the row the export writes, though it reads no staged legacy record", async () => {
+    await copiedOnce();
     const path = join(await mkdtemp(join(tmpdir(), "legacy-copy-")), "occurrences.csv");
     await writeLegacyExport(conn, path);
     const reader = await conn.runAndReadAll(
@@ -143,6 +167,7 @@ describe("copying printed specimens into the old Beeline", () => {
   });
 
   test("a night with nothing changed sends nothing and does not sign in", async () => {
+    await copiedOnce();
     const r = await copyToOldBeeline(conn, creds);
     expect(r).toMatchObject({ printed: 120, unchanged: 120, inserted: 0, updated: 0 });
     expect(old.logins).toBe(0);
@@ -150,6 +175,7 @@ describe("copying printed specimens into the old Beeline", () => {
   });
 
   test("a change reaches the old record, and never overwrites what a volunteer entered there", async () => {
+    await copiedOnce();
     // A volunteer identifies specimen 3 in the old Beeline.
     const three = old.records.get(legacyCopyId(printed.get("26090003")!))!;
     Object.assign(three, { familyVolDet: "Halictidae", genusVolDet: "Lasioglossum", sexVolDet: "female" });
@@ -165,6 +191,7 @@ describe("copying printed specimens into the old Beeline", () => {
   });
 
   test("a record the old system lost is made again when everything is sent", async () => {
+    await copiedOnce();
     const id = legacyCopyId(printed.get("26090010")!);
     old.records.delete(id);
     const r = await copyToOldBeeline(conn, creds, { all: true });
@@ -173,6 +200,7 @@ describe("copying printed specimens into the old Beeline", () => {
   });
 
   test("never sends a field number the old system holds under another record, and fails the night", async () => {
+    await copiedOnce();
     const id = legacyCopyId(printed.get("26090020")!);
     old.records.set("6b09ffad195b941413e3080619e750ddf3d9a60c600677389600985575dc7c32", { _id: "6b09ffad195b941413e3080619e750ddf3d9a60c600677389600985575dc7c32", fieldNumber: "26090020" });
     const before = { ...old.records.get(id)! };
@@ -191,6 +219,7 @@ describe("copying printed specimens into the old Beeline", () => {
   });
 
   test("follows a specimen to a second field number, finding its old record by the number it still holds", async () => {
+    await copiedOnce();
     // A duplicate repair: specimen 30 is given a new number, and the old
     // record must move with it rather than a second one be made, so that a
     // volunteer's entry on it is kept.
@@ -204,6 +233,7 @@ describe("copying printed specimens into the old Beeline", () => {
   });
 
   test("keeps a volunteer's entry saved between the copy's read and its write", async () => {
+    await copiedOnce();
     const five = old.records.get(legacyCopyId(printed.get("26090005")!))!;
     expect(five.familyVolDet).toBe("");
     // The volunteer saves after the copy has read the batch and seen no entry.
@@ -217,6 +247,7 @@ describe("copying printed specimens into the old Beeline", () => {
   });
 
   test("fills a record nobody has identified in the old Beeline with the volunteer determination made here", async () => {
+    await copiedOnce();
     const forty = printed.get("26090040")!;
     await conn.run(
       `INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, is_expert, channel, determiner_id)

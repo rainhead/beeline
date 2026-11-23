@@ -2,7 +2,7 @@ import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { InatClient } from "../src/app/auth.js";
 import { en } from "../src/app/messages/en.js";
 import { createApp } from "../src/app/server.js";
@@ -170,36 +170,45 @@ describe("the line each difference is on", () => {
   });
 });
 
-describe("writing the changes", () => {
-  let instance: DuckDBInstance;
+/** A night's folder from long before, named as the job names one. */
+const OLDER_NIGHT = "2026-01-01T00-00-00-000Z";
+
+/**
+ * A store of the occurrences fixture with its export written and one night of
+ * changes worked out from it: the state every test of "writing the changes"
+ * starts from. Synthetic, in the shapes the production store showed on
+ * 2026-11-15: an Ecdysis identification giving a sex the old record had
+ * otherwise (2310599), and a difference no ruling explains.
+ */
+async function nightOfChanges() {
+  const { instance, conn } = await promotedStore("occurrences");
+  await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, is_expert, channel)
+    SELECT sp.entity_id, a.entity_id, 'Bombus vosnesenskii', 'female', true, 'ecdysis_import'
+    FROM specimen sp, animal a WHERE sp.field_number = '25000005' AND a.scientific_name = 'Bombus vosnesenskii'`);
+  const exportsDir = await mkdtemp(join(tmpdir(), "legacy-changes-"));
+  await writeLegacyExport(conn, legacyExportPath(exportsDir));
+  await conn.run(`UPDATE legacy_occurrence SET sex = 'male' WHERE "fieldNumber" = '25000005'`);
+  await conn.run(`UPDATE legacy_occurrence SET "taxonomicNotes" = 'planted' WHERE "fieldNumber" = '25000001'`);
+  // An earlier night's folder that no summary names any more, and a folder
+  // this did not write, as --out pointed at the exports folder would hold.
+  const dir = changesDir(exportsDir);
+  await mkdir(join(dir, OLDER_NIGHT), { recursive: true });
+  await writeFile(join(dir, OLDER_NIGHT, "coarser.csv"), "stale");
+  await mkdir(join(dir, "dwca"), { recursive: true });
+  await conn.run("SET threads = 3");
+  const summary = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), dir);
+  return { instance, conn, exportsDir, summary };
+}
+
+// Tests that only read what one night of changes wrote share it: they write
+// nothing to the store or the folder.
+describe("a night of changes", () => {
   let conn: DuckDBConnection;
   let exportsDir: string;
   let summary: ChangesSummary;
-  /** The second run's night, which the third keeps (set by the test of keeping nights). */
-  let nightBefore = "";
-  /** A night's folder from long before, named as the job names one. */
-  const OLDER_NIGHT = "2026-01-01T00-00-00-000Z";
 
-  // Synthetic, in the shapes the production store showed on 2026-11-15: an
-  // Ecdysis identification giving a sex the old record had otherwise
-  // (2310599), and a difference no ruling explains.
   beforeAll(async () => {
-    ({ instance, conn } = await promotedStore("occurrences"));
-    await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, is_expert, channel)
-      SELECT sp.entity_id, a.entity_id, 'Bombus vosnesenskii', 'female', true, 'ecdysis_import'
-      FROM specimen sp, animal a WHERE sp.field_number = '25000005' AND a.scientific_name = 'Bombus vosnesenskii'`);
-    exportsDir = await mkdtemp(join(tmpdir(), "legacy-changes-"));
-    await writeLegacyExport(conn, legacyExportPath(exportsDir));
-    await conn.run(`UPDATE legacy_occurrence SET sex = 'male' WHERE "fieldNumber" = '25000005'`);
-    await conn.run(`UPDATE legacy_occurrence SET "taxonomicNotes" = 'planted' WHERE "fieldNumber" = '25000001'`);
-    // An earlier night's folder that no summary names any more, and a folder
-    // this did not write, as --out pointed at the exports folder would hold.
-    const dir = changesDir(exportsDir);
-    await mkdir(join(dir, OLDER_NIGHT), { recursive: true });
-    await writeFile(join(dir, OLDER_NIGHT, "coarser.csv"), "stale");
-    await mkdir(join(dir, "dwca"), { recursive: true });
-    await conn.run("SET threads = 3");
-    summary = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), dir);
+    ({ conn, exportsDir, summary } = await nightOfChanges());
   });
 
   test("counts the records on each line by program, with a record to look at and what changed on it", () => {
@@ -212,30 +221,6 @@ describe("writing the changes", () => {
     const [example] = sex.examples;
     expect(example).toMatchObject({ fieldNumber: "25000005", values: [{ column: "sex", kind: "newer_determination", old: "male", new: "female" }] });
     expect(example!.specimenId).toEqual(expect.any(Number));
-  });
-
-  test("gives a record new Beeline does not hold the held-back download rather than a file of blanks", async () => {
-    // Synthetic: a record only old Beeline holds, ruled as promotion would
-    // rule one it held back, written into a folder of its own.
-    await conn.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('only-old' AS _id, '29999999' AS "fieldNumber")
-                    FROM legacy_occurrence WHERE "fieldNumber" = '25000001'`);
-    try {
-      const rulings = [
-        ...(await readRulings(DEFAULT_RULINGS)),
-        { field_number: "", column: RECORD_COLUMN, kind: "not_exported", outcome: "reference-wrong", reason: "test", source: "test", decided_by: "test", decided_on: "2026-11-16" },
-      ];
-      const dir = changesDir(await mkdtemp(join(tmpdir(), "legacy-changes-held-")));
-      const held = (await writeChanges(conn, legacyExportPath(exportsDir), rulings, dir)).lines.find((l) => l.line === "held_back")!;
-      expect(held.examples.map((e) => e.fieldNumber)).toEqual(["29999999"]);
-      expect(held).toMatchObject({ file: null, bytes: null });
-      const generation = (await readdir(dir)).find((n) => GENERATION.test(n))!;
-      expect(await readdir(join(dir, generation))).not.toContain("held_back.csv");
-      const page = String(await LegacyChangesPage({ m: en as never, summary: (await readChangesSummary(join(dir, "..")))! }));
-      expect(page).toContain(`href="/exports/held-back.csv"`);
-      expect(page).not.toContain("held_back.csv");
-    } finally {
-      await conn.run(`DELETE FROM legacy_occurrence WHERE _id = 'only-old'`);
-    }
   });
 
   test("offers no download for specimens old Beeline never had", async () => {
@@ -278,6 +263,58 @@ describe("writing the changes", () => {
     await stat(join(changesDir(exportsDir), "dwca"));
   });
 
+  test("leaves no temporary table behind and puts the thread count back", async () => {
+    const [[left]] = (await (await conn.run(`
+      SELECT count(*) FROM (SELECT table_name AS n FROM duckdb_tables() WHERE temporary
+                            UNION ALL SELECT view_name FROM duckdb_views() WHERE temporary)
+      WHERE starts_with(n, 'cmp_') OR starts_with(n, 'chg_')`)).getRows()) as [[bigint]];
+    expect(Number(left)).toBe(0);
+    const [[threads]] = (await (await conn.run(`SELECT current_setting('threads')`)).getRows()) as [[bigint]];
+    expect(Number(threads)).toBe(3);
+  });
+
+  test("says when nothing has been worked out yet", async () => {
+    const { LegacyChangesPage } = await import("../src/app/views/legacy-changes.js");
+    expect(String(await LegacyChangesPage({ m: en as never, summary: null }))).toContain(en.legacyChanges.missing);
+  });
+});
+
+// Tests that add rows, nights or people each work out a night of their own,
+// which takes about a second, rather than leave them for the next test.
+describe("writing more changes", () => {
+  let instance: DuckDBInstance;
+  let conn: DuckDBConnection;
+  let exportsDir: string;
+  let summary: ChangesSummary;
+
+  beforeEach(async () => {
+    ({ instance, conn, exportsDir, summary } = await nightOfChanges());
+  });
+
+  test("gives a record new Beeline does not hold the held-back download rather than a file of blanks", async () => {
+    // Synthetic: a record only old Beeline holds, ruled as promotion would
+    // rule one it held back, written into a folder of its own.
+    await conn.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('only-old' AS _id, '29999999' AS "fieldNumber")
+                    FROM legacy_occurrence WHERE "fieldNumber" = '25000001'`);
+    try {
+      const rulings = [
+        ...(await readRulings(DEFAULT_RULINGS)),
+        { field_number: "", column: RECORD_COLUMN, kind: "not_exported", outcome: "reference-wrong", reason: "test", source: "test", decided_by: "test", decided_on: "2026-11-16" },
+      ];
+      const dir = changesDir(await mkdtemp(join(tmpdir(), "legacy-changes-held-")));
+      const held = (await writeChanges(conn, legacyExportPath(exportsDir), rulings, dir)).lines.find((l) => l.line === "held_back")!;
+      expect(held.examples.map((e) => e.fieldNumber)).toEqual(["29999999"]);
+      expect(held).toMatchObject({ file: null, bytes: null });
+      const generation = (await readdir(dir)).find((n) => GENERATION.test(n))!;
+      expect(await readdir(join(dir, generation))).not.toContain("held_back.csv");
+      const page = String(await LegacyChangesPage({ m: en as never, summary: (await readChangesSummary(join(dir, "..")))! }));
+      expect(page).toContain(`href="/exports/held-back.csv"`);
+      expect(page).not.toContain("held_back.csv");
+    } finally {
+      await conn.run(`DELETE FROM legacy_occurrence WHERE _id = 'only-old'`);
+    }
+  });
+
   test("keeps the night before's folder, which a reader may still be downloading from, and nothing older", async () => {
     const root = changesDir(exportsDir);
     const second = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), root);
@@ -288,7 +325,6 @@ describe("writing the changes", () => {
     expect((await readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort()).toEqual(
       [second.generation, third.generation, "dwca"].sort(),
     );
-    nightBefore = second.generation;
   });
 
   test("keeps the night an old-shaped summary names, which a reader may still be downloading from", async () => {
@@ -302,16 +338,6 @@ describe("writing the changes", () => {
     expect(next.generation).not.toBe(night);
   });
 
-  test("leaves no temporary table behind and puts the thread count back", async () => {
-    const [[left]] = (await (await conn.run(`
-      SELECT count(*) FROM (SELECT table_name AS n FROM duckdb_tables() WHERE temporary
-                            UNION ALL SELECT view_name FROM duckdb_views() WHERE temporary)
-      WHERE starts_with(n, 'cmp_') OR starts_with(n, 'chg_')`)).getRows()) as [[bigint]];
-    expect(Number(left)).toBe(0);
-    const [[threads]] = (await (await conn.run(`SELECT current_setting('threads')`)).getRows()) as [[bigint]];
-    expect(Number(threads)).toBe(3);
-  });
-
   test("the page shows each line, and serves only the files the summary names, to admins only", async () => {
     const unusedInat: InatClient = {
       authorizeUrl: () => "unused",
@@ -321,6 +347,10 @@ describe("writing the changes", () => {
     const [[staff]] = (await (await conn.run(`INSERT INTO person (display_name) VALUES ('Sam Staff') RETURNING entity_id`)).getRows()) as [[number]];
     await conn.run(`INSERT INTO person_admin (person_id) VALUES (${staff})`);
     const [[volunteer]] = (await (await conn.run(`INSERT INTO person (display_name) VALUES ('Val Volunteer') RETURNING entity_id`)).getRows()) as [[number]];
+    // Two more nights, so that the page shows the third and the second is the night before.
+    const root = changesDir(exportsDir);
+    const nightBefore = (await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), root)).generation;
+    await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), root);
     let who = Number(staff);
     const app = createApp({
       ...(await scratchPaths()),
@@ -354,10 +384,6 @@ describe("writing the changes", () => {
     expect((await app.request(`/exports/changes/${shown}/newer_expert_sex.csv`)).status).toBe(403);
   });
 
-  test("says when nothing has been worked out yet", async () => {
-    const { LegacyChangesPage } = await import("../src/app/views/legacy-changes.js");
-    expect(String(await LegacyChangesPage({ m: en as never, summary: null }))).toContain(en.legacyChanges.missing);
-  });
 });
 
 describe("a summary written before the counts were by program", () => {

@@ -1,10 +1,13 @@
-import { readFile } from "node:fs/promises";
-import { beforeAll, describe, expect, test } from "vitest";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, FIXTURE_INPUTS, rows } from "./helpers.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
 import { MIGRATIONS_DIR } from "../src/migrate.js";
+import { openCopy, writeCopy } from "./store-template.js";
 
 /**
  * How a sample's host is named from the old Beeline's five plant columns
@@ -52,7 +55,11 @@ const SHAPES: Shape[] = [
   { sid: "117", genus: "Arctostaphylos", species: "uva-ursi", name: "Arctostaphylos uva-ursi", rank: "species" },
 ];
 
+/** The store the tests that only read use, shared; a test that writes opens its own copy of `promotedFile`. */
+let shared: DuckDBConnection;
+/** The same store, `conn`, unless a test of the migration has swapped in a copy of its own. */
 let conn: DuckDBConnection;
+let promotedFile: string;
 let migration: string;
 /** Every sample's host straight after promotion with the new rule. */
 let promoted: unknown[][];
@@ -62,6 +69,7 @@ const hostOf = async (sid: string) =>
 
 beforeAll(async () => {
   ({ conn } = await createMemoryDb());
+  shared = conn;
   await loadLegacyStaging(conn, FIXTURE);
   const q = (v: string) => `'${v.replaceAll("'", "''")}'`;
   const insert = (id: string, fieldNumber: string, s: Pick<Shape, "sid" | "genus" | "species" | "family">, specimenId = "1") =>
@@ -88,6 +96,10 @@ beforeAll(async () => {
   await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('solidago canadensis', 'species', 1, true)");
   await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('solidago canadensis', 'species', 999001, 'Solidago canadensis', 'species', true, 'Solidago canadensis')");
   await promoteLegacy(conn, FIXTURE_INPUTS);
+  // Promoting this fixture costs several seconds, so each test that changes
+  // the store opens a copy of the promoted one instead of promoting again.
+  promotedFile = join(await mkdtemp(join(tmpdir(), "promote-legacy-host-")), "promoted.duckdb");
+  await writeCopy(conn, promotedFile);
   promoted = await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`);
   migration = await readFile(`${MIGRATIONS_DIR}0091-host-name-from-genus-and-epithet.sql`, "utf8");
 });
@@ -113,6 +125,14 @@ describe("a promoted sample's host", () => {
 });
 
 describe("migration 0091, on a store promoted before the rule", () => {
+  // Each test writes to the store, so each has a copy of its own.
+  beforeEach(async () => {
+    ({ conn } = await openCopy(promotedFile));
+  });
+  afterEach(() => {
+    conn = shared;
+  });
+
   // Put the stored hosts back as the old rule wrote them: the first non-empty
   // plant column of the sample's first record, ranked by its column.
   const OLD = `

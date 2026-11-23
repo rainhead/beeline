@@ -22,6 +22,7 @@
     "legacy:repair-skipped": "tsx src/repair-legacy-skipped.ts",
     "legacy:carry-over": "tsx src/carry-over-legacy.ts",
     "backup:check": "tsx src/check-backup.ts",
+    "views:rehash": "tsx src/view-manifest.ts",
     "store:query": "tsx src/store-query.ts",
     "legacy:compare-export": "tsx src/compare-legacy-export.ts",
     "legacy:changes": "tsx src/legacy-changes.ts",

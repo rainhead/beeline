@@ -89,6 +89,30 @@ describe("drift against the schema", () => {
     expect(await schemaDrift(conn)).toEqual(["not in the schema: sample.hand_added"]);
   });
 
+  test("a changed comment on a view, a table or a column is named", async () => {
+    await conn.run("COMMENT ON VIEW season IS 'stale'");
+    await conn.run("COMMENT ON TABLE atlas_region IS 'stale'");
+    await conn.run("COMMENT ON COLUMN atlas_region.inat_place_id IS 'stale'");
+    expect(await schemaDrift(conn)).toEqual([
+      "comment differs: atlas_region",
+      "comment differs: atlas_region.inat_place_id",
+      "comment differs: season",
+    ]);
+  });
+
+  test("a view recreated with the same text, or with other text, is not drift: definitions are the test suite's to compare", async () => {
+    const [[sql, comment]] = (await rows(conn, "SELECT sql, comment FROM duckdb_views() WHERE view_name = 'season' AND NOT internal")) as [[string, string]];
+    const restate = () => conn.run(`COMMENT ON VIEW season IS '${comment.replaceAll("'", "''")}'`);
+    await conn.run(String(sql).replace(/^CREATE VIEW/, "CREATE OR REPLACE VIEW"));
+    // CREATE OR REPLACE VIEW drops the view's comment, so a migration that replaces a view must restate it.
+    expect(await schemaDrift(conn)).toEqual(["comment differs: season"]);
+    await restate();
+    await conn.run("CREATE OR REPLACE VIEW season AS SELECT 1 AS current_season, DATE '2000-01-01' AS active_since");
+    await restate();
+    // Same columns, different text: production's stored text depends on the DuckDB that wrote it, so --check leaves it to the suite.
+    expect(await schemaDrift(conn)).toEqual([]);
+  });
+
   test("tables the schema never declared are not drift — the pipeline makes those", async () => {
     // A real store also holds the legacy load's staging tables (ingest/*.sql).
     await conn.run("CREATE TABLE legacy_staging_whatever (id INTEGER)");
@@ -108,8 +132,9 @@ describe("the CLI's flags (beeline-736)", () => {
     // A store whose schema drifts AND has a migration pending that would fix
     // it: the old --check would have applied the migration and then reported
     // no drift, answering a question by changing the answer.
+    const [[sql, comment]] = (await rows(conn, "SELECT sql, comment FROM duckdb_views() WHERE view_name = 'settled_sample' AND NOT internal")) as [[string, string]];
     await conn.run("DROP VIEW settled_sample");
-    await write("0001-restore-view.sql", "CREATE VIEW settled_sample AS SELECT 1 AS sample_id;");
+    await write("0001-restore-view.sql", `${sql}\nCOMMENT ON VIEW settled_sample IS '${String(comment).replaceAll("'", "''")}';`);
     const { out, err, io: t } = io();
     expect(await runCli(conn, new Set(["--check"]), "x.duckdb", t, dir)).toBe(0);
     expect(out).toEqual(["PENDING  0001-restore-view.sql"]);
@@ -119,8 +144,9 @@ describe("the CLI's flags (beeline-736)", () => {
   });
 
   test("--status reads and says nothing about drift", async () => {
+    const [[sql, comment]] = (await rows(conn, "SELECT sql, comment FROM duckdb_views() WHERE view_name = 'settled_sample' AND NOT internal")) as [[string, string]];
     await conn.run("DROP VIEW settled_sample");
-    await write("0001-restore-view.sql", "CREATE VIEW settled_sample AS SELECT 1 AS sample_id;");
+    await write("0001-restore-view.sql", `${sql}\nCOMMENT ON VIEW settled_sample IS '${String(comment).replaceAll("'", "''")}';`);
     const { out, err, io: t } = io();
     expect(await runCli(conn, new Set(["--status"]), "x.duckdb", t, dir)).toBe(0);
     expect(out).toEqual(["PENDING  0001-restore-view.sql"]);
@@ -137,8 +163,9 @@ describe("the CLI's flags (beeline-736)", () => {
   });
 
   test("migrating applies, then reports; --check afterwards is clean", async () => {
+    const [[sql, comment]] = (await rows(conn, "SELECT sql, comment FROM duckdb_views() WHERE view_name = 'settled_sample' AND NOT internal")) as [[string, string]];
     await conn.run("DROP VIEW settled_sample");
-    await write("0001-restore-view.sql", "CREATE VIEW settled_sample AS SELECT 1 AS sample_id;");
+    await write("0001-restore-view.sql", `${sql}\nCOMMENT ON VIEW settled_sample IS '${String(comment).replaceAll("'", "''")}';`);
     const first = io();
     expect(await runCli(conn, new Set(), "x.duckdb", first.io, dir)).toBe(0);
     expect(first.out).toEqual(["applied 0001-restore-view.sql"]);
@@ -399,7 +426,9 @@ describe("abbreviating each program (0089)", () => {
       ["WaBA", "WABA"],
     ]);
     expect(await rows(conn, "SELECT count(*) FROM program p LEFT JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE a.program_id IS NULL")).toEqual([[0n]]);
-    expect(await schemaDrift(conn)).toEqual([]);
+    // 0118 restated these two comments for British Columbia, and 0089 alone
+    // predates it: they are the only drift.
+    expect(await schemaDrift(conn)).toEqual(["comment differs: program_abbreviation", "comment differs: program_abbreviation.abbreviation"]);
     // The point of the satellite: unlike the code, it can be changed on a referenced program.
     await conn.run("UPDATE program_abbreviation SET abbreviation = 'WA' WHERE abbreviation = 'WABA'");
   });
@@ -421,6 +450,26 @@ describe("British Columbia's abbreviation (0118)", () => {
       ["WaBA", "WABA"],
     ]);
     expect(await rows(conn, "SELECT code FROM program WHERE code = 'BC'")).toEqual([["BC"]]);
+    expect(await schemaDrift(conn)).toEqual([]);
+  });
+});
+
+describe("the atlas_region comments (0121)", () => {
+  test("restates the table's and inat_place_id's comments as the schema has them, and nothing else", async () => {
+    const { conn: fresh } = await createMemoryDb();
+    const comments = (c: DuckDBConnection) => rows(c, `SELECT comment FROM duckdb_tables() WHERE table_name = 'atlas_region'
+      UNION ALL SELECT comment FROM duckdb_columns() WHERE table_name = 'atlas_region' AND column_name = 'inat_place_id'`);
+    // Production's wording, from before the atlases grew past six.
+    await conn.run("COMMENT ON TABLE atlas_region IS 'listing only the six would make every other real place look like a typo.'");
+    await conn.run("COMMENT ON COLUMN atlas_region.inat_place_id IS 'the six atlases'' included.'");
+    expect(await comments(conn)).not.toEqual(await comments(fresh));
+    expect(await schemaDrift(conn)).toContain("comment differs: atlas_region");
+
+    const name = "0121-atlas-region-comments.sql";
+    await copyFile(join(MIGRATIONS_DIR, name), join(dir, name));
+    expect(await migrate(conn, { dir })).toEqual([name]);
+
+    expect(await comments(conn)).toEqual(await comments(fresh));
     expect(await schemaDrift(conn)).toEqual([]);
   });
 });

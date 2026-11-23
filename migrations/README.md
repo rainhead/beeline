@@ -27,6 +27,65 @@ whether to migrate. It was not always: it used to migrate first and diff
 after, and on a store that already carried a later change by another route
 it applied two migrations and stopped at the third (beeline-736).
 
+`--check` compares the names of the tables, views and columns the schema
+declares and the `COMMENT` on each. It does not compare a view's definition:
+DuckDB stores that text as the version that wrote it serialised it, so
+production's differs in text (not in meaning) from a fresh build's, in 85 of
+134 views on the backup of 2026-11-22. A migration that replaces a view with
+`CREATE OR REPLACE VIEW` must restate its `COMMENT ON VIEW`, because the
+replacement drops it. A view reads the views under it as they are now, so
+replacing one view needs no migration for the views that read it. Numbers may
+skip (the runner orders by filename); two migrations already share some.
+See the 2026-11-22 amendment in [ADR 0006](../docs/adr/0006-migrations-for-deployed-stores.md).
+
+**Changing a view, a table or a comment.** A change to a view in `schema/`
+needs a new migration that restates the whole view with `CREATE OR REPLACE
+VIEW` and then its `COMMENT ON VIEW`, in the same file. Never edit a migration
+that has been deployed: production records each file it has run and never runs
+it again, so an edit passes the tests and changes nothing there. A migration
+that states a view must sort after every existing migration that states the
+same view, because the test takes the last one by filename, so if another
+branch lands first, renumber yours on rebase. Any changed `COMMENT ON`, for a
+view, a table or a column, needs a migration too. For tables and columns
+nothing in the test suite checks this yet: only `pnpm db:migrate --check`
+against a store shows it.
+
+**What each failure of `test/view-migrations.test.ts` means.**
+
+- *"gives differs from schema/'s", or the comment differs.* The view was
+  changed in `schema/` and the newest migration that creates it was not
+  updated. Write a new migration that restates the view and its comment.
+- *"changed in schema/ and held by a hash".* The view is listed in
+  `view-hashes.txt` because no migration since 0071 creates it. Write a new
+  migration that restates the whole view and its comment, then delete the
+  view's line from the file. A migration with only the comment is not enough:
+  the hash covers the text and the comment, and the view has to become one
+  that a migration states.
+- *"created with no COMMENT ON VIEW after it".* `CREATE OR REPLACE VIEW` drops
+  the view's comment. Write a new migration that restates the view and then
+  its comment.
+- *"neither schema/ nor ingest/ declares it any more".* A view was removed
+  from `schema/` and no migration drops it, so a deployed store keeps it.
+  Write a new migration with `DROP VIEW`.
+- *"DuckDB changed from X to Y".* The hashes were made by another DuckDB
+  version, which writes the same view as different text. Run `pnpm
+  views:rehash`. It refuses to run when the version has not changed, because
+  then a differing hash means the view changed and needs a migration.
+- *A view the test cannot see.* The test reads a view's name from the first
+  words of a statement, in three forms only: `CREATE [OR REPLACE] VIEW name`,
+  `DROP VIEW name` and `COMMENT ON VIEW name IS`, with a bare name. It does not
+  recognise `ALTER VIEW ... RENAME`, a quoted or `main.`-qualified name, or
+  `CREATE TEMP VIEW`. A migration using one of them is not seen, so the view
+  fails as one that no migration states. Use `DROP VIEW` and `CREATE VIEW` with
+  a bare name instead.
+
+`view-hashes.txt` holds a hash of the text and comment for each view that no
+migration from 0071 on creates (73 on 2026-11-22), since those cannot be
+replayed. 0071 is the first migration production ran: its store was built
+fresh from `schema/` at cutover, stamped every earlier migration at one
+instant, and ran 0071 two hours later (read from the migration ledger of the
+backup of 2026-11-22). The file only shrinks, except after a DuckDB upgrade.
+
 Nothing else may hold the database open (ADR 0005), so the app must not be
 running. On Fly the entrypoint migrates before it starts the app
 ([`infra/fly/entrypoint.sh`](../infra/fly/entrypoint.sh)), so a deploy needs no

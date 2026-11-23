@@ -151,7 +151,9 @@ export async function baseline(conn: DuckDBConnection, dir = MIGRATIONS_DIR): Pr
 /**
  * Where a database's shape differs from `schema/*.sql` — the answer to "did
  * I forget to write a migration?". Compares the tables and views the schema
- * declares, and their columns, against a database freshly built from it.
+ * declares, their columns, and the COMMENT on each of them, against a
+ * database freshly built from it. A view's definition is left out (see
+ * `comments` below).
  *
  * Tables the schema does not declare are ignored on purpose: a real store
  * also holds the ingestion pipeline's staging tables (`ingest/*.sql`), which
@@ -174,9 +176,29 @@ export async function schemaDrift(conn: DuckDBConnection): Promise<string[]> {
     return byTable;
   };
 
+  // Comments, as the stored text of the thing they describe: one per view,
+  // table and column, keyed the way the drift line names it. A view's
+  // definition is NOT compared here: DuckDB stores it re-serialised by the
+  // version that wrote it, so a store migrated under 1.x differs in text
+  // from a fresh 2.0 build with no difference in meaning (85 of 134 views on
+  // the backup of 2026-11-22). Definitions are compared in the test suite,
+  // where both sides come from one DuckDB (ADR 0006).
+  const comments = async (c: DuckDBConnection): Promise<Map<string, string | null>> => {
+    const rows = await (
+      await c.run(
+        `SELECT view_name, NULL, comment FROM duckdb_views() WHERE NOT internal AND schema_name = 'main' AND database_name = current_database()
+         UNION ALL SELECT table_name, NULL, comment FROM duckdb_tables() WHERE schema_name = 'main' AND database_name = current_database()
+         UNION ALL SELECT table_name, column_name, comment FROM duckdb_columns() WHERE schema_name = 'main' AND NOT internal AND database_name = current_database()`,
+      )
+    ).getRows();
+    return new Map(rows.map(([t, col, cm]) => [col === null ? String(t) : `${String(t)}.${String(col)}`, cm === null ? null : String(cm)]));
+  };
+
   const { instance, conn: fresh } = await createMemoryDb();
   try {
     const expected = await shape(fresh);
+    const expectedComments = await comments(fresh);
+    const actualComments = await comments(conn);
     const actual = await shape(conn);
     const drift: string[] = [];
     for (const [table, columns] of expected) {
@@ -187,6 +209,10 @@ export async function schemaDrift(conn: DuckDBConnection): Promise<string[]> {
       }
       for (const col of columns) if (!here.has(col)) drift.push(`missing: ${table}.${col}`);
       for (const col of here) if (!columns.has(col)) drift.push(`not in the schema: ${table}.${col}`);
+    }
+    // Only objects both sides have: a missing one is already named above.
+    for (const [name, comment] of expectedComments) {
+      if (actualComments.has(name) && actualComments.get(name) !== comment) drift.push(`comment differs: ${name}`);
     }
     return drift.sort();
   } finally {

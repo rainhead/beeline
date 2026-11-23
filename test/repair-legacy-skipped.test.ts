@@ -2,7 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { readOldVolunteerRecords, recordOldVolunteerDeterminations } from "../src/legacy-volunteer-import.js";
 import { describeSkippedRepair, REMARK_SOURCE, REMARK_STATED_BY, repairSkippedLegacyRecords } from "../src/repair-legacy-skipped.js";
@@ -67,7 +67,8 @@ const dets = async (fieldNumber: string) =>
      WHERE sp.field_number = '${fieldNumber}' ORDER BY d.is_expert DESC, a.scientific_name`,
   );
 
-beforeAll(async () => {
+/** The store as promotion left it, with the two samples the nightly sync made and the observations' fields. */
+async function promoted(): Promise<void> {
   ({ conn } = await promotedStore("skipped"));
   // The 2020 sample as the nightly sync made it from its observation, with no specimens.
   observedSample = await insertCleanSample(conn, {
@@ -87,7 +88,13 @@ beforeAll(async () => {
     `INSERT INTO observation_field (inat_id, collection_method_raw, specimen_count_raw)
      VALUES (56390000, 'pan trap', '1'), (56391000, 'net', '1'), (56392000, 'pan trap', '2'), (56393000, 'pan trap', '2')`,
   );
-});
+}
+
+/** The same store after the repair has run once, as of 12 November 2026. */
+async function repaired(): Promise<void> {
+  await promoted();
+  await repairSkippedLegacyRecords(conn, { statedOn: "2026-11-12" });
+}
 
 const remarkOf = async (fieldNumber: string) =>
   rows(
@@ -95,7 +102,10 @@ const remarkOf = async (fieldNumber: string) =>
     `SELECT d.remarks FROM specimen_disposition d JOIN specimen sp ON sp.entity_id = d.specimen_id WHERE sp.field_number = '${fieldNumber}'`,
   );
 
-describe("repairing what legacy promotion set aside", () => {
+// Only these two tests see the store before the repair, and neither writes to it.
+describe("before the repair", () => {
+  beforeAll(promoted);
+
   test("promotion kept one record of each pair, and refused the 2020 sample's", async () => {
     expect(await rows(conn, `SELECT field_number FROM specimen ORDER BY 1`)).toEqual(
       [
@@ -139,9 +149,13 @@ describe("repairing what legacy promotion set aside", () => {
     expect(await rows(conn, `SELECT count(*) FROM specimen`)).toEqual([[15n]]);
     expect(await rows(conn, `SELECT count(*) FROM specimen_disposition`)).toEqual([[0n]]);
   });
+});
+
+// Tests that only read what the repair left share one repaired store.
+describe("after the repair", () => {
+  beforeAll(repaired);
 
   test("carries what each specimen lacks from its set-aside second print, as promotion would have recorded it", async () => {
-    await repairSkippedLegacyRecords(conn, { statedOn: "2026-11-12" });
     // Nothing on the kept record: both identifications come over, the
     // expert's to its determiner and the volunteer's to the collector.
     expect(await dets("2127319")).toEqual([
@@ -291,6 +305,12 @@ describe("repairing what legacy promotion set aside", () => {
     ]);
   });
 
+});
+
+// Tests that write to the store, or run the repair again, each repair a store of their own.
+describe("repairing again, and what writes", () => {
+  beforeEach(repaired);
+
   test("a second run finds nothing left to do", async () => {
     expect(await repairSkippedLegacyRecords(conn)).toMatchObject({
       tied: 0, carriedExpert: 0, carriedVolunteer: 0, attached: [], placed: 0, newSpecimenDeterminations: 0, remarked: [],
@@ -332,6 +352,7 @@ describe("repairing what legacy promotion set aside", () => {
 });
 
 describe("the nightly import, after the repair", () => {
+  beforeEach(repaired);
   let old: FakeOldBeeline;
   afterAll(() => old.server.close());
 

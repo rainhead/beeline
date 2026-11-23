@@ -76,7 +76,7 @@ CREATE TABLE animal_filing (
   ecdysis_fetched_on DATE,
   filed_at           TIMESTAMP NOT NULL DEFAULT current_timestamp
 );
-COMMENT ON TABLE animal_filing IS 'One row for each node whose parent in effect differs from animal.parent_id: the node is filed under another one, as Ecdysis files it (a genus under its tribe rather than its family). Derived from the thesaurus by src/file-animals.ts and restated whenever the tree or the thesaurus changes; a node that sits where it was created has no row. Read through animal_tree, never directly.';
+COMMENT ON TABLE animal_filing IS 'One row for each node whose parent in effect differs from animal.parent_id: the node is filed under another one, as Ecdysis files it (a genus under its tribe rather than its family). Derived from the thesaurus by src/file-animals.ts and restated whenever the tree or the thesaurus changes; a node that sits where it was created has no row, and a row is deleted when the rule stops reaching its node. Read through animal_tree, never directly.';
 COMMENT ON COLUMN animal_filing.animal_id IS 'The node that was filed, animal.entity_id. Not a foreign key, on purpose: see the note above this table.';
 COMMENT ON COLUMN animal_filing.parent_id IS 'The node it is filed under, animal.entity_id. Not a foreign key.';
 COMMENT ON COLUMN animal_filing.ecdysis_fetched_on IS 'The day of the Ecdysis export the filing was decided against (ecdysis_taxon.fetched_on).';

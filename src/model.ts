@@ -1986,9 +1986,23 @@ export interface AnimalTreeView {
   ecdysis_tid: BigIntCol | null;
 }
 
+export interface AnimalAnchorView {
+  entity_id: number;
+  anchor_id: number;
+  anchor_tid: BigIntCol | null;
+}
+
+export interface AnimalFilingChainView {
+  node_id: number;
+  anchor_id: number;
+  tid: BigIntCol;
+  pos: number;
+}
+
 export interface AnimalFilingRuleView {
   entity_id: number;
   filed_under_tid: BigIntCol;
+  target_id: number | null;
   filed_under_id: number | null;
   created_under_id: number | null;
 }
@@ -1999,6 +2013,7 @@ export interface AnimalFilingStaleView {
   scientific_name: string;
   filed_under_tid: BigIntCol;
   should_be_under_id: number | null;
+  target_id: number | null;
   is_under_id: number | null;
 }
 
@@ -2308,6 +2323,8 @@ export interface Database {
   inat_taxon_stalest: InatTaxonStalestView;
   animal_ecdysis: AnimalEcdysisView;
   animal_tree: AnimalTreeView;
+  animal_anchor: AnimalAnchorView;
+  animal_filing_chain: AnimalFilingChainView;
   animal_filing_rule: AnimalFilingRuleView;
   animal_filing_stale: AnimalFilingStaleView;
   animal_ecdysis_match: AnimalEcdysisMatchView;

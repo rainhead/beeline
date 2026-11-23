@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
 import { openDuckDb } from "./db.js";
-import type { FilingResult } from "./file-animals.js";
+import { NO_FILING, type FilingResult } from "./file-animals.js";
 import { matchAndFileAnimals } from "./load-ecdysis-taxonomy.js";
 import { DEFAULT_DB } from "./person-change.js";
 
@@ -225,7 +225,7 @@ export async function applyTaxonCuration(conn: DuckDBConnection, rows: readonly 
     return r === undefined ? null : Number(r[0]);
   };
 
-  const result: ApplyResult = { applied: 0, created: 0, unplaced: [], filing: { moved: [], created: [], emptyIntermediates: 0, needsCachedLoad: false } };
+  const result: ApplyResult = { applied: 0, created: 0, unplaced: [], filing: NO_FILING };
   await conn.run("DELETE FROM animal_curation");
   for (const row of rows) {
     let id = await nodeId(row.rank, row.name);

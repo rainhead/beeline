@@ -3,6 +3,8 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, FIXTURE_INPUTS, rows } from "./helpers.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
+import { NO_FILING } from "../src/file-animals.js";
+import { loadEcdysisTaxonomy, matchAndFileAnimals } from "../src/load-ecdysis-taxonomy.js";
 import { PrintedStoreRefused } from "../src/registry-guard.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
@@ -80,7 +82,7 @@ describe("legacy promotion", () => {
       taxonCurationApplied: 0, // the fixture file decides nothing
       taxonCurationCreated: 0,
       taxonCurationUnplaced: [],
-      filing: { moved: [], created: [], emptyIntermediates: 0, needsCachedLoad: false },
+      filing: NO_FILING,
       collectorDuplicateLogins: 0,
       correctionsApplied: 0,
       correctionConflicts: 0,
@@ -495,5 +497,33 @@ describe("a joint row whose name columns are a list", () => {
       ["OBAS-00658", "Bea Trapper | Ada Collector"],
       ["OBAS-00659", "Bea Trapper | Ada Collector"], // the pair's head, ahead of this row's own order
     ]);
+  });
+});
+
+describe("promotion into a store whose thesaurus holds tribes", () => {
+  test("files the tree it builds, and changes nothing the second time", async () => {
+    const { conn: store } = await createMemoryDb();
+    await loadEcdysisTaxonomy(store, new URL("./fixtures/ecdysis-taxonomy/", import.meta.url).pathname);
+    await loadLegacyStaging(store, FIXTURE);
+    const result = await promoteLegacy(store, { ...FIXTURE_INPUTS, usernameRegister: REGISTER });
+    expect(result.filing.needsCachedLoad).toBe(false);
+    expect(result.filing.moved.length).toBeGreaterThan(0);
+    for (const move of result.filing.moved) expect(move.from).not.toBe(move.to);
+    expect(await rows(store, "SELECT count(*) FROM animal_filing_stale")).toEqual([[0n]]);
+    expect(await rows(store, "SELECT count(*) FROM animal_ecdysis_stale")).toEqual([[0n]]);
+    // Nothing but the kingdom is a root.
+    expect(await rows(store, "SELECT count(*) FROM animal_tree WHERE filed_under_id IS NULL")).toEqual([[1n]]);
+    const filed = await rows(store, "SELECT animal_id, parent_id, CAST(filed_at AS TEXT) FROM animal_filing ORDER BY 1");
+    expect((await matchAndFileAnimals(store)).moved).toEqual([]);
+    expect(await rows(store, "SELECT animal_id, parent_id, CAST(filed_at AS TEXT) FROM animal_filing ORDER BY 1")).toEqual(filed);
+  });
+
+  test("says that the cached load is needed when the thesaurus predates subfamilies", async () => {
+    const { conn: store } = await createMemoryDb();
+    await store.run(`INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, fetched_on)
+                     VALUES (1, 'kingdom', 'Animalia', 'accepted', 1, DATE '2026-10-24')`);
+    await loadLegacyStaging(store, FIXTURE);
+    const result = await promoteLegacy(store, { ...FIXTURE_INPUTS, usernameRegister: REGISTER });
+    expect(result.filing.needsCachedLoad).toBe(true);
   });
 });

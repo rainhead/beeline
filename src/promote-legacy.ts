@@ -8,7 +8,7 @@ import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
 import { mergeOverlays, readOverlay, CURATED_OVERLAY } from "./person-overlay.js";
 import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
-import type { FilingResult } from "./file-animals.js";
+import { describeFiling, type FilingResult } from "./file-animals.js";
 import { refreshPlantCommonNames } from "./plant-common-names.js";
 import { applyTaxonCuration, CURATED_TAXON_CURATION, readTaxonCuration, type Unplaced } from "./taxon-curation.js";
 import { PrintedStoreRefused, refusePromotionIntoPrintedStore } from "./registry-guard.js";
@@ -325,6 +325,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       2,
     ),
   );
+  const filed = describeFiling(counts.filing);
+  if (filed !== "") console.log(`\nfiling the tree under Ecdysis's subfamilies and tribes: ${filed}`);
   if (counts.specimens + counts.blockedRows !== counts.staged) {
     console.error("specimens + blocked rows ≠ staged rows — investigate before trusting this run");
     process.exit(1);

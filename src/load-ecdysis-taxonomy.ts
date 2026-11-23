@@ -336,8 +336,8 @@ export function describeRefresh(r: RefreshEcdysisTaxonomyResult): string {
   if (filed !== "") parts.push(`the tree: ${filed}`);
   parts.push(
     r.load.filingStale === 0
-      ? "every node sits where Ecdysis files it"
-      : `${r.load.filingStale} node(s) sit where Ecdysis does not file them (animal_filing_stale)`,
+      ? "no filing moves pending"
+      : `${r.load.filingStale} node(s) the filing rule would file elsewhere and cannot (animal_filing_stale)`,
   );
   if (r.curationStale > 0) parts.push(`${r.curationStale} curation decision(s) Ecdysis has moved from under (/taxonomy?decided=moved)`);
   const { active, settled } = r.draftsNoLongerOffered;

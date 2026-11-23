@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
@@ -26,7 +26,8 @@ const ALLOWED: { file: string; only?: RegExp; why: string }[] = [
   { file: "src/adopt-ecdysis.ts", only: /INSERT INTO animal \(parent_id/, why: "an insert site" },
   { file: "src/taxon-curation.ts", only: /INSERT INTO animal \(rank, scientific_name, parent_id\)/, why: "an insert site" },
   { file: "ingest/seed-animals.sql", only: /INSERT INTO animal \(/, why: "insert sites" },
-  { file: "src/model.ts", only: /^\s*(parent_id: .*|\/\/.*|\*.*|\/\*\*.*|.*parent_id.*inat.*)$/i, why: "iNaturalist's taxon table and animal_filing's column" },
+  { file: "src/model.ts", only: /^\s*(parent_id: (BigIntCol \| null|number);|\/\/.*|\*.*|\/\*\*.*)$/, why: "iNaturalist\'s taxon table and animal_filing\'s column; AnimalTable is checked on its own below" },
+  { file: "migrations/0122-subfamily-tribe-and-filing.sql", only: /^\s*--|^COMMENT ON|^\s*parent_id\s+INTEGER NOT NULL|coalesce\(f\.parent_id, a\.parent_id\)|n\.parent_id AS created_under_id/, why: "the migration that made animal_filing and the views, which copies schema/020 and 117" },
 ];
 
 async function walk(dir: string): Promise<string[]> {
@@ -40,11 +41,24 @@ async function walk(dir: string): Promise<string[]> {
 }
 
 describe("the tree is read through animal_tree", () => {
+  test("the animal type in src/model.ts has no parent_id, so a Kysely read fails typecheck", async () => {
+    const model = await readFile(join(ROOT, "src/model.ts"), "utf8");
+    const start = model.indexOf("export interface AnimalTable {");
+    expect(start).toBeGreaterThan(-1);
+    const body = model.slice(start, model.indexOf("\n}\n", start));
+    const code = body.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(code).not.toMatch(/\bparent_id\b/);
+    // And the table that does carry one under another name is not the animal's.
+    expect(model).toMatch(/export interface AnimalTreeView \{[^}]*filed_under_id/);
+  });
+
   test("nothing reads animal.parent_id outside the insert sites, the schema, the view and the snapshot", async () => {
     const offenders: string[] = [];
-    for (const dir of ["src", "schema", "ingest", "bench"]) {
+    for (const dir of ["src", "schema", "ingest", "bench", "migrations"]) {
       for (const path of await walk(join(ROOT, dir))) {
         const file = relative(ROOT, path);
+        // A migration before 0122 ran on stores whose tree nothing had moved in.
+        if (dir === "migrations" && basename(file) < "0122") continue;
         const allowed = ALLOWED.find((a) => a.file === file);
         if (allowed !== undefined && allowed.only === undefined) continue;
         const lines = (await readFile(path, "utf8")).split("\n");

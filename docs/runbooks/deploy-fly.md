@@ -490,8 +490,8 @@ After the deploy that brings in the subfamily, tribe and subtribe ranks
 (migration 0122), run the job once to do the first filing of the tree under
 Ecdysis's subfamilies and tribes (beeline-stoi): `POST /api/v1/jobs/ecdysis-taxonomy`
 with an API key, which starts the job on the running app.
-It fetches and loads as the weekly run does, and its report names each genus
-moved and any node still out of place. A dev store reseeded from a copy made
+It fetches and loads as the weekly run does, and its report gives the
+number of nodes moved with the first ten named, and any node still out of place. A dev store reseeded from a copy made
 before those ranks were kept needs `pnpm ecdysis:taxonomy --cached`, which
 the filing step says when it finds no subfamily or tribe in the thesaurus.
 

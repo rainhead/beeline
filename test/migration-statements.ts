@@ -156,3 +156,29 @@ export function asCreateOrReplace(statement: string): string {
   const lead = statement.slice(0, statement.length - rest.length);
   return lead + rest.replace(/^CREATE\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?/i, "CREATE OR REPLACE VIEW ");
 }
+
+/**
+ * A plain `CREATE VIEW` of a view an earlier migration already created and
+ * nothing dropped since: on a deployed store that fails with "already exists"
+ * and the migration rolls back. The convention (migrations/README.md) is
+ * `CREATE OR REPLACE VIEW`, or `DROP VIEW` first. test/view-migrations.test.ts
+ * rewrites every create to OR REPLACE before it replays a migration, so
+ * nothing else would notice (beeline-stoi, migration 0122 stated animal_castes
+ * with a plain CREATE, which 0040 had made). Only creates in migrations numbered
+ * `fromFile` or later are judged, since earlier ones ran on a store they built.
+ */
+export function plainCreateOfExistingView(statements: ViewStatement[], fromFile: string): string[] {
+  const order = (a: ViewStatement, b: ViewStatement) => (a.file === b.file ? a.index - b.index : a.file < b.file ? -1 : 1);
+  const exists = new Set<string>();
+  const problems: string[] = [];
+  for (const s of [...statements].sort(order)) {
+    if (s.kind === "drop") exists.delete(s.view);
+    if (s.kind !== "create") continue;
+    const plain = !/^CREATE\s+OR\s+REPLACE\b/i.test(stripLeadingComments(s.text));
+    if (plain && exists.has(s.view) && s.file >= fromFile) {
+      problems.push(`${s.file}: CREATE VIEW ${s.view} but an earlier migration created it: use CREATE OR REPLACE VIEW (then COMMENT ON VIEW again), or DROP VIEW first`);
+    }
+    exists.add(s.view);
+  }
+  return problems;
+}

@@ -1,6 +1,6 @@
 -- Migration for schema/020, 025, 117 and 119 (beeline-stoi): the tree gains the ranks subfamily, tribe and subtribe, and a node can be filed
 -- under one after it exists. animal.parent_id stays as the parent at creation, because DuckDB refuses to update a row another table's key
--- refers to; animal_filing holds each node that has moved, and animal_tree reads it before the column. animal_castes now walks animal_tree.
+-- refers to; animal_filing holds each node that has moved, and animal_tree reads it before the column. animal_castes (made by 0040, so restated here with CREATE OR REPLACE, which drops its comment, so the comment follows) now walks animal_tree.
 -- No row of animal changes here: src/file-animals.ts does the filing, run by the job `ecdysis-taxonomy` after the deploy.
 
 INSERT INTO animal_rank (rank, ordinal, italic) VALUES
@@ -22,7 +22,7 @@ CREATE TABLE animal_filing (
   ecdysis_fetched_on DATE,
   filed_at           TIMESTAMP NOT NULL DEFAULT current_timestamp
 );
-COMMENT ON TABLE animal_filing IS 'One row for each node whose parent in effect differs from animal.parent_id: the node is filed under another one, as Ecdysis files it (a genus under its tribe rather than its family). Derived from the thesaurus by src/file-animals.ts and restated whenever the tree or the thesaurus changes; a node that sits where it was created has no row. Read through animal_tree, never directly.';
+COMMENT ON TABLE animal_filing IS 'One row for each node whose parent in effect differs from animal.parent_id: the node is filed under another one, as Ecdysis files it (a genus under its tribe rather than its family). Derived from the thesaurus by src/file-animals.ts and restated whenever the tree or the thesaurus changes; a node that sits where it was created has no row, and a row is deleted when the rule stops reaching its node. Read through animal_tree, never directly.';
 COMMENT ON COLUMN animal_filing.animal_id IS 'The node that was filed, animal.entity_id. Not a foreign key, on purpose: see the note above this table.';
 COMMENT ON COLUMN animal_filing.parent_id IS 'The node it is filed under, animal.entity_id. Not a foreign key.';
 COMMENT ON COLUMN animal_filing.ecdysis_fetched_on IS 'The day of the Ecdysis export the filing was decided against (ecdysis_taxon.fetched_on).';
@@ -49,18 +49,11 @@ LEFT JOIN animal_filing f ON f.animal_id = a.entity_id;
 COMMENT ON VIEW animal_tree IS 'Every animal node with the parent it is filed under now: animal_filing''s where the node has been moved, animal.parent_id where it has not. The only way to read a node''s parent. Walk it with filed_under_id; the creation parent is a column nobody should read.';
 COMMENT ON COLUMN animal_tree.filed_under_id IS 'The node this one sits under now, animal.entity_id; NULL for a root.';
 
--- Where Ecdysis would file each node, for the nodes the rule reaches. A
--- node's anchor is its nearest ancestor in the tree that is not a subfamily,
--- tribe or subtribe (a genus's is its family). Walking up Ecdysis's own
--- parents from the node, past subfamilies, tribes and subtribes only, the
--- first name of any other rank is Ecdysis's anchor. When that is the node's
--- anchor, the node is filed under the first name on the walk, which is the
--- node's admitted_parent_tid. So the rule follows Ecdysis between tribes of
--- one family and never moves a node across families, and where the two trees
--- disagree about the anchor it does nothing. filed_under_id is NULL while
--- the tree holds no node for that name, which animal_filing_stale reports
--- and src/file-animals.ts creates.
-CREATE VIEW animal_filing_rule AS
+-- A node's anchor: its nearest ancestor in the tree that is not a subfamily,
+-- tribe or subtribe (a genus's is its family). Moving a node among those
+-- three ranks never changes its anchor, which is what lets the rule below
+-- promise never to move a node across families.
+CREATE VIEW animal_anchor AS
 WITH RECURSIVE climb(node_id, cur_id, depth) AS (
   SELECT entity_id, filed_under_id, 1 FROM animal_tree WHERE filed_under_id IS NOT NULL
   UNION ALL
@@ -68,14 +61,24 @@ WITH RECURSIVE climb(node_id, cur_id, depth) AS (
   FROM climb
   JOIN animal_tree c ON c.entity_id = climb.cur_id
   WHERE c.rank IN ('subfamily', 'tribe', 'subtribe') AND c.filed_under_id IS NOT NULL AND climb.depth < 32
-),
-anchor AS (
-  SELECT climb.node_id, c.ecdysis_tid AS anchor_tid
-  FROM climb
-  JOIN animal_tree c ON c.entity_id = climb.cur_id
-  WHERE c.rank NOT IN ('subfamily', 'tribe', 'subtribe') AND c.ecdysis_tid IS NOT NULL
-),
-hop(node_id, tid, pos) AS (
+)
+SELECT climb.node_id AS entity_id, c.entity_id AS anchor_id, c.ecdysis_tid AS anchor_tid
+FROM climb
+JOIN animal_tree c ON c.entity_id = climb.cur_id
+WHERE c.rank NOT IN ('subfamily', 'tribe', 'subtribe');
+COMMENT ON VIEW animal_anchor IS 'The nearest ancestor of each node that is not a subfamily, tribe or subtribe, by the tree as it stands: a genus''s family, a species'' genus. A root has none. Filing a node among subfamilies, tribes and subtribes never changes it.';
+COMMENT ON COLUMN animal_anchor.entity_id IS 'The node, animal.entity_id.';
+COMMENT ON COLUMN animal_anchor.anchor_id IS 'Its anchor, animal.entity_id.';
+COMMENT ON COLUMN animal_anchor.anchor_tid IS 'The anchor''s Ecdysis taxon id, or NULL where it has none.';
+
+-- The names Ecdysis puts between a node and its anchor: walking up Ecdysis's
+-- admitted_parent_tid from the node, past subfamilies, tribes and subtribes
+-- only, the names met (pos 1 is the node's admitted parent) up to and
+-- including the first name of any other rank. Only for a node whose anchor is
+-- that last name, so where the two trees disagree about the anchor, or the
+-- node is a synonym (no admitted_parent_tid), it has no rows.
+CREATE VIEW animal_filing_chain AS
+WITH RECURSIVE hop(node_id, tid, pos) AS (
   SELECT n.entity_id, t.admitted_parent_tid, 1
   FROM animal_tree n
   JOIN ecdysis_taxon t ON t.tid = n.ecdysis_tid
@@ -85,35 +88,59 @@ hop(node_id, tid, pos) AS (
   FROM hop
   JOIN ecdysis_taxon t ON t.tid = hop.tid
   WHERE t.rank IN ('subfamily', 'tribe', 'subtribe') AND t.admitted_parent_tid IS NOT NULL AND hop.pos < 8
-),
-held AS (
+)
+SELECT a.entity_id AS node_id, a.anchor_id, hop.tid, hop.pos
+FROM animal_anchor a
+JOIN hop ON hop.node_id = a.entity_id
+WHERE a.anchor_tid IS NOT NULL
+  AND EXISTS (SELECT 1 FROM hop e JOIN ecdysis_taxon et ON et.tid = e.tid AND et.rank NOT IN ('subfamily', 'tribe', 'subtribe')
+              WHERE e.node_id = a.entity_id AND e.tid = a.anchor_tid);
+COMMENT ON VIEW animal_filing_chain IS 'For each node the filing rule reaches, the Ecdysis names between it and its anchor, nearest first, ending with the anchor itself. What src/file-animals.ts creates missing subfamilies, tribes and subtribes from.';
+COMMENT ON COLUMN animal_filing_chain.node_id IS 'The node, animal.entity_id.';
+COMMENT ON COLUMN animal_filing_chain.anchor_id IS 'The node''s anchor in the tree (animal_anchor).';
+COMMENT ON COLUMN animal_filing_chain.tid IS 'The Ecdysis taxon id of a name on the walk.';
+COMMENT ON COLUMN animal_filing_chain.pos IS 'Its place on the walk: 1 for the node''s admitted_parent_tid.';
+
+-- Where Ecdysis would file each node the rule reaches: under the first name
+-- on its chain, which is its admitted_parent_tid. The target is accepted only
+-- when it is the node's own anchor, or when its anchor in the tree is the
+-- node's: so the rule follows Ecdysis between tribes of one family, and never
+-- puts a node under a subfamily, tribe or subtribe that sits in another
+-- family, however it got there. filed_under_id is NULL when no node can take
+-- it: target_id is NULL too when the tree holds no node for the name (which
+-- src/file-animals.ts creates), and set when a node holds it in another
+-- family (which it reports and leaves, and animal_filing_stale lists).
+CREATE VIEW animal_filing_rule AS
+WITH held AS (
   SELECT ecdysis_tid AS tid, min(entity_id) AS entity_id FROM animal_tree WHERE ecdysis_tid IS NOT NULL GROUP BY ecdysis_tid
 )
-SELECT a.node_id AS entity_id, first.tid AS filed_under_tid, h.entity_id AS filed_under_id, n.parent_id AS created_under_id
-FROM anchor a
-JOIN animal n ON n.entity_id = a.node_id
-JOIN hop ends ON ends.node_id = a.node_id AND ends.tid = a.anchor_tid
-JOIN ecdysis_taxon et ON et.tid = ends.tid AND et.rank NOT IN ('subfamily', 'tribe', 'subtribe')
-JOIN hop first ON first.node_id = a.node_id AND first.pos = 1
-LEFT JOIN held h ON h.tid = first.tid;
-COMMENT ON VIEW animal_filing_rule IS 'The node Ecdysis files each node under, for the nodes the rule reaches: the nearest ancestor that is not a subfamily, tribe or subtribe must be the one Ecdysis reaches walking up past those three ranks, and then the node belongs under the name Ecdysis gives as its admitted parent. NULL filed_under_id means the tree holds no node for that name yet. What src/file-animals.ts writes into animal_filing, and what animal_filing_stale checks it against.';
+SELECT c.node_id AS entity_id, c.tid AS filed_under_tid, h.entity_id AS target_id,
+       CASE WHEN h.entity_id = c.anchor_id OR ta.anchor_id = c.anchor_id THEN h.entity_id END AS filed_under_id,
+       n.parent_id AS created_under_id
+FROM animal_filing_chain c
+JOIN animal n ON n.entity_id = c.node_id
+LEFT JOIN held h ON h.tid = c.tid
+LEFT JOIN animal_anchor ta ON ta.entity_id = h.entity_id
+WHERE c.pos = 1;
+COMMENT ON VIEW animal_filing_rule IS 'The node Ecdysis files each node under, for the nodes the rule reaches: a node whose anchor (animal_anchor) is the one Ecdysis reaches walking up past subfamilies, tribes and subtribes belongs under the name Ecdysis gives as its admitted parent, if that node is its anchor or sits under the same anchor. NULL filed_under_id means no node can take it. What src/file-animals.ts writes into animal_filing, and what animal_filing_stale checks it against.';
 COMMENT ON COLUMN animal_filing_rule.entity_id IS 'The node, animal.entity_id.';
 COMMENT ON COLUMN animal_filing_rule.filed_under_tid IS 'The Ecdysis taxon id of the name the node belongs under: the node''s admitted_parent_tid.';
-COMMENT ON COLUMN animal_filing_rule.filed_under_id IS 'The animal node carrying that Ecdysis id, or NULL where the tree has none.';
+COMMENT ON COLUMN animal_filing_rule.target_id IS 'The animal node carrying that Ecdysis id wherever it sits, or NULL where the tree has none.';
+COMMENT ON COLUMN animal_filing_rule.filed_under_id IS 'target_id when it can take the node (it is the node''s anchor, or sits under the same anchor); otherwise NULL.';
 COMMENT ON COLUMN animal_filing_rule.created_under_id IS 'The parent the node was created under (animal.parent_id), so the filing can tell a node that belongs where it was made from one that has to be moved. Read nowhere else.';
 
 CREATE VIEW animal_filing_stale AS
-SELECT r.entity_id, a.rank, a.scientific_name, r.filed_under_tid, r.filed_under_id AS should_be_under_id, t.filed_under_id AS is_under_id
+SELECT r.entity_id, a.rank, a.scientific_name, r.filed_under_tid, r.filed_under_id AS should_be_under_id, r.target_id, t.filed_under_id AS is_under_id
 FROM animal_filing_rule r
 JOIN animal a ON a.entity_id = r.entity_id
 JOIN animal_tree t ON t.entity_id = r.entity_id
 WHERE r.filed_under_id IS NULL OR r.filed_under_id IS DISTINCT FROM t.filed_under_id;
-COMMENT ON VIEW animal_filing_stale IS 'Nodes the filing rule (animal_filing_rule) would file somewhere else than where they sit: the thesaurus or the tree changed without src/file-animals.ts running. Asserted empty by test after every writer of the tree, and reported empty or not by the weekly Ecdysis refresh, the same shape as animal_ecdysis_stale.';
+COMMENT ON VIEW animal_filing_stale IS 'Nodes the rule reaches that sit somewhere other than where it would file them, or that it cannot file because no usable node holds the name (should_be_under_id is NULL; target_id says whether a node in another family holds it). Empty after src/file-animals.ts runs unless Ecdysis and the tree disagree in a way the rule will not resolve by moving. It says nothing about nodes the rule does not reach: a genus whose family Ecdysis spells differently, a synonym, a name Ecdysis lacks.';
 
 -- Whether a node records sex by caste (schema/045): the nearest
 -- ancestor-or-self stated in animal_caste decides, so Bombus says yes for
 -- every species beneath it and a cuckoo species says no for itself.
-CREATE VIEW animal_castes AS
+CREATE OR REPLACE VIEW animal_castes AS
 WITH RECURSIVE up (animal_id, ancestor_id, depth) AS (
   SELECT entity_id, entity_id, 0 FROM animal
   UNION ALL

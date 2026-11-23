@@ -93,7 +93,8 @@ describe("the weekly refresh of Ecdysis's taxonomy", () => {
     const line = describeRefresh(result);
     expect(line).toContain("Bombus: Apidae to Bombini");
     expect(line).toContain("2 subfamilies, tribes and subtribes created");
-    expect(line).toContain("every node sits where Ecdysis files it");
+    expect(line).toContain("no filing moves pending");
+    expect(line).toContain("not reached by the filing rule");
   });
 
   test("refuses a fetch that shrank by more than a twentieth, and leaves the store as it was", async () => {

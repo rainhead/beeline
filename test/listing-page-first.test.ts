@@ -8,6 +8,7 @@ import {
   SPECIMEN_SORT_KEYS,
   STAFF_READER,
   listSamples,
+  nameLocalityChoices,
   listSpecimens,
   parseListingQuery,
   type ListingQuery,
@@ -157,7 +158,7 @@ beforeAll(async () => {
       if ((i + n) % 5 === 1) {
         await conn.run(
           `INSERT INTO specimen_disposition (specimen_id, disposition, remarks, stated_by, stated_on, source)
-           VALUES (${spId}, ${n === 1 ? "'missing'" : "NULL"}, 'remark ${i}', 'tester', DATE '2026-01-01', 'test')`,
+           VALUES (${spId}, ${n === 1 ? "'missing'" : "NULL"}, 'remark ${i}', 'tester', DATE '${SETTLED_SEASON}-01-01', 'test')`,
         );
       }
     }
@@ -188,10 +189,10 @@ const offsets = (n: number) => [...new Set([0, PAGE, Math.max(0, Math.floor((n -
 
 async function sameSamples(search: string, who: Who): Promise<number> {
   const query = parse(search);
-  const first = await listSamples(db, query, who.personId, who.reader, { limit: PAGE, offset: 0, hostNames: new Map() });
+  const first = await listSamples(db, query, who.personId, who.reader, { limit: PAGE, offset: 0, hostNames: new Map(), withLocalityChoices: true });
   let seen = 0;
   for (const offset of offsets(first.total)) {
-    const opts = { limit: PAGE, offset, hostNames: new Map() as never };
+    const opts = { limit: PAGE, offset, hostNames: new Map() as never, withLocalityChoices: true };
     const now = await listSamples(db, query, who.personId, who.reader, opts);
     const before = await referenceSampleRows(db, query, who.personId, who.reader, { limit: PAGE, offset });
     expect(flagsSorted(now.rows), `${who.name}, samples ${search} at ${offset}`).toEqual(flagsSorted(withoutHostNames(before)));
@@ -240,9 +241,9 @@ const FILTERS: Array<[search: string, atLeastSamples: number, atLeastSpecimens: 
   ["scope=all&taxon=Apidae", 3, 3],
   ["scope=all&host=salvia", 3, 3],
   ["scope=all&host=rosa", 3, 3],
-  ["scope=all&from=2026-06-01&to=2026-12-31", 3, 3],
-  ["scope=all&from=2026-06-30", 3, 3],
-  ["scope=all&to=2026-06-30", 3, 3],
+  [`scope=all&from=${CURRENT_SEASON}-06-01&to=${CURRENT_SEASON}-12-31`, 3, 3],
+  [`scope=all&from=${CURRENT_SEASON}-06-30`, 3, 3],
+  [`scope=all&to=${CURRENT_SEASON}-06-30`, 3, 3],
   [`scope=all&year=${CURRENT_SEASON}`, 3, 3],
   ["scope=all&kind=trap", 3, 3],
   ["scope=all&kind=net", 3, 3],
@@ -260,7 +261,7 @@ const FILTERS: Array<[search: string, atLeastSamples: number, atLeastSpecimens: 
   ["scope=all&ecdysis=in", 0, 3],
   ["scope=all&ecdysis=not", 3, 3],
   ["scope=all&place=Corvallis&kind=net&qc=flagged&taxon=Bombus", 0, 0],
-  ["scope=all&collector=bob&host=salvia&from=2026-01-01", 0, 0],
+  [`scope=all&collector=bob&host=salvia&from=${SETTLED_SEASON}-01-01`, 0, 0],
 ];
 
 describe("the samples listing chooses its page first and returns what it returned before", () => {
@@ -296,7 +297,7 @@ describe("the samples listing chooses its page first and returns what it returne
 
   it("withholds another volunteer's locality and coordinates exactly as before, and the choices of the names offered", async () => {
     const alice = readers()[1]!;
-    const page = await listSamples(db, parse("scope=all"), alice.personId, alice.reader, { limit: 30, offset: 0, hostNames: new Map() });
+    const page = await listSamples(db, parse("scope=all"), alice.personId, alice.reader, { limit: 30, offset: 0, hostNames: new Map(), withLocalityChoices: true });
     const hidden = page.rows.filter((r) => r.location_withheld);
     expect(hidden.length).toBeGreaterThan(3);
     for (const r of hidden) {
@@ -305,24 +306,49 @@ describe("the samples listing chooses its page first and returns what it returne
       expect(r.locality_choices).toBeNull();
     }
     expect(page.rows.some((r) => !r.location_withheld && r.locality_choices !== null)).toBe(true);
-    const staff = await listSamples(db, parse("scope=all"), people.staff!, STAFF_READER, { limit: 30, offset: 0, hostNames: new Map() });
+    const staff = await listSamples(db, parse("scope=all"), people.staff!, STAFF_READER, { limit: 30, offset: 0, hostNames: new Map(), withLocalityChoices: true });
     expect(staff.rows.every((r) => !r.location_withheld)).toBe(true);
     expect(staff.rows.filter((r) => r.locality_choices !== null).length).toBeGreaterThan(3);
   });
 
-  it("has an order that cannot tie, so a page cannot differ between runs", async () => {
-    // Every key in the order ends in the sample's own id: no two samples compare equal.
-    for (const sort of SAMPLE_SORT_KEYS) {
-      const all = await listSamples(db, { ...EMPTY_QUERY, scope: "all", sort }, people.staff!, STAFF_READER, { limit: 1000, offset: 0, hostNames: new Map() });
-      const paged: number[] = [];
-      for (let offset = 0; offset < all.rows.length; offset += PAGE) {
-        const p = await listSamples(db, { ...EMPTY_QUERY, scope: "all", sort }, people.staff!, STAFF_READER, { limit: PAGE, offset, hostNames: new Map() });
-        paged.push(...p.rows.map((r) => r.sample_id));
-      }
-      expect(paged, sort).toEqual(all.rows.map((r) => r.sample_id));
-      expect(new Set(paged).size, sort).toBe(paged.length);
-    }
+  it("reads the names offered for a point only when asked, and none where a row does not say it is not withheld", async () => {
+    const staff = readers()[0]!;
+    const plain = await listSamples(db, parse("scope=all"), staff.personId, staff.reader, { limit: 30, offset: 0, hostNames: new Map() });
+    expect(plain.rows.every((r) => r.locality_choices === null)).toBe(true);
+    const asked = await listSamples(db, parse("scope=all"), staff.personId, staff.reader, { limit: 30, offset: 0, hostNames: new Map(), withLocalityChoices: true });
+    const withChoices = asked.rows.filter((r) => r.locality_choices !== null);
+    expect(withChoices.length).toBeGreaterThan(3);
+    // A row without the column (a renamed one, say) is withheld, not shown.
+    const rows = withChoices.map((r) => ({ sample_id: r.sample_id, locality_choices: "stale" })) as unknown as Parameters<typeof nameLocalityChoices>[1];
+    await nameLocalityChoices(db, rows);
+    expect(rows.every((r) => r.locality_choices === null)).toBe(true);
   });
+
+  // Pages of five read against one full read, with no reference copy: every key ends in the sample's own id, so no
+  // two samples compare equal and a page cannot differ between runs.
+  for (const who of ["staff", "volunteer reading others' obscured samples"]) {
+    it(`has an order that cannot tie, for ${who}`, async () => {
+      const w = readers().find((r) => r.name === who)!;
+      const searches = [
+        ...SAMPLE_SORT_KEYS.flatMap((sort) => ["asc", "desc"].map((dir) => `scope=all&sort=${sort}&dir=${dir}`)),
+        "scope=all&qc=flagged",
+        "scope=all&qc=flagged&sort=flags&dir=desc",
+        "scope=all&qc=blocking&sort=flags",
+      ];
+      for (const search of searches) {
+        const q = parse(search);
+        const all = await listSamples(db, q, w.personId, w.reader, { limit: 1000, offset: 0, hostNames: new Map() });
+        expect(all.rows.length, search).toBeGreaterThan(PAGE);
+        const paged: number[] = [];
+        for (let offset = 0; offset < all.rows.length; offset += PAGE) {
+          const p = await listSamples(db, q, w.personId, w.reader, { limit: PAGE, offset, hostNames: new Map() });
+          paged.push(...p.rows.map((r) => r.sample_id));
+        }
+        expect(paged, search).toEqual(all.rows.map((r) => r.sample_id));
+        expect(new Set(paged).size, search).toBe(paged.length);
+      }
+    }, 300_000);
+  }
 });
 
 describe("the specimens listing chooses its page first and returns what it returned before", () => {
@@ -360,17 +386,26 @@ describe("the specimens listing chooses its page first and returns what it retur
     await sameSpecimens("scope=all&act=reprint", staff);
   });
 
-  it("has an order that cannot tie, so a page cannot differ between runs", async () => {
-    for (const sort of SPECIMEN_SORT_KEYS) {
-      const q = { ...EMPTY_QUERY, scope: "all", sort };
-      const all = await listSpecimens(db, q, people.staff!, STAFF_READER, { limit: 1000, offset: 0, hostNames: new Map() });
-      const paged: number[] = [];
-      for (let offset = 0; offset < all.rows.length; offset += PAGE) {
-        const p = await listSpecimens(db, q, people.staff!, STAFF_READER, { limit: PAGE, offset, hostNames: new Map() });
-        paged.push(...p.rows.map((r) => r.specimen_id));
+  for (const who of ["staff", "volunteer reading others' obscured samples"]) {
+    it(`has an order that cannot tie, for ${who}`, async () => {
+      const w = readers().find((r) => r.name === who)!;
+      const searches = [
+        ...SPECIMEN_SORT_KEYS.flatMap((sort) => ["asc", "desc"].map((dir) => `scope=all&sort=${sort}&dir=${dir}`)),
+        "scope=all&qc=flagged",
+        "scope=all&taxon=Bombus&sort=determiner",
+      ];
+      for (const search of searches) {
+        const q = parse(search);
+        const all = await listSpecimens(db, q, w.personId, w.reader, { limit: 1000, offset: 0, hostNames: new Map() });
+        expect(all.rows.length, search).toBeGreaterThan(PAGE);
+        const paged: number[] = [];
+        for (let offset = 0; offset < all.rows.length; offset += PAGE) {
+          const p = await listSpecimens(db, q, w.personId, w.reader, { limit: PAGE, offset, hostNames: new Map() });
+          paged.push(...p.rows.map((r) => r.specimen_id));
+        }
+        expect(paged, search).toEqual(all.rows.map((r) => r.specimen_id));
+        expect(new Set(paged).size, search).toBe(paged.length);
       }
-      expect(paged, sort).toEqual(all.rows.map((r) => r.specimen_id));
-      expect(new Set(paged).size, sort).toBe(paged.length);
-    }
-  });
+    }, 300_000);
+  }
 });

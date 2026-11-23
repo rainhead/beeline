@@ -43,6 +43,7 @@ export async function referenceSampleRows(
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
   return await base
+    .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
       .select([
         "s.entity_id as sample_id",
         "s.sample_number",
@@ -120,6 +121,7 @@ export async function referenceSpecimenRows(
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
   return await base
+    .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
       .select([
         "sp.entity_id as specimen_id",
         "sp.specimen_number",

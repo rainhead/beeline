@@ -772,6 +772,13 @@ export interface ListingPageOptions {
    */
   withFlagWords?: boolean;
   /**
+   * True reads the names offered for each sample's point (`locality_choices`, nameLocalityChoices) for the page's
+   * samples; they are null otherwise. Only the Samples page shows them, for the Place cell's editor: the downloads,
+   * the API's rows and the samples upload's comparison never read the column, and asking costs a statement by up to
+   * 5,000 ids a page.
+   */
+  withLocalityChoices?: boolean;
+  /**
    * How to read a host's names (nameHosts). `all`, the default, reads the
    * current name, family and common name of the hosts on the page from the
    * view; `common`, for the pages, only the common name, which is cheaper;
@@ -1404,10 +1411,12 @@ export async function filteredSamples(
         .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
         .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
     )
-    // One row per sample (it is the PK), so this cannot fan the listing out.
-    // Joined whole and blanked in the select (`located`): a condition in the
-    // ON that reads `own` cost a volunteer's listing 7.5 s against 0.1 s.
-    .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
+    // `sample_location` is not joined here: no filter or sort reads it. The page's rows join it in listSamples,
+    // whole and blanked in the select (`located`): a condition in the ON that reads `own` cost a volunteer's
+    // listing 7.5 s against 0.1 s.
+    //
+    // THE JOINS BELOW ARE WRITTEN TWICE: here, for what a filter or the order reads, and in listSamples, for the
+    // page's rows. A change to a join's condition must be made in both.
     // The flag roll-up: the listing selects it, and a count needs it only for a status filter.
     .$if(rollup, (qb) =>
       qb.leftJoin(
@@ -1567,8 +1576,9 @@ export async function filteredSamples(
  * reader. Asked for after the page is chosen, by the page's ids: as a column of the rows statement it was a
  * string_agg over every sample's candidates, 113 to 231 ms, against 6.5 ms for fifty ids (beeline-amdt.4).
  */
-async function nameLocalityChoices(db: Kysely<Database>, rows: Array<Pick<SampleRow, "sample_id" | "location_withheld" | "locality_choices">>) {
-  const ids = rows.filter((r) => !r.location_withheld).map((r) => r.sample_id);
+export async function nameLocalityChoices(db: Kysely<Database>, rows: Array<Pick<SampleRow, "sample_id" | "location_withheld" | "locality_choices">>) {
+  // A row that does not say its location is withheld is treated as withheld: the rows are cast to their type, so a renamed column would not be noticed.
+  const ids = rows.filter((r) => r.location_withheld === false).map((r) => r.sample_id);
   const found = new Map<number, string | null>();
   if (ids.length > 0) {
     const choices = await sql<{ sample_id: number; choices: string | null }>`
@@ -1616,6 +1626,7 @@ export async function listSamples(
       .with("pg", () => pageKeys)
       .selectFrom("pg")
       .innerJoin("sample as s", "s.entity_id", "pg.sample_id")
+      // These joins repeat filteredSamples's: a change to a join's condition must be made in both.
       .leftJoin("host_name_taxon_cache as hnt", (join) =>
         join.onRef("hnt.host_name", "=", "s.host_name_as_observed").on("s.host_inat_taxon_id", "is", null),
       )
@@ -1704,7 +1715,8 @@ export async function listSamples(
   const sampleRows = rows as unknown as Array<SampleRow & { flag_list: string | null }>;
   await nameHosts(db, sampleRows, opts.hostNames ?? "all");
   const ids = sampleRows.map((r) => r.sample_id);
-  await nameLocalityChoices(db, sampleRows);
+  if (opts.withLocalityChoices === true) await nameLocalityChoices(db, sampleRows);
+  else for (const r of sampleRows) r.locality_choices = null;
   const findings = new Map(sampleRows.map((r) => [r.sample_id, parseFlags(r.flag_list)] as const));
   // Where the location is withheld from this reader, a finding's words go,
   // as on the sample page (visibleFindings, src/app/record.ts): a hold's
@@ -1772,6 +1784,15 @@ export async function sampleIdsInScope(db: Kysely<Database>, scope: string, ids:
   return new Set(found.map((r) => Number(r.sample_id)));
 }
 
+/** Which of the determination's joins a {@link filteredSpecimens} caller reads: the name (`d`, `an`), the determiner (`det`), the ORCID iD. */
+export interface SpecimenJoins {
+  name: boolean;
+  determiner: boolean;
+  orcid: boolean;
+}
+const ALL_SPECIMEN_JOINS: SpecimenJoins = { name: true, determiner: true, orcid: true };
+const NO_SPECIMEN_JOINS: SpecimenJoins = { name: false, determiner: false, orcid: false };
+
 /** The specimens a query selects, as this reader may see them; see {@link filteredSamples}. */
 export async function filteredSpecimens(
   db: Kysely<Database>,
@@ -1782,9 +1803,11 @@ export async function filteredSpecimens(
   exact: ExactLookup = {},
   rollup = true,
   ids?: readonly number[],
-  determination = true,
+  joins: SpecimenJoins = ALL_SPECIMEN_JOINS,
+  /** The taxon filter's animals where the caller has already worked them out (listSpecimens calls this twice). */
+  taxa?: readonly number[] | null,
 ) {
-  const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
+  const animals = taxa !== undefined ? taxa : query.taxon === "" ? null : await taxonIds(db, query.taxon);
   const place = placeColumns(reader);
   const core = db
     .selectFrom("specimen as sp")
@@ -1801,7 +1824,10 @@ export async function filteredSpecimens(
         .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
         .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
     )
-    .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
+    // `sample_location` is not joined here either: only the page's rows read it (listSpecimens).
+    //
+    // THE JOINS BELOW ARE WRITTEN TWICE: here, for what a filter or the order reads, and in listSpecimens, for the
+    // page's rows. A change to a join's condition must be made in both.
     // The flag roll-up: the listing selects it, and a count needs it only for a status filter.
     .$if(rollup, (qb) =>
       qb.leftJoin(
@@ -1816,16 +1842,24 @@ export async function filteredSpecimens(
         (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
       ),
     );
-  const withDetermination = core
+  const withName = core
     .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
-    .leftJoin("animal as an", "an.entity_id", "d.animal_id")
-    .leftJoin("person as det", "det.entity_id", "d.determiner_id")
-    .leftJoin("person_orcid_of_record as det_orcid", "det_orcid.person_id", "d.determiner_id");
-  // The name of record and who gave it: the page's rows select them, and the choice of the page needs them only for
-  // the filters and sorts that name a determination (`filtersOnDetermination` and `sortsOnDetermination`), so a caller that selects none of them
-  // says `determination = false` and does not pay for the window that finds each specimen's name of record. A query
-  // whose filters read them gets them whatever the caller says, so a caller cannot leave out one a filter needs.
-  let base = determination || filtersOnDetermination(query) ? withDetermination : (core as unknown as typeof withDetermination);
+    .leftJoin("animal as an", "an.entity_id", "d.animal_id");
+  const withDeterminer = withName.leftJoin("person as det", "det.entity_id", "d.determiner_id");
+  const withOrcid = withDeterminer.leftJoin("person_orcid_of_record as det_orcid", "det_orcid.person_id", "d.determiner_id");
+  // The name of record (`d`, `an`), who gave it (`det`) and their ORCID iD: the page's rows select them, and the
+  // choice of the page needs only what a filter or the order reads (`filtersOnDetermination`, `sortsOnDetermination`),
+  // so a caller says which it selects and does not pay for the window that finds each specimen's name of record
+  // when it selects none. A query whose filters read the name of record gets it whatever the caller says, so a
+  // caller cannot leave out one a filter needs.
+  const chosen = joins.orcid
+    ? withOrcid
+    : joins.determiner
+      ? withDeterminer
+      : joins.name || filtersOnDetermination(query)
+        ? withName
+        : core;
+  let base = chosen as unknown as typeof withOrcid;
 
   if (query.scope === MINE) {
     base = base.where(({ exists, selectFrom }) =>
@@ -1909,8 +1943,10 @@ export async function specimenListingBase(
   personId: number,
   reader: Reader,
   opts: ListingPageOptions,
+  taxa?: readonly number[] | null,
 ) {
-  return filteredSpecimens(db, query, personId, reader, opts.year, opts.exact, needsRollup(query), opts.ids);
+  // The total reads no column of the name of record, only the filters that do (which join it themselves).
+  return filteredSpecimens(db, query, personId, reader, opts.year, opts.exact, needsRollup(query), opts.ids, NO_SPECIMEN_JOINS, taxa);
 }
 
 export async function listSpecimens(
@@ -1922,7 +1958,8 @@ export async function listSpecimens(
 ): Promise<Page<SpecimenRow>> {
   const hidden = withheld(reader);
   const place = placeColumns(reader);
-  const base = await specimenListingBase(db, query, personId, reader, opts);
+  const taxa = query.taxon === "" ? null : await taxonIds(db, query.taxon);
+  const base = await specimenListingBase(db, query, personId, reader, opts, taxa);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1931,7 +1968,18 @@ export async function listSpecimens(
   // of record were computed for every specimen in the store before the sort took its fifty (beeline-amdt.5).
   // A new column goes in the outer query below, unless a filter or a sort reads it, which puts it here.
   const pageKeys = (
-    await filteredSpecimens(db, query, personId, reader, opts.year, opts.exact, needsRollup(query), opts.ids, sortsOnDetermination(query))
+    await filteredSpecimens(
+      db,
+      query,
+      personId,
+      reader,
+      opts.year,
+      opts.exact,
+      needsRollup(query),
+      opts.ids,
+      { name: sortsOnDetermination(query), determiner: query.sort === "determiner", orcid: false },
+      taxa,
+    )
   )
     .select("sp.entity_id as specimen_id")
     .orderBy(specimenOrder(query, place))
@@ -1944,6 +1992,7 @@ export async function listSpecimens(
       .selectFrom(pageKeys.as("pg"))
       .innerJoin("specimen as sp", "sp.entity_id", "pg.specimen_id")
       .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
+      // These joins repeat filteredSpecimens's: a change to a join's condition must be made in both.
       .leftJoin("host_name_taxon_cache as hnt", (join) =>
         join.onRef("hnt.host_name", "=", "s.host_name_as_observed").on("s.host_inat_taxon_id", "is", null),
       )

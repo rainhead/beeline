@@ -28,23 +28,43 @@ describe("on-machine.sh steal_percent", () => {
   it("reads about 0 on an idle machine", () => {
     expect(stealBetween(line(1000, 5000), line(1100, 5000))).toBe("0");
   });
+  it("does not count guest time twice", () => {
+    // user and guest each grow 700 and steal 300: 300 of 1000, not 300 of 1700.
+    const a = "cpu  0 0 0 0 0 0 0 0 0 0\n";
+    const b = "cpu  700 0 0 0 0 0 0 300 700 0\n";
+    expect(stealBetween(a, b)).toBe("30");
+  });
   it("reads 0 when the counters did not move", () => {
     expect(stealBetween(line(1000, 5), line(1000, 5))).toBe("0");
   });
 });
 
+function runScript(before: string, after: string) {
+  const dir = mkdtempSync(join(tmpdir(), "steal-"));
+  const stat = join(dir, "stat");
+  writeFileSync(stat, before);
+  // A fake `sleep` that moves the counters, so the test does not wait 5 seconds.
+  // The fake `node` stands in for the benchmark, in case a run passes the check.
+  writeFileSync(join(dir, "sleep"), `#!/bin/sh\nprintf '%s' '${after}' > "${stat}"\n`, { mode: 0o755 });
+  writeFileSync(join(dir, "node"), "#!/bin/sh\necho STARTED\n", { mode: 0o755 });
+  return spawnSync("sh", [script, "pages"], {
+    env: { PATH: `${dir}:${process.env.PATH}`, PROC_STAT: stat },
+    encoding: "utf8",
+  });
+}
+
 describe("on-machine.sh refusing", () => {
   it("refuses when the machine is being throttled", () => {
-    const dir = mkdtempSync(join(tmpdir(), "steal-"));
-    const stat = join(dir, "stat");
-    writeFileSync(stat, line(1000, 5000));
-    // A fake `sleep` that moves the counters, so the test does not wait 5 seconds.
-    writeFileSync(join(dir, "sleep"), `#!/bin/sh\nprintf '%s' '${line(1010, 5090)}' > "${stat}"\n`, { mode: 0o755 });
-    const r = spawnSync("sh", [script, "pages"], {
-      env: { PATH: `${dir}:${process.env.PATH}`, PROC_STAT: stat },
-      encoding: "utf8",
-    });
+    const r = runScript(line(1000, 5000), line(1010, 5090));
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("90% of CPU time was stolen");
+  });
+  it("allows exactly 20%", () => {
+    expect(runScript(line(1000, 5000), line(1800, 5200)).stderr).not.toContain("stolen");
+  });
+  it("refuses 20.9%, which a whole number would round down to 20", () => {
+    const r = runScript(line(1000, 5000), line(1791, 5209));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("20% of CPU time was stolen");
   });
 });

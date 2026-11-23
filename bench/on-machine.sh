@@ -20,16 +20,27 @@ PROC_STAT=${PROC_STAT:-/proc/stat}
 # Prints the share of CPU time stolen between two readings, as a whole
 # number of percent. Each argument is a `cpu` line from /proc/stat: counts
 # since boot, in the order user nice system idle iowait irq softirq steal
-# ..., so steal is the growth of the eighth figure as a share of the growth of
-# all of them. Prints 0 when the counters did not move.
+# guest guest_nice. Steal is the growth of the eighth figure as a share of the
+# growth of the first eight. The last two are left out of the total because the
+# kernel already counts guest in user and guest_nice in nice. Prints 0 when
+# the counters did not move.
 steal_percent() {
   printf '%s\n%s\n' "$1" "$2" | awk '
-    { total = 0; for (i = 2; i <= NF; i++) total += $i; t[NR] = total; s[NR] = $9 }
+    { total = 0; for (i = 2; i <= 9; i++) total += $i; t[NR] = total; s[NR] = $9 }
     END {
       dt = t[2] - t[1]
       if (dt <= 0) { print 0; exit }
       print int(100 * (s[2] - s[1]) / dt)
     }'
+}
+
+# Succeeds when steal between two readings is strictly above $3 percent. It
+# compares the exact ratio, not the whole number steal_percent prints, so 20.9%
+# is above 20 and exactly 20% is not.
+steal_exceeds() {
+  printf '%s\n%s\n' "$1" "$2" | awk -v limit="$3" '
+    { total = 0; for (i = 2; i <= 9; i++) total += $i; t[NR] = total; s[NR] = $9 }
+    END { exit !(t[2] > t[1] && 100 * (s[2] - s[1]) > limit * (t[2] - t[1])) }'
 }
 
 # A test sources this file to reach the function above, and stops here.
@@ -50,8 +61,8 @@ if [ "${BENCH_ALLOW_STEAL:-}" != 1 ] && [ -r "$PROC_STAT" ]; then
   before=$(head -n 1 "$PROC_STAT")
   sleep 5
   after=$(head -n 1 "$PROC_STAT")
-  steal=$(steal_percent "$before" "$after")
-  if [ "$steal" -gt 20 ]; then
+  if steal_exceeds "$before" "$after" 20; then
+    steal=$(steal_percent "$before" "$after")
     echo "${steal}% of CPU time was stolen over the last 5 seconds: the burst balance is probably spent. Not starting; check the balance in Fly's metrics, wait, or set BENCH_ALLOW_STEAL=1" >&2
     exit 1
   fi

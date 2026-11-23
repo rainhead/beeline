@@ -60,7 +60,7 @@ async function setup() {
 /** The archive's data rows: the ids of the specimens it holds. A body that is not read is cancelled, so none is left open. */
 const specimensIn = async (res: Response) => {
   const files = unzipSync(new Uint8Array(await res.arrayBuffer()));
-  return strFromU8(files["occurrence.txt"]!).trim().split("\n").slice(1).map((l) => l.split("\t")[0]!);
+  return strFromU8(files["occurrence.tsv"]!).trim().split("\n").slice(1).map((l) => l.split("\t")[0]!);
 };
 /** Asks for an archive the way the page's form does: a POST, with the choices as fields. A query string is for the tests that must be refused. */
 const ask = (app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }, opts: { year?: number; query?: string; fields?: Record<string, string> } = {}) =>

@@ -137,10 +137,21 @@ describe("the six label fields", () => {
     ).toBe("28.XII2025-4.I2026-WBAS1.1");
   });
 
-  it("reads nest off the protocol and otherwise prints the kind", () => {
+  it("reads the word off the method text as old Beeline did: nest, then trap, then net, then the text itself", () => {
     expect(methodText({ kind: "trap", protocol: "Trap nest" })).toBe("nest");
     expect(methodText({ kind: "trap", protocol: "vane trap" })).toBe("trap");
+    expect(methodText({ kind: "net", protocol: "pan traps" })).toBe("trap");
+    expect(methodText({ kind: "trap", protocol: "aerial net" })).toBe("net");
+    expect(methodText({ kind: "net", protocol: "6 Vane Traps" })).toBe("trap");
+    expect(methodText({ kind: "net", protocol: "  Aerial NET  " })).toBe("net");
+    expect(methodText({ kind: "net", protocol: "vacuum" })).toBe("vacuum");
+    expect(methodText({ kind: "net", protocol: " Vacuum " })).toBe("vacuum");
+  });
+
+  it("prints the kind only where the method is empty or missing", () => {
     expect(methodText({ kind: "net", protocol: null })).toBe("net");
+    expect(methodText({ kind: "trap", protocol: "" })).toBe("trap");
+    expect(methodText({ kind: "trap", protocol: "   " })).toBe("trap");
   });
 });
 

@@ -215,9 +215,26 @@ export function collectorText(collectors: PersonNameParts[]): string {
   return names.join("&");
 }
 
-/** `net`, `trap`, or `nest` where the protocol says so — the reference's rule, minus its lowercasing of free text. */
+/**
+ * The word a label's method box prints, worked out from the sample's method
+ * text the way old Beeline did it (LabelsSubtaskHandler.js), so a reprint
+ * says what the pin says. The text is lowercased and trimmed, then: `nest` if
+ * it contains "nest"; otherwise `trap` if it contains "trap"; otherwise `net`
+ * if it contains "net"; otherwise the text itself ("vacuum" prints
+ * "vacuum", Peter, 2026-11-23). Only a method that is empty or missing falls
+ * back to the sample's kind. The sample's kind says nothing otherwise: 291
+ * old netted samples are kind trap and 679 trap-worded ones are kind net
+ * (beeline-lmlh). Mirrored in `now_method` of printed_label_out_of_date
+ * (schema/155_views_print_run.sql); test/label-out-of-date-method.test.ts
+ * holds the two together.
+ */
 export function methodText(input: Pick<LabelInput, "kind" | "protocol">): string {
-  return input.protocol?.toLowerCase().includes("nest") ? "nest" : input.kind;
+  const text = (input.protocol ?? "").toLowerCase().trim();
+  if (text === "") return input.kind;
+  if (text.includes("nest")) return "nest";
+  if (text.includes("trap")) return "trap";
+  if (text.includes("net")) return "net";
+  return text;
 }
 
 export function composeLabel(input: LabelInput, fieldNumber: string): LabelText {

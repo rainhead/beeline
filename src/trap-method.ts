@@ -4,6 +4,9 @@
  * promotion sets from whether the old records gave an end date, so a netting
  * trip over several days is a "trap" sample and a trap emptied on the day it
  * was set is a "net" one (237 and 9 such on the backup of 16 November 2026).
+ * The associations file of the upload to Ecdysis decides the same way
+ * (beeline-lmlh), and so does the word on a label, which also takes it from
+ * the method text (`methodText`, src/label-text.ts).
  *
  * A trap catches bees without saying which flower any of them visited, so
  * the plant its observation names is a plant near the trap, never a floral

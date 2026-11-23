@@ -494,7 +494,6 @@ export function WhereCollected({
           {w.withheld({
             geoprivacy: sample.geoprivacy,
             taxonGeoprivacy: sample.taxon_geoprivacy,
-            gone: sample.observation_gone_since !== null,
           })}
         </Meta>
       </>

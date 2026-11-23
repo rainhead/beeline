@@ -1220,23 +1220,19 @@ export const STAFF_READER: Reader = { staff: true, personIds: [] };
 
 /**
  * Whether this sample's location is not the reader's to see: iNaturalist
- * obscures or hides it from everyone but its observer — or it cites an
- * observation Beeline has never read, so nobody here knows whether it does —
- * and the reader is neither staff nor one of its collectors. The second case
- * is the legacy import's: 1,537 samples on the dev store cite an observation
- * no sync has fetched, their geoprivacy columns blank because nothing wrote
- * them, and at the corpus's rate a dozen or more of them are protected on
- * iNaturalist. A sample citing no observation has no setting to know.
+ * obscures or hides it from everyone but its observer, as the sample's stored
+ * `geoprivacy` or `taxon_geoprivacy` says, and the reader is neither staff nor
+ * one of its collectors. A sample whose observation Beeline has never read has
+ * no setting stored, so its location is shown: Peter decided on 2026-11-23 not
+ * to protect samples whose observation Beeline has never read (beeline-gab9).
  *
- * Reads `own`, the reader's own samples, and `seen`, the observation's
- * stored projection, which every query that uses it joins first
- * (`ownSamples`, and `observation_field` as `seen`).
+ * Reads `own`, the reader's own samples, which every query that uses it joins
+ * first (`ownSamples`).
  */
 export function withheld(reader: Reader) {
   return reader.staff
     ? sql<boolean>`FALSE`
-    : sql<boolean>`((s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL
-                     OR (s.inat_observation_id IS NOT NULL AND seen.inat_id IS NULL))
+    : sql<boolean>`((s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL)
                     AND own.sample_id IS NULL)`;
 }
 
@@ -1415,7 +1411,7 @@ export async function filteredSamples(
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
-    // Only `withheld` reads these, and for staff it reads nothing.
+    // Only `withheld` reads this, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
         .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
@@ -1834,7 +1830,7 @@ export async function filteredSpecimens(
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
-    // Only `withheld` reads these, and for staff it reads nothing.
+    // Only `withheld` reads this, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
         .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))

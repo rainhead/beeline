@@ -38,6 +38,17 @@ replacing one view needs no migration for the views that read it. Numbers may
 skip (the runner orders by filename); two migrations already share some.
 See the 2026-11-22 amendment in [ADR 0006](../docs/adr/0006-migrations-for-deployed-stores.md).
 
+**When you change a view in `schema/`, write a migration that restates it**
+(`CREATE OR REPLACE VIEW`, then its `COMMENT ON VIEW`, in the same file), and
+if the view is listed in `view-hashes.txt`, delete its line. The test
+`test/view-migrations.test.ts` replays the newest migration that creates each
+view and fails when the result differs from `schema/`, which is how a
+forgotten migration shows. `view-hashes.txt` holds a hash for each view that no
+migration from 0070 on creates (73 on 2026-11-22), since those cannot be
+replayed. It only shrinks, except that after a DuckDB upgrade changes how
+views are serialised, `pnpm views:rehash` rewrites the hashes of the views
+already listed; it never adds one.
+
 Nothing else may hold the database open (ADR 0005), so the app must not be
 running. On Fly the entrypoint migrates before it starts the app
 ([`infra/fly/entrypoint.sh`](../infra/fly/entrypoint.sh)), so a deploy needs no

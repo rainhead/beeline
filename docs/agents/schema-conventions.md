@@ -20,6 +20,10 @@ Document tables and columns with `COMMENT ON` (queryable in-database); reserve `
 
 Kysely is pinned to 0.28.x until `kysely-duckdb` supports 0.29.
 
+## Changing a view
+
+A view changed in `schema/` needs a migration that restates it with its `COMMENT ON VIEW`; `test/view-migrations.test.ts` fails otherwise. See [migrations/README.md](../../migrations/README.md).
+
 ## Timestamps
 
 A `TIMESTAMP` means UTC in every process, not only on Fly: the openers in `src/db.ts` pin DuckDB's session zone to UTC, and `patches/kysely-duckdb.patch` reads the value back as UTC rather than as the machine's local time (beeline-j0aj). Write an instant as `current_timestamp` or `toISOString()`, never as a local-time string. Before this, a workstation stored the SQL clock in Pacific time and JavaScript's instants in UTC, seven hours apart in one column.

@@ -114,8 +114,13 @@ differed in text (`main.` before function names, `CAST('f' AS BOOLEAN)` for
 joins) and none differed in meaning (their query plans matched, or differed
 only in how a chain of `UNION`s was grouped). A text comparison would fail
 every deployed store after each DuckDB upgrade. Forgotten view changes are
-instead to be caught in the test suite, where both sides are written by one
-DuckDB; that test is not built yet (the design is in beeline-0apa). Constraints
+instead caught in the test suite, where both sides are written by one DuckDB
+(`test/view-migrations.test.ts`): the newest migration that creates or
+replaces a view must produce, when replayed on a fresh build, the text and
+comment that `schema/` gives. A view that no migration from 0070 on creates
+(0070 is the first migration production ran; it was built fresh from
+`schema/` at cutover, and several earlier migrations no longer run) is held by
+a hash in `migrations/view-hashes.txt`, which only shrinks. Constraints
 and column defaults are not compared either: their stored text depends on the
 writing version in the same way, and a deployed store cannot gain a CHECK.
 

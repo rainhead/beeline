@@ -1414,8 +1414,7 @@ export async function filteredSamples(
     // Only `withheld` reads this, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
-        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
-        .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
     )
     // `sample_location` is not joined here: no filter or sort reads it. The page's rows join it in listSamples,
     // whole and blanked in the select (`located`): a condition in the ON that reads `own` cost a volunteer's
@@ -1647,8 +1646,7 @@ export async function listSamples(
       .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
       .$if(!reader.staff, (qb) =>
         qb
-          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
-          .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
       )
       .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
       // The flag roll-up, as `qc`: the page's own copy of it where the page was chosen by it, else computed here.
@@ -1833,8 +1831,7 @@ export async function filteredSpecimens(
     // Only `withheld` reads this, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
-        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
-        .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
     )
     // `sample_location` is not joined here either: only the page's rows read it (listSpecimens).
     //
@@ -2019,8 +2016,7 @@ export async function listSpecimens(
       .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
       .$if(!reader.staff, (qb) =>
         qb
-          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
-          .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
       )
       .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
       .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")

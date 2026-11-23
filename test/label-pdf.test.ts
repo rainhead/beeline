@@ -12,7 +12,7 @@ import {
   type LabelRow,
 } from "../src/label-pdf.js";
 import { renderLabelsPdfOffThread } from "../src/label-pdf-worker.js";
-import { layoutSheets } from "../src/label-text.js";
+import { layoutSheets, METHOD_WORD_LIMIT } from "../src/label-text.js";
 
 const PREPARED = new Date("2026-09-21T16:00:00Z");
 
@@ -151,6 +151,46 @@ describe("shrinking a line to fit its box", () => {
     expect(fitted.fontSize).toBeLessThan(box.fontSize);
     // A line that already fits is left at the size the label was drawn for.
     expect(fitText(font, "A. Ash", box).fontSize).toBe(box.fontSize);
+  });
+});
+
+describe("the method word", () => {
+  const embed = async () => {
+    const doc = await PDFDocument.create();
+    doc.registerFontkit(fontkit);
+    const bytes = await readFile(FONT_PATH);
+    return { font: await doc.embedFont(bytes), characters: (fontkit.create(bytes) as unknown as { characterSet: number[] }).characterSet };
+  };
+
+  it("has a length limit that is the most letters of the widest letter that fit the box at the 1 pt floor", async () => {
+    const { font, characters } = await embed();
+    const letters = characters.map((c) => String.fromCodePoint(c)).filter((c) => /\p{L}/u.test(c));
+    const widest = letters.reduce((a, c) => (font.widthOfTextAtSize(c, 1) > font.widthOfTextAtSize(a, 1) ? c : a));
+    let n = 0;
+    while (font.widthOfTextAtSize(widest.repeat(n + 1), 1) <= LABEL_BOXES.method.width) n += 1;
+    expect(n).toBe(METHOD_WORD_LIMIT);
+  });
+
+  it("is drawn inside its box at every length the rule allows, in every printable ASCII character, and for the common words", async () => {
+    const { font } = await embed();
+    // Not the space: the rule trims the text, so it never is only spaces.
+    const ascii = Array.from({ length: 94 }, (_, i) => String.fromCharCode(33 + i));
+    const texts = ["net", "trap", "nest", "vacuum", "m".repeat(METHOD_WORD_LIMIT), "a b c d e f g", "mmmmm mmmmmm"];
+    for (const c of ascii) for (let n = 1; n <= METHOD_WORD_LIMIT; n++) texts.push(c.repeat(n));
+    for (const text of texts) {
+      const fit = fitText(font, text, LABEL_BOXES.method);
+      // The lines drawText draws, as fitText measures them: each inside the box, and several inside its height (one line is let stand, as fitText does).
+      const lines = breakTextIntoLines(text, [" "], LABEL_BOXES.method.width, (t) => font.widthOfTextAtSize(t, fit.fontSize));
+      for (const line of lines) expect(font.widthOfTextAtSize(line.trimEnd(), fit.fontSize), text).toBeLessThanOrEqual(LABEL_BOXES.method.width);
+      if (lines.length > 1) expect(lines.length * font.heightAtSize(fit.fontSize, { descender: true }), text).toBeLessThanOrEqual(LABEL_BOXES.method.height + 1e-9);
+    }
+  });
+
+  it("is not clipped by the drawing, which is why the rule keeps the text short: one more letter runs past the box at the floor", async () => {
+    const { font } = await embed();
+    const fit = fitText(font, "m".repeat(METHOD_WORD_LIMIT + 1), LABEL_BOXES.method);
+    expect(fit.fontSize).toBe(1);
+    expect(font.widthOfTextAtSize("m".repeat(METHOD_WORD_LIMIT + 1), 1)).toBeGreaterThan(LABEL_BOXES.method.width);
   });
 });
 

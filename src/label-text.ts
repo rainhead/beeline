@@ -216,25 +216,46 @@ export function collectorText(collectors: PersonNameParts[]): string {
 }
 
 /**
+ * The longest method text that is printed as itself: 12 characters. The
+ * method box is 7.56 pt wide and a label's text is shrunk to fit it, but never
+ * below 1 pt (`fitText`, src/label-pdf.ts); a longer single word would then
+ * run past the box and onto the DataMatrix. In the label's font (Oxygen Mono)
+ * every printable ASCII character, letters and digits among them, is 0.6001 em
+ * wide (measured over all 360 characters the font holds: the widest letter is
+ * "A", at the same width as "m"; the only other width is U+2015 at 2 em, which
+ * is why the text must also be ASCII), so at 1 pt a word of 12 is 7.20 pt and
+ * one of 13 is 7.80 pt, past 7.56. test/label-pdf.test.ts repeats the
+ * measurement and fails if the font or the box changes this number.
+ */
+export const METHOD_WORD_LIMIT = 12;
+
+/**
  * The word a label's method box prints, worked out from the sample's method
  * text the way old Beeline did it (LabelsSubtaskHandler.js), so a reprint
- * says what the pin says. The text is lowercased and trimmed, then: `nest` if
- * it contains "nest"; otherwise `trap` if it contains "trap"; otherwise `net`
- * if it contains "net"; otherwise the text itself ("vacuum" prints
- * "vacuum", Peter, 2026-11-23). Only a method that is empty or missing falls
- * back to the sample's kind. The sample's kind says nothing otherwise: 291
- * old netted samples are kind trap and 679 trap-worded ones are kind net
- * (beeline-lmlh). Mirrored in `now_method` of printed_label_out_of_date
- * (schema/155_views_print_run.sql); test/label-out-of-date-method.test.ts
- * holds the two together.
+ * says what the pin says. The text is lowercased, its tabs, line breaks and
+ * non-breaking spaces made spaces, and its outer spaces removed; then: `nest`
+ * if it contains "nest"; otherwise `trap` if it contains "trap"; otherwise
+ * `net` if it contains "net"; otherwise the text itself ("vacuum" prints
+ * "vacuum", Peter, 2026-11-23), but only when it is plain ASCII and at most
+ * {@link METHOD_WORD_LIMIT} characters, so it always fits its box. The
+ * sample's kind is printed where the text is empty, missing, or too long or
+ * not plain enough for that. The kind says nothing otherwise: 291 old netted
+ * samples are kind trap and 679 trap-worded ones are kind net (beeline-lmlh).
+ * Mirrored in `now_method` of printed_label_out_of_date
+ * (schema/155_views_print_run.sql), which spells the whitespace rule with
+ * translate() and trim() so both agree on tab, newline and no-break space;
+ * test/label-out-of-date-method.test.ts holds the two together.
  */
 export function methodText(input: Pick<LabelInput, "kind" | "protocol">): string {
-  const text = (input.protocol ?? "").toLowerCase().trim();
+  const text = (input.protocol ?? "")
+    .toLowerCase()
+    .replace(/[\t\n\v\f\r\u00a0]/g, " ")
+    .replace(/^ +| +$/g, "");
   if (text === "") return input.kind;
   if (text.includes("nest")) return "nest";
   if (text.includes("trap")) return "trap";
   if (text.includes("net")) return "net";
-  return text;
+  return /^[ -~]+$/.test(text) && text.length <= METHOD_WORD_LIMIT ? text : input.kind;
 }
 
 export function composeLabel(input: LabelInput, fieldNumber: string): LabelText {

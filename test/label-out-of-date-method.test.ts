@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { prepareRun } from "../src/print-run.js";
-import { methodText } from "../src/label-text.js";
+import { METHOD_WORD_LIMIT, methodText } from "../src/label-text.js";
 import { TRAP_METHODS } from "../src/trap-sample.js";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
@@ -113,11 +113,17 @@ describe("labels out of date for their method", () => {
       null, "", "  ", "net", "aerial net", "vane trap", "nest", "Nest box", "NESTING", "bee hotel",
       "  Aerial NET ", " TRAP NEST ", "Net trap", "Vacuum", "sweep netting",
       ...PRODUCTION_PROTOCOLS, ...TRAP_METHODS,
+      // The longest text printed as itself, and one character more, which prints the kind.
+      "x".repeat(METHOD_WORD_LIMIT), "x".repeat(METHOD_WORD_LIMIT + 1), "ab cd ef gh ij", "abcdefghijk l",
+      // Whitespace that JavaScript's trim strips and SQL's trim does not: tab, line breaks, no-break space.
+      "\tvacuum\n", "vacuum\u00a0", "\u00a0vacuum\r\n", "\t \n", "\u00a0", "aerial\tnet", "vacu\num",
+      // Not plain ASCII: the kind, whatever the length.
+      "aspiración", "ＡＢＣ", "a\u2015",
     ];
     for (const kind of ["net", "trap"] as const) {
       for (const protocol of protocols) {
         await conn.run(
-          `UPDATE sample SET kind = '${kind}', protocol = ${protocol === null ? "NULL" : `'${protocol}'`} WHERE entity_id = ${sample}`,
+          `UPDATE sample SET kind = '${kind}', protocol = ${protocol === null ? "NULL" : `'${protocol.replaceAll("'", "''")}'`} WHERE entity_id = ${sample}`,
         );
         const [[label]] = (await rows(conn, `SELECT method_text FROM printed_label WHERE specimen_id = (SELECT min(entity_id) FROM specimen WHERE sample_id = ${sample})`)) as [[string]];
         const differs = label !== methodText({ kind, protocol });

@@ -97,31 +97,63 @@ export interface ScopeCounts {
 }
 
 export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
-  const program = await db
-    .selectFrom("print_scope_sample")
-    .select(({ fn }) => [fn.countAll<number>().as("samples"), fn.sum<number>("pending_count").as("labels")])
-    .executeTakeFirstOrThrow();
-  // A specimen asked for twice prints once, so reprints are counted by specimen.
-  const programReprints = await db
-    .selectFrom("print_scope_reprint")
-    .select(sql<number>`count(DISTINCT specimen_id)`.as("n"))
-    .executeTakeFirstOrThrow();
-  const atlases = await sql<ScopeOption>`
-    SELECT a.entity_id AS atlas_id, a.code, coalesce(ab.abbreviation, a.code) AS abbreviation, a.name,
-           (ap.atlas_id IS NOT NULL) AS own,
-           count(p.sample_id) AS samples,
-           coalesce(sum(p.pending_count), 0) AS labels,
-           (SELECT count(DISTINCT pr.specimen_id) FROM printable_reprint pr
-              JOIN sample_atlas rsa ON rsa.sample_id = pr.sample_id
-             WHERE rsa.atlas_id = a.entity_id) AS reprints
-    FROM program a
-    JOIN (SELECT DISTINCT atlas_id FROM atlas_region WHERE atlas_id IS NOT NULL) reg ON reg.atlas_id = a.entity_id
-    LEFT JOIN atlas_printing ap ON ap.atlas_id = a.entity_id
-    LEFT JOIN program_abbreviation ab ON ab.program_id = a.entity_id
-    LEFT JOIN sample_atlas sa ON sa.atlas_id = a.entity_id
-    LEFT JOIN pending_print_sample p ON p.sample_id = sa.sample_id
-    GROUP BY a.entity_id, a.code, ab.abbreviation, a.name, ap.atlas_id
-    ORDER BY a.entity_id`.execute(db);
+  // The expensive part is the chain of views under print_scope_sample and
+  // print_scope_reprint (pending_print_sample, printable_reprint, and the
+  // findings of every sample under them): about 200 ms and 140 ms on the
+  // store of 2026-11-22. So each is read once, as one row per pending sample
+  // or reprint with its atlas, and every count on the screen is added up from
+  // those rows. The program's counts are those views' rows as they come, the
+  // freeze's own definition (schema/155), and no part of what is pending or
+  // printable is written again here (beeline-amdt.2).
+  const scopeSamples = (
+    await sql<{ sample_id: number; pending_count: number; atlas_id: number | null }>`
+      SELECT s.sample_id, s.pending_count, sa.atlas_id
+      FROM print_scope_sample s
+      LEFT JOIN sample_atlas sa ON sa.sample_id = s.sample_id`.execute(db)
+  ).rows;
+  const scopeReprints = (
+    await sql<{ specimen_id: number; sample_id: number; atlas_id: number | null }>`
+      SELECT r.specimen_id, r.sample_id, sa.atlas_id
+      FROM print_scope_reprint r
+      LEFT JOIN sample_atlas sa ON sa.sample_id = r.sample_id`.execute(db)
+  ).rows;
+  const atlasRows = (
+    await sql<Omit<ScopeOption, "samples" | "labels" | "reprints">>`
+      SELECT a.entity_id AS atlas_id, a.code, coalesce(ab.abbreviation, a.code) AS abbreviation, a.name,
+             (ap.atlas_id IS NOT NULL) AS own
+      FROM program a
+      JOIN (SELECT DISTINCT atlas_id FROM atlas_region WHERE atlas_id IS NOT NULL) reg ON reg.atlas_id = a.entity_id
+      LEFT JOIN atlas_printing ap ON ap.atlas_id = a.entity_id
+      LEFT JOIN program_abbreviation ab ON ab.program_id = a.entity_id
+      ORDER BY a.entity_id`.execute(db)
+  ).rows;
+  // An atlas that prints its own labels is outside the two views above: they
+  // are the program's run. Its pending samples and reprints are read from the
+  // views they come from, and only when such an atlas exists (none does on
+  // production today), so the usual case pays for nothing it does not use.
+  const ownIds = (await sql<{ atlas_id: number }>`SELECT atlas_id FROM atlas_printing`.execute(db)).rows.map((r) =>
+    Number(r.atlas_id),
+  );
+  const ownSamples =
+    ownIds.length === 0
+      ? []
+      : (
+          await sql<{ sample_id: number; pending_count: number; atlas_id: number }>`
+            SELECT p.sample_id, p.pending_count, sa.atlas_id
+            FROM pending_print_sample p
+            JOIN sample_atlas sa ON sa.sample_id = p.sample_id
+            WHERE sa.atlas_id IN (${sql.join(ownIds)})`.execute(db)
+        ).rows;
+  const ownReprints =
+    ownIds.length === 0
+      ? []
+      : (
+          await sql<{ specimen_id: number; sample_id: number; atlas_id: number }>`
+            SELECT r.specimen_id, r.sample_id, sa.atlas_id
+            FROM printable_reprint r
+            JOIN sample_atlas sa ON sa.sample_id = r.sample_id
+            WHERE sa.atlas_id IN (${sql.join(ownIds)})`.execute(db)
+        ).rows;
   // Only those with bees still to label: a released sample with every label already
   // individuated has nothing to wait for. Counted as pending_print_sample counts a sample's labels.
   const awaiting = await sql<{ n: number }>`
@@ -131,35 +163,32 @@ export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
     WHERE s.specimen_count > coalesce((SELECT count(*) FROM individuated_specimen i
                                        WHERE i.sample_id = s.entity_id AND i.specimen_number <= s.specimen_count), 0)`.execute(db);
   // The samples awaiting an elevation are few and usually none, since the
-  // nightly reads them (5 ms on the store of 2026-11-21), while the two views of
-  // what a run would take cost about 250 ms each there. So they are read only
-  // when there is something to look for.
-  const anyPending = await sql<{ n: number }>`
-    SELECT CAST(count(*) AS INTEGER) AS n FROM sample_elevation_pending`.execute(db);
-  const staleElevation =
-    Number(anyPending.rows[0]?.n ?? 0) === 0
-      ? { rows: [{ n: 0 }] }
-      : await sql<{ n: number }>`
-          SELECT CAST(count(*) AS INTEGER) AS n
-          FROM sample_elevation_pending e
-          WHERE e.sample_id IN (SELECT sample_id FROM pending_print_sample)
-             OR e.sample_id IN (SELECT sample_id FROM printable_reprint)`.execute(db);
+  // nightly reads them (5 ms on the store of 2026-11-21). Of them, those a run
+  // would take are the ones among the samples and reprints read above.
+  const wanting = (await sql<{ sample_id: number }>`SELECT sample_id FROM sample_elevation_pending`.execute(db)).rows.map(
+    (r) => Number(r.sample_id),
+  );
+  const taken = new Set([...scopeSamples, ...scopeReprints, ...ownSamples, ...ownReprints].map((r) => Number(r.sample_id)));
+  const staleElevation = wanting.filter((id) => taken.has(id)).length;
+
+  const labelsOf = (rows: Array<{ pending_count: number }>) => rows.reduce((n, r) => n + Number(r.pending_count), 0);
+  const distinctSpecimens = (rows: Array<{ specimen_id: number }>) => new Set(rows.map((r) => Number(r.specimen_id))).size;
   return {
     awaiting_place: Number(awaiting.rows[0]?.n ?? 0),
-    stale_elevation: Number(staleElevation.rows[0]?.n ?? 0),
+    stale_elevation: staleElevation,
     program: {
-      samples: Number(program.samples),
-      labels: Number(program.labels ?? 0),
-      reprints: Number(programReprints.n),
+      samples: scopeSamples.length,
+      labels: labelsOf(scopeSamples),
+      // A specimen asked for twice prints once, so reprints are counted by specimen.
+      reprints: distinctSpecimens(scopeReprints),
     },
-    atlases: atlases.rows.map((r) => ({
-      ...r,
-      atlas_id: Number(r.atlas_id),
-      own: Boolean(r.own),
-      samples: Number(r.samples),
-      labels: Number(r.labels),
-      reprints: Number(r.reprints),
-    })),
+    atlases: atlasRows.map((a) => {
+      const id = Number(a.atlas_id);
+      const own = Boolean(a.own);
+      const samples = (own ? ownSamples : scopeSamples).filter((r) => Number(r.atlas_id) === id);
+      const reprints = (own ? ownReprints : scopeReprints).filter((r) => Number(r.atlas_id) === id);
+      return { ...a, atlas_id: id, own, samples: samples.length, labels: labelsOf(samples), reprints: distinctSpecimens(reprints) };
+    }),
   };
 }
 

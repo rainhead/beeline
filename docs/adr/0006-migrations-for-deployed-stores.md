@@ -117,9 +117,11 @@ every deployed store after each DuckDB upgrade. Forgotten view changes are
 instead caught in the test suite, where both sides are written by one DuckDB
 (`test/view-migrations.test.ts`): the newest migration that creates or
 replaces a view must produce, when replayed on a fresh build, the text and
-comment that `schema/` gives. A view that no migration from 0070 on creates
-(0070 is the first migration production ran; it was built fresh from
-`schema/` at cutover, and several earlier migrations no longer run) is held by
+comment that `schema/` gives. A view that no migration from 0071 on creates
+(0071 is the first migration production ran: the ledger in its backup of
+2026-11-22 shows every migration up to 0070 stamped at one instant, when the
+store was built fresh from `schema/` at cutover, and 0071 run two hours later;
+several earlier migrations no longer run) is held by
 a hash in `migrations/view-hashes.txt`, which only shrinks. Constraints
 and column defaults are not compared either: their stored text depends on the
 writing version in the same way, and a deployed store cannot gain a CHECK.

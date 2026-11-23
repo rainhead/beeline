@@ -125,7 +125,7 @@ export function creatingWithoutComment(statements: ViewStatement[], schemaCommen
   for (const s of newest.values()) {
     if (!schemaComments(s.view)) continue;
     const restated = statements.some((c) => c.kind === "comment" && c.view === s.view && c.file === s.file && c.index > s.index);
-    if (!restated) missing.push(`${s.file}: ${s.view}`);
+    if (!restated) missing.push(`${s.file}: ${s.view} is created with no COMMENT ON VIEW after it, and CREATE OR REPLACE VIEW drops the comment: write a NEW migration, sorting after ${s.file}, that restates the view and then its COMMENT ON VIEW; do not edit ${s.file}, production has already run it`);
   }
   return missing;
 }
@@ -142,5 +142,5 @@ export function createdAndNeverDropped(statements: ViewStatement[], schemaViews:
   for (const s of [...statements].sort(order)) if (s.kind !== "comment") newest.set(s.view, s);
   return [...newest.values()]
     .filter((s) => s.kind === "create" && !schemaViews.has(s.view))
-    .map((s) => `${s.view}: ${s.file} creates it, the schema no longer declares it and no later migration drops it`);
+    .map((s) => `${s.view}: ${s.file} creates it, neither schema/ nor ingest/ declares it any more and no later migration drops it: write a NEW migration, sorting after ${s.file}, with DROP VIEW ${s.view}; do not edit ${s.file}, production has already run it`);
 }

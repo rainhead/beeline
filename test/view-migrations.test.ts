@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { MIGRATIONS_DIR } from "../src/migrate.js";
 import { SCHEMA_DIR } from "../src/schema.js";
-import { viewHash, VIEW_MANIFEST } from "../src/view-manifest.js";
+import { parseManifest, rehashManifest, viewHash, VIEW_MANIFEST } from "../src/view-manifest.js";
 import { createMemoryDb } from "./helpers.js";
 import { createdAndNeverDropped, creatingWithoutComment, sqlFiles, viewStatements, splitStatements, type ViewStatement } from "./migration-statements.js";
 
@@ -25,18 +25,24 @@ const INGEST_DIR = fileURLToPath(new URL("../ingest/", import.meta.url));
 
 const stored = async (c: DuckDBConnection) => {
   const rows = await (
-    await c.run("SELECT view_name, sql, comment FROM duckdb_views() WHERE NOT internal AND schema_name = 'main' ORDER BY view_name")
+    await c.run("SELECT view_name, sql, comment FROM duckdb_views() WHERE NOT internal AND schema_name = 'main' AND database_name = current_database() ORDER BY view_name")
   ).getRows();
   return new Map(rows.map(([n, sql, comment]) => [String(n), { sql: String(sql), comment: comment === null ? null : String(comment) }]));
 };
 
 /**
- * Production's store was built fresh from schema/ at cutover (2026-11-03) and
- * has run only the migrations from 0070 on; the earlier ones served the
+ * Production's store was built fresh from schema/ at cutover and stamped every
+ * migration up to 0070 at one instant (2026-11-03 22:01:54, in its backup of
+ * 2026-11-22); the first one it ran, 2026-11-04 00:05:48, is
+ * 0071-nothing-names-the-oklahoma-bee-atlas.sql. The earlier ones served the
  * sandbox, and several no longer run on today's schema. A view whose newest
  * statement is older than this is held by a hash instead.
  */
-const FIRST_MIGRATION_PRODUCTION_RAN = "0070";
+const FIRST_MIGRATION_PRODUCTION_RAN = "0071";
+
+/** What to do about a view whose newest migration no longer gives the schema's text or comment. */
+const restate = (file: string) =>
+  `write a NEW migration, sorting after ${file}, that restates the whole view (CREATE OR REPLACE VIEW) and then its COMMENT ON VIEW; do not edit ${file}, because production has already run it and never runs it again`;
 
 const migrations = await sqlFiles(MIGRATIONS_DIR);
 const statements = viewStatements(migrations.filter((m) => m.file >= FIRST_MIGRATION_PRODUCTION_RAN));
@@ -52,24 +58,26 @@ function manifestProblems(
   have: Map<string, { sql: string; comment: string | null }>,
   manifestText: string,
   isStated: (view: string) => boolean,
+  running: string,
 ): string[] {
-  const manifest = new Map(
-    manifestText
-      .split("\n")
-      .filter((l) => l.trim() !== "" && !l.startsWith("#"))
-      .map((l) => l.split(/\s+/) as [string, string]),
-  );
+  const { version, hashes } = parseManifest(manifestText);
+  // Before any hash is compared: another DuckDB writes views differently, so every hash would differ.
+  if (hashes.size > 0 && version !== running) return [`DuckDB changed from ${version ?? "an unrecorded version"} to ${running}: run pnpm views:rehash`];
   const problems: string[] = [];
   for (const [view, want] of have) {
     const stated = isStated(view);
-    const hash = manifest.get(view);
+    const hash = hashes.get(view);
     if (stated && hash !== undefined) problems.push(`${view}: a migration states it, so delete its line from migrations/view-hashes.txt`);
-    if (!stated && hash === undefined) problems.push(`${view}: in the schema, stated by no migration and not in migrations/view-hashes.txt`);
+    if (!stated && hash === undefined) {
+      problems.push(`${view}: in the schema, but no migration creates it and it is not in migrations/view-hashes.txt: write a NEW migration that creates it (do not add a line to the file)`);
+    }
     if (!stated && hash !== undefined && hash !== viewHash(want.sql, want.comment)) {
-      problems.push(`${view}: changed in schema/ and held by a hash: write a migration that restates the view, then delete its line from migrations/view-hashes.txt`);
+      problems.push(
+        `${view}: changed in schema/ and held by a hash: write a NEW migration, sorting after every existing migration, that restates the whole view (CREATE OR REPLACE VIEW) and its COMMENT ON VIEW, then delete its line from migrations/view-hashes.txt. A migration with only the comment is not enough`,
+      );
     }
   }
-  for (const view of manifest.keys()) if (!have.has(view)) problems.push(`${view}: in migrations/view-hashes.txt but not in the schema; delete the line`);
+  for (const view of hashes.keys()) if (!have.has(view)) problems.push(`${view}: in migrations/view-hashes.txt but not in the schema; delete the line, and if a deployed store has the view write a NEW migration with DROP VIEW`);
   return problems;
 }
 
@@ -109,7 +117,7 @@ describe("the rule about comments, on made-up migrations", () => {
       "0100-a.sql": "CREATE VIEW v AS SELECT 1 AS a; COMMENT ON VIEW v IS 'commented';",
       "0101-b.sql": "CREATE OR REPLACE VIEW v AS SELECT 2 AS a;",
     });
-    expect(creatingWithoutComment(newestWithout, () => true)).toEqual(["0101-b.sql: v"]);
+    expect(creatingWithoutComment(newestWithout, () => true)).toEqual([expect.stringContaining("0101-b.sql: v is created with no COMMENT ON VIEW")]);
     // A view the schema does not comment needs none.
     expect(creatingWithoutComment(newestWithout, () => false)).toEqual([]);
   });
@@ -151,7 +159,7 @@ describe("views and the migrations that state them", () => {
         continue;
       }
       if (shape.kind === "drop") {
-        failures.push(`${view}: the newest migration to touch it, ${shape.file}, drops it, yet schema/ declares it`);
+        failures.push(`${view}: the newest migration to touch it, ${shape.file}, drops it, yet schema/ declares it: ${restate(shape.file)}`);
         continue;
       }
       // Replay only this view's own statements: its CREATE (as OR REPLACE, so it
@@ -161,12 +169,12 @@ describe("views and the migrations that state them", () => {
         await store.run(shape.text.replace(/^(\s*(?:(?:--[^\n]*\n|\/\*[\s\S]*?\*\/)\s*)*)CREATE\s+VIEW/i, "$1CREATE OR REPLACE VIEW"));
         for (const c of replay) await store.run(c.text);
       } catch (err) {
-        failures.push(`${view}: ${shape.file} no longer runs on today's schema: ${(err as Error).message.split("\n")[0]}`);
+        failures.push(`${view}: ${shape.file} no longer runs on today's schema (${(err as Error).message.split("\n")[0]}): ${restate(shape.file)}`);
         continue;
       }
       const got = (await stored(store)).get(view)!;
-      if (got.sql !== want.sql) failures.push(`${view}: the text ${shape.file} gives differs from schema/'s\n  migration: ${got.sql}\n  schema:    ${want.sql}`);
-      if (got.comment !== want.comment) failures.push(`${view}: the comment after ${shape.file} differs from schema/'s\n  migration: ${got.comment}\n  schema:    ${want.comment}`);
+      if (got.sql !== want.sql) failures.push(`${view}: the text ${shape.file} gives differs from schema/'s: ${restate(shape.file)}\n  migration: ${got.sql}\n  schema:    ${want.sql}`);
+      if (got.comment !== want.comment) failures.push(`${view}: the comment after ${shape.file} differs from schema/'s: ${restate(shape.file)}\n  migration: ${got.comment}\n  schema:    ${want.comment}`);
     }
     expect(failures).toEqual([]);
     // Views no migration states are held by the manifest, which the next test checks.
@@ -175,14 +183,32 @@ describe("views and the migrations that state them", () => {
   test("a view no migration states is held by a hash, and only those views are", async () => {
     const { conn } = await createMemoryDb();
     const text = await readFile(VIEW_MANIFEST, "utf8").catch(() => "");
-    expect(manifestProblems(await stored(conn), text, (view) => newestShape(view) !== undefined)).toEqual([]);
+    const [[running]] = (await (await conn.run("SELECT version()")).getRows()) as [[string]];
+    expect(manifestProblems(await stored(conn), text, (view) => newestShape(view) !== undefined, running)).toEqual([]);
   });
 
   test("an empty or absent manifest is fine once every view is stated by a migration", () => {
     const have = new Map([["v", { sql: "CREATE VIEW v AS SELECT 1", comment: null }]]);
-    expect(manifestProblems(have, "", () => true)).toEqual([]);
-    expect(manifestProblems(have, "# nothing left\n", () => true)).toEqual([]);
-    expect(manifestProblems(have, "", () => false)).toEqual([expect.stringContaining("v: in the schema, stated by no migration")]);
+    expect(manifestProblems(have, "", () => true, "v9")).toEqual([]);
+    expect(manifestProblems(have, "# duckdb v1\n", () => true, "v9")).toEqual([]);
+    expect(manifestProblems(have, "", () => false, "v9")).toEqual([expect.stringContaining("v: in the schema, but no migration creates it")]);
+  });
+
+  test("another DuckDB version is named before any hash is compared", () => {
+    const have = new Map([["v", { sql: "CREATE VIEW v AS SELECT 1", comment: null }]]);
+    const text = `# duckdb v1\nv ${viewHash("something else", null)}\n`;
+    expect(manifestProblems(have, text, () => false, "v2")).toEqual(["DuckDB changed from v1 to v2: run pnpm views:rehash"]);
+    // The same version with a different hash is a changed view, and says a migration is needed.
+    expect(manifestProblems(have, text, () => false, "v1")).toEqual([expect.stringContaining("write a NEW migration")]);
+  });
+
+  test("pnpm views:rehash refuses with the recorded version and runs after an upgrade", () => {
+    const fresh = new Map([["v", "newhash"]]);
+    expect(() => rehashManifest("# duckdb v1\nv oldhash\n", fresh, "v1")).toThrow(/needs a new migration/);
+    expect(rehashManifest("# duckdb v1\nv oldhash\n", fresh, "v2")).toBe("# duckdb v2\nv newhash\n");
+    // It never adds a view, and refuses one that has left the schema.
+    expect(rehashManifest("# duckdb v1\nv oldhash\n", new Map([["v", "h"], ["w", "h"]]), "v2")).not.toContain("w ");
+    expect(() => rehashManifest("# duckdb v1\nx oldhash\n", fresh, "v2")).toThrow(/not in the schema/);
   });
 
   test("a migration that creates a view the schema comments restates the comment after it, in the same file", async () => {

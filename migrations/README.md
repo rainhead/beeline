@@ -38,19 +38,53 @@ replacing one view needs no migration for the views that read it. Numbers may
 skip (the runner orders by filename); two migrations already share some.
 See the 2026-11-22 amendment in [ADR 0006](../docs/adr/0006-migrations-for-deployed-stores.md).
 
-**When you change a view in `schema/`, write a migration that restates it**
-(`CREATE OR REPLACE VIEW`, then its `COMMENT ON VIEW`, in the same file), and
-if the view is listed in `view-hashes.txt`, delete its line. The test
-`test/view-migrations.test.ts` replays the newest migration that creates each
-view and fails when the result differs from `schema/`, which is how a
-forgotten migration shows. Removing a view from `schema/` needs a migration
-with `DROP VIEW`, or a deployed store keeps it; the same test fails when a
-migration creates a view that neither `schema/` nor `ingest/*.sql` declares
-and none drops it. `view-hashes.txt` holds a hash for each view that no
-migration from 0070 on creates (73 on 2026-11-22), since those cannot be
-replayed. It only shrinks, except that after a DuckDB upgrade changes how
-views are serialised, `pnpm views:rehash` rewrites the hashes of the views
-already listed; it never adds one.
+**Changing a view, a table or a comment.** A change to a view in `schema/`
+needs a new migration that restates the whole view with `CREATE OR REPLACE
+VIEW` and then its `COMMENT ON VIEW`, in the same file. Never edit a migration
+that has been deployed: production records each file it has run and never runs
+it again, so an edit passes the tests and changes nothing there. A migration
+that states a view must sort after every existing migration that states the
+same view, because the test takes the last one by filename, so if another
+branch lands first, renumber yours on rebase. Any changed `COMMENT ON`, for a
+view, a table or a column, needs a migration too. For tables and columns
+nothing in the test suite checks this yet: only `pnpm db:migrate --check`
+against a store shows it.
+
+**What each failure of `test/view-migrations.test.ts` means.**
+
+- *"gives differs from schema/'s", or the comment differs.* The view was
+  changed in `schema/` and the newest migration that creates it was not
+  updated. Write a new migration that restates the view and its comment.
+- *"changed in schema/ and held by a hash".* The view is listed in
+  `view-hashes.txt` because no migration since 0071 creates it. Write a new
+  migration that restates the whole view and its comment, then delete the
+  view's line from the file. A migration with only the comment is not enough:
+  the hash covers the text and the comment, and the view has to become one
+  that a migration states.
+- *"created with no COMMENT ON VIEW after it".* `CREATE OR REPLACE VIEW` drops
+  the view's comment. Write a new migration that restates the view and then
+  its comment.
+- *"neither schema/ nor ingest/ declares it any more".* A view was removed
+  from `schema/` and no migration drops it, so a deployed store keeps it.
+  Write a new migration with `DROP VIEW`.
+- *"DuckDB changed from X to Y".* The hashes were made by another DuckDB
+  version, which writes the same view as different text. Run `pnpm
+  views:rehash`. It refuses to run when the version has not changed, because
+  then a differing hash means the view changed and needs a migration.
+- *A view the test cannot see.* The test reads a view's name from the first
+  words of a statement, in three forms only: `CREATE [OR REPLACE] VIEW name`,
+  `DROP VIEW name` and `COMMENT ON VIEW name IS`, with a bare name. It does not
+  recognise `ALTER VIEW ... RENAME`, a quoted or `main.`-qualified name, or
+  `CREATE TEMP VIEW`. A migration using one of them is not seen, so the view
+  fails as one that no migration states. Use `DROP VIEW` and `CREATE VIEW` with
+  a bare name instead.
+
+`view-hashes.txt` holds a hash of the text and comment for each view that no
+migration from 0071 on creates (73 on 2026-11-22), since those cannot be
+replayed. 0071 is the first migration production ran: its store was built
+fresh from `schema/` at cutover, stamped every earlier migration at one
+instant, and ran 0071 two hours later (read from the migration ledger of the
+backup of 2026-11-22). The file only shrinks, except after a DuckDB upgrade.
 
 Nothing else may hold the database open (ADR 0005), so the app must not be
 running. On Fly the entrypoint migrates before it starts the app

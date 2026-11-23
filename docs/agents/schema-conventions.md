@@ -22,7 +22,7 @@ Kysely is pinned to 0.28.x until `kysely-duckdb` supports 0.29.
 
 ## Changing a view
 
-A view changed in `schema/` needs a migration that restates it with its `COMMENT ON VIEW`; `test/view-migrations.test.ts` fails otherwise. See [migrations/README.md](../../migrations/README.md).
+A view changed in `schema/` needs a new migration that restates it with its `COMMENT ON VIEW`; `test/view-migrations.test.ts` fails otherwise. Any changed `COMMENT ON` (view, table or column) needs a migration, but for tables and columns nothing in the suite checks it yet: only `pnpm db:migrate --check` against a store shows it. Never edit a migration that has been deployed. See [migrations/README.md](../../migrations/README.md).
 
 ## Timestamps
 

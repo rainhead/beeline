@@ -186,9 +186,9 @@ export async function schemaDrift(conn: DuckDBConnection): Promise<string[]> {
   const comments = async (c: DuckDBConnection): Promise<Map<string, string | null>> => {
     const rows = await (
       await c.run(
-        `SELECT view_name, NULL, comment FROM duckdb_views() WHERE NOT internal AND schema_name = 'main'
-         UNION ALL SELECT table_name, NULL, comment FROM duckdb_tables() WHERE schema_name = 'main'
-         UNION ALL SELECT table_name, column_name, comment FROM duckdb_columns() WHERE schema_name = 'main' AND NOT internal`,
+        `SELECT view_name, NULL, comment FROM duckdb_views() WHERE NOT internal AND schema_name = 'main' AND database_name = current_database()
+         UNION ALL SELECT table_name, NULL, comment FROM duckdb_tables() WHERE schema_name = 'main' AND database_name = current_database()
+         UNION ALL SELECT table_name, column_name, comment FROM duckdb_columns() WHERE schema_name = 'main' AND NOT internal AND database_name = current_database()`,
       )
     ).getRows();
     return new Map(rows.map(([t, col, cm]) => [col === null ? String(t) : `${String(t)}.${String(col)}`, cm === null ? null : String(cm)]));

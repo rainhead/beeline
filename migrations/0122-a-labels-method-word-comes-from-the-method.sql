@@ -1,16 +1,20 @@
--- Migration for schema/155_views_print_run.sql: the word printed_label_out_of_date
--- compares a label's method with now comes from the sample's method text, as
--- old Beeline's label code chose it (beeline-lmlh), not from the sample's
--- kind. nest if the text contains "nest", else trap if it contains "trap",
--- else net if it contains "net", else the text itself ("vacuum") when it is
--- plain ASCII of at most 12 characters, which always fits the label's method
--- box; the sample's kind where the text is empty or is none of these. It
--- mirrors methodText (src/label-text.ts), making tabs, line breaks and
--- no-break spaces spaces with translate() before trimming, as methodText
--- does. Where kind and method disagree (977 old samples), a reprint now says
--- what the pin says. The view is replaced in place; no table changes and no
--- column does, and nothing reads the view from another view. The whole view
--- and its comment are restated, since replacing a view drops its comment.
+-- Migration for schema/155_views_print_run.sql and schema/035_print_runs.sql:
+-- the word printed_label_out_of_date compares a label's method with now comes
+-- from the sample's method text (beeline-lmlh), not from the sample's kind.
+-- nest if the text contains "nest", else trap if it contains "trap", else net
+-- if it contains "net", ignoring case. Old Beeline's label code (since
+-- January 2025) also used the text, testing net, then trap, then nest with the
+-- first match winning, so it printed "trap" for "trap nest" where Beeline says
+-- "nest"; for every other text production holds the two agree. A text naming
+-- none of the three is the word itself ("vacuum") only for a sample of kind
+-- net, when it is plain ASCII of at most 12 characters, which always fits the
+-- label's method box; otherwise, and where the text is empty, the word is the
+-- sample's kind. It mirrors methodText (src/label-text.ts), making tabs, line
+-- breaks and no-break spaces spaces with translate() before trimming. The
+-- view is replaced in place; no table changes and no column does, and nothing
+-- reads the view from another view. The whole view and its comment are
+-- restated, since replacing a view drops its comment. The comment on
+-- printed_label.method_text, which said "net, trap or nest", is restated too.
 
 CREATE OR REPLACE VIEW printed_label_out_of_date AS
 WITH open_label AS (
@@ -30,19 +34,19 @@ joined AS (
          loc.latitude AS now_latitude, loc.longitude AS now_longitude, loc.elevation_m AS now_elevation_m,
          s.date_start AS now_date_start, s.date_end AS now_date_end,
          s.kind AS now_kind,
-         trim(translate(lower(coalesce(s.protocol, '')),
-                        concat(chr(9), chr(10), chr(11), chr(12), chr(13), chr(160)), '      ')) AS now_text
+         trim(translate(coalesce(s.protocol, ''),
+                        concat(chr(9), chr(10), chr(11), chr(12), chr(13), chr(160)), '      ')) AS now_raw
   FROM open_label l
   JOIN sample s ON s.entity_id = l.sample_id
   LEFT JOIN sample_location loc ON loc.sample_id = l.sample_id
 ),
 pair AS (
   SELECT j.*,
-         CASE WHEN now_text = '' THEN now_kind
-              WHEN now_text LIKE '%nest%' THEN 'nest'
-              WHEN now_text LIKE '%trap%' THEN 'trap'
-              WHEN now_text LIKE '%net%' THEN 'net'
-              WHEN length(now_text) <= 12 AND regexp_full_match(now_text, '[ -~]+') THEN now_text
+         CASE WHEN now_raw = '' THEN now_kind
+              WHEN lower(now_raw) LIKE '%nest%' THEN 'nest'
+              WHEN lower(now_raw) LIKE '%trap%' THEN 'trap'
+              WHEN lower(now_raw) LIKE '%net%' THEN 'net'
+              WHEN now_kind = 'net' AND length(now_raw) <= 12 AND regexp_full_match(now_raw, '[ -~]+') THEN lower(now_raw)
               ELSE now_kind END AS now_method
   FROM joined j
 )
@@ -75,4 +79,5 @@ FROM pair WHERE date_start IS DISTINCT FROM now_date_start OR date_end IS DISTIN
 UNION ALL
 SELECT print_run_id, specimen_id, sample_id, 'method', method_text, now_method
 FROM pair WHERE method_text IS DISTINCT FROM now_method;
-COMMENT ON VIEW printed_label_out_of_date IS 'Labels in a run not yet printed (and not canceled) whose sample has changed since the run was prepared: one row per label and changed field (locality, county, state_province, country, coordinates, elevation, dates, method), with the value on the label and the value now. The method is the word the label prints (from the protocol text: nest, trap, net or a short plain text as itself, and the kind where the protocol is empty or none of these), so a change of kind or protocol that leaves the word alone is not a change. The run page lists these so the printer can cancel and prepare again, or print and reprint (beeline-fq3j). The collector line is not compared.';
+COMMENT ON VIEW printed_label_out_of_date IS 'Labels in a run not yet printed (and not canceled) whose sample has changed since the run was prepared: one row per label and changed field (locality, county, state_province, country, coordinates, elevation, dates, method), with the value on the label and the value now. The method is the word the label prints (from the protocol text: nest, trap or net, a short plain text as itself for a net sample, otherwise the kind), so a change of kind or protocol that leaves the word alone is not a change. The run page lists these so the printer can cancel and prepare again, or print and reprint (beeline-fq3j). The collector line is not compared.';
+COMMENT ON COLUMN printed_label.method_text IS 'The word the method box prints (methodText, src/label-text.ts): nest, trap or net where the method text of the sample contains it, in that order; otherwise a short plain-ASCII method text as itself for a net sample (vacuum); otherwise the kind of the sample.';

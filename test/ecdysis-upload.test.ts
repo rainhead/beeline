@@ -577,6 +577,8 @@ describe("the associations file", () => {
       n += 1;
       made.push(await f.specimen({ field: `25000${n}`, sample: { kind: "'trap'", protocol: `'${method}'`, inat_observation_id: String(800 + n), host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } }));
     }
+    // A method written in, naming nothing ("pan", as OBAS-00218 has), stays out as it was when kind decided.
+    made.push(await f.specimen({ field: "2500030", sample: { kind: "'trap'", protocol: "'pan'", inat_observation_id: "830", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } }));
     const csv = await associationsCsv(f.db, await written(f, made.map((s) => s.id)));
     expect(csv.split("\n").filter((l) => l !== "")).toEqual(["subject identifier: catalogNumber,resourceUrl,verbatimSciname"]);
   });

@@ -99,11 +99,12 @@ describe("labels out of date for their method", () => {
     expect(await flagged()).toEqual([]);
   });
 
-  it("lists a label whose sample's method is a word the label prints as itself, and not one that stays the same", async () => {
+  it("lists a vacuum label when its sample becomes a trap sample or its method changes, and not otherwise", async () => {
     await prepared({ protocol: "'vacuum'" });
-    await conn.run(`UPDATE sample SET kind = 'trap' WHERE entity_id = ${sample}`);
     expect(await flagged()).toEqual([]);
-    await conn.run(`UPDATE sample SET protocol = 'aerial net' WHERE entity_id = ${sample}`);
+    await conn.run(`UPDATE sample SET kind = 'trap' WHERE entity_id = ${sample}`);
+    expect(await flagged()).toEqual([["method", "vacuum", "trap"]]);
+    await conn.run(`UPDATE sample SET kind = 'net', protocol = 'aerial net' WHERE entity_id = ${sample}`);
     expect(await flagged()).toEqual([["method", "vacuum", "net"]]);
   });
 
@@ -118,7 +119,7 @@ describe("labels out of date for their method", () => {
       // Whitespace that JavaScript's trim strips and SQL's trim does not: tab, line breaks, no-break space.
       "\tvacuum\n", "vacuum\u00a0", "\u00a0vacuum\r\n", "\t \n", "\u00a0", "aerial\tnet", "vacu\num",
       // Not plain ASCII: the kind, whatever the length.
-      "aspiración", "ＡＢＣ", "a\u2015",
+      "aspiración", "ＡＢＣ", "a\u2015", "\u0130", "\u212a", "\u0130stanbul", "\u212aick", "VACUUM\u0130",
     ];
     for (const kind of ["net", "trap"] as const) {
       for (const protocol of protocols) {

@@ -14,8 +14,19 @@ let conn: DuckDBConnection;
 let path: string;
 let bytes: Buffer;
 
-beforeAll(async () => {
+/**
+ * A store of its own for each test that uses `conn`: many of them edit the
+ * staged records or the model before writing another export, and none may
+ * start from what another changed. A copy of the promoted store is the same
+ * store every time (about 0.2 s), so `path` and `bytes`, written once from
+ * the first, describe every test's store.
+ */
+const freshStore = async () => {
   ({ conn } = await promotedStore("occurrences"));
+};
+
+beforeAll(async () => {
+  await freshStore();
   path = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
   await writeLegacyExport(conn, path);
   bytes = await readFile(path);
@@ -30,6 +41,8 @@ async function exported(): Promise<Record<string, string>[]> {
 }
 
 describe("the legacy-format export", () => {
+  beforeEach(freshStore);
+
   test("opens with a byte order mark and the legacy header, in order", () => {
     expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     const header = bytes.subarray(3).toString("utf8").split("\n")[0];
@@ -818,6 +831,8 @@ describe("the plant: the sample's floral host as the store holds it (beeline-qpy
 });
 
 describe("the Exports page", () => {
+  beforeEach(freshStore);
+
   const inat = {
     authorizeUrl: () => "unused",
     exchangeCode: () => Promise.reject(new Error("not under test")),
@@ -860,6 +875,8 @@ describe("the Exports page", () => {
 });
 
 describe("writing the export", () => {
+  beforeEach(freshStore);
+
   test("leaves the instance's thread count as it found it", async () => {
     // The CLI, which used to run on the machine's two and outgrew the budget (beeline-1w2d).
     await conn.run("SET threads = 2");
@@ -879,6 +896,8 @@ describe("writing the export", () => {
 });
 
 describe("the legacy-export job", () => {
+  beforeEach(freshStore);
+
   test("writes the file on one thread and puts the instance's thread count back", async () => {
     const { buildJobs } = await import("../src/app/jobs/registry.js");
     const { runJob } = await import("../src/app/jobs/framework.js");

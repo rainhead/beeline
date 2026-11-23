@@ -17,6 +17,10 @@ import { refreshObservationFields } from "./refresh-observation-fields.js";
 
 // The whitelisted projection. Private fields are simply absent when the
 // token lacks trust — provenance rules read viewer_trusted_by_observer.
+// private_place_ids is requested although iNaturalist's API v2 never returns
+// it: the field is missing from v2's Observation response schema, and v2 drops
+// a requested field the schema does not list, without an error. It stays
+// because schema/107's coalesce would start to use it if v2 gained the field.
 const FIELDS = [
   "id", "uuid", "observed_on",
   "geojson", "private_geojson", "positional_accuracy", "public_positional_accuracy",

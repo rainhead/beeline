@@ -347,8 +347,9 @@ COMMENT ON VIEW sample_mint_group IS 'Unlinked collection records, one per obser
 -- Which existing sample, if any, a group is already recorded as.
 --
 -- THE KEY IS A DATE RANGE, NOT date_start. legacy_sample_map derives
--- kind='trap' from the presence of a second date, so a trap sample spans a
--- range and its observation is dated on the END. Keying on date_start misses
+-- kind='trap' from a second date (unless every end is that record's start
+-- and its method a net, src/old-sample-kind.ts, beeline-lmlh), so a trap
+-- sample usually spans a range and its observation is dated on the END. Keying on date_start misses
 -- 20 samples whose observed_on falls strictly inside [date_start, date_end],
 -- and all 20 cite no observation — so they are free links that would instead
 -- have become duplicate collecting events, invisible because

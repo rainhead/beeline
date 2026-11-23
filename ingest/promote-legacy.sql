@@ -12,8 +12,11 @@
 -- (beeline-eyk); a difference of an actual letter still does, and is
 -- curation, not a wider fold.
 --
--- kind: a sample with a date range is a trap sample — the definitional
--- criterion (CONTEXT.md); sampleId prefixes also occur on net data (G/R/…).
+-- kind: a sample is a trap sample when some old record gives an end date,
+-- unless every end given equals that record's start and every record's method
+-- is a net (src/old-sample-kind.ts, CONTEXT.md, beeline-lmlh); the old
+-- records wrote a one-day netting trip as a range ending on its start day.
+-- sampleId prefixes also occur on net data (G/R/…).
 
 -- ── Corrections over staging (ADR 0004, frozen-upstream case) ───────────
 -- Staff fixes for rows whose upstream is frozen or wrong forever, keyed by
@@ -681,7 +684,8 @@ SELECT
   m.person_id,
   r.sid, r.p_date_start, k.obs_key,
   coalesce(max(r.p_date_end), r.p_date_start)      AS date_end,
-  CASE WHEN max(r.p_date_end) IS NOT NULL THEN 'trap' ELSE 'net' END AS kind,
+  -- The rule is src/old-sample-kind.ts's, put in here when the file is read.
+  {{OLD_SAMPLE_KIND}}                               AS kind,
   count(*)                                          AS specimen_count,
   arg_min(r.country, r._id)                         AS country,
   arg_min(r.stateProvince, r._id)                   AS state_province,

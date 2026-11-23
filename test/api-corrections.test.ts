@@ -1409,3 +1409,135 @@ describe("releasing a settled season's sample for printing", () => {
     expect(await releases()).toEqual([]);
   });
 });
+
+describe("a sample's kind, worked out again from its old records (beeline-lmlh)", () => {
+  // The fixture's sample '1' of Ada Collector was made from three records with a netting method and no end date,
+  // so the rule gives net. Promotion (before the rule was corrected) is simulated by setting its kind to trap.
+  const oldKind = async (w: World, id: number, kind: "net" | "trap") => {
+    await w.conn.run(`UPDATE sample SET kind = '${kind}' WHERE entity_id = ${id}`);
+    await recordSampleChanges(duckdbReader(w.conn), { log: w.paths.sampleChangesPath, state: w.paths.sampleStatePath }, { source: "observation_promotion" });
+  };
+  const sampleRow = async (w: World, id: number) => rows(w.conn, `SELECT * FROM sample WHERE entity_id = ${id}`);
+  const logLines = async (w: World) => (await readFile(w.paths.sampleChangesPath, "utf8").catch(() => "")).split("\n").length;
+  const legacySample = async (w: World, number: string) =>
+    Number(((await rows(w.conn, `SELECT entity_id FROM sample WHERE sample_number = '${number}'`)) as number[][])[0]![0]);
+  const NOTE = "netted on one day, written as a range ending the same day";
+
+  it("changes the kind and nothing else, records one history entry and no correction against the old records", async () => {
+    const w = await world();
+    const id = await legacySample(w, "1");
+    await oldKind(w, id, "trap");
+    const path = `/samples/${id}/kind-from-old-records`;
+    const corrections = await correctionsFile(w);
+    const before = await sampleRow(w, id);
+    const lines = await logLines(w);
+    const stagedCorrections = await rows(w.conn, `SELECT count(*) FROM legacy_correction`);
+
+    // A dry run says what would change and writes nothing at all.
+    const dry = await w.send(w.keys.sam, path, { note: NOTE, dry_run: true });
+    expect(dry.status).toBe(200);
+    expect(await json(dry)).toEqual({ sample_id: id, outcome: "would_save", dry_run: true, from: "trap", to: "net" });
+    expect(await sampleRow(w, id)).toEqual(before);
+    expect(await correctionsFile(w)).toBe(corrections);
+    expect(await logLines(w)).toBe(lines);
+    expect(await w.entries("1")).toEqual([]);
+
+    const saved = await w.send(w.keys.sam, path, { note: NOTE, reference: "beeline-lmlh" });
+    expect(saved.status).toBe(200);
+    expect(await json(saved)).toEqual({ sample_id: id, outcome: "saved", dry_run: false, from: "trap", to: "net" });
+    const after = await sampleRow(w, id);
+    const column = async (name: string) =>
+      ((await rows(w.conn, `SELECT column_name FROM information_schema.columns WHERE table_name = 'sample' ORDER BY ordinal_position`)) as string[][]).findIndex((r) => r[0] === name);
+    const kindAt = await column("kind");
+    expect(after[0]![kindAt]).toBe("net");
+    // Every other column of the row is as it was.
+    expect(after[0]!.filter((_, i) => i !== kindAt)).toEqual(before[0]!.filter((_, i) => i !== kindAt));
+    expect(await w.entries("1")).toEqual([{ field: "kind", to: "net", author: "samstaff", reason: NOTE, source: "api" }]);
+    expect((await readSampleChanges(w.paths.sampleChangesPath)).filter((c) => c.sample_number === "1" && c.field === "kind" && c.source === "api").map((c) => [c.old_value, c.new_value])).toEqual([["trap", "net"]]);
+    // The old records are not corrected: no event in the file or in either correction table.
+    expect(await correctionsFile(w)).toBe(corrections);
+    expect(await rows(w.conn, `SELECT count(*) FROM legacy_correction`)).toEqual(stagedCorrections);
+    expect(await rows(w.conn, `SELECT count(*) FROM legacy_app_correction`)).toEqual([[0n]]);
+
+    // Asked again, the records give the kind it has.
+    expect(await json(await w.send(w.keys.sam, path, { note: NOTE }))).toMatchObject({ outcome: "unchanged", from: "net", to: "net" });
+    expect(await w.entries("1")).toHaveLength(1);
+  });
+
+  it("takes no kind from the caller, and needs a note", async () => {
+    const w = await world();
+    const id = await legacySample(w, "1");
+    await oldKind(w, id, "trap");
+    const path = `/samples/${id}/kind-from-old-records`;
+    for (const body of [{ note: NOTE, kind: "net" }, { kind: "net" }, {}, { note: 3 }]) {
+      expect([JSON.stringify(body), (await w.send(w.keys.sam, path, body)).status]).toEqual([JSON.stringify(body), 400]);
+    }
+    expect((await w.send(w.keys.sam, path, { note: "   " })).status).toBe(422);
+    expect(await sampleRow(w, id)).toEqual(await sampleRow(w, id));
+    expect(((await rows(w.conn, `SELECT kind FROM sample WHERE entity_id = ${id}`)) as string[][])[0]![0]).toBe("trap");
+  });
+
+  it("refuses a key that is not staff, a sample nobody has, and a read key, and writes nothing", async () => {
+    const w = await world();
+    const id = await legacySample(w, "1");
+    await oldKind(w, id, "trap");
+    const path = `/samples/${id}/kind-from-old-records`;
+    expect((await w.send(w.keys.samEdit, path, { note: NOTE })).status).toBe(403);
+    expect((await w.send(w.keys.alice, path, { note: NOTE })).status).toBe(403);
+    expect((await w.send(w.keys.aliceRead, path, { note: NOTE })).status).toBe(403);
+    expect((await w.send(w.keys.sam, "/samples/999999/kind-from-old-records", { note: NOTE })).status).toBe(404);
+    expect(((await rows(w.conn, `SELECT kind FROM sample WHERE entity_id = ${id}`)) as string[][])[0]![0]).toBe("trap");
+    expect(await w.entries("1")).toEqual([]);
+  });
+
+  it("refuses a sample with no old records, one entered in Beeline, and while a job runs", async () => {
+    const w = await world();
+    const none = await w.send(w.keys.sam, `/samples/${w.linked}/kind-from-old-records`, { note: NOTE });
+    expect([none.status, (await json(none)).error]).toEqual([409, "no_staging"]);
+    const entered = await insertCleanSample(w.conn, { collector_id: String(w.people.alice), sample_number: "'A-30'" });
+    await w.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${entered}, ${w.people.alice})`);
+    const refused = await w.send(w.keys.sam, `/samples/${entered}/kind-from-old-records`, { note: NOTE });
+    expect([refused.status, (await json(refused)).error]).toEqual([409, "entered_in_beeline"]);
+    const id = await legacySample(w, "1");
+    await oldKind(w, id, "trap");
+    w.setRunning("nightly-pipeline");
+    const busy = await w.send(w.keys.sam, `/samples/${id}/kind-from-old-records`, { note: NOTE });
+    expect([busy.status, (await json(busy)).error]).toEqual([409, "busy"]);
+    expect(((await rows(w.conn, `SELECT kind FROM sample WHERE entity_id = ${id}`)) as string[][])[0]![0]).toBe("trap");
+  });
+
+  it("refuses while the sample's labels are in a print run that has not printed", async () => {
+    const w = await world();
+    const id = await legacySample(w, "1");
+    await oldKind(w, id, "trap");
+    await w.conn.run(`INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person`);
+    await w.conn.run(
+      `INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text,
+                                  collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
+       SELECT (SELECT max(entity_id) FROM print_run), sp.entity_id, 1, sp.specimen_number, 'l', 'c', 'd', 'c', 'm', 'n', 46.0646, -118.343, s.date_start, s.date_end
+       FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.sample_id = ${id}`,
+    );
+    expect((await rows(w.conn, `SELECT 1 FROM sample_label_in_progress WHERE sample_id = ${id} AND printing_count > 0`)).length).toBeGreaterThan(0);
+    const held = await w.send(w.keys.sam, `/samples/${id}/kind-from-old-records`, { note: NOTE });
+    expect([held.status, (await json(held)).error]).toEqual([409, "in_print_run"]);
+    expect(((await rows(w.conn, `SELECT kind FROM sample WHERE entity_id = ${id}`)) as string[][])[0]![0]).toBe("trap");
+  });
+
+  it("changes a net to a trap where the records say so, unless its series number is another trap sample's", async () => {
+    const w = await world();
+    // OBAS-00657's records give a range and a trap method, so the rule gives trap.
+    const id = await legacySample(w, "OBAS-00657");
+    await oldKind(w, id, "net");
+    const path = `/samples/${id}/kind-from-old-records`;
+    // OBAS-00658 is the other trap sample; give it this one's number.
+    const other = await legacySample(w, "OBAS-00658");
+    await w.conn.run(`UPDATE sample SET sample_number = 'OBAS-00657' WHERE entity_id = ${other}`);
+    const taken = await w.send(w.keys.sam, path, { note: NOTE });
+    expect([taken.status, (await json(taken)).error]).toEqual([409, "series_number_taken"]);
+    expect(((await rows(w.conn, `SELECT kind FROM sample WHERE entity_id = ${id}`)) as string[][])[0]![0]).toBe("net");
+    await w.conn.run(`UPDATE sample SET sample_number = 'OBAS-00658' WHERE entity_id = ${other}`);
+    const saved = await w.send(w.keys.sam, path, { note: NOTE });
+    expect(await json(saved)).toMatchObject({ outcome: "saved", from: "net", to: "trap" });
+    expect(await w.entries("OBAS-00657")).toEqual([{ field: "kind", to: "trap", author: "samstaff", reason: NOTE, source: "api" }]);
+  });
+});

@@ -44,6 +44,7 @@ Starting a job takes no arguments: it is the registered job, run now, as the but
 | `coordinates` | `latitude`, `longitude`, `uncertainty`, `remove`, `note` | the staff coordinates form | staff |
 | `country-state-county` | `country`, `state_province`, `county` (each absent to leave it; an empty county for none), `note` | none yet (the samples upload, beeline-kgyd.4, applies it) | staff |
 | `collectors` | `collectors` (a list, the first collector first, each a display name, a person's id, or `inat:` and a login or user id), `note`, `dry_run` | none yet (the samples upload, beeline-kgyd.4, applies it) | staff |
+| `kind-from-old-records` | `note` (required), `dry_run`; never a kind | none | staff |
 | `trap-count` | `count` (a whole number, or empty to take it away), `note` | none yet (the samples upload, beeline-kgyd.4, applies it) | staff |
 | `specimen-count` | `count` (a whole number, 0 or more), `note` | none yet (the samples upload, beeline-kgyd.4, applies it) | staff |
 | `release-labels` | `note`, `withdraw` | "Release labels for printing" and "Withdraw release" on the sample page | staff |

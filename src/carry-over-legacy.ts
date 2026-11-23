@@ -2,6 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
+import { oldSampleKindSql } from "./old-sample-kind.js";
 
 /**
  * Carries over the old Beeline's records that a correction in git has made
@@ -223,7 +224,7 @@ export async function carryOverLegacyRecords(
         conn,
         `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, inat_observation_id,
                              country, state_province, county, locality, protocol)
-         SELECT CASE WHEN max(p_date_end) IS NOT NULL THEN 'trap' ELSE 'net' END,
+         SELECT ${oldSampleKindSql({ end: "p_date_end", start: "p_date_start", method: '"samplingProtocol"' })},
                 sid, p_date_start, coalesce(max(p_date_end), p_date_start), count(*), arg_min(p_inat_obs_id, _id),
                 CASE nullif(arg_min(country, _id), '') WHEN 'CA' THEN 'CAN' WHEN 'NZ' THEN 'NZL' ELSE nullif(arg_min(country, _id), '') END,
                 nullif(arg_min("stateProvince", _id), ''), nullif(arg_min(county, _id), ''),

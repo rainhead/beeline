@@ -25,6 +25,7 @@ import { applySampleEdit, loadEditableSample, planSampleEdit, type EditableField
 import { setStaffCollectors, type CollectorLine } from "./sample-collectors.js";
 import { heldByUnprintedRun, setStaffPlace, type PlaceChange, type PlaceField } from "./sample-place.js";
 import { setSampleMethod, type MethodInput, type MethodResult } from "./sample-method.js";
+import { kindFromOldRecords, setKindFromOldRecords } from "./sample-kind.js";
 import { onSample } from "./sample-queue.js";
 
 /**
@@ -801,6 +802,88 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
         case "conflict":
         case "not_applied":
           return refused(saved.outcome);
+      }
+    }),
+  );
+}
+
+export interface KindFromOldRecordsInput {
+  /** Why, required: it is shown in the sample's history. */
+  note: string;
+  /** Work it out and write nothing: no change to the sample, no history entry. */
+  dryRun?: boolean;
+}
+
+export type KindFromOldRecordsResult =
+  | {
+      ok: true;
+      /** `would_save` is the answer to a dry run that found a change. */
+      outcome: "saved" | "unchanged" | "would_save";
+      from: "net" | "trap";
+      to: "net" | "trap";
+    }
+  | Common
+  | StaffOnly
+  | Refused<"no_staging" | "entered_in_beeline" | "in_print_run" | "series_number_taken" | "unavailable" | "busy">
+  | Invalid;
+
+/**
+ * Staff have a sample's kind worked out again from its old records, under the rule promotion uses
+ * (src/old-sample-kind.ts, beeline-lmlh). The caller names no kind. Only `sample.kind` is written, with one history
+ * entry under the staff member and the note; nothing is written against the old records, which are not corrected
+ * (src/app/sample-kind.ts). Refused for a sample with no old records, one entered in Beeline, one whose labels are in
+ * a print run that has not printed, and a change to trap where the sample's series number is another trap sample's.
+ * Staff only, refused while impersonating.
+ */
+export function setKindFromOldRecordsCorrection(
+  deps: CorrectionDeps,
+  actor: Actor,
+  sampleId: number,
+  input: Input<KindFromOldRecordsInput>,
+): Promise<KindFromOldRecordsResult> {
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const found = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select("entity_id").executeTakeFirst();
+    if (found === undefined) return refused("not_found");
+    if (deps.syncJobRunning()) return refused("busy");
+    return { ready: null };
+  };
+  return correct(sampleId, input, gates, (_, form): Promise<KindFromOldRecordsResult> =>
+    withPrintRunLock(async (): Promise<KindFromOldRecordsResult> => {
+      const { db } = deps;
+      const note = form.note.trim();
+      if (note === "") return { ok: false, refusal: "invalid", problem: "A note is required: it is shown in the sample's history." };
+      const dryRun = form.dryRun === true;
+      const now = await db.selectFrom("sample").where("entity_id", "=", sampleId).select(["kind", "sample_number"]).executeTakeFirst();
+      if (now === undefined) return refused("not_found");
+      const entered = (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
+      if (entered) return refused("entered_in_beeline");
+      if (await heldByUnprintedRun(db, sampleId)) return refused("in_print_run");
+      // A change to trap makes the sample's series number a trap sample's, and each trap sample has one (as `setMethod`).
+      if (now.kind !== "trap" && (await kindFromOldRecords(db, sampleId)) === "trap") {
+        const writer = deps.printWriter ?? deps.conn;
+        if (writer === undefined) return refused("unavailable");
+        if (await seriesTrapNumberTaken(writer, now.sample_number, sampleId)) return refused("series_number_taken");
+      }
+      const saved = await setKindFromOldRecords(db, sampleId, { dryRun });
+      switch (saved.outcome) {
+        case "saved":
+          await recordChange(deps, sampleId, actor, note, "kind change");
+          return { ok: true, outcome: "saved", from: saved.from, to: saved.to };
+        case "unchanged":
+        case "would_save":
+          return { ok: true, outcome: saved.outcome, from: saved.from, to: saved.to };
+        case "not_found":
+          return refused("not_found");
+        case "entered":
+          return refused("entered_in_beeline");
+        case "no_old_records":
+          return refused("no_staging");
+        case "not_applied":
+          return refused("busy");
+        default:
+          return unreachable(saved);
       }
     }),
   );

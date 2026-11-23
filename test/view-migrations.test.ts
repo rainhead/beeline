@@ -6,7 +6,7 @@ import { MIGRATIONS_DIR } from "../src/migrate.js";
 import { SCHEMA_DIR } from "../src/schema.js";
 import { parseManifest, rehashManifest, viewHash, VIEW_MANIFEST } from "../src/view-manifest.js";
 import { createMemoryDb } from "./helpers.js";
-import { createdAndNeverDropped, creatingWithoutComment, sqlFiles, viewStatements, splitStatements, type ViewStatement } from "./migration-statements.js";
+import { asCreateOrReplace, createdAndNeverDropped, creatingWithoutComment, sqlFiles, viewStatements, splitStatements, type ViewStatement } from "./migration-statements.js";
 
 /**
  * "Did this change forget a migration?" for views, which `db:migrate --check`
@@ -94,6 +94,14 @@ describe("the statement splitter", () => {
     expect(wrong).toEqual([]);
   });
 
+  test("rewrites CREATE VIEW to CREATE OR REPLACE VIEW after any comments, and leaves OR REPLACE alone", () => {
+    expect(asCreateOrReplace("/* a; b */\n-- line\n  CREATE VIEW v AS SELECT 1")).toBe("/* a; b */\n-- line\n  CREATE OR REPLACE VIEW v AS SELECT 1");
+    expect(asCreateOrReplace("-- x\nCREATE OR REPLACE VIEW v AS SELECT 1")).toBe("-- x\nCREATE OR REPLACE VIEW v AS SELECT 1");
+    expect(asCreateOrReplace("COMMENT ON VIEW v IS 'CREATE VIEW'")).toBe("COMMENT ON VIEW v IS 'CREATE VIEW'");
+    // The pattern that CodeQL flagged: many block comments in a row do not hang it.
+    expect(asCreateOrReplace("/*".repeat(5000) + "CREATE VIEW v AS SELECT 1")).toContain("/*");
+  });
+
   test("cuts at a top-level semicolon only", () => {
     expect(splitStatements("-- a; b\nSELECT 'x;''y'; /* ; */ SELECT \"a;b\" ; -- end;")).toEqual([
       "-- a; b\nSELECT 'x;''y'",
@@ -166,7 +174,7 @@ describe("views and the migrations that state them", () => {
       // replaces the view in place) and every COMMENT ON VIEW stated after it.
       const replay = history(view).filter((s) => s.kind === "comment" && order(shape, s) < 0);
       try {
-        await store.run(shape.text.replace(/^(\s*(?:(?:--[^\n]*\n|\/\*[\s\S]*?\*\/)\s*)*)CREATE\s+VIEW/i, "$1CREATE OR REPLACE VIEW"));
+        await store.run(asCreateOrReplace(shape.text));
         for (const c of replay) await store.run(c.text);
       } catch (err) {
         failures.push(`${view}: ${shape.file} no longer runs on today's schema (${(err as Error).message.split("\n")[0]}): ${restate(shape.file)}`);

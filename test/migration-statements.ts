@@ -144,3 +144,15 @@ export function createdAndNeverDropped(statements: ViewStatement[], schemaViews:
     .filter((s) => s.kind === "create" && !schemaViews.has(s.view))
     .map((s) => `${s.view}: ${s.file} creates it, neither schema/ nor ingest/ declares it any more and no later migration drops it: write a NEW migration, sorting after ${s.file}, with DROP VIEW ${s.view}; do not edit ${s.file}, production has already run it`);
 }
+
+/**
+ * The statement with its leading `CREATE VIEW` turned into `CREATE OR REPLACE
+ * VIEW`, so that it replaces the view in place. Leading whitespace and
+ * comments are kept as they are; a statement that already says OR REPLACE, or
+ * is not a CREATE VIEW, is returned unchanged.
+ */
+export function asCreateOrReplace(statement: string): string {
+  const rest = stripLeadingComments(statement);
+  const lead = statement.slice(0, statement.length - rest.length);
+  return lead + rest.replace(/^CREATE\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?/i, "CREATE OR REPLACE VIEW ");
+}

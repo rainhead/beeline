@@ -120,6 +120,8 @@ describe("labels out of date for their method", () => {
       "\tvacuum\n", "vacuum\u00a0", "\u00a0vacuum\r\n", "\t \n", "\u00a0", "aerial\tnet", "vacu\num",
       // Not plain ASCII: the kind, whatever the length.
       "aspiración", "ＡＢＣ", "a\u2015", "\u0130", "\u212a", "\u0130stanbul", "\u212aick", "VACUUM\u0130",
+      // Unicode spaces that SQL's one-argument trim removes and the code does not: not plain ASCII, so the kind.
+      "\u2003vacuum", "vacuum\u2003", "vac\u2003uum", "\u3000vacuum", "vacuum\u3000", "vac\u3000uum",
     ];
     for (const kind of ["net", "trap"] as const) {
       for (const protocol of protocols) {

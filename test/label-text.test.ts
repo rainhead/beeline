@@ -160,6 +160,9 @@ describe("the six label fields", () => {
     expect(methodText({ kind: "net", protocol: "aspiración" })).toBe("net");
     expect(methodText({ kind: "net", protocol: "\tVacuum\n" })).toBe("vacuum");
     expect(methodText({ kind: "net", protocol: "\u00a0vacuum\u00a0" })).toBe("vacuum");
+    // An em space or ideographic space is not an ASCII space, so it is not trimmed and the text is not plain ASCII.
+    expect(methodText({ kind: "net", protocol: "\u2003vacuum" })).toBe("net");
+    expect(methodText({ kind: "net", protocol: "vacuum\u3000" })).toBe("net");
     expect(methodText({ kind: "net", protocol: "\u0130" })).toBe("net");
     expect(methodText({ kind: "net", protocol: "\u212a" })).toBe("net");
     expect(methodText({ kind: "trap", protocol: "handcollected" })).toBe("trap");

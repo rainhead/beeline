@@ -218,7 +218,7 @@ joined AS (
          s.date_start AS now_date_start, s.date_end AS now_date_end,
          s.kind AS now_kind,
          trim(translate(lower(coalesce(s.protocol, '')),
-                        chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || chr(160), '      ')) AS now_text
+                        concat(chr(9), chr(10), chr(11), chr(12), chr(13), chr(160)), '      ')) AS now_text
   FROM open_label l
   JOIN sample s ON s.entity_id = l.sample_id
   LEFT JOIN sample_location loc ON loc.sample_id = l.sample_id

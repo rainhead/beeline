@@ -86,7 +86,8 @@ describe("the kind promotion gives a sample from old records", () => {
   });
 });
 
-describe("the rule as the carry-over states it", () => {
+describe("the expression, in the column names the carry-over gives it", () => {
+  // Tests the SQL the carry-over splices in, over a table with its column names; the carry-over itself is test/carry-over-legacy.test.ts.
   test("gives the same kinds over records written in the carry-over's own columns", async () => {
     const { conn: scratch } = await createMemoryDb();
     await scratch.run(`CREATE TEMP TABLE r (sid TEXT, p_date_start DATE, p_date_end DATE, "samplingProtocol" TEXT)`);

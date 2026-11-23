@@ -211,7 +211,7 @@ async function recordChange(
   actor: Actor,
   reason: string | undefined,
   what: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
       source: sourceOf(actor),
@@ -219,8 +219,10 @@ async function recordChange(
       reason,
       where: `s.entity_id = ${sampleId}`,
     });
+    return true;
   } catch (err) {
     console.warn(`could not record the ${what}: ${(err as Error).message}`);
+    return false;
   }
 }
 
@@ -821,10 +823,13 @@ export type KindFromOldRecordsResult =
       outcome: "saved" | "unchanged" | "would_save";
       from: "net" | "trap";
       to: "net" | "trap";
+      /** On `saved`: whether the history entry was written. The change stands either way; a run stops on the first false. */
+      history_recorded?: boolean;
     }
   | Common
   | StaffOnly
-  | Refused<"no_staging" | "entered_in_beeline" | "in_print_run" | "series_number_taken" | "unavailable" | "busy">
+  | Refused<"no_staging" | "entered_in_beeline" | "rule_says_trap">
+  | (Refused<"in_print_run" | "busy"> & { says?: string })
   | Invalid;
 
 /**
@@ -832,7 +837,7 @@ export type KindFromOldRecordsResult =
  * (src/old-sample-kind.ts, beeline-lmlh). The caller names no kind. Only `sample.kind` is written, with one history
  * entry under the staff member and the note; nothing is written against the old records, which are not corrected
  * (src/app/sample-kind.ts). Refused for a sample with no old records, one entered in Beeline, one whose labels are in
- * a print run that has not printed, and a change to trap where the sample's series number is another trap sample's.
+ * a print run that has not printed, and one stored as a net sample whose records give trap (only a trap is corrected to a net).
  * Staff only, refused while impersonating.
  */
 export function setKindFromOldRecordsCorrection(
@@ -859,18 +864,19 @@ export function setKindFromOldRecordsCorrection(
       if (now === undefined) return refused("not_found");
       const entered = (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
       if (entered) return refused("entered_in_beeline");
-      if (await heldByUnprintedRun(db, sampleId)) return refused("in_print_run");
-      // A change to trap makes the sample's series number a trap sample's, and each trap sample has one (as `setMethod`).
-      if (now.kind !== "trap" && (await kindFromOldRecords(db, sampleId)) === "trap") {
-        const writer = deps.printWriter ?? deps.conn;
-        if (writer === undefined) return refused("unavailable");
-        if (await seriesTrapNumberTaken(writer, now.sample_number, sampleId)) return refused("series_number_taken");
+      if (await heldByUnprintedRun(db, sampleId)) {
+        return { ...refused("in_print_run"), says: "This sample's labels are in a print run that has not printed yet, which froze them. Wait for the run to print or cancel it, then make the correction. Nothing was done." };
       }
       const saved = await setKindFromOldRecords(db, sampleId, { dryRun });
       switch (saved.outcome) {
         case "saved":
-          await recordChange(deps, sampleId, actor, note, "kind change");
-          return { ok: true, outcome: "saved", from: saved.from, to: saved.to };
+          return {
+            ok: true,
+            outcome: "saved",
+            from: saved.from,
+            to: saved.to,
+            history_recorded: await recordChange(deps, sampleId, actor, note, "kind change"),
+          };
         case "unchanged":
         case "would_save":
           return { ok: true, outcome: saved.outcome, from: saved.from, to: saved.to };
@@ -880,8 +886,10 @@ export function setKindFromOldRecordsCorrection(
           return refused("entered_in_beeline");
         case "no_old_records":
           return refused("no_staging");
+        case "rule_says_trap":
+          return refused("rule_says_trap");
         case "not_applied":
-          return refused("busy");
+          return { ...refused("busy"), says: "Another write to the store got there first. Nothing was written. Try again." };
         default:
           return unreachable(saved);
       }

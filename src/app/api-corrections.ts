@@ -168,11 +168,11 @@ const REFUSALS = {
     error: "entered_in_beeline",
     message: "This sample was entered in Beeline, so there are no old records to work its kind out from, and a trap sample entered here stays one. Nothing was done.",
   },
-  series_number_taken: {
+  rule_says_trap: {
     status: 409,
-    error: "series_number_taken",
+    error: "rule_says_trap",
     message:
-      "The old records make this a trap sample, and its number is a series number that another trap sample already has: each trap sample's is its own. Nothing was done. Correct one of the two samples' numbers first.",
+      "This sample's old records give trap, and this route only corrects a trap sample to a net sample. Nothing was changed.",
   },
   unavailable: { status: 503, error: "unavailable", message: "This Beeline cannot make this correction." },
 } as const satisfies Record<string, { status: ContentfulStatusCode; error: string; message: string }>;
@@ -229,11 +229,11 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "labels_in_run":
     case "no_host_key":
     case "entered_in_beeline":
-    case "series_number_taken":
+    case "rule_says_trap":
     case "inat_unreachable":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
-      return apiError(c, r.status, r.error, r.message);
+      return apiError(c, r.status, r.error, "says" in failure && typeof failure.says === "string" ? failure.says : r.message);
     }
     default:
       return unreachable(failure);
@@ -252,7 +252,7 @@ export function refusalSentence(failure: AnyFailure): string {
     case "unresolved":
       return failure.reason;
     default:
-      return REFUSALS[failure.refusal].message;
+      return "says" in failure && typeof failure.says === "string" ? failure.says : REFUSALS[failure.refusal].message;
   }
 }
 
@@ -655,7 +655,13 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     { note: "string", dry_run: "boolean" },
     ["note"],
     setKindFromOldRecordsCorrection,
-    (r, input) => ({ outcome: r.outcome, dry_run: input.dryRun === true, from: r.from, to: r.to }),
+    (r, input) => ({
+      outcome: r.outcome,
+      dry_run: input.dryRun === true,
+      from: r.from,
+      to: r.to,
+      ...(r.history_recorded === undefined ? {} : { history_recorded: r.history_recorded }),
+    }),
   );
 
   endpoint(

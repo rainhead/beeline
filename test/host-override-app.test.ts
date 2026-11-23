@@ -327,7 +327,7 @@ describe("the host through the API", () => {
     expect(await w.overlay()).toEqual([]);
     // The API's own refusal of a dry run on an endpoint that has none still names the ones that do.
     const other = await w.send(w.keys.sam, `/samples/${w.sampleId}/hold`, { note: "x", dry_run: true });
-    expect((await other.json()).message).toContain("Dry runs exist only for edit, collectors and host");
+    expect((await other.json()).message).toContain("Dry runs exist only for edit, collectors, host and kind-from-old-records");
   });
 
   it("refuses `remove` sent with a taxon or `none`, as the page refuses a plant with no host", async () => {

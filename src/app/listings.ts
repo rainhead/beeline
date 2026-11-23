@@ -2133,9 +2133,13 @@ export const needsRollup = (query: ListingQuery) => query.qc !== "any" && query.
 // The two selections are different query builders over the same sample
 // columns, which the grouping reads as `s` and `a`; the builder's own type
 // cannot say that, so it is left open here and the callers are the check.
-// A grouped count is one query: the selection's group key as a subquery,
-// grouped outside it (grouping the selection's own joins by an expression made
-// DuckDB fail to bind a column), and the total is the sum of the groups.
+// A grouped count is one query: the selection's group key as a materialized
+// common table expression, grouped outside it, and the total is the sum of the
+// groups. Grouping the selection's own joins by an expression made DuckDB
+// (2.0.0) fail to bind a column, and so did grouping a plain subquery once the
+// selection held an IN (subquery), as the Ecdysis filter does: the planner
+// pulled the grouping into the selection and lost `date_start`
+// (beeline-zzeg). Materializing keeps the two apart.
 async function countSelection(
   db: Kysely<Database>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2147,7 +2151,8 @@ async function countSelection(
     return { total: Number(total?.n ?? 0), groups: [] };
   }
   const rows = await db
-    .selectFrom(base.select(groupExpression(group).as("group_key")).as("g"))
+    .with((cte) => cte("g").materialized(), () => base.select(groupExpression(group).as("group_key")))
+    .selectFrom("g")
     .select(["g.group_key as key", sql<number>`count(*)`.as("n")])
     .groupBy("g.group_key")
     .orderBy("g.group_key")

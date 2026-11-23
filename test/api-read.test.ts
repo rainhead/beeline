@@ -441,6 +441,16 @@ describe("the counts", () => {
         }
       }
     }
+    // Staff's query joins nothing for the location rule, and grouping the
+    // specimens awaiting Ecdysis by season once failed there with a DuckDB
+    // binding error (beeline-zzeg).
+    for (const kind of ["samples", "specimens"] as const) {
+      const listed = await w.json(w.keys.sam, `/${kind}?scope=all&ecdysis=expected&page_size=1`);
+      for (const group of COUNT_GROUPS) {
+        const grouped = await w.json(w.keys.sam, `/${kind}/count?scope=all&ecdysis=expected&group_by=${group}`);
+        expect(grouped.total, `${kind} ${group}`).toBe(listed.total);
+      }
+    }
     const seasons = await w.json(w.keys.alice, "/samples/count?scope=all&group_by=season");
     expect(seasons.groups).toEqual([
       { key: SETTLED_SEASON, total: 1 },

@@ -5,7 +5,7 @@ import { MIGRATIONS_DIR } from "../src/migrate.js";
 import { SCHEMA_DIR } from "../src/schema.js";
 import { viewHash, VIEW_MANIFEST } from "../src/view-manifest.js";
 import { createMemoryDb } from "./helpers.js";
-import { sqlFiles, viewStatements, splitStatements, type ViewStatement } from "./migration-statements.js";
+import { creatingWithoutComment, sqlFiles, viewStatements, splitStatements, type ViewStatement } from "./migration-statements.js";
 
 /**
  * "Did this change forget a migration?" for views, which `db:migrate --check`
@@ -44,6 +44,32 @@ const history = (view: string) => statements.filter((s) => s.view === view).sort
 /** The newest CREATE or DROP of a view, which decides whether and how a migration states it. */
 const newestShape = (view: string) => history(view).filter((s) => s.kind !== "comment").at(-1);
 
+/** What is wrong between the schema's views, the manifest's text and which views a migration states. */
+function manifestProblems(
+  have: Map<string, { sql: string; comment: string | null }>,
+  manifestText: string,
+  isStated: (view: string) => boolean,
+): string[] {
+  const manifest = new Map(
+    manifestText
+      .split("\n")
+      .filter((l) => l.trim() !== "" && !l.startsWith("#"))
+      .map((l) => l.split(/\s+/) as [string, string]),
+  );
+  const problems: string[] = [];
+  for (const [view, want] of have) {
+    const stated = isStated(view);
+    const hash = manifest.get(view);
+    if (stated && hash !== undefined) problems.push(`${view}: a migration states it, so delete its line from migrations/view-hashes.txt`);
+    if (!stated && hash === undefined) problems.push(`${view}: in the schema, stated by no migration and not in migrations/view-hashes.txt`);
+    if (!stated && hash !== undefined && hash !== viewHash(want.sql, want.comment)) {
+      problems.push(`${view}: changed in schema/ and held by a hash: write a migration that restates the view, then delete its line from migrations/view-hashes.txt`);
+    }
+  }
+  for (const view of manifest.keys()) if (!have.has(view)) problems.push(`${view}: in migrations/view-hashes.txt but not in the schema; delete the line`);
+  return problems;
+}
+
 describe("the statement splitter", () => {
   test("agrees with DuckDB on how many statements every schema file and every migration holds", async () => {
     const { conn } = await createMemoryDb();
@@ -65,18 +91,37 @@ describe("the statement splitter", () => {
   });
 });
 
+describe("the rule about comments, on made-up migrations", () => {
+  const stated = (files: Record<string, string>) =>
+    viewStatements(Object.entries(files).map(([file, text]) => ({ file, text })));
+
+  test("only the newest create of a view needs the comment", () => {
+    const earlierWithout = stated({
+      "0100-a.sql": "CREATE VIEW v AS SELECT 1 AS a;",
+      "0101-b.sql": "CREATE OR REPLACE VIEW v AS SELECT 2 AS a; COMMENT ON VIEW v IS 'now commented';",
+    });
+    expect(creatingWithoutComment(earlierWithout, () => true)).toEqual([]);
+
+    const newestWithout = stated({
+      "0100-a.sql": "CREATE VIEW v AS SELECT 1 AS a; COMMENT ON VIEW v IS 'commented';",
+      "0101-b.sql": "CREATE OR REPLACE VIEW v AS SELECT 2 AS a;",
+    });
+    expect(creatingWithoutComment(newestWithout, () => true)).toEqual(["0101-b.sql: v"]);
+    // A view the schema does not comment needs none.
+    expect(creatingWithoutComment(newestWithout, () => false)).toEqual([]);
+  });
+});
+
 describe("views and the migrations that state them", () => {
   test("the newest migration that states each view states it as schema/ does", async () => {
     const { conn: reference } = await createMemoryDb();
     const { conn: store } = await createMemoryDb();
     const wanted = await stored(reference);
     const failures: string[] = [];
-    const unstated: string[] = [];
 
     for (const [view, want] of wanted) {
       const shape = newestShape(view);
       if (shape === undefined) {
-        unstated.push(view);
         continue;
       }
       if (shape.kind === "drop") {
@@ -98,42 +143,26 @@ describe("views and the migrations that state them", () => {
       if (got.comment !== want.comment) failures.push(`${view}: the comment after ${shape.file} differs from schema/'s\n  migration: ${got.comment}\n  schema:    ${want.comment}`);
     }
     expect(failures).toEqual([]);
-    // The views no migration states, which the manifest holds, are the next test's.
-    expect(unstated.length).toBeGreaterThan(0);
+    // Views no migration states are held by the manifest, which the next test checks.
   });
 
   test("a view no migration states is held by a hash, and only those views are", async () => {
     const { conn } = await createMemoryDb();
-    const have = await stored(conn);
-    const manifest = new Map(
-      (await readFile(VIEW_MANIFEST, "utf8"))
-        .split("\n")
-        .filter((l) => l.trim() !== "" && !l.startsWith("#"))
-        .map((l) => l.split(/\s+/) as [string, string]),
-    );
-    const problems: string[] = [];
-    for (const [view, want] of have) {
-      const stated = newestShape(view) !== undefined;
-      const hash = manifest.get(view);
-      if (stated && hash !== undefined) problems.push(`${view}: a migration states it, so delete its line from migrations/view-hashes.txt`);
-      if (!stated && hash === undefined) problems.push(`${view}: in the schema, stated by no migration and not in migrations/view-hashes.txt`);
-      if (!stated && hash !== undefined && hash !== viewHash(want.sql, want.comment)) {
-        problems.push(`${view}: changed in schema/ and held by a hash: write a migration that restates the view, then delete its line from migrations/view-hashes.txt`);
-      }
-    }
-    for (const view of manifest.keys()) if (!have.has(view)) problems.push(`${view}: in migrations/view-hashes.txt but not in the schema; delete the line`);
-    expect(problems).toEqual([]);
+    const text = await readFile(VIEW_MANIFEST, "utf8").catch(() => "");
+    expect(manifestProblems(await stored(conn), text, (view) => newestShape(view) !== undefined)).toEqual([]);
+  });
+
+  test("an empty or absent manifest is fine once every view is stated by a migration", () => {
+    const have = new Map([["v", { sql: "CREATE VIEW v AS SELECT 1", comment: null }]]);
+    expect(manifestProblems(have, "", () => true)).toEqual([]);
+    expect(manifestProblems(have, "# nothing left\n", () => true)).toEqual([]);
+    expect(manifestProblems(have, "", () => false)).toEqual([expect.stringContaining("v: in the schema, stated by no migration")]);
   });
 
   test("a migration that creates a view the schema comments restates the comment after it, in the same file", async () => {
     const { conn } = await createMemoryDb();
     const have = await stored(conn);
-    const missing: string[] = [];
-    for (const s of statements.filter((s) => s.kind === "create")) {
-      if (have.get(s.view)?.comment == null) continue;
-      const restated = statements.some((c) => c.kind === "comment" && c.view === s.view && c.file === s.file && c.index > s.index);
-      if (!restated) missing.push(`${s.file}: ${s.view}`);
-    }
+    const missing = creatingWithoutComment(statements, (view) => have.get(view)?.comment != null);
     expect(missing).toEqual([]);
   });
 });

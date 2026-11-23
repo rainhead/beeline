@@ -108,3 +108,24 @@ export function viewStatements(files: { file: string; text: string }[]): ViewSta
   }
   return out;
 }
+
+/**
+ * Views a migration creates or replaces and leaves without the comment the
+ * schema gives them. `CREATE OR REPLACE VIEW` drops a view's comment, so the
+ * newest statement that creates a view must be followed, in its own file, by
+ * a `COMMENT ON VIEW` for it. Earlier creates are superseded, so a view that
+ * had no comment when first made and gained one in a later migration is not
+ * a failure of the first. Only views the schema comments are required to.
+ */
+export function creatingWithoutComment(statements: ViewStatement[], schemaComments: (view: string) => boolean): string[] {
+  const order = (a: ViewStatement, b: ViewStatement) => (a.file === b.file ? a.index - b.index : a.file < b.file ? -1 : 1);
+  const newest = new Map<string, ViewStatement>();
+  for (const s of [...statements].sort(order)) if (s.kind === "create") newest.set(s.view, s);
+  const missing: string[] = [];
+  for (const s of newest.values()) {
+    if (!schemaComments(s.view)) continue;
+    const restated = statements.some((c) => c.kind === "comment" && c.view === s.view && c.file === s.file && c.index > s.index);
+    if (!restated) missing.push(`${s.file}: ${s.view}`);
+  }
+  return missing;
+}

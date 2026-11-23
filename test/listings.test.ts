@@ -14,6 +14,11 @@ import {
   hostNamesOnce,
   listSamples,
   listSpecimens,
+  QC_RULE_NAMES,
+  QC_STATUSES,
+  needsRollup,
+  samplesCountQuery,
+  specimenListingBase,
   specimenCsvRow,
   textCell,
   listingHref,
@@ -2576,6 +2581,56 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       const volunteer = await download("alice");
       expect(book(volunteer.bytes).SheetNames).toEqual(["specimens", "names", "words", "about"]);
     });
+  });
+});
+
+describe("a listing's total (beeline-amdt.1)", () => {
+  // The count leaves the flag roll-up out unless a status filter reads it, so it is built apart from the
+  // page's rows: these hold that its WHERE is still the page's, whatever filters are set.
+  const queries: Array<[string, Partial<ListingQuery>]> = [
+    ["no filter", {}],
+    ...QC_STATUSES.map((qc): [string, Partial<ListingQuery>] => [`qc=${qc}`, { qc }]),
+    ...QC_RULE_NAMES.map((flag): [string, Partial<ListingQuery>] => [`flag=${flag}`, { flag }]),
+    ["flag with a status", { flag: "locality_format", qc: "blocking" }],
+    ["collector", { collector: "bob" }],
+    ["collector and clean", { collector: "bob", qc: "clean" }],
+    ["place and flagged", { place: "WA", qc: "flagged" }],
+    ["place and warning", { place: "NV", qc: "warning" }],
+    ["collector and flag", { collector: "alice", flag: "locality_format" }],
+  ];
+  const pages = (fx: Awaited<ReturnType<typeof listingApp>>, patch: Partial<ListingQuery>, kind: "samples" | "specimens") => {
+    const query = { ...EMPTY_QUERY, scope: "all", ...patch };
+    const list = kind === "samples" ? listSamples : listSpecimens;
+    return { query, list: (offset: number) => list(fx.db, query, fx.staffer, STAFF_READER, { limit: 1, offset }) };
+  };
+
+  for (const kind of ["samples", "specimens"] as const) {
+    it(`shows as many ${kind} as the pages hold, for every filter`, async () => {
+      const fx = await listingApp("staffer");
+      for (const [name, patch] of queries) {
+        const { list } = pages(fx, patch, kind);
+        const first = await list(0);
+        let held = first.rows.length;
+        // One row a page, so the walk crosses every page boundary.
+        while (held < first.total + 1 && (await list(held)).rows.length > 0) held += 1;
+        expect(first.total, `${kind}, ${name}`).toBe(held);
+      }
+    });
+  }
+
+  it("asks the samples count for the flag roll-up only when a status filter reads it", async () => {
+    const fx = await listingApp("staffer");
+    for (const [name, patch] of queries) {
+      const query = { ...EMPTY_QUERY, scope: "all", ...patch };
+      const sampleSql = (await samplesCountQuery(fx.db, query, fx.staffer, STAFF_READER, {})).compile().sql;
+      const specimenSql = (await specimenListingBase(fx.db, query, fx.staffer, STAFF_READER, {})).select(({ fn }) => fn.countAll().as("n")).compile().sql;
+      const uses = needsRollup(query);
+      // A flag-by-name or locality filter asks sample_qc_finding itself, in a subquery of its own, so look for the roll-up's join.
+      expect(sampleSql.includes("qc_rule"), `samples, ${name}`).toBe(uses);
+      expect(specimenSql.includes("qc_rule"), `specimens, ${name}`).toBe(uses);
+    }
+    expect(needsRollup({ ...EMPTY_QUERY, qc: "flagged" })).toBe(true);
+    expect(needsRollup(EMPTY_QUERY)).toBe(false);
   });
 });
 

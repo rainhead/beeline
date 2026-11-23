@@ -1238,7 +1238,7 @@ export function createApp({
     const m = c.get("m");
     const { personId, admin, reader, atlases, programs, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("samples", "page", query, viewer(c)));
-    const results = await listSamples(db, query, personId, reader, { hostNames: "common" });
+    const results = await listSamples(db, query, personId, reader, { hostNames: "common", withLocalityChoices: true });
     return c.html(
       await page(
         c,

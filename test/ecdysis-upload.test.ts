@@ -71,7 +71,7 @@ async function archiveOf(f: F, ids: number[], c = BC, rules = rulesOf()) {
     const [header, ...body] = files[name]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
     return { header: header!, body, cell: (r: number, col: string) => body[r]![header!.indexOf(col)] };
   };
-  return { files, occurrence: table("occurrence.txt"), identification: table("identification.txt") };
+  return { files, occurrence: table("occurrence.tsv"), identification: table("identification.tsv") };
 }
 
 describe("which specimens go in a file", () => {
@@ -361,12 +361,12 @@ describe("the rules hold when the rows are written", () => {
     // Pages of three: 3 + 3 + 1 specimens, the first of them one short.
     const stream = uploadArchiveStream(f.db, BC, ids, rulesOf(), { pageSize: 3, written });
     const files = unzipSync(new Uint8Array(await new Response(stream).arrayBuffer()));
-    const body = strFromU8(files["occurrence.txt"]!).trim().split("\n").slice(1).map((l) => l.split("\t")[0]);
+    const body = strFromU8(files["occurrence.tsv"]!).trim().split("\n").slice(1).map((l) => l.split("\t")[0]);
     expect(body).toHaveLength(6);
     expect(new Set(body)).toEqual(new Set(ids.filter((id) => id !== made[2]!.id).map(String)));
     expect(written.map((w) => w.id).sort((a, b) => a - b)).toEqual(ids.filter((id) => id !== made[2]!.id));
     // Identifications of every page are in the one file.
-    expect(strFromU8(files["identification.txt"]!).split("\n")[0]).toContain("coreid");
+    expect(strFromU8(files["identification.tsv"]!).split("\n")[0]).toContain("coreid");
   });
 
   it("ends a file whose last full page is exactly the size of a page", async () => {
@@ -377,7 +377,7 @@ describe("the rules hold when the rows are written", () => {
     expect(a.occurrence.body).toHaveLength(4);
     const stream = uploadArchiveStream(f.db, BC, made, rulesOf(), { pageSize: 2 });
     const files = unzipSync(new Uint8Array(await new Response(stream).arrayBuffer()));
-    expect(strFromU8(files["occurrence.txt"]!).trim().split("\n")).toHaveLength(5);
+    expect(strFromU8(files["occurrence.tsv"]!).trim().split("\n")).toHaveLength(5);
   });
 });
 
@@ -398,7 +398,7 @@ describe("the upload archive", () => {
     expect(a.occurrence.header).not.toContain("occurrenceID");
     expect(a.occurrence.header).not.toContain("sampleNumber");
     expect(a.occurrence.header).not.toContain("geoprivacy");
-    expect(Object.keys(a.files).sort()).toEqual(["identification.txt", "meta.xml", "occurrence.txt"]);
+    expect(Object.keys(a.files).sort()).toEqual(["identification.tsv", "meta.xml", "occurrence.tsv"]);
   });
 
   it("declares the fixed values for each collection: Washington's records carry a label project, British Columbia's none yet", async () => {
@@ -569,8 +569,8 @@ describe("the associations file", () => {
     const a = await archiveOf(f, [net.id, trap.id]);
     expect(a.occurrence.header).not.toContain("associatedTaxa");
     expect(a.files["meta.xml"]).not.toContain("associatedTaxa");
-    expect(a.files["occurrence.txt"]).not.toContain("Salvia");
-    expect(a.files["occurrence.txt"]).not.toContain("Ceanothus");
+    expect(a.files["occurrence.tsv"]).not.toContain("Salvia");
+    expect(a.files["occurrence.tsv"]).not.toContain("Ceanothus");
   });
 
   it("names the subject by the catalog number the specimen was written under, though the label number was corrected after", async () => {
@@ -663,7 +663,7 @@ describe("building the whole archive before answering", () => {
     const built = await buildArchive(f.db, BC, [a.id, b.id], rulesOf(), { stillCurrent: current });
     expect(built.written).toEqual([{ id: a.id, catalogNumber: "BCBA_2500001" }]);
     const files = unzipSync(built.bytes);
-    expect(strFromU8(files["occurrence.txt"]!).trim().split("\n")).toHaveLength(2);
+    expect(strFromU8(files["occurrence.tsv"]!).trim().split("\n")).toHaveLength(2);
   });
 
   it("stops, with nothing to record, when the read the plan rested on is replaced while it is written", async () => {

@@ -123,7 +123,7 @@ import type { Database, DeterminationQualifier } from "../model.js";
  * Which volunteer determinations go downstream is the atlas staff's call after
  * downloading (beeline-pyr), so every determination is in the file.
  *
- * - `occurrence.txt`, the core: one row per specimen behind an `id`, in the
+ * - `occurrence.tsv`, the core: one row per specimen behind an `id`, in the
  *   archive's own columns (`ARCHIVE_DWC_COLUMNS`). Most cells are the CSV's, but
  *   the list is not: the archive adds `recordNumber`, `caste` and the higher
  *   classification, and writes the numbers as Darwin Core defines them (see
@@ -131,7 +131,7 @@ import type { Database, DeterminationQualifier } from "../model.js";
  *   Beeline's own (geoprivacy, coordinate provenance, the atlas) follow them
  *   undeclared, so a reader of the archive ignores them and a person opening
  *   the file still sees them.
- * - `identification.txt`, the extension: one row per determination, oldest
+ * - `identification.tsv`, the extension: one row per determination, oldest
  *   first, joined to the core by `coreid`, with Symbiota's flag for the
  *   current one, then the determination's own sex and caste, declared as
  *   Darwin Core terms; whether an expert made it follows undeclared.
@@ -372,12 +372,12 @@ export const archiveDescriptor = (
 ) => `<?xml version="1.0" encoding="UTF-8"?>
 <archive xmlns="http://rs.tdwg.org/dwc/text/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://rs.tdwg.org/dwc/text/ http://rs.tdwg.org/dwc/text/tdwg_dwc_text.xsd">
   <core encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Occurrence">
-    <files><location>occurrence.txt</location></files>
+    <files><location>occurrence.tsv</location></files>
     <id index="0"/>
 ${fields(coreTerms)}
 ${opts.license == null ? "" : `    <field default="${xmlAttr(opts.license)}" term="http://purl.org/dc/terms/license"/>\n`}${opts.coreComment === undefined ? "" : `    <!-- ${opts.coreComment} -->\n`}  </core>
   <extension encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Identification">
-    <files><location>identification.txt</location></files>
+    <files><location>identification.tsv</location></files>
     <coreid index="0"/>
 ${fields(identificationTerms)}
 ${opts.identificationComment === undefined ? "" : `    <!-- ${opts.identificationComment} -->\n`}  </extension>
@@ -487,9 +487,9 @@ export function specimenArchiveStream(
     {
       head: () => {
         file("meta.xml").push(encoder.encode(layout.meta), true);
-        core = file("occurrence.txt");
+        core = file("occurrence.tsv");
         core.push(encoder.encode(tabLine(layout.occurrenceHeader)));
-        identifications = file("identification.txt");
+        identifications = file("identification.tsv");
         identifications.push(encoder.encode(tabLine(layout.identificationHeader)));
         return take();
       },

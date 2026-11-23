@@ -70,7 +70,7 @@ async function archiveOf(rows: SpecimenRow[], opts: { catalogPrefix?: string | n
   const files = Object.fromEntries(
     Object.entries(unzipSync(new Uint8Array(await new Response(stream).arrayBuffer()))).map(([n, d]) => [n, strFromU8(d)]),
   );
-  const [header, ...body] = files["occurrence.txt"]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
+  const [header, ...body] = files["occurrence.tsv"]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
   return { files, header: header!, body, cell: (r: number, name: string) => body[r]![header!.indexOf(name)] };
 }
 
@@ -151,7 +151,7 @@ describe("sex and caste in the archive", () => {
   it("declares both on the identification, and caste on the occurrence beside sex", async () => {
     const a = await archiveOf([specimen({ sex: "female", caste: "worker" })]);
     const meta = a.files["meta.xml"]!;
-    const [identHeader] = a.files["identification.txt"]!.split("\n").map((l) => l.split("\t"));
+    const [identHeader] = a.files["identification.tsv"]!.split("\n").map((l) => l.split("\t"));
     for (const term of ["sex", "caste"]) {
       expect(meta).toContain(`<field index="${identHeader!.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
       expect(meta).toContain(`<field index="${a.header.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);

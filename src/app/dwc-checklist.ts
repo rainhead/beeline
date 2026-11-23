@@ -120,7 +120,7 @@ async function checklistIn(db: Kysely<Database>, scope: string): Promise<Checkli
 export const checklistMetaXml = () => `<?xml version="1.0" encoding="UTF-8"?>
 <archive xmlns="http://rs.tdwg.org/dwc/text/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://rs.tdwg.org/dwc/text/ http://rs.tdwg.org/dwc/text/tdwg_dwc_text.xsd">
   <core encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Taxon">
-    <files><location>taxon.txt</location></files>
+    <files><location>taxon.tsv</location></files>
     <id index="0"/>
     <field index="0" term="${DWC}taxonID"/>
 ${fields(CHECKLIST_DWC_COLUMNS.map((t) => `${DWC}${t}`))}
@@ -152,5 +152,5 @@ export function checklistArchive(rows: readonly ChecklistRow[]): Uint8Array {
         ]),
       )
       .join("");
-  return zipSync({ "meta.xml": strToU8(checklistMetaXml()), "taxon.txt": strToU8(taxa) }, { level: 6 });
+  return zipSync({ "meta.xml": strToU8(checklistMetaXml()), "taxon.tsv": strToU8(taxa) }, { level: 6 });
 }

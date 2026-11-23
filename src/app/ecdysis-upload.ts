@@ -743,7 +743,7 @@ export async function uploadStateOf(
 // --- The archive ---------------------------------------------------------------
 
 /**
- * occurrence.txt's columns after the id, each with the term meta.xml gives it
+ * occurrence.tsv's columns after the id, each with the term meta.xml gives it
  * and the Symbiota field it lands in (checked against Symbiota's source and by
  * importing the archive; the table is in
  * docs/architecture/the-upload-to-ecdysis.md). Constants are real columns, not
@@ -799,7 +799,7 @@ export const uploadOccurrenceColumns = (collection: EcdysisCollection): readonly
   constantsOf(collection).labelProject === undefined ? OCCURRENCE_COLUMNS : [...OCCURRENCE_COLUMNS, LABEL_PROJECT];
 
 /**
- * identification.txt's columns after the specimen's id. `identificationIsCurrent`
+ * identification.tsv's columns after the specimen's id. `identificationIsCurrent`
  * is Symbiota's own term. `sourceIdentifier` is the header Symbiota's importer
  * maps to the identification's `sourceIdentifier` column: an identification
  * already on the record with the same one is updated in place, not added again

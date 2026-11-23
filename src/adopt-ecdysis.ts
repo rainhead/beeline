@@ -100,7 +100,7 @@ export async function adoptEcdysisNames(conn: DuckDBConnection, names: readonly 
     // subfamily, tribe or subtribe whose own anchor in the tree is it. A
     // parent found by spelling in another family would put the node there
     // for good, and a missing parent would make it a root (beeline-stoi).
-    const [[anchorTid]] = (await (
+    const anchorRow = (await (
       await conn.run(
         `WITH RECURSIVE up(tid, depth) AS (
            SELECT admitted_parent_tid, 1 FROM ecdysis_taxon WHERE tid = $1
@@ -112,7 +112,10 @@ export async function adoptEcdysisNames(conn: DuckDBConnection, names: readonly 
          WHERE t.rank NOT IN ('subfamily', 'tribe', 'subtribe') ORDER BY up.depth LIMIT 1`,
         [tid] as never,
       )
-    ).getRows()) as [[bigint | null]];
+    ).getRows()) as [bigint | null][];
+    // No anchor outside the three ranks: nothing to check the parent against, so the name is not adopted.
+    const anchorTid = anchorRow[0]?.[0] ?? null;
+    if (anchorTid === null) continue;
     await conn.run(
       `INSERT INTO animal (parent_id, rank, scientific_name, authorship, ecdysis_tid)
        WITH p AS (

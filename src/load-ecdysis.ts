@@ -563,11 +563,24 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     // specimen's rows in order within one load.
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ecd_insert AS
-       SELECT c.*,
+       SELECT c.* REPLACE (
+                -- A record made again keeps the sex and caste the old event
+                -- stated where the export row states none (a first load is
+                -- unchanged), unless the pair would break the CHECK, as the
+                -- fill step above refuses too.
+                CASE WHEN c.refile_from IS NOT NULL
+                          AND coalesce(coalesce(c.caste, o.caste) IS NULL
+                                       OR (coalesce(c.caste, o.caste) = 'drone') = (coalesce(c.sex, o.sex) = 'male'), true)
+                     THEN coalesce(c.sex, o.sex) ELSE c.sex END AS sex,
+                CASE WHEN c.refile_from IS NOT NULL
+                          AND coalesce(coalesce(c.caste, o.caste) IS NULL
+                                       OR (coalesce(c.caste, o.caste) = 'drone') = (coalesce(c.sex, o.sex) = 'male'), true)
+                     THEN coalesce(c.caste, o.caste) ELSE c.caste END AS caste),
               CASE WHEN c.is_current THEN $1::TIMESTAMPTZ
                    ELSE coalesce(c.entered_at::TIMESTAMPTZ, $1::TIMESTAMPTZ - INTERVAL 1 SECOND) END
                 + INTERVAL (row_number() OVER (ORDER BY c.specimen_id, c.is_current, c.entered_at NULLS FIRST, c.record_id)) MICROSECOND AS recorded_at
        FROM ecd_candidate c
+       LEFT JOIN determination o ON o.entity_id = c.refile_from
        WHERE NOT c.placeholder AND c.animal_id IS NOT NULL
          AND ((NOT c.already AND c.adopt_id IS NULL) OR c.refile_from IS NOT NULL)`,
       [now.toISOString()],

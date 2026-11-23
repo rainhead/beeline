@@ -131,4 +131,16 @@ describe("adopting Ecdysis names", () => {
     expect(await adoptEcdysisNames(conn, ["Chrysididae"])).toEqual([{ name: "Chrysididae", rank: "family", tid: 87753, ancestors: [] }]);
     expect(await rows(conn, "SELECT count(*) FROM animal WHERE scientific_name = 'Chrysidoidea'")).toEqual([[1n]]);
   });
+
+  test("a name whose chain reaches a node with no anchor outside subfamilies, tribes and subtribes is not adopted, and nothing throws", async () => {
+    await loadEcdysisTaxonomy(conn, ECDYSIS_TAXONOMY);
+    await node("subfamily", "Qsub", null);
+    await conn.run(`INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, parent_tid, admitted_parent_tid, fetched_on)
+                    VALUES (910001, 'subfamily', 'Qsub', 'accepted', 910001, NULL, NULL, DATE '2026-11-30'),
+                           (910002, 'genus', 'Qgenus', 'accepted', 910002, 910001, 910001, DATE '2026-11-30')`);
+    expect(await adoptEcdysisNames(conn, ["Qgenus", "Melecta pacifica"])).toHaveLength(1);
+    expect(await rows(conn, "SELECT count(*) FROM animal WHERE scientific_name = 'Qgenus'")).toEqual([[0n]]);
+    // The other name in the same call was still adopted.
+    expect(await rows(conn, "SELECT count(*) FROM animal WHERE scientific_name = 'Melecta pacifica'")).toEqual([[1n]]);
+  });
 });

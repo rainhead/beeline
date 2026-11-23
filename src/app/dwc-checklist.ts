@@ -67,6 +67,12 @@ export interface ChecklistRow extends PlacedTaxon {
 
 /** The names the program's specimens are identified to, with their ancestors, in tree order. */
 export async function programChecklist(db: Kysely<Database>, scope: string): Promise<ChecklistRow[]> {
+  // One transaction, so the counts and the tree are read as of the same moment: a filing that
+  // commits between them could leave a genus whose parent, a tribe, is missing from the file.
+  return db.transaction().execute((trx) => checklistIn(trx, scope));
+}
+
+async function checklistIn(db: Kysely<Database>, scope: string): Promise<ChecklistRow[]> {
   const inScope = scope === OUTSIDE ? sql`sa.atlas_id IS NULL` : sql`a.code = ${scope}`;
   const counted = await sql<{ entity_id: number; specimens: number | bigint; by_experts: number | bigint; first_year: number; last_year: number }>`
     WITH RECURSIVE recorded AS (

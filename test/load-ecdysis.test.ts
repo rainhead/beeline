@@ -529,6 +529,17 @@ describe("names the tree lacks", () => {
     expect(await rows(conn, `SELECT count(*) FROM determination WHERE specimen_id = ${b}`)).toEqual([[2n]]);
   });
 
+  test("a record made again keeps the sex its old event stated when the export row states none", async () => {
+    await vespidaeTree(false);
+    await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    // The old event came to state a sex (an earlier export, or the fill step); the archive row states none.
+    await conn.run(`UPDATE determination SET sex = 'female' WHERE specimen_id = ${b}`);
+    await eumeninaeArrives();
+    const result = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result.refiled).toBe(1);
+    expect(await rows(conn, `SELECT an.scientific_name, r.sex, r.caste FROM determination_of_record r JOIN animal an ON an.entity_id = r.animal_id WHERE r.specimen_id = ${b}`)).toEqual([["Eumeninae", "female", null]]);
+  });
+
   test("a record that is no longer the specimen's determination of record is left where it was filed", async () => {
     await vespidaeTree(false);
     await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });

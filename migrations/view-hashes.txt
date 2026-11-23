@@ -1,7 +1,6 @@
 # Views no migration from 0071 on creates: name and sha256 of the text and comment a fresh build gives.
 # duckdb v2.0.0
 # Only shrinks: see src/view-manifest.ts and migrations/README.md.
-animal_castes ad508c6de215f48b90e4054b4da6c41abc97366b0bc4744c9444f06723b13cbf
 animal_curation_stale 8e59da6ccd9f4ebd98d47806c6ba37c26486cdef575037dec1681cc88c014fa7
 animal_ecdysis 91b6ac73558a4e1d91d6dee5b50e7949ead31203bb3e4153615b4b01bcceeb2e
 animal_ecdysis_match 2380285bdc042916292950dbd4c6987a8849ae1908720a4196a19358fc9fe38f

@@ -6,7 +6,7 @@ import { MIGRATIONS_DIR } from "../src/migrate.js";
 import { SCHEMA_DIR } from "../src/schema.js";
 import { parseManifest, rehashManifest, viewHash, VIEW_MANIFEST } from "../src/view-manifest.js";
 import { createMemoryDb } from "./helpers.js";
-import { asCreateOrReplace, createdAndNeverDropped, creatingWithoutComment, sqlFiles, viewStatements, splitStatements, type ViewStatement } from "./migration-statements.js";
+import { plainCreateOfExistingView, asCreateOrReplace, createdAndNeverDropped, creatingWithoutComment, sqlFiles, viewStatements, splitStatements, type ViewStatement } from "./migration-statements.js";
 
 /**
  * "Did this change forget a migration?" for views, which `db:migrate --check`
@@ -227,3 +227,20 @@ describe("views and the migrations that state them", () => {
   });
 });
 
+
+describe("a migration that restates a view that already exists", () => {
+  test("uses CREATE OR REPLACE, or drops it first, because a plain CREATE fails on a deployed store", async () => {
+    const all = viewStatements(migrations);
+    expect(plainCreateOfExistingView(all, "0122")).toEqual([]);
+  });
+
+  test("names a plain CREATE of an existing view, and not one after a DROP", () => {
+    const made = viewStatements([
+      { file: "0040-a.sql", text: "CREATE VIEW v AS SELECT 1;" },
+      { file: "0041-b.sql", text: "CREATE VIEW v AS SELECT 2;" },
+      { file: "0042-c.sql", text: "DROP VIEW v; CREATE VIEW v AS SELECT 3; CREATE OR REPLACE VIEW v AS SELECT 4;" },
+    ]);
+    expect(plainCreateOfExistingView(made, "0040")).toHaveLength(1);
+    expect(plainCreateOfExistingView(made, "0040")[0]).toContain("0041-b.sql");
+  });
+});

@@ -7,7 +7,8 @@
 -- The rule is adoption's (src/adopt-ecdysis.ts): accepted, the only accepted
 -- name at its spelling, plain ASCII, and not a genus Ecdysis spells like a
 -- subgenus. Three narrowings:
---  - only the ranks a person names a pinned insect at: no subgenus, which the
+--  - only the ranks a person names a pinned insect at (subfamily, tribe and
+--    subtribe among them, since beeline-stoi): no subgenus, which the
 --    tree keeps as a leaf, and no subspecies, which adoption refuses;
 --  - only names reached walking down admitted_parent_tid from Animalia, which
 --    every tree holds, so adoption is sure to find a node to hang them from;
@@ -57,7 +58,7 @@ JOIN ecdysis_taxon t ON t.tid = d.tid
 LEFT JOIN ecdysis_taxon f ON f.tid = d.family_tid
 LEFT JOIN ecdysis_taxon sf ON sf.tid = d.superfamily_tid
 LEFT JOIN ecdysis_taxon o ON o.tid = d.order_tid
-WHERE t.rank IN ('order', 'suborder', 'superfamily', 'family', 'genus', 'species')
+WHERE t.rank IN ('order', 'suborder', 'superfamily', 'family', 'subfamily', 'tribe', 'subtribe', 'genus', 'species')
   AND NOT d.under_shared
   AND t.name NOT IN (SELECT name FROM homonym)
   AND t.name = regexp_replace(t.name, '[^ -~]', '', 'g')

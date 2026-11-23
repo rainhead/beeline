@@ -105,6 +105,12 @@ export interface LoadEcdysisResult {
   unresolvedNames: Array<{ name: string; rows: number }>;
   /** Bycatch rows recorded under a broader name the tree holds, since their own is not there yet; each is a curation task too. */
   filedUnder: Array<{ name: string; under: string; rows: number }>;
+  /**
+   * Current records loaded earlier under a broader name, since their own was
+   * not in the tree, that now resolve to it: each was recorded again under its
+   * own node and its recordID moved to the new event (beeline-stoi). Not in `loaded`.
+   */
+  refiled: number;
   loaded: number;
   /** The determiners seen, and whether each reached a person. */
   determiners: Array<{ name: string; rows: number; resolved: boolean }>;
@@ -354,7 +360,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        WITH RECURSIVE up(node_id, anc_id) AS (
          SELECT entity_id, entity_id FROM animal
          UNION ALL
-         SELECT up.node_id, a.parent_id FROM up JOIN animal a ON a.entity_id = up.anc_id WHERE a.parent_id IS NOT NULL
+         SELECT up.node_id, a.filed_under_id FROM up JOIN animal_tree a ON a.entity_id = up.anc_id WHERE a.filed_under_id IS NOT NULL
        ) SELECT * FROM up`,
     );
     await conn.run(
@@ -389,7 +395,12 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
          SELECT ident.*,
                 (SELECT count(*) FROM animal a WHERE a.scientific_name = ident.scientific_name) AS nodes,
                 (SELECT min(a.entity_id) FROM animal a WHERE a.scientific_name = ident.scientific_name) AS exact_id,
+                -- A qualifier says something about a species epithet, so one
+                -- never lands on a node coarser than species: 'cf. Eumeninae'
+                -- is a note on a record named for the subfamily.
                 CASE WHEN q_word <> '' AND lower(q_epithet) = lower(last_word)
+                          AND (SELECT min(r.ordinal) FROM animal a JOIN animal_rank r ON r.rank = a.rank WHERE a.scientific_name = ident.scientific_name)
+                              >= (SELECT ordinal FROM animal_rank WHERE rank = 'species')
                      THEN CASE q_word WHEN 'cf' THEN 'cf.' WHEN 'nr' THEN 'nr.' ELSE 'aff.' END END AS exact_qualifier,
                 CASE WHEN regexp_matches(date_identified, '^\\d{4}$') THEN CAST(concat(date_identified, '-01-01') AS DATE)
                      WHEN regexp_matches(date_identified, '^\\d{4}-\\d{2}$') THEN CAST(concat(date_identified, '-01') AS DATE)
@@ -443,6 +454,26 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        )
        SELECT *,
               EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.record_id = resolved.record_id) AS already,
+              -- A current record loaded before its name was in the tree, and
+              -- filed under a broader one: its event is the specimen's
+              -- determination of record, and what it says is not its node's
+              -- name (a subfamily such as Eumeninae under its family, before
+              -- beeline-stoi). Where the name now resolves to one node, the
+              -- record is made again through the insert below, and its
+              -- recordID follows it, so the new event carries Ecdysis's entry
+              -- time (Peter, 2026-11-23). The old event stays, superseded.
+              -- The name it says is the one it was filed from, so a later
+              -- load, finding the event named for its node, does nothing.
+              (SELECT min(d.entity_id)
+                 FROM ecdysis_identification e
+                 JOIN determination_of_record d ON d.entity_id = e.determination_id
+                 JOIN animal filed ON filed.entity_id = d.animal_id
+                WHERE e.record_id = resolved.record_id
+                  AND resolved.is_current AND resolved.nodes = 1 AND resolved.animal_id IS NOT NULL
+                  AND d.channel = 'ecdysis_import'
+                  AND d.animal_id <> resolved.animal_id
+                  AND d.verbatim_identification = resolved.scientific_name
+                  AND d.verbatim_identification <> filed.scientific_name) AS refile_from,
               -- The same identification under another key. A flat export
               -- and an archive key one identification differently, so an
               -- event on this specimen with this node, qualifier and
@@ -532,12 +563,26 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     // specimen's rows in order within one load.
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ecd_insert AS
-       SELECT c.*,
+       SELECT c.* REPLACE (
+                -- A record made again keeps the sex and caste the old event
+                -- stated where the export row states none (a first load is
+                -- unchanged), unless the pair would break the CHECK, as the
+                -- fill step above refuses too.
+                CASE WHEN c.refile_from IS NOT NULL
+                          AND coalesce(coalesce(c.caste, o.caste) IS NULL
+                                       OR (coalesce(c.caste, o.caste) = 'drone') = (coalesce(c.sex, o.sex) = 'male'), true)
+                     THEN coalesce(c.sex, o.sex) ELSE c.sex END AS sex,
+                CASE WHEN c.refile_from IS NOT NULL
+                          AND coalesce(coalesce(c.caste, o.caste) IS NULL
+                                       OR (coalesce(c.caste, o.caste) = 'drone') = (coalesce(c.sex, o.sex) = 'male'), true)
+                     THEN coalesce(c.caste, o.caste) ELSE c.caste END AS caste),
               CASE WHEN c.is_current THEN $1::TIMESTAMPTZ
                    ELSE coalesce(c.entered_at::TIMESTAMPTZ, $1::TIMESTAMPTZ - INTERVAL 1 SECOND) END
                 + INTERVAL (row_number() OVER (ORDER BY c.specimen_id, c.is_current, c.entered_at NULLS FIRST, c.record_id)) MICROSECOND AS recorded_at
        FROM ecd_candidate c
-       WHERE NOT c.placeholder AND NOT c.already AND c.adopt_id IS NULL AND c.animal_id IS NOT NULL`,
+       LEFT JOIN determination o ON o.entity_id = c.refile_from
+       WHERE NOT c.placeholder AND c.animal_id IS NOT NULL
+         AND ((NOT c.already AND c.adopt_id IS NULL) OR c.refile_from IS NOT NULL)`,
       [now.toISOString()],
     );
     // Adoptions: the recordID is linked to the event that already stands.
@@ -589,10 +634,24 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        SELECT i.record_id, d.entity_id, i.occurrence_record_id, i.entered_at, $1::TIMESTAMPTZ
        FROM ecd_insert i
        JOIN determination d ON d.specimen_id = i.specimen_id AND d.recorded_at = i.recorded_at
-                            AND d.channel = 'ecdysis_import' AND d.entity_id > $2`,
+                            AND d.channel = 'ecdysis_import' AND d.entity_id > $2
+       WHERE i.refile_from IS NULL`,
       [now.toISOString(), before],
     );
-    const loaded = await scalar(conn, `SELECT count(*) FROM ecd_insert`);
+    // A record made again under its own name: its recordID moves to the new
+    // event, which is why the first insert above leaves it out.
+    await conn.run(
+      `UPDATE ecdysis_identification SET determination_id = n.entity_id
+       FROM (SELECT i.record_id, d.entity_id
+             FROM ecd_insert i
+             JOIN determination d ON d.specimen_id = i.specimen_id AND d.recorded_at = i.recorded_at
+                                  AND d.channel = 'ecdysis_import' AND d.entity_id > $1
+             WHERE i.refile_from IS NOT NULL) n
+       WHERE ecdysis_identification.record_id = n.record_id`,
+      [before],
+    );
+    const refiled = await scalar(conn, `SELECT count(*) FROM ecd_insert WHERE refile_from IS NOT NULL`);
+    const loaded = await scalar(conn, `SELECT count(*) FROM ecd_insert WHERE refile_from IS NULL`);
     await conn.run("COMMIT");
     return {
       input: files.input,
@@ -609,6 +668,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       adopted: adoptedNames,
       unresolvedNames,
       filedUnder,
+      refiled,
       loaded,
       determiners,
     };

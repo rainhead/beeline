@@ -380,6 +380,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     `\n${target} has the schema and ${source}'s staging, and no model.\n` +
       `Derive it: pnpm legacy:promote ${target} && pnpm inat:fetch-places ${target} && ` +
       `pnpm inat:promote ${target} && pnpm inat:backfill-accounts ${target} && ` +
-      `pnpm elevation:derive ${target}`,
+      `pnpm elevation:derive ${target}\n` +
+      `If the promote step says the thesaurus holds no subfamily or tribe, load them with: pnpm ecdysis:taxonomy ${target} --cached`,
   );
 }

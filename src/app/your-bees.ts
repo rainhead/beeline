@@ -114,7 +114,7 @@ const BEES = (personId: number) => sql`
   up(start, node) AS (
     SELECT DISTINCT animal_id, animal_id FROM mine_records WHERE animal_id IS NOT NULL
     UNION
-    SELECT up.start, a.parent_id FROM up JOIN animal a ON a.entity_id = up.node WHERE a.parent_id IS NOT NULL
+    SELECT up.start, a.filed_under_id FROM up JOIN animal_tree a ON a.entity_id = up.node WHERE a.filed_under_id IS NOT NULL
   ),
   not_bee AS (
     SELECT DISTINCT up.start AS animal_id FROM up JOIN animal a ON a.entity_id = up.node
@@ -356,9 +356,9 @@ async function ancestorsOf(db: Kysely<Database>, ids: number[]): Promise<Map<num
   if (unique.length === 0) return map;
   const result = await sql<{ start: unknown; ancestor: unknown }>`
     WITH RECURSIVE up(start, ancestor) AS (
-      SELECT entity_id, parent_id FROM animal WHERE entity_id IN (${sql.join(unique)}) AND parent_id IS NOT NULL
+      SELECT entity_id, filed_under_id FROM animal_tree WHERE entity_id IN (${sql.join(unique)}) AND filed_under_id IS NOT NULL
       UNION
-      SELECT up.start, a.parent_id FROM up JOIN animal a ON a.entity_id = up.ancestor WHERE a.parent_id IS NOT NULL
+      SELECT up.start, a.filed_under_id FROM up JOIN animal_tree a ON a.entity_id = up.ancestor WHERE a.filed_under_id IS NOT NULL
     )
     SELECT start, ancestor FROM up`.execute(db);
   for (const r of result.rows) {
@@ -622,8 +622,8 @@ async function lineageOf(db: Kysely<Database>, ids: number[]): Promise<Map<numbe
     WITH RECURSIVE up(start, node, depth) AS (
       SELECT entity_id, entity_id, 0 FROM animal WHERE entity_id IN (${sql.join(ids)})
       UNION ALL
-      SELECT up.start, a.parent_id, up.depth + 1 FROM up JOIN animal a ON a.entity_id = up.node
-      WHERE a.parent_id IS NOT NULL AND up.depth < 32
+      SELECT up.start, a.filed_under_id, up.depth + 1 FROM up JOIN animal_tree a ON a.entity_id = up.node
+      WHERE a.filed_under_id IS NOT NULL AND up.depth < 32
     )
     SELECT up.start, up.node, a.rank, a.scientific_name, r.ordinal,
            (SELECT ordinal FROM animal_rank WHERE rank = 'genus') AS genus_ordinal, up.depth
@@ -697,7 +697,7 @@ export async function collectedOf(db: Kysely<Database>, personId: number, animal
     WITH RECURSIVE below(entity_id, depth) AS (
       SELECT ${animalId}, 0
       UNION ALL
-      SELECT a.entity_id, below.depth + 1 FROM animal a JOIN below ON a.parent_id = below.entity_id WHERE below.depth < 32
+      SELECT a.entity_id, below.depth + 1 FROM animal_tree a JOIN below ON a.filed_under_id = below.entity_id WHERE below.depth < 32
     )
     SELECT s.locality, s.county, s.state_province, s.host_name_as_observed AS host_name, s.host_rank,
            ${sql.raw(methodNamesTrapSql("s.protocol"))} AS near_trap, ss.season,

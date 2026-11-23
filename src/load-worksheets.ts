@@ -530,7 +530,7 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
       WITH RECURSIVE up(node_id, anc_id) AS (
         SELECT entity_id, entity_id FROM animal
         UNION ALL
-        SELECT up.node_id, a.parent_id FROM up JOIN animal a ON a.entity_id = up.anc_id WHERE a.parent_id IS NOT NULL
+        SELECT up.node_id, a.filed_under_id FROM up JOIN animal_tree a ON a.entity_id = up.anc_id WHERE a.filed_under_id IS NOT NULL
       ) SELECT * FROM up`);
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE ws_old_system AS

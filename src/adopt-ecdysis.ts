@@ -1,5 +1,5 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { matchAnimalsToEcdysis } from "./load-ecdysis-taxonomy.js";
+import { matchAndFileAnimals } from "./load-ecdysis-taxonomy.js";
 
 /**
  * Adopt accepted Ecdysis names into the curated taxonomy (beeline-45v.1.1,
@@ -95,16 +95,46 @@ export async function adoptEcdysisNames(conn: DuckDBConnection, names: readonly 
       ORDER BY c.ordinal, c.name`)
   ).getRows()) as [bigint, string, string, string | null, number, bigint][];
   for (const [tid, rank, name, author, , parentTid] of toCreate) {
+    // A node is made only under a parent that exists and sits in the family
+    // Ecdysis files the node in: the parent is the node's Ecdysis anchor, or a
+    // subfamily, tribe or subtribe whose own anchor in the tree is it. A
+    // parent found by spelling in another family would put the node there
+    // for good, and a missing parent would make it a root (beeline-stoi).
+    const anchorRow = (await (
+      await conn.run(
+        `WITH RECURSIVE up(tid, depth) AS (
+           SELECT admitted_parent_tid, 1 FROM ecdysis_taxon WHERE tid = $1
+           UNION ALL
+           SELECT t.admitted_parent_tid, up.depth + 1 FROM up JOIN ecdysis_taxon t ON t.tid = up.tid
+           WHERE t.rank IN ('subfamily', 'tribe', 'subtribe') AND up.depth < 8
+         )
+         SELECT up.tid FROM up JOIN ecdysis_taxon t ON t.tid = up.tid
+         WHERE t.rank NOT IN ('subfamily', 'tribe', 'subtribe') ORDER BY up.depth LIMIT 1`,
+        [tid] as never,
+      )
+    ).getRows()) as [bigint | null][];
+    // No anchor outside the three ranks: nothing to check the parent against, so the name is not adopted.
+    const anchorTid = anchorRow[0]?.[0] ?? null;
+    if (anchorTid === null) continue;
     await conn.run(
       `INSERT INTO animal (parent_id, rank, scientific_name, authorship, ecdysis_tid)
-       SELECT (SELECT min(a.entity_id) FROM animal a, ecdysis_taxon p
-                WHERE p.tid = $1 AND (a.ecdysis_tid = p.tid OR (a.rank = p.rank AND a.scientific_name = p.name))),
-              $2, $3, $4, $5
-       WHERE NOT EXISTS (SELECT 1 FROM animal a WHERE a.rank = $2 AND a.scientific_name = $3)`,
-      [parentTid, rank, name, author, tid],
+       WITH p AS (
+         SELECT min(a.entity_id) AS entity_id FROM animal a, ecdysis_taxon pt
+          WHERE pt.tid = $1 AND (a.ecdysis_tid = pt.tid OR (a.rank = pt.rank AND a.scientific_name = pt.name))
+       ), anchor AS (
+         SELECT min(a.entity_id) AS entity_id FROM animal a, ecdysis_taxon xt
+          WHERE xt.tid = $6 AND (a.ecdysis_tid = xt.tid OR (a.rank = xt.rank AND a.scientific_name = xt.name))
+       )
+       SELECT p.entity_id, $2, $3, $4, $5
+       FROM p, anchor
+       WHERE p.entity_id IS NOT NULL AND anchor.entity_id IS NOT NULL
+         AND (p.entity_id = anchor.entity_id
+              OR (SELECT x.anchor_id FROM animal_anchor x WHERE x.entity_id = p.entity_id) = anchor.entity_id)
+         AND NOT EXISTS (SELECT 1 FROM animal a WHERE a.rank = $2 AND a.scientific_name = $3)`,
+      [parentTid, rank, name, author, tid, anchorTid] as never,
     );
   }
-  await matchAnimalsToEcdysis(conn);
+  await matchAndFileAnimals(conn);
 
   const adopted = (await (
     await conn.run(`
@@ -114,6 +144,7 @@ export async function adoptEcdysisNames(conn: DuckDBConnection, names: readonly 
       JOIN ecdysis_taxon t ON t.tid = s.tid
       JOIN adopt_chain c ON c.start = s.name
       WHERE s.name IN (SELECT start FROM adopt_reached)
+        AND EXISTS (SELECT 1 FROM animal a WHERE a.ecdysis_tid = s.tid)
       GROUP BY s.name, t.rank, s.tid
       ORDER BY s.name`)
   ).getRows()) as [string, string, bigint, string][];

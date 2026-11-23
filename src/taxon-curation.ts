@@ -4,7 +4,8 @@ import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
 import { openDuckDb } from "./db.js";
-import { matchAnimalsToEcdysis } from "./load-ecdysis-taxonomy.js";
+import { NO_FILING, type FilingResult } from "./file-animals.js";
+import { matchAndFileAnimals } from "./load-ecdysis-taxonomy.js";
 import { DEFAULT_DB } from "./person-change.js";
 
 /**
@@ -197,6 +198,8 @@ export interface ApplyResult {
   created: number;
   /** Rows whose node could not be made: a parent nowhere in the tree, or a rank whose parent the row did not name. */
   unplaced: Unplaced[];
+  /** What filing the tree under Ecdysis's subfamilies and tribes did after the replay (src/file-animals.ts). */
+  filing: FilingResult;
 }
 
 const lit = (s: string) => `'${s.replaceAll("'", "''")}'`;
@@ -222,7 +225,7 @@ export async function applyTaxonCuration(conn: DuckDBConnection, rows: readonly 
     return r === undefined ? null : Number(r[0]);
   };
 
-  const result: ApplyResult = { applied: 0, created: 0, unplaced: [] };
+  const result: ApplyResult = { applied: 0, created: 0, unplaced: [], filing: NO_FILING };
   await conn.run("DELETE FROM animal_curation");
   for (const row of rows) {
     let id = await nodeId(row.rank, row.name);
@@ -252,7 +255,7 @@ export async function applyTaxonCuration(conn: DuckDBConnection, rows: readonly 
     );
     result.applied += 1;
   }
-  await matchAnimalsToEcdysis(conn);
+  result.filing = await matchAndFileAnimals(conn);
   return result;
 }
 

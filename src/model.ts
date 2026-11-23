@@ -693,12 +693,22 @@ export interface ExpertIdentificationView {
 
 export interface AnimalTable {
   entity_id: Generated<number>;
-  parent_id: number | null;
+  // No parent_id on purpose (beeline-stoi). The column holds a node's parent at creation and is
+  // never updated, so a read of it is wrong the day a node is filed elsewhere. Read the parent in
+  // effect from animal_tree (AnimalTreeView.filed_under_id). Rows are inserted with raw SQL.
   rank: string;
   scientific_name: string;
   authorship: string | null;
   /** The Ecdysis taxon id of the name this node matches, or null (animal_ecdysis says why). Derived by ingest/match-ecdysis.sql. */
   ecdysis_tid: BigIntCol | null;
+}
+
+/** A node filed under a parent other than the one it was created under (schema/020, src/file-animals.ts). */
+export interface AnimalFilingTable {
+  animal_id: number;
+  parent_id: number;
+  ecdysis_fetched_on: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  filed_at: Generated<Date>;
 }
 
 // schema/022_animal_curation.sql
@@ -1964,6 +1974,49 @@ export interface MintedFieldNumberCollisionView {
   also_on: number;
 }
 
+// schema/117_views_animal_tree.sql
+
+/** animal with the parent it is filed under now. The only way to read a node's parent. */
+export interface AnimalTreeView {
+  entity_id: number;
+  filed_under_id: number | null;
+  rank: string;
+  scientific_name: string;
+  authorship: string | null;
+  ecdysis_tid: BigIntCol | null;
+}
+
+export interface AnimalAnchorView {
+  entity_id: number;
+  anchor_id: number;
+  anchor_tid: BigIntCol | null;
+}
+
+export interface AnimalFilingChainView {
+  node_id: number;
+  anchor_id: number;
+  tid: BigIntCol;
+  pos: number;
+}
+
+export interface AnimalFilingRuleView {
+  entity_id: number;
+  filed_under_tid: BigIntCol;
+  target_id: number | null;
+  filed_under_id: number | null;
+  created_under_id: number | null;
+}
+
+export interface AnimalFilingStaleView {
+  entity_id: number;
+  rank: string;
+  scientific_name: string;
+  filed_under_tid: BigIntCol;
+  should_be_under_id: number | null;
+  target_id: number | null;
+  is_under_id: number | null;
+}
+
 // schema/118_views_animal_ecdysis.sql
 
 export type AnimalEcdysisStanding = "accepted" | "synonym" | "homonym" | "absent" | "not loaded";
@@ -2100,6 +2153,7 @@ export interface Database {
   atlas_region: AtlasRegionTable;
   animal: AnimalTable;
   animal_curation: AnimalCurationTable;
+  animal_filing: AnimalFilingTable;
   ecdysis_taxon: EcdysisTaxonTable;
   ecdysis_adoptable: EcdysisAdoptableTable;
   sample: SampleTable;
@@ -2268,6 +2322,11 @@ export interface Database {
   inat_taxon_recheck: InatTaxonRecheckView;
   inat_taxon_stalest: InatTaxonStalestView;
   animal_ecdysis: AnimalEcdysisView;
+  animal_tree: AnimalTreeView;
+  animal_anchor: AnimalAnchorView;
+  animal_filing_chain: AnimalFilingChainView;
+  animal_filing_rule: AnimalFilingRuleView;
+  animal_filing_stale: AnimalFilingStaleView;
   animal_ecdysis_match: AnimalEcdysisMatchView;
   animal_ecdysis_stale: AnimalEcdysisStaleView;
   animal_curation_stale: AnimalCurationStaleView;

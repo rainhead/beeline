@@ -415,6 +415,7 @@ export function describeFetch(r: FetchEcdysisResult): string {
   if (l.ambiguousIdentifications > 0)
     parts.push(`${l.ambiguousIdentifications} identification(s) held back for the same reason`);
   if (l.adopted.length > 0) parts.push(`${l.adopted.length} name(s) adopted from Ecdysis's thesaurus: ${l.adopted.map((a) => a.name).join(", ")}`);
+  if (l.refiled > 0) parts.push(`${l.refiled} record(s) made again under their own name, no longer filed under a broader one`);
   const count = (n: number) => (n >= REPORTED_NAMES ? `at least ${n}` : String(n));
   if (l.filedUnder.length > 0) parts.push(`${count(l.filedUnder.length)} bycatch name(s) recorded under a broader name`);
   if (l.unresolvedNames.length > 0) parts.push(`${count(l.unresolvedNames.length)} name(s) unresolved`);

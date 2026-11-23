@@ -7,7 +7,7 @@
  * the rules and the worked examples.
  *
  * The data this reads is `animal` (schema/020_animal.sql): rank,
- * scientific_name, authorship, parent_id — and deliberately no vernacular
+ * scientific_name, authorship — and deliberately no vernacular
  * names. Floral hosts are iNaturalist taxa and do have one; the scientific
  * name is the value and the common name only assists, so it is an optional
  * `vernacular` prop that takes no room on the screen: it is the name's

@@ -5,10 +5,10 @@ CREATE VIEW animal_castes AS
 WITH RECURSIVE up (animal_id, ancestor_id, depth) AS (
   SELECT entity_id, entity_id, 0 FROM animal
   UNION ALL
-  SELECT up.animal_id, a.parent_id, up.depth + 1
+  SELECT up.animal_id, a.filed_under_id, up.depth + 1
   FROM up
-  JOIN animal a ON a.entity_id = up.ancestor_id
-  WHERE a.parent_id IS NOT NULL
+  JOIN animal_tree a ON a.entity_id = up.ancestor_id
+  WHERE a.filed_under_id IS NOT NULL
 ),
 stated AS (
   SELECT up.animal_id, c.has_castes,

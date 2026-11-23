@@ -47,12 +47,12 @@ type Rows = Array<Array<string | null>>;
  */
 export async function nameRows(db: Kysely<Database>): Promise<Rows> {
   const nodes = (
-    await sql<{ id: number; parent_id: number | null; rank: string; name: string }>`
-      SELECT entity_id AS id, parent_id, rank, scientific_name AS name FROM animal`.execute(db)
+    await sql<{ id: number; filed_under_id: number | null; rank: string; name: string }>`
+      SELECT entity_id AS id, filed_under_id, rank, scientific_name AS name FROM animal_tree`.execute(db)
   ).rows;
   const byId = new Map(nodes.map((n) => [Number(n.id), n]));
   const familyOf = (start: number): string | null => {
-    for (let n = byId.get(start); n !== undefined; n = n.parent_id === null ? undefined : byId.get(Number(n.parent_id))) {
+    for (let n = byId.get(start); n !== undefined; n = n.filed_under_id === null ? undefined : byId.get(Number(n.filed_under_id))) {
       if (n.rank === "family") return n.name;
     }
     return null;

@@ -50,8 +50,10 @@ the sync's paging loop stops at its next request, and a DuckDB query in flight
 is cancelled so its transaction rolls back. The failure is recorded in
 `job_run` like any other and the daily schedule retries it after its usual
 pause. Only then is the store checkpointed — both catalogs, explicitly, with a
-failure said out loud — and closed, and the close is reached whatever happened
-before it. The whole thing fits inside the 120s `kill_timeout` with room to
+failure said out loud — and closed. A step that throws does not stop the later ones, but time does:
+the app waits without a limit for the interrupted job to end, and if shutdown as
+a whole runs past 110 seconds the process exits with status 1 without
+checkpointing. Normally the whole thing fits inside the 120s `kill_timeout` with room to
 spare, which is the point: host maintenance restarts a machine with little
 warning and can land inside the 2am window, and the version that closed a busy
 connection from an async callback could lose the checkpoint to an unhandled

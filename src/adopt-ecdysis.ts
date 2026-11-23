@@ -1,5 +1,5 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { matchAnimalsToEcdysis } from "./load-ecdysis-taxonomy.js";
+import { matchAndFileAnimals } from "./load-ecdysis-taxonomy.js";
 
 /**
  * Adopt accepted Ecdysis names into the curated taxonomy (beeline-45v.1.1,
@@ -104,7 +104,7 @@ export async function adoptEcdysisNames(conn: DuckDBConnection, names: readonly 
       [parentTid, rank, name, author, tid],
     );
   }
-  await matchAnimalsToEcdysis(conn);
+  await matchAndFileAnimals(conn);
 
   const adopted = (await (
     await conn.run(`

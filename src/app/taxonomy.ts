@@ -136,10 +136,10 @@ export interface TaxonNode extends TaxonRow {
 
 const rows = (db: Kysely<Database>) =>
   db
-    .selectFrom("animal as a")
+    .selectFrom("animal_tree as a")
     .innerJoin("animal_ecdysis as i", "i.entity_id", "a.entity_id")
     .innerJoin("animal_rank as r", "r.rank", "a.rank")
-    .leftJoin("animal as p", "p.entity_id", "a.parent_id")
+    .leftJoin("animal_tree as p", "p.entity_id", "a.filed_under_id")
     .leftJoin("animal_curation as c", "c.animal_id", "a.entity_id")
     .select([
       "a.entity_id",
@@ -167,7 +167,7 @@ async function specimensUnder(db: Kysely<Database>, ids: readonly number[]): Pro
     WITH RECURSIVE below(ancestor, descendant) AS (
       SELECT entity_id, entity_id FROM animal WHERE entity_id IN (${sql.join(ids)})
       UNION
-      SELECT below.ancestor, a.entity_id FROM below JOIN animal a ON a.parent_id = below.descendant
+      SELECT below.ancestor, a.entity_id FROM below JOIN animal_tree a ON a.filed_under_id = below.descendant
     )
     SELECT below.ancestor AS entity_id, count(d.entity_id) AS specimens
     FROM below
@@ -229,7 +229,7 @@ export async function loadTaxon(db: Kysely<Database>, rank: string, name: string
   const id = found.entity_id;
 
   const children = await rows(db)
-    .where("a.parent_id", "=", id)
+    .where("a.filed_under_id", "=", id)
     .orderBy("r.ordinal")
     .orderBy("a.scientific_name")
     .execute();
@@ -238,11 +238,11 @@ export async function loadTaxon(db: Kysely<Database>, rank: string, name: string
   // Guarded by depth: the tree is not constrained against a cycle, and a
   // page that never returns is a worse answer than a truncated lineage.
   const lineage = await sql<TaxonRef & { depth: number }>`
-    WITH RECURSIVE up(entity_id, parent_id, rank, scientific_name, depth) AS (
-      SELECT entity_id, parent_id, rank, scientific_name, 0 FROM animal WHERE entity_id = ${id}
+    WITH RECURSIVE up(entity_id, filed_under_id, rank, scientific_name, depth) AS (
+      SELECT entity_id, filed_under_id, rank, scientific_name, 0 FROM animal_tree WHERE entity_id = ${id}
       UNION ALL
-      SELECT a.entity_id, a.parent_id, a.rank, a.scientific_name, up.depth + 1
-      FROM animal a JOIN up ON a.entity_id = up.parent_id
+      SELECT a.entity_id, a.filed_under_id, a.rank, a.scientific_name, up.depth + 1
+      FROM animal_tree a JOIN up ON a.entity_id = up.filed_under_id
       WHERE up.depth < 32
     )
     SELECT rank, scientific_name, depth FROM up WHERE depth > 0 ORDER BY depth DESC
@@ -307,11 +307,11 @@ export async function loadTaxon(db: Kysely<Database>, rank: string, name: string
  * answer instead.
  */
 export async function browseStart(db: Kysely<Database>): Promise<{ node: TaxonNode | null; roots: TaxonRow[] }> {
-  const roots = await rows(db).where("a.parent_id", "is", null).orderBy("r.ordinal").orderBy("a.scientific_name").execute();
+  const roots = await rows(db).where("a.filed_under_id", "is", null).orderBy("r.ordinal").orderBy("a.scientific_name").execute();
   if (roots.length !== 1) return { node: null, roots: await decorate(db, roots) };
   let current = roots[0]!;
   for (let depth = 0; depth < 32; depth++) {
-    const below = await rows(db).where("a.parent_id", "=", current.entity_id).limit(2).execute();
+    const below = await rows(db).where("a.filed_under_id", "=", current.entity_id).limit(2).execute();
     if (below.length !== 1) break;
     current = below[0]!;
   }
@@ -396,11 +396,12 @@ export async function taxonomySummary(db: Kysely<Database>): Promise<TaxonomySum
 }
 
 /** The ranks a row names its ancestor at, Darwin Core's higher classification. */
-export const CLASSIFICATION = ["kingdom", "phylum", "class", "order", "family", "genus"] as const;
+export const CLASSIFICATION = ["kingdom", "phylum", "class", "order", "family", "subfamily", "tribe", "subtribe", "genus"] as const;
 
 /** A name in tree order, with its parent's id and its ancestors at the main ranks. */
 export interface PlacedTaxon extends TaxonRow {
-  parent_id: number | null;
+  /** The node it is filed under (animal_tree). */
+  filed_under_id: number | null;
   classification: Record<(typeof CLASSIFICATION)[number], string | null>;
 }
 
@@ -414,21 +415,21 @@ export interface PlacedTaxon extends TaxonRow {
  * left out rather than looping.
  */
 export async function treeInOrder(db: Kysely<Database>): Promise<PlacedTaxon[]> {
-  const placed = await sql<{ entity_id: number; parent_id: number | null; path: string } & Record<(typeof CLASSIFICATION)[number], string | null>>`
-    WITH RECURSIVE down(entity_id, parent_id, path, depth, ${sql.join(CLASSIFICATION.map((rank) => sql.id(rank)))}) AS (
-      SELECT a.entity_id, a.parent_id, concat(lpad(CAST(r.ordinal AS TEXT), 3, '0'), ' ', a.scientific_name), 0,
+  const placed = await sql<{ entity_id: number; filed_under_id: number | null; path: string } & Record<(typeof CLASSIFICATION)[number], string | null>>`
+    WITH RECURSIVE down(entity_id, filed_under_id, path, depth, ${sql.join(CLASSIFICATION.map((rank) => sql.id(rank)))}) AS (
+      SELECT a.entity_id, a.filed_under_id, concat(lpad(CAST(r.ordinal AS TEXT), 3, '0'), ' ', a.scientific_name), 0,
              ${sql.join(CLASSIFICATION.map((rank) => sql`CASE WHEN a.rank = ${rank} THEN a.scientific_name END`))}
-      FROM animal a JOIN animal_rank r ON r.rank = a.rank
-      WHERE a.parent_id IS NULL
+      FROM animal_tree a JOIN animal_rank r ON r.rank = a.rank
+      WHERE a.filed_under_id IS NULL
       UNION ALL
       -- chr(1) sorts below every character a name holds, so a name's children
       -- follow it before a sibling that merely starts with the same letters.
-      SELECT a.entity_id, a.parent_id, concat(down.path, chr(1), lpad(CAST(r.ordinal AS TEXT), 3, '0'), ' ', a.scientific_name), down.depth + 1,
+      SELECT a.entity_id, a.filed_under_id, concat(down.path, chr(1), lpad(CAST(r.ordinal AS TEXT), 3, '0'), ' ', a.scientific_name), down.depth + 1,
              ${sql.join(CLASSIFICATION.map((rank) => sql`CASE WHEN a.rank = ${rank} THEN a.scientific_name ELSE down.${sql.id(rank)} END`))}
-      FROM animal a JOIN animal_rank r ON r.rank = a.rank JOIN down ON a.parent_id = down.entity_id
+      FROM animal_tree a JOIN animal_rank r ON r.rank = a.rank JOIN down ON a.filed_under_id = down.entity_id
       WHERE down.depth < 32
     )
-    SELECT entity_id, parent_id, path, ${sql.join(CLASSIFICATION.map((rank) => sql.id(rank)))} FROM down
+    SELECT entity_id, filed_under_id, path, ${sql.join(CLASSIFICATION.map((rank) => sql.id(rank)))} FROM down
   `.execute(db);
   const decorated = new Map((await decorate(db, await rows(db).execute())).map((row) => [row.entity_id, row]));
   return [...placed.rows]
@@ -437,7 +438,7 @@ export async function treeInOrder(db: Kysely<Database>): Promise<PlacedTaxon[]> 
       const row = decorated.get(place.entity_id);
       if (row === undefined) return [];
       const classification = Object.fromEntries(CLASSIFICATION.map((rank) => [rank, place[rank]])) as PlacedTaxon["classification"];
-      return [{ ...row, parent_id: place.parent_id === null ? null : Number(place.parent_id), classification }];
+      return [{ ...row, filed_under_id: place.filed_under_id === null ? null : Number(place.filed_under_id), classification }];
     });
 }
 

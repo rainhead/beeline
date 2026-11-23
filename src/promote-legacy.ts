@@ -8,6 +8,7 @@ import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
 import { mergeOverlays, readOverlay, CURATED_OVERLAY } from "./person-overlay.js";
 import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
+import type { FilingResult } from "./file-animals.js";
 import { refreshPlantCommonNames } from "./plant-common-names.js";
 import { applyTaxonCuration, CURATED_TAXON_CURATION, readTaxonCuration, type Unplaced } from "./taxon-curation.js";
 import { PrintedStoreRefused, refusePromotionIntoPrintedStore } from "./registry-guard.js";
@@ -52,6 +53,8 @@ export interface PromotionCounts {
   taxonCurationCreated: number;
   /** Curation rows whose node could not be placed — reported, never guessed at. */
   taxonCurationUnplaced: Unplaced[];
+  /** What filing the tree under Ecdysis's subfamilies, tribes and subtribes did (src/file-animals.ts). Reports needsCachedLoad when the store's thesaurus holds none, as one reseeded from a copy made before they were kept. */
+  filing: FilingResult;
   /** Logins two person records file under: one human twice, or a shared account. */
   collectorDuplicateLogins: number;
   correctionsApplied: number;
@@ -217,6 +220,7 @@ export async function promoteLegacy(
     taxonCurationApplied: curation.applied,
     taxonCurationCreated: curation.created,
     taxonCurationUnplaced: curation.unplaced,
+    filing: curation.filing,
     collectorDuplicateLogins: await scalar(
       "SELECT count(DISTINCT login) FROM legacy_collector_duplicate_candidate",
     ),

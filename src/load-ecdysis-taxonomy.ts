@@ -11,6 +11,7 @@ import {
   TAXA_COLUMNS,
   TAXA_FILE,
 } from "./fetch-ecdysis-taxonomy.js";
+import { describeFiling, fileAnimalsByEcdysis, type FilingResult } from "./file-animals.js";
 import { DEFAULT_DB } from "./person-change.js";
 
 /**
@@ -21,8 +22,10 @@ import { DEFAULT_DB } from "./person-change.js";
  * rank Ecdysis uses. The store keeps only the ranks animal_rank admits — a
  * Symbiota rank id is an animal_rank ordinal — and gives each accepted name
  * its nearest admitted ancestor (admitted_parent_tid), walking past the
- * tribes, subfamilies and subclasses in between, so adoption can follow a
- * name up to the tree. The walk passes a subgenus too: Ecdysis files a
+ * subclasses in between, so adoption can follow a name up to the tree.
+ * Subfamilies, tribes and subtribes are admitted ranks (beeline-stoi), so a
+ * genus's ancestor is its subtribe, tribe or subfamily, and the load ends by
+ * filing the tree under them (src/file-animals.ts). The walk passes a subgenus too: Ecdysis files a
  * species under its subgenus (Lasioglossum tenax under Lasioglossum
  * (Dialictus)), but the tree files every species under its genus and keeps
  * subgenera as leaves (ingest/seed-animals.sql), and an adopted species has
@@ -48,7 +51,7 @@ export interface LoadEcdysisTaxonomyResult {
   /** Names kept: at a rank animal_rank admits. */
   taxa: number;
   synonyms: number;
-  /** Names the fetch held at a rank the store does not admit — tribes, subfamilies — and so not kept. */
+  /** Names the fetch held at a rank the store does not admit (a subclass, say) and so not kept. */
   notAdmitted: number;
   /**
    * Synonyms whose accepted name is itself a synonym, or not in the store.
@@ -63,6 +66,10 @@ export interface LoadEcdysisTaxonomyResult {
   fetchedOn: string;
   /** How the animal nodes stand after matching, by animal_ecdysis.standing. */
   standing: Record<string, number>;
+  /** What filing the tree under Ecdysis's subfamilies, tribes and subtribes did (src/file-animals.ts). */
+  filing: FilingResult;
+  /** Nodes animal_filing_stale lists after the filing: the rule would file them elsewhere. Zero when the filing did its work. */
+  filingStale: number;
 }
 
 const MATCH_SQL = new URL("../ingest/match-ecdysis.sql", import.meta.url).pathname;
@@ -76,6 +83,17 @@ export async function rebuildEcdysisAdoptable(conn: DuckDBConnection): Promise<v
 /** Restate animal.ecdysis_tid from animal_ecdysis_match. Legacy promotion and every writer of the tree run it too. */
 export async function matchAnimalsToEcdysis(conn: DuckDBConnection): Promise<void> {
   await conn.run(await readFile(MATCH_SQL, "utf8"));
+}
+
+/**
+ * Restate animal.ecdysis_tid, then file the tree by Ecdysis's subfamilies,
+ * tribes and subtribes (src/file-animals.ts, beeline-stoi). What every writer
+ * of the tree runs: the taxonomy load, legacy promotion and the curation
+ * file, adoption (the nightly Ecdysis load and the draft commit).
+ */
+export async function matchAndFileAnimals(conn: DuckDBConnection): Promise<FilingResult> {
+  await matchAnimalsToEcdysis(conn);
+  return fileAnimalsByEcdysis(conn);
 }
 
 const literal = (path: string) => `'${path.replaceAll("'", "''")}'`;
@@ -127,6 +145,7 @@ export async function loadEcdysisTaxonomy(
   };
   const columns = TAXA_COLUMNS.map((c) => `'${c}': '${types[c]}'`).join(", ");
 
+  let filing: FilingResult;
   await conn.run("BEGIN TRANSACTION");
   try {
     await conn.run(
@@ -179,7 +198,7 @@ export async function loadEcdysisTaxonomy(
       throw new Error(`${path} holds no name at a rank the store admits — refusing to replace the loaded thesaurus with nothing`);
     }
     await rebuildEcdysisAdoptable(conn);
-    await matchAnimalsToEcdysis(conn);
+    filing = await matchAndFileAnimals(conn);
     await conn.run("COMMIT");
   } catch (err) {
     await conn.run("ROLLBACK");
@@ -201,6 +220,8 @@ export async function loadEcdysisTaxonomy(
     ),
     fetchedOn: day,
     standing,
+    filing,
+    filingStale: Number(await scalar("SELECT count(*) FROM animal_filing_stale")),
   };
   await conn.run("DROP TABLE IF EXISTS ecd_fetched");
   await conn.run("DROP TABLE IF EXISTS ecd_admitted_parent");
@@ -311,6 +332,13 @@ export function describeRefresh(r: RefreshEcdysisTaxonomyResult): string {
   } else {
     parts.push("none of the tree's names moved in Ecdysis");
   }
+  const filed = describeFiling(r.load.filing);
+  if (filed !== "") parts.push(`the tree: ${filed}`);
+  parts.push(
+    r.load.filingStale === 0
+      ? "every node sits where Ecdysis files it"
+      : `${r.load.filingStale} node(s) sit where Ecdysis does not file them (animal_filing_stale)`,
+  );
   if (r.curationStale > 0) parts.push(`${r.curationStale} curation decision(s) Ecdysis has moved from under (/taxonomy?decided=moved)`);
   const { active, settled } = r.draftsNoLongerOffered;
   if (active + settled > 0) {

@@ -55,8 +55,8 @@ describe("the weekly refresh of Ecdysis's taxonomy", () => {
   test("loads a first fetch and reports nothing as moved", async () => {
     const result = await refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: fetchFixture("2026-10-24") });
     expect(result).toMatchObject({ previousFetchedOn: null, moved: [], curationStale: 0, draftsNoLongerOffered: { active: 0, settled: 0 } });
-    // 60 rows, of which 45 are at ranks the store admits.
-    expect(result.load.taxa).toBe(45);
+    // 60 rows, of which 54 are at ranks the store admits.
+    expect(result.load.taxa).toBe(54);
     expect(await rows(conn, "SELECT count(*) FROM ecdysis_adoptable WHERE name = 'Chrysis'")).toEqual([[1n]]);
   });
 
@@ -84,6 +84,18 @@ describe("the weekly refresh of Ecdysis's taxonomy", () => {
     expect(describeRefresh(result)).toContain("volunteer drafts naming a taxon Ecdysis no longer offers: 1 in the active seasons, 0 in settled ones");
   });
 
+  test("names each node it filed under a tribe, and says the tree is in step", async () => {
+    await node("genus", "Bombus", "Apidae");
+    const result = await refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: fetchFixture("2026-10-24") });
+    expect(result.load.filing.moved).toEqual([{ rank: "genus", name: "Bombus", from: "Apidae", to: "Bombini" }]);
+    expect(result.load.filing.created.map((c) => c.name)).toEqual(["Apinae", "Bombini"]);
+    expect(result.load.filingStale).toBe(0);
+    const line = describeRefresh(result);
+    expect(line).toContain("Bombus: Apidae to Bombini");
+    expect(line).toContain("2 subfamilies, tribes and subtribes created");
+    expect(line).toContain("every node sits where Ecdysis files it");
+  });
+
   test("refuses a fetch that shrank by more than a twentieth, and leaves the store as it was", async () => {
     await refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: fetchFixture("2026-10-24") });
     // Synthetic: an export that lost most of its rows.
@@ -94,9 +106,11 @@ describe("the weekly refresh of Ecdysis's taxonomy", () => {
 
   test("counts the names the store keeps, so names gained at ranks it drops cannot hide a loss", async () => {
     await refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: fetchFixture("2026-10-24") });
-    // Synthetic: three species gone (45 kept become 42, 93%), and ten tribes
-    // added, which the store does not keep: 67 rows against the first 60.
-    const tribes = Array.from({ length: 10 }, (_, i) => `${9100000 + i},Tribus${i},,160,86587,accepted,${9100000 + i}`).join("\n");
+    // Synthetic: three species gone (54 kept become 51, 94%), and ten names
+    // added at a rank the store does not keep (200, below subtribe and above
+    // genus in Symbiota's numbering, which animal_rank skips): 70 rows against
+    // the first 60.
+    const tribes = Array.from({ length: 10 }, (_, i) => `${9100000 + i},Sectio${i},,200,86587,accepted,${9100000 + i}`).join("\n");
     const lossHidden = fetchFixture("2026-11-21", (csv) =>
       csv
         .replace(/^236821,.*\n/m, "")
@@ -104,7 +118,7 @@ describe("the weekly refresh of Ecdysis's taxonomy", () => {
         .replace(/^245760,.*\n/m, "")
         .concat(`${tribes}\n`),
     );
-    await expect(refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: lossHidden })).rejects.toThrow(/keeps 42 names against the 45/);
+    await expect(refreshEcdysisTaxonomy(conn, { dir, fetchTaxonomy: lossHidden })).rejects.toThrow(/keeps 51 names against the 54/);
     expect(await rows(conn, "SELECT DISTINCT CAST(fetched_on AS TEXT) FROM ecdysis_taxon")).toEqual([["2026-10-24"]]);
   });
 });

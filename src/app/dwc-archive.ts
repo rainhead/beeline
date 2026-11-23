@@ -37,7 +37,7 @@ const ARCHIVE_DECLARED_OWN = new Set<string>(["caste"]);
  * classification where it does not know the name itself: a genus or a rank it
  * does not use falls all the way to "Animalia" without one.
  */
-export const CLASSIFICATION_RANKS = ["kingdom", "phylum", "class", "order", "family", "genus", "subgenus"] as const;
+export const CLASSIFICATION_RANKS = ["kingdom", "phylum", "class", "order", "family", "subfamily", "tribe", "subtribe", "genus", "subgenus"] as const;
 export type ClassificationRank = (typeof CLASSIFICATION_RANKS)[number];
 /** One specimen's classification; a rank the tree has no ancestor at is absent. */
 export type Classification = Partial<Record<ClassificationRank, string>>;
@@ -302,7 +302,7 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
 /**
  * The higher classification of every animal in the tree, by animal id: the
  * ranks `CLASSIFICATION_RANKS` names that sit at or above it, found by walking
- * up `animal.parent_id`. A classification belongs to the animal and not to the
+ * up the tree (`animal_tree`). A classification belongs to the animal and not to the
  * specimen, so it is built once for a whole run of archives from the tree alone
  * (a few thousand nodes) and each specimen's is looked up by the animal its
  * determination of record names. Asking per page of specimens instead scanned
@@ -311,12 +311,12 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
  */
 export async function classificationsByAnimal(db: Kysely<Database>): Promise<Map<number, Classification>> {
   const result = await sql<{ animal_id: number | bigint; rank: ClassificationRank; scientific_name: string }>`
-    WITH RECURSIVE walk(animal_id, rank, scientific_name, parent_id) AS (
-      SELECT entity_id, rank, scientific_name, parent_id FROM animal
+    WITH RECURSIVE walk(animal_id, rank, scientific_name, filed_under_id) AS (
+      SELECT entity_id, rank, scientific_name, filed_under_id FROM animal_tree
       UNION ALL
-      SELECT w.animal_id, up.rank, up.scientific_name, up.parent_id
+      SELECT w.animal_id, up.rank, up.scientific_name, up.filed_under_id
       FROM walk w
-      JOIN animal up ON up.entity_id = w.parent_id
+      JOIN animal_tree up ON up.entity_id = w.filed_under_id
     )
     SELECT animal_id, rank, scientific_name FROM walk
     WHERE rank IN (${sql.join([...CLASSIFICATION_RANKS])})`.execute(db);

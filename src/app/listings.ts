@@ -570,7 +570,10 @@ export async function atlasOptions(db: Kysely<Database>): Promise<AtlasOption[]>
 
 /**
  * The taxa a taxon filter names: everything whose name starts with the term,
- * plus everything below them. Resolved to ids in one small query rather than
+ * plus everything below them. A subfamily, tribe or subtribe matches only on
+ * its whole name, so 'Nomad' finds the genus Nomada and its species but not
+ * Nomadinae (Peter, 2026-11-23; beeline-xngl replaces the text with a picked
+ * taxon, which will make the question go away). Resolved to ids in one small query rather than
  * a correlated recursive subquery, because `animal` is thousands of rows and
  * the listing is tens of thousands — the expansion belongs on the small side.
  * A genus term also matches its species directly (names are binomials), but
@@ -579,9 +582,12 @@ export async function atlasOptions(db: Kysely<Database>): Promise<AtlasOption[]>
 export async function taxonIds(db: Kysely<Database>, term: string): Promise<number[]> {
   const result = await sql<{ entity_id: number }>`
     WITH RECURSIVE matched(entity_id) AS (
-      SELECT entity_id FROM animal WHERE ${likePrefix(sql`lower(scientific_name)`, term)}
+      SELECT entity_id FROM animal_tree
+      WHERE CASE WHEN rank IN ('subfamily', 'tribe', 'subtribe')
+                 THEN lower(scientific_name) = ${term.toLowerCase()}
+                 ELSE ${likePrefix(sql`lower(scientific_name)`, term)} END
       UNION
-      SELECT child.entity_id FROM animal child JOIN matched ON child.parent_id = matched.entity_id
+      SELECT child.entity_id FROM animal_tree child JOIN matched ON child.filed_under_id = matched.entity_id
     )
     SELECT entity_id FROM matched
   `.execute(db);

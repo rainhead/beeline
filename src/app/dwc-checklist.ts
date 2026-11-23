@@ -85,9 +85,9 @@ export async function programChecklist(db: Kysely<Database>, scope: string): Pro
     up(animal_id, ancestor, depth) AS (
       SELECT animal_id, animal_id, 0 FROM recorded
       UNION ALL
-      SELECT up.animal_id, a.parent_id, up.depth + 1
-      FROM up JOIN animal a ON a.entity_id = up.ancestor
-      WHERE a.parent_id IS NOT NULL AND up.depth < 32
+      SELECT up.animal_id, a.filed_under_id, up.depth + 1
+      FROM up JOIN animal_tree a ON a.entity_id = up.ancestor
+      WHERE a.filed_under_id IS NOT NULL AND up.depth < 32
     )
     SELECT up.ancestor AS entity_id, sum(r.specimens) AS specimens, sum(r.by_experts) AS by_experts,
            min(r.first_year) AS first_year, max(r.last_year) AS last_year
@@ -131,7 +131,7 @@ export function checklistArchive(rows: readonly ChecklistRow[]): Uint8Array {
       .map((r) =>
         tabLine([
           r.entity_id,
-          r.parent_id,
+          r.filed_under_id,
           r.scientific_name,
           r.authorship,
           r.rank,

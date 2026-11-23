@@ -43,7 +43,10 @@ See the 2026-11-22 amendment in [ADR 0006](../docs/adr/0006-migrations-for-deplo
 if the view is listed in `view-hashes.txt`, delete its line. The test
 `test/view-migrations.test.ts` replays the newest migration that creates each
 view and fails when the result differs from `schema/`, which is how a
-forgotten migration shows. `view-hashes.txt` holds a hash for each view that no
+forgotten migration shows. Removing a view from `schema/` needs a migration
+with `DROP VIEW`, or a deployed store keeps it; the same test fails when a
+migration creates a view that neither `schema/` nor `ingest/*.sql` declares
+and none drops it. `view-hashes.txt` holds a hash for each view that no
 migration from 0070 on creates (73 on 2026-11-22), since those cannot be
 replayed. It only shrinks, except that after a DuckDB upgrade changes how
 views are serialised, `pnpm views:rehash` rewrites the hashes of the views

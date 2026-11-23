@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { MIGRATIONS_DIR } from "../src/migrate.js";
 import { SCHEMA_DIR } from "../src/schema.js";
 import { viewHash, VIEW_MANIFEST } from "../src/view-manifest.js";
 import { createMemoryDb } from "./helpers.js";
-import { creatingWithoutComment, sqlFiles, viewStatements, splitStatements, type ViewStatement } from "./migration-statements.js";
+import { createdAndNeverDropped, creatingWithoutComment, sqlFiles, viewStatements, splitStatements, type ViewStatement } from "./migration-statements.js";
 
 /**
  * "Did this change forget a migration?" for views, which `db:migrate --check`
@@ -19,6 +20,8 @@ import { creatingWithoutComment, sqlFiles, viewStatements, splitStatements, type
  * does. A view no migration states is held by a hash in
  * migrations/view-hashes.txt instead.
  */
+
+const INGEST_DIR = fileURLToPath(new URL("../ingest/", import.meta.url));
 
 const stored = async (c: DuckDBConnection) => {
   const rows = await (
@@ -109,6 +112,29 @@ describe("the rule about comments, on made-up migrations", () => {
     expect(creatingWithoutComment(newestWithout, () => true)).toEqual(["0101-b.sql: v"]);
     // A view the schema does not comment needs none.
     expect(creatingWithoutComment(newestWithout, () => false)).toEqual([]);
+  });
+});
+
+describe("a view the schema no longer declares", () => {
+  const stated = (files: Record<string, string>) => viewStatements(Object.entries(files).map(([file, text]) => ({ file, text })));
+  const none = new Set<string>();
+
+  test("must have been dropped by the newest migration that mentions it", () => {
+    expect(createdAndNeverDropped(stated({ "0100-a.sql": "CREATE VIEW v AS SELECT 1 AS a;", "0101-b.sql": "DROP VIEW v;" }), none)).toEqual([]);
+    expect(createdAndNeverDropped(stated({ "0100-a.sql": "CREATE VIEW v AS SELECT 1 AS a;" }), none)).toEqual([expect.stringContaining("v: 0100-a.sql")]);
+    expect(
+      createdAndNeverDropped(stated({ "0100-a.sql": "CREATE VIEW v AS SELECT 1 AS a; DROP VIEW v;", "0101-b.sql": "CREATE VIEW v AS SELECT 2 AS a;" }), none),
+    ).toEqual([expect.stringContaining("v: 0101-b.sql")]);
+    // A view the schema still declares is the other tests' business.
+    expect(createdAndNeverDropped(stated({ "0100-a.sql": "CREATE VIEW v AS SELECT 1 AS a;" }), new Set(["v"]))).toEqual([]);
+  });
+
+  test("none of today's migrations leaves one behind", async () => {
+    const { conn } = await createMemoryDb();
+    // Views that ingest/*.sql makes when a legacy promotion runs (not schema/) are declared there; the
+    // migrations that change them say `-- needs:` (migrations/README.md).
+    const ingest = viewStatements(await sqlFiles(INGEST_DIR)).filter((s) => s.kind === "create").map((s) => s.view);
+    expect(createdAndNeverDropped(statements, new Set([...(await stored(conn)).keys(), ...ingest]))).toEqual([]);
   });
 });
 

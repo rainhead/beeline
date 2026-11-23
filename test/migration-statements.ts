@@ -129,3 +129,18 @@ export function creatingWithoutComment(statements: ViewStatement[], schemaCommen
   }
   return missing;
 }
+
+/**
+ * Views a migration creates that the schema no longer declares and no later
+ * migration drops: a deployed store would keep them. For each view named by a
+ * CREATE or DROP and absent from the schema, the newest of those statements
+ * must be a DROP.
+ */
+export function createdAndNeverDropped(statements: ViewStatement[], schemaViews: ReadonlySet<string>): string[] {
+  const order = (a: ViewStatement, b: ViewStatement) => (a.file === b.file ? a.index - b.index : a.file < b.file ? -1 : 1);
+  const newest = new Map<string, ViewStatement>();
+  for (const s of [...statements].sort(order)) if (s.kind !== "comment") newest.set(s.view, s);
+  return [...newest.values()]
+    .filter((s) => s.kind === "create" && !schemaViews.has(s.view))
+    .map((s) => `${s.view}: ${s.file} creates it, the schema no longer declares it and no later migration drops it`);
+}

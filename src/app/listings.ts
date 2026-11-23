@@ -1580,6 +1580,7 @@ export async function listSamples(
   const hidden = withheld(reader);
   const place = placeColumns(reader);
   const base = await filteredSamples(db, query, personId, reader, opts.exact, true, opts.ids);
+  const countQuery = opts.withTotal === false ? undefined : await samplesCountQuery(db, query, personId, reader, opts, base);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1647,7 +1648,7 @@ export async function listSamples(
       .offset(offset)
       .execute(),
     // A streamed download pages through everything and never shows a total.
-    opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
+    countQuery === undefined ? Promise.resolve(undefined) : countQuery.executeTakeFirst(),
   ]);
   const sampleRows = rows as unknown as Array<SampleRow & { flag_list: string | null }>;
   await nameHosts(db, sampleRows, opts.hostNames ?? "all");
@@ -1672,6 +1673,27 @@ export async function listSamples(
     findings,
     area: await listedArea(db, query.area, reader, Math.max(sampleRows.length, Number(count?.n ?? 0))),
   };
+}
+
+/**
+ * The query for a samples page's total: the page's own filters ({@link filteredSamples}),
+ * joined to the flag roll-up only when {@link needsRollup} says a filter reads it. The page's
+ * rows select the roll-up for their Flags column, so they are given `rowsBase`, which has it;
+ * when a status filter needs it the count reuses that base, and otherwise builds one without.
+ */
+export async function samplesCountQuery(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  opts: ListingPageOptions,
+  rowsBase?: Awaited<ReturnType<typeof filteredSamples>>,
+) {
+  const base =
+    rowsBase !== undefined && needsRollup(query)
+      ? rowsBase
+      : await filteredSamples(db, query, personId, reader, opts.exact, needsRollup(query), opts.ids);
+  return base.select(({ fn }) => fn.countAll().as("n"));
 }
 
 /**
@@ -1824,6 +1846,20 @@ export async function filteredSpecimens(
   return base;
 }
 
+/**
+ * The specimens a page and its total are both read from. The rows select nothing from the
+ * flag roll-up, so it is joined only when a status filter reads it ({@link needsRollup}).
+ */
+export async function specimenListingBase(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  opts: ListingPageOptions,
+) {
+  return filteredSpecimens(db, query, personId, reader, opts.year, opts.exact, needsRollup(query), opts.ids);
+}
+
 export async function listSpecimens(
   db: Kysely<Database>,
   query: ListingQuery,
@@ -1833,7 +1869,7 @@ export async function listSpecimens(
 ): Promise<Page<SpecimenRow>> {
   const hidden = withheld(reader);
   const place = placeColumns(reader);
-  const base = await filteredSpecimens(db, query, personId, reader, opts.year, opts.exact, true, opts.ids);
+  const base = await specimenListingBase(db, query, personId, reader, opts);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1945,7 +1981,7 @@ const groupExpression = (group: CountGroup): RawBuilder<string | number | null> 
  * against 1 ms for a bare count, and the roll-up is one of two joins the page's
  * rows need and a count does not.
  */
-const needsRollup = (query: ListingQuery) => query.qc !== "any" && query.qc !== "locality";
+export const needsRollup = (query: ListingQuery) => query.qc !== "any" && query.qc !== "locality";
 
 // The two selections are different query builders over the same sample
 // columns, which the grouping reads as `s` and `a`; the builder's own type

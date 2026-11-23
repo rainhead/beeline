@@ -1,6 +1,7 @@
 # ADR 0006: Migrations carry deployed stores forward; the schema stays the schema
 
-**Status:** accepted (2026-08-23) · narrows the "no migration system" stance in
+**Status:** accepted (2026-08-23) · **Amended** (2026-11-22, beeline-0apa): what
+`--check` compares; see the last section · narrows the "no migration system" stance in
 [roadmap.md](../roadmap.md) · operational context in
 [ADR 0005](0005-app-process-owns-the-store.md)
 
@@ -98,3 +99,30 @@ deltas that bring an already-deployed database up to it.**
   (beeline-csgv; restoring an older archive is in the runbook). Before that it
   was attached rather than part of this catalog, and patched itself at boot
   outside this mechanism.
+
+### Amendment, 2026-11-22: what `--check` compares (beeline-0apa)
+
+The sentence above says `--check` diffs tables, views and columns. It compared
+only their names. Since 2026-11-22 it also compares the `COMMENT` on every
+view, table and column that the schema declares, and reports
+`comment differs: <name>`. It still compares no view's definition, and the
+reason is measured. DuckDB stores a view's text as the version that wrote it
+serialised it, so a store migrated under DuckDB 1.x holds text that differs
+from a fresh 2.0 build's: on the backup of 2026-11-22, 85 of the 134 views
+differed in text (`main.` before function names, `CAST('f' AS BOOLEAN)` for
+`false`, `VARCHAR` for `TEXT`, different grouping of nested `UNION`s and
+joins) and none differed in meaning (their query plans matched, or differed
+only in how a chain of `UNION`s was grouped). A text comparison would fail
+every deployed store after each DuckDB upgrade. Forgotten view changes are
+instead to be caught in the test suite, where both sides are written by one
+DuckDB; that test is not built yet (the design is in beeline-0apa). Constraints
+and column defaults are not compared either: their stored text depends on the
+writing version in the same way, and a deployed store cannot gain a CHECK.
+
+A view reads the views under it as they are when it is queried, so replacing
+one view is enough: the views that read it need no migration of their own
+(unless a column they use goes away, which fails when they are next queried).
+
+`CREATE OR REPLACE VIEW` removes the view's comment, so a migration that
+replaces a view must restate its `COMMENT ON VIEW`; the comment check now
+fails a migration that forgets.

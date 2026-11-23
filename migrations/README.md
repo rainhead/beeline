@@ -27,6 +27,17 @@ whether to migrate. It was not always: it used to migrate first and diff
 after, and on a store that already carried a later change by another route
 it applied two migrations and stopped at the third (beeline-736).
 
+`--check` compares the names of the tables, views and columns the schema
+declares and the `COMMENT` on each. It does not compare a view's definition:
+DuckDB stores that text as the version that wrote it serialised it, so
+production's differs in text (not in meaning) from a fresh build's, in 85 of
+134 views on the backup of 2026-11-22. A migration that replaces a view with
+`CREATE OR REPLACE VIEW` must restate its `COMMENT ON VIEW`, because the
+replacement drops it. A view reads the views under it as they are now, so
+replacing one view needs no migration for the views that read it. Numbers may
+skip (the runner orders by filename); two migrations already share some.
+See the 2026-11-22 amendment in [ADR 0006](../docs/adr/0006-migrations-for-deployed-stores.md).
+
 Nothing else may hold the database open (ADR 0005), so the app must not be
 running. On Fly the entrypoint migrates before it starts the app
 ([`infra/fly/entrypoint.sh`](../infra/fly/entrypoint.sh)), so a deploy needs no

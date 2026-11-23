@@ -57,6 +57,14 @@ const EXAMPLES: ReadonlyArray<{ props: TaxonNameProps; note: string }> = [
     note: "Family. Above genus, so upright.",
   },
   {
+    props: { rank: "subfamily", scientificName: "Eumeninae" },
+    note: "A subfamily, upright. A determination may name one (a potter wasp that cannot be taken further), and the picker shows the rank beside it.",
+  },
+  {
+    props: { rank: "tribe", scientificName: "Eucerini" },
+    note: "A tribe, upright. Subtribes (Eucerina) are the same. Ecdysis files a genus under one, and the tree follows it.",
+  },
+  {
     props: { rank: "superfamily", scientificName: "Ichneumonoidea" },
     note: "Bycatch determined only to superfamily. The taxonomy admits this rank deliberately.",
   },

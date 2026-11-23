@@ -77,6 +77,8 @@ describe("adopting Ecdysis names", () => {
       ["phylum", "Arthropoda", 2],
       ["kingdom", "Animalia", 1],
     ]);
+    // Adoption files the tree too: nothing is left for the rule to move.
+    expect(await rows(conn, "SELECT count(*) FROM animal_filing_stale")).toEqual([[0n]]);
     const before = await rows(conn, "SELECT count(*) FROM animal");
     expect(await adoptEcdysisNames(conn, ["Chrysis", "Chrysididae", "Melecta pacifica"])).toEqual([]);
     expect(await rows(conn, "SELECT count(*) FROM animal")).toEqual(before);

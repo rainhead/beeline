@@ -17,6 +17,7 @@ import {
   specimenCsvRow,
   textCell,
   listingHref,
+  taxonIds,
   MINE,
   parseListingQuery,
   toCsv,
@@ -538,6 +539,33 @@ describe("sample listing", () => {
     expect(await get(app, "/samples?scope=all&taxon=Megachile")).toContain("No samples match");
   });
 
+  it("matches a subfamily, tribe or subtribe only on its whole name (Peter, 2026-11-23)", async () => {
+    // 'Nomad' must find the genus Nomada and its species, not the subfamily
+    // Nomadinae and everything filed under it, which it would also start.
+    const { instance, conn } = await createMemoryDb();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Apidae')`);
+    const under = (parent: string) => `(SELECT entity_id FROM animal WHERE scientific_name = '${parent}')`;
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('subfamily', 'Nomadinae', ${under("Apidae")})`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('tribe', 'Nomadini', ${under("Nomadinae")})`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Nomada', ${under("Nomadini")}), ('genus', 'Epeolus', ${under("Nomadini")})`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('species', 'Nomada fervida', ${under("Nomada")})`);
+    const db = createKysely(instance);
+    const names = async (term: string) =>
+      (
+        await db
+          .selectFrom("animal")
+          .select("scientific_name")
+          .where("entity_id", "in", await taxonIds(db, term))
+          .orderBy("scientific_name")
+          .execute()
+      ).map((r) => r.scientific_name);
+    expect(await names("Nomad")).toEqual(["Nomada", "Nomada fervida"]);
+    expect(await names("nomadinae")).toEqual(["Epeolus", "Nomada", "Nomada fervida", "Nomadinae", "Nomadini"]);
+    expect(await names("Nomadini")).toEqual(["Epeolus", "Nomada", "Nomada fervida", "Nomadini"]);
+    // Other ranks still match by the start of the name, case apart.
+    expect(await names("apid")).toEqual(["Apidae", "Epeolus", "Nomada", "Nomada fervida", "Nomadinae", "Nomadini"]);
+  });
+
   it("reads in the collector's own numbering within a day, not upload order", async () => {
     // A day's samples reach iNaturalist in whatever order they were
     // photographed; the collector numbered them 1, 2, 3 (Peter, 2026-08-23).
@@ -682,6 +710,9 @@ describe("how far a specimen is named (beeline-o9rd)", () => {
       suborder: "coarse",
       superfamily: "coarse",
       family: "coarse",
+      subfamily: "coarse",
+      tribe: "coarse",
+      subtribe: "coarse",
       genus: "genus",
       subgenus: "genus",
       species: "species",

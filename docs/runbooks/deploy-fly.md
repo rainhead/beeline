@@ -486,6 +486,15 @@ fly ssh console --app beeline-production -C "sh -c 'cd /app && pnpm ecdysis:taxo
 fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production
 ```
 
+After the deploy that brings in the subfamily, tribe and subtribe ranks
+(migration 0122), run the job once to do the first filing of the tree under
+Ecdysis's subfamilies and tribes (beeline-stoi): `POST /api/v1/jobs/ecdysis-taxonomy`
+with an API key, which starts the job on the running app.
+It fetches and loads as the weekly run does, and its report names each genus
+moved and any node still out of place. A dev store reseeded from a copy made
+before those ranks were kept needs `pnpm ecdysis:taxonomy --cached`, which
+the filing step says when it finds no subfamily or tribe in the thesaurus.
+
 `--cached` loads the last fetch into the machine's `BEELINE_DB`, replaces the
 table and re-matches every node in one transaction, in about three seconds,
 and refuses a fetch with no name at a rank the tree admits. A reseed carries

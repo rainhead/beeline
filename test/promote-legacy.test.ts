@@ -80,6 +80,7 @@ describe("legacy promotion", () => {
       taxonCurationApplied: 0, // the fixture file decides nothing
       taxonCurationCreated: 0,
       taxonCurationUnplaced: [],
+      filing: { moved: [], created: [], emptyIntermediates: 0, needsCachedLoad: false },
       collectorDuplicateLogins: 0,
       correctionsApplied: 0,
       correctionConflicts: 0,

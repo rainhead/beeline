@@ -80,7 +80,7 @@ The plan is made from the store at one moment and the archive is written later, 
 | `lifeStage`, `preparations`, `individualCount` | the `dwc:` terms | the same names | Auto-mapped. `adult`, `pinned`, `1`, from the collection's constants |
 | `labelProject` (Washington only) | `https://symbiota.org/terms/labelProject` | `labelProject` (varchar 250) | Mapped by name (`uploadspectemp` has the column); not imported live |
 | `disposition`, `occurrenceRemarks` | the `dwc:` terms | the same names | Auto-mapped. Symbiota straightens curly quotes, collapses runs of spaces, deletes emoji and cuts `disposition` at 250 characters (test C3) |
-| `scientificName` | `dwc:scientificName` | `sciname` | Mapped through the translation map `scientificname` to `sciname` ("excluding author") |
+| `scientificName` | `dwc:scientificName` | `sciname` | Mapped through the translation map `scientificname` to `sciname` ("excluding author"). The upload sends no classification (no family, subfamily or tribe column), so a determination at tribe or subfamily goes as `scientificName` alone |
 | `scientificNameAuthorship`, `identificationQualifier`, `identifiedBy`, `dateIdentified` | the `dwc:` terms | the same names | Auto-mapped |
 | `sex` | `dwc:sex` | `sex` | Auto-mapped. Symbiota reads sex from the occurrence row only |
 | `reproductiveCondition` | `dwc:reproductiveCondition` | `reproductiveCondition` | Auto-mapped. Holds the caste: Symbiota has no caste column anywhere, and British Columbia already keeps it here |

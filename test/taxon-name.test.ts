@@ -12,7 +12,7 @@ const render = (props: TaxonNameProps) => String(TaxonName(props));
 describe("TaxonName", () => {
   it("italicises genus and below, and nothing above it", () => {
     for (const rank of ["genus", "subgenus", "species", "subspecies"]) expect(isItalicRank(rank), rank).toBe(true);
-    for (const rank of ["family", "tribe", "order", "suborder", "superfamily"])
+    for (const rank of ["family", "subfamily", "tribe", "subtribe", "order", "suborder", "superfamily"])
       expect(isItalicRank(rank), rank).toBe(false);
   });
 

@@ -279,28 +279,32 @@ describe("the listings", () => {
     expect(first.url).toBe(`${ORIGIN}/specimens/${first.id}`);
   });
 
-  it("hold the downloads' values: the JSON and the samples CSV or the specimens Excel file cannot disagree", async () => {
-    const w = await world();
-    const queries = [
-      "",
-      "scope=all",
-      "scope=all&sort=collector&dir=asc",
-      "scope=all&qc=flagged",
-      "scope=OBA",
-      "scope=outside",
-      "scope=all&kind=trap",
-      "scope=all&ecdysis=expected",
-      "scope=all&ecdysis=not",
-      "scope=all&q=B-",
-      "scope=all&place=Corvallis",
-      "scope=all&taxon=Apidae",
-      "scope=all&from=2025-01-01&to=2025-12-31",
-      "scope=all&collector=Barnes&member=WaBA",
-    ];
-    for (const person of ["alice", "sam"] as const) {
-      for (const kind of ["samples", "specimens"] as const) {
+  // One test for each reader and listing, not one for all four (beeline-emim). Each makes 28 requests and takes about 3 s
+  // alone; the four in one test took 12 s alone and passed their 30 s limit whenever a full run kept the machine busy.
+  // A request costs about 100 ms whatever the query, and the Excel file's cost is in reading it, so the time is the
+  // number of requests, and no one step to make cheaper.
+  const DOWNLOAD_QUERIES = [
+    "",
+    "scope=all",
+    "scope=all&sort=collector&dir=asc",
+    "scope=all&qc=flagged",
+    "scope=OBA",
+    "scope=outside",
+    "scope=all&kind=trap",
+    "scope=all&ecdysis=expected",
+    "scope=all&ecdysis=not",
+    "scope=all&q=B-",
+    "scope=all&place=Corvallis",
+    "scope=all&taxon=Apidae",
+    "scope=all&from=2025-01-01&to=2025-12-31",
+    "scope=all&collector=Barnes&member=WaBA",
+  ];
+  for (const person of ["alice", "sam"] as const) {
+    for (const kind of ["samples", "specimens"] as const) {
+      it(`hold the downloads' values for ${person}: the JSON and the ${kind === "samples" ? "samples CSV" : "specimens Excel file"} cannot disagree`, async () => {
+        const w = await world();
         const header: readonly string[] = kind === "samples" ? SAMPLE_CSV_HEADER : SPECIMEN_CSV_HEADER;
-        for (const q of queries) {
+        for (const q of DOWNLOAD_QUERIES) {
           const api = await w.json(w.keys[person], `/${kind}?${q}&page_size=500`);
           if (kind === "specimens") {
             // The specimens' one download is the Excel file for editing (beeline-kgyd.5): its columns, in its order.
@@ -334,9 +338,9 @@ describe("the listings", () => {
             header.forEach((name, j) => expect(String(api.rows[i][name] ?? ""), `${person} ${kind} ${q} row ${i} ${name}`).toBe(cells[j]));
           });
         }
-      }
+      });
     }
-  });
+  }
 
   it("filter, sort, scope and page as the page does", async () => {
     const w = await world();

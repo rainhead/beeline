@@ -55,17 +55,23 @@ WITH resolved AS (
                             ORDER BY p.inat_place_id) AS rn
   FROM (
     SELECT o.inat_id,
-           -- Private first, exactly as the coordinate rule does
-           -- (ingest/promote-observations.sql): iNaturalist withholds
-           -- place_ids on a private observation the same way it withholds
-           -- the point, and delivers private_place_ids instead when the
-           -- reader is trusted. Without this branch a trusted private
-           -- observation resolves to nowhere — which is the one population
-           -- the whole trust apparatus exists to serve. Unexercised by the
-           -- dev corpus, which was synced without trust: all 63,280 loads
-           -- carry neither private_place_ids nor private_geojson, and the
-           -- 60 private observations among them carry no place_ids at all,
-           -- which is what makes them the only observations with no state.
+           -- Private place ids first, exactly as the coordinate rule puts
+           -- private_geojson first (ingest/promote-observations.sql). In
+           -- practice this reads place_ids every time: iNaturalist's API v2
+           -- never returns private_place_ids (the field is missing from its
+           -- Observation response schema, and v2 drops a requested field the
+           -- schema does not list, without an error), so no stored
+           -- observation carries it. An obscured observation still resolves
+           -- its state and county from its public place_ids. A private one
+           -- has place_ids: [] and so no country, state or county here (88
+           -- on production's backup of 2026-11-22). A sample minted from one
+           -- is not left without a place: the nightly's find-areas step
+           -- derives the county from the sample's true point, and
+           -- stampCounties (src/derive-area.ts) writes its county, state and
+           -- country and fills its atlas. The coalesce stays because it costs
+           -- nothing and would start to work if v2 gained the field. (v1
+           -- would return it to a viewer who gets private coordinates, by a
+           -- reading of its source on 2026-11-22, not confirmed with a token.)
            unnest(CAST(coalesce(json_extract(o.content, '$.private_place_ids'),
                                 json_extract(o.content, '$.place_ids')) AS BIGINT[])) AS place_id
     FROM observation_current o

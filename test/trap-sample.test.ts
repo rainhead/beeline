@@ -189,15 +189,30 @@ describe("entering and editing", () => {
 });
 
 describe("who may enter trap samples", () => {
-  it("is staff, and anyone who has collected a trap sample", async () => {
+  it("is staff, and anyone who has collected a sample whose method is a trap", async () => {
     const trapper = await personId("Dan O'Loughlin");
     const netter = await personId("Net Only");
-    await insertCleanSample(conn, { kind: "'trap'", collector_id: String(trapper) });
+    await insertCleanSample(conn, { kind: "'trap'", protocol: "'vane trap'", collector_id: String(trapper) });
     await insertCleanSample(conn, { kind: "'net'", collector_id: String(netter), sample_number: "'2'" });
     expect(await mayEnterTrapSamples(conn, trapper, false)).toBe(true);
     expect(await mayEnterTrapSamples(conn, netter, false)).toBe(false);
     expect(await mayEnterTrapSamples(conn, netter, true)).toBe(true);
     expect(await mayEnterTrapSamples(conn, null, false)).toBe(false);
+  });
+
+  it("reads the method, not kind: a netted sample stored as a trap gives nothing, a trap nest stored as a net does", async () => {
+    const netter = await personId("Net Only");
+    const nester = await personId("Michael O'Loughlin");
+    await insertCleanSample(conn, { kind: "'trap'", protocol: "'aerial net'", collector_id: String(netter) });
+    await insertCleanSample(conn, { kind: "'net'", protocol: "'trap nest'", collector_id: String(nester), sample_number: "'2'" });
+    expect(await mayEnterTrapSamples(conn, netter, false)).toBe(false);
+    expect(await mayEnterTrapSamples(conn, nester, false)).toBe(true);
+  });
+
+  it("is anyone who leads a program, whatever they have collected", async () => {
+    const lead = await personId("Net Only");
+    await conn.run(`INSERT INTO program_lead (program_id, person_id) SELECT entity_id, ${lead} FROM program WHERE code = 'WaBA'`);
+    expect(await mayEnterTrapSamples(conn, lead, false)).toBe(true);
   });
 });
 

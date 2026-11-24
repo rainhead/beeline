@@ -32,6 +32,7 @@ import {
   type SpecimenRow,
 } from "./listings.js";
 import type { CsvTiming } from "./request-timing.js";
+import { methodNamesTrap } from "../trap-method.js";
 
 /**
  * The two files a person uploads to Ecdysis by hand (beeline-8dx9.12, Peter,
@@ -1043,6 +1044,17 @@ export const observationUrl = (observationId: number | bigint): string => `https
 const ASSOCIATION_PAGE = 5_000;
 
 /**
+ * A sample whose plant is left out of the associations file: its method names
+ * a trap, or its kind is trap and its method does not say it was netted. So a
+ * netted sample recorded as a trap (297 old ones) keeps its host, a
+ * trap-worded one recorded as a net does not, and a trap sample whose method
+ * names nothing ("pan", entered in Beeline) stays out, as it was when kind
+ * alone decided (beeline-lmlh).
+ */
+const isTrapSample = (kind: string, protocol: string | null): boolean =>
+  methodNamesTrap(protocol) || (kind === "trap" && !/net/i.test(protocol ?? ""));
+
+/**
  * The associations file for the specimens a completed download held: exactly
  * those, with no rule applied again, so the file matches the archive that was
  * uploaded, and each named by the catalog number it was written under, not one
@@ -1053,8 +1065,11 @@ const ASSOCIATION_PAGE = 5_000;
  * Ecdysis: the specimens file carries no `associatedTaxa` column, because
  * loading this file again can correct an association but never the text on a
  * specimen record, so the two would disagree after a plant is renamed (Peter
- * decided, 2026-11-22). A trap sample (the sample's `kind`, not the words of its
- * protocol) has no row at all: Symbiota applies one relationship, `hasHost`, to
+ * decided, 2026-11-22). A trap sample has no row at all, and a trap sample is
+ * one whose method names a trap (`methodNamesTrap`, as the archives and
+ * downloads decide), or whose kind is trap with a method that does not say
+ * "net" (`isTrapSample`): old records disagree between kind and method for
+ * 977 samples (beeline-lmlh). Symbiota applies one relationship, `hasHost`, to
  * the whole file, and the plant near a trap is not a host. UTF-8 with no byte order mark and no formula guard. The
  * program's CSV downloads have both for the sake of spreadsheets; this file is
  * read by Symbiota, which loaded it the same with and without a mark (tried
@@ -1073,11 +1088,11 @@ export async function associationsCsv(db: Kysely<Database>, recorded: readonly W
         .where("sp.entity_id", "in", recorded.slice(from, from + ASSOCIATION_PAGE).map((w) => w.id))
         .where("s.inat_observation_id", "is not", null)
         .where(sql<boolean>`NOT ${observationGone}`)
-        .select(["sp.entity_id as specimen_id", "s.inat_observation_id", "s.host_name_as_observed", "s.kind"])
+        .select(["sp.entity_id as specimen_id", "s.inat_observation_id", "s.host_name_as_observed", "s.kind", "s.protocol"])
         .orderBy("sp.entity_id")
         .execute();
       for (const r of found) {
-        if (r.inat_observation_id === null || r.kind === "trap") continue;
+        if (r.inat_observation_id === null || isTrapSample(r.kind, r.protocol)) continue;
         lines.push(csvExactLine([catalogNumbers.get(Number(r.specimen_id)), observationUrl(r.inat_observation_id), r.host_name_as_observed]));
       }
     }

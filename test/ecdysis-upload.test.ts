@@ -33,6 +33,7 @@ import {
   type Include,
   type UploadPlan,
 } from "../src/app/ecdysis-upload.js";
+import { TRAP_METHODS } from "../src/trap-sample.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
 import { BC, BC_OFFERED_YEARS_IN_CODE, fixture, HOUR, WABA } from "./ecdysis-upload-fixture.js";
 
@@ -549,17 +550,37 @@ describe("the associations file", () => {
     expect(csv.charCodeAt(0)).not.toBe(0xfeff);
   });
 
-  it("has no row at all for a trap sample, decided by the sample's kind and not the words of its protocol", async () => {
+  it("decides a trap sample by the sample's method naming a trap, as the archives and downloads do, and not by its kind (beeline-lmlh)", async () => {
     const f = await fixture();
     const trap = await f.specimen({ field: "2500007", sample: { kind: "'trap'", protocol: "'blue vane trap'", inat_observation_id: "666", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } });
-    const unnamed = await f.specimen({ field: "2500008", sample: { kind: "'trap'", protocol: "'blue vane'", inat_observation_id: "667", host_name_as_observed: "'Rosa'", host_rank: "'genus'" } });
+    const nettedButTrap = await f.specimen({ field: "2500008", sample: { kind: "'trap'", protocol: "'aerial net'", inat_observation_id: "667", host_name_as_observed: "'Rosa'", host_rank: "'genus'" } });
+    const trapWordedButNet = await f.specimen({ field: "2500011", sample: { kind: "'net'", protocol: "'pan traps'", inat_observation_id: "670", host_name_as_observed: "'Aster'", host_rank: "'genus'" } });
+    const trapNestButNet = await f.specimen({ field: "2500012", sample: { kind: "'net'", protocol: "'Trap nest'", inat_observation_id: "671", host_name_as_observed: "'Mentha'", host_rank: "'genus'" } });
     const netWithTheWord = await f.specimen({ field: "2500010", sample: { kind: "'net'", protocol: "'netting near the trap line'", inat_observation_id: "669", host_name_as_observed: "'Aster'", host_rank: "'genus'" } });
+    const vacuum = await f.specimen({ field: "2500015", sample: { kind: "'net'", protocol: "'vacuum'", inat_observation_id: "672", host_name_as_observed: "'Salvia'", host_rank: "'genus'" } });
     const net = await f.specimen({ field: "2500009", sample: { inat_observation_id: "668", host_name_as_observed: "'Salvia'", host_rank: "'genus'" } });
-    const csv = await associationsCsv(f.db, await written(f, [trap.id, unnamed.id, netWithTheWord.id, net.id]));
+    const ids = [trap, nettedButTrap, trapWordedButNet, trapNestButNet, netWithTheWord, vacuum, net].map((s) => s.id);
+    const csv = await associationsCsv(f.db, await written(f, ids));
+    // The netted sample recorded as a trap gets its row; the trap-worded ones recorded as nets get none.
     expect(csv.split("\n").filter((l) => l !== "").slice(1)).toEqual([
-      "BCBA_2500010,https://www.inaturalist.org/observations/669,Aster",
+      "BCBA_2500008,https://www.inaturalist.org/observations/667,Rosa",
+      "BCBA_2500015,https://www.inaturalist.org/observations/672,Salvia",
       "BCBA_2500009,https://www.inaturalist.org/observations/668,Salvia",
     ]);
+  });
+
+  it("has no row for a trap sample entered in Beeline, whichever method of the form it has", async () => {
+    const f = await fixture();
+    const made = [];
+    let n = 20;
+    for (const method of TRAP_METHODS) {
+      n += 1;
+      made.push(await f.specimen({ field: `25000${n}`, sample: { kind: "'trap'", protocol: `'${method}'`, inat_observation_id: String(800 + n), host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } }));
+    }
+    // A method written in, naming nothing ("pan", as OBAS-00218 has), stays out as it was when kind decided.
+    made.push(await f.specimen({ field: "2500030", sample: { kind: "'trap'", protocol: "'pan'", inat_observation_id: "830", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } }));
+    const csv = await associationsCsv(f.db, await written(f, made.map((s) => s.id)));
+    expect(csv.split("\n").filter((l) => l !== "")).toEqual(["subject identifier: catalogNumber,resourceUrl,verbatimSciname"]);
   });
 
   it("leaves the host out of the specimens file altogether: no associatedTaxa column in the occurrence file or meta.xml, for a flower visit and a trap alike", async () => {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applySchema } from "../src/build-db.js";
 import { loadSpatial, openDuckDb } from "../src/db.js";
+import { fillEffortFromStored } from "../src/sample-method-row.js";
 import type { PromotionInputs } from "../src/promote-legacy.js";
 
 /**
@@ -181,21 +182,17 @@ export async function insertCleanSample(
   const [[id]] = (await result.getRows()) as [[number]];
   // The method, as the migration that made sample_method gives it: whatever method_text says the method as written
   // means, with a count only for a trap: the one the effort states ("6 vane traps"), else the text's. A text it does not
-  // know gives no row, as for a real sample. Then the old effort column as its one writer writes it from the stored count.
+  // know gives no row, as for a real sample. Then the old effort column, by the one function that writes it.
   await conn.run(
     `INSERT INTO sample_method (sample_id, method_code, trap_count)
      SELECT s.entity_id, t.method_code,
             CASE WHEN d.is_trap THEN coalesce(
-              TRY_CAST(nullif(regexp_extract(lower(s.sampling_effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER),
+              TRY_CAST(nullif(regexp_extract(s.sampling_effort, '^([1-9][0-9]{0,5}) .+$', 1), '') AS INTEGER),
               t.trap_count) END
      FROM sample s JOIN method_text t ON t.text = s.protocol JOIN method d ON d.code = t.method_code
      WHERE s.entity_id = ${id}`,
   );
-  await conn.run(
-    `UPDATE sample SET sampling_effort = CASE WHEN m.trap_count IS NULL THEN NULL
-         ELSE concat(m.trap_count, ' ', m.method_code, CASE WHEN m.trap_count = 1 OR lower(m.method_code) LIKE '%s' THEN '' ELSE 's' END) END
-     FROM sample_method m WHERE m.sample_id = sample.entity_id AND sample.entity_id = ${id}`,
-  );
+  await fillEffortFromStored(conn, [id]);
   // Position 1 is the primary collector — the head every "my samples" query
   // and attribution read (beeline-77j, beeline-6e9).
   await conn.run(

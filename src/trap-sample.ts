@@ -61,11 +61,9 @@ export interface TrapSample {
   collector_ids: number[];
   date_start: string;
   date_end: string;
-  /** The method as written: the code of the method chosen from the list, or on an edit the sample's own unlisted words, left as they were. */
+  /** The method chosen from the list: its code, which is also the method as written for a sample made here. */
   protocol: string;
-  /** The method chosen from the list; null only where an edit leaves the sample's unlisted words as they were, so the sample has no method. */
-  method_code: string | null;
-  /** How many traps, null when not said; null too where the sample has no method (`method_code`). */
+  /** How many traps, null when not said. */
   trap_count: number | null;
   specimen_count: number;
   latitude: number;
@@ -471,12 +469,8 @@ export async function checkTrapSample(
 
   const method = form.method.trim();
   const offered = methods ?? (await methodCodes(conn, { trapOnly: true }));
-  // An edit that leaves the sample's own unlisted words as they were is no change of method, so it needs none chosen.
-  const asWritten =
-    sampleId !== null && method !== "" && !offered.includes(method) && (await rows<{ protocol: string | null }>(conn, `SELECT protocol FROM sample WHERE entity_id = $1`, [sampleId]))[0]?.protocol === method
-    && (await rows(conn, `SELECT 1 FROM method_text WHERE text = $1`, [method])).length === 0;
   if (method === "") problems.method = "Say what kind of trap.";
-  else if (!offered.includes(method) && !asWritten) problems.method = unlistedMethodProblem(offered);
+  else if (!offered.includes(method)) problems.method = unlistedMethodProblem(offered);
   const trapCount = parseNumber(form.trap_count);
   if (form.trap_count.trim() !== "" && (trapCount === null || !Number.isInteger(trapCount) || trapCount < 1)) {
     problems.trap_count = "The number of traps is a whole number, 1 or more.";
@@ -508,8 +502,7 @@ export async function checkTrapSample(
       date_start: start!,
       date_end: end!,
       protocol: method,
-      method_code: asWritten ? null : method,
-      trap_count: asWritten ? null : trapCount,
+      trap_count: trapCount,
       specimen_count: specimens!,
       latitude: latitude!,
       longitude: longitude!,
@@ -603,7 +596,7 @@ export function createTrapSample(
       );
       const id = created[0]!.entity_id;
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);
-      await setSampleMethodRow(conn, id, s.method_code!, s.trap_count);
+      await setSampleMethodRow(conn, id, s.protocol, s.trap_count);
       await writeParts(conn, id, s);
       await within?.(id, number);
       if (options.staff !== undefined) await releaseByStaff(conn, id, options.staff);
@@ -787,7 +780,7 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
          WHERE entity_id = $1`,
         [id, s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol] as never,
       );
-      if (s.method_code !== null) await setSampleMethodRow(conn, id, s.method_code, s.trap_count);
+      await setSampleMethodRow(conn, id, s.protocol, s.trap_count);
       // An atlas a person assigned stands; otherwise it follows the state.
       const assigned = await rows<{ n: number }>(conn, `SELECT count(*)::INTEGER AS n FROM sample_atlas WHERE sample_id = $1`, [id]);
       await writeParts(conn, id, s, (assigned[0]?.n ?? 0) === 0);

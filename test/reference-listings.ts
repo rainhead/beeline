@@ -55,7 +55,6 @@ export async function referenceSampleRows(
         "s.state_province",
         "s.country",
         "s.protocol",
-        "s.sampling_effort",
         sql<number | null>`(SELECT m.trap_count FROM sample_method m WHERE m.sample_id = s.entity_id)`.as("trap_count"),
         "s.specimen_count",
         "s.inat_observation_id",

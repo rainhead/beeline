@@ -8,7 +8,8 @@ import type { Database } from "./model.js";
  * `sample_method.trap_count` is the trap count: nothing reads one from anywhere else, and nothing writes one but this.
  * It belongs to a method that is a trap, so it is null for any other. `sample.sampling_effort` is written here and
  * nowhere else, from the stored count and method, for no purpose but to keep that old column filled until it is
- * retired: the text `trapEffort` writes when there is a count, null when there is none. The view
+ * retired, and nothing reads it but the API's read of a sample and the change log: the text `trapEffort` writes when there
+ * is a count, null when there is none. The view
  * `sample_method_out_of_step` asserts all of it.
  */
 

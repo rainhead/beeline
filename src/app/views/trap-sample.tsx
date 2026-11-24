@@ -68,8 +68,6 @@ export function TrapSampleFormPage({
           value={form.method}
           options={[
             ["", t.hints.methodChoose],
-            // The sample's own words, where they are not a listed method: kept unless another is chosen.
-            ...(form.method.trim() === "" || methods.includes(form.method) ? [] : [[form.method, m.record.sample.methodEdit.protocolAsWritten(form.method)] as const]),
             ...methods.map((code) => [code, code] as const),
           ]}
           hint={problem("method") ?? t.hints.method}

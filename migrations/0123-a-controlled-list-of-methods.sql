@@ -23,13 +23,15 @@
 -- Rolling the release back after this migration: the old code writes a method as
 -- written without its sample_method row, so after rolling forward again the
 -- nightly's check (sample_method_out_of_step) fails until the rows are
--- repaired. With the app stopped, this one statement repairs them from
--- method_text and the count the old code wrote into the effort:
+-- repaired. With the app stopped, these two statements, in this order, repair them
+-- from method_text and the count the old code wrote into the effort, and then write
+-- the old effort column from the stored count (a sample with no method has no count,
+-- so its effort is emptied):
 --
 --   MERGE INTO sample_method m
 --   USING (SELECT s.entity_id AS sample_id, t.method_code,
 --                 CASE WHEN d.is_trap THEN coalesce(
---                   TRY_CAST(nullif(regexp_extract(lower(s.sampling_effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER),
+--                   TRY_CAST(nullif(regexp_extract(s.sampling_effort, '^([1-9][0-9]{0,5}) .+$', 1), '') AS INTEGER),
 --                   t.trap_count) END AS trap_count
 --          FROM sample s JOIN method_text t ON t.text = s.protocol JOIN method d ON d.code = t.method_code) x
 --   ON m.sample_id = x.sample_id
@@ -37,6 +39,13 @@
 --     THEN UPDATE SET method_code = x.method_code, trap_count = x.trap_count
 --   WHEN NOT MATCHED THEN INSERT (sample_id, method_code, trap_count) VALUES (x.sample_id, x.method_code, x.trap_count)
 --   WHEN NOT MATCHED BY SOURCE THEN DELETE;
+--
+--   UPDATE sample SET sampling_effort = x.expected
+--   FROM (SELECT s.entity_id AS sample_id,
+--                CASE WHEN m.trap_count IS NULL THEN NULL
+--                     ELSE concat(m.trap_count, ' ', m.method_code, CASE WHEN m.trap_count = 1 OR lower(m.method_code) LIKE '%s' THEN '' ELSE 's' END) END AS expected
+--         FROM sample s LEFT JOIN sample_method m ON m.sample_id = s.entity_id) x
+--   WHERE sample.entity_id = x.sample_id AND sample.sampling_effort IS DISTINCT FROM x.expected;
 
 CREATE TABLE method (
   code       TEXT PRIMARY KEY,
@@ -114,19 +123,23 @@ INSERT INTO method_text (text, method_code, trap_count) VALUES
   ('pan and vane traps', 'pan and vane traps', NULL),
   ('pan traps and vane traps', 'pan and vane traps', NULL);
 
--- The count: for a trap method, the count the effort states in the form trapEffort writes (a whole number of one to
--- six digits, a space, and a kind of trap ending in trap, traps, nest or nests; "45 minutes" states none), else the
--- count the method as written states; for a method that is not a trap, none.
+-- The count: for a trap method, the count the effort states, which the old code wrote as the count and the sample's own
+-- words ("6 vane traps", "6 pans"): a whole number of one to six digits not starting with 0, a space and any words; else
+-- the count the method as written states; for a method that is not a trap, none. The backup of 2026-11-23 holds an
+-- effort on 12 samples, all entered in Beeline, every one of that form with a trap method, so none is lost.
 INSERT INTO sample_method (sample_id, method_code, trap_count)
 SELECT s.entity_id, t.method_code,
        CASE WHEN d.is_trap THEN coalesce(
-         TRY_CAST(nullif(regexp_extract(lower(s.sampling_effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER),
+         TRY_CAST(nullif(regexp_extract(s.sampling_effort, '^([1-9][0-9]{0,5}) .+$', 1), '') AS INTEGER),
          t.trap_count) END
 FROM sample s
 JOIN method_text t ON t.text = s.protocol
 JOIN method d ON d.code = t.method_code;
 
--- The old effort column, from the stored count, as the one writer writes it: on production this changes nothing.
+-- The old effort column, from the stored count, as the one writer writes it. On the backup of 2026-11-23 this writes the
+-- effort of 30 old-record samples that had none: their method as written states a count ("6 vane traps"), which is now
+-- their trap count, and the column is kept filled from the count. The 12 entered samples already hold the same text and
+-- are not touched.
 UPDATE sample SET sampling_effort = x.expected
 FROM (SELECT m.sample_id,
              CASE WHEN m.trap_count IS NULL THEN NULL
@@ -174,4 +187,4 @@ WHERE (s.kind = 'trap') <> md.is_trap;
 COMMENT ON VIEW sample_kind_method_mismatch IS 'Samples whose kind says trap where the method is not a trap, or net where it is. Informational and not asserted: kind is set from the dates and the method as written, so the two disagree where the end date and the words do (976 on production on 2026-11-23, all in settled seasons).';
 
 COMMENT ON COLUMN sample.protocol IS 'The method as written, and never parsed: for a sample from old records the text as they wrote it or as staff corrected it (''vane trap'', ''6 Vane Traps''); for a sample made in Beeline the code of its method. The method itself is sample_method (schema/031), which every writer sets in the same transaction, and sample_method_out_of_step asserts the two agree.';
-COMMENT ON COLUMN sample.sampling_effort IS 'The old effort column, kept filled until it is retired and never read: it is the text setSampleMethodRow (src/sample-method-row.ts) writes from sample_method.trap_count and the method ("6 vane traps"), and null where there is no count. The trap count is sample_method.trap_count; sample_method_out_of_step asserts the two agree.';
+COMMENT ON COLUMN sample.sampling_effort IS 'The old effort column, kept filled until it is retired and read only by the API''s read of a sample and the change log: it is the text setSampleMethodRow (src/sample-method-row.ts) writes from sample_method.trap_count and the method ("6 vane traps"), and null where there is no count. The trap count is sample_method.trap_count; sample_method_out_of_step asserts the two agree.';

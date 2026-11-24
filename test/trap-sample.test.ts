@@ -266,26 +266,6 @@ describe("the method of an entered sample (beeline-ni5m.15)", () => {
     expect(await loadTrapSample(conn, id)).toMatchObject({ method: "vane trap" });
   });
 
-  it("lets an edit leave the sample's own unlisted words as they were, with no method, and refuses other unlisted words", async () => {
-    const id = await made();
-    await conn.run(`DELETE FROM sample_method WHERE sample_id = ${id}`);
-    await conn.run(`UPDATE sample SET protocol = 'ground pitfall', sampling_effort = NULL WHERE entity_id = ${id}`);
-    expect(await loadTrapSample(conn, id)).toMatchObject({ method: "ground pitfall" });
-    const same = await checkTrapSample(conn, form({ method: "ground pitfall", locality: "Elsewhere" }), id);
-    if (!("sample" in same)) throw new Error(JSON.stringify(same.problems));
-    expect(await updateTrapSample(conn, id, same.sample)).toBe("saved");
-    expect(await methodOf(id)).toEqual(["ground pitfall", null, null]);
-    expect(await mismatches()).toBe(0n);
-    // Other words are still refused, and so are the same words on a new sample.
-    expect("problems" in (await checkTrapSample(conn, form({ method: "pitfall" }), id))).toBe(true);
-    expect("problems" in (await checkTrapSample(conn, form({ method: "ground pitfall" })))).toBe(true);
-    // And choosing a method then sets one.
-    const chosen = await checkTrapSample(conn, form({ method: "malaise trap" }), id);
-    if (!("sample" in chosen)) throw new Error("unexpected problems");
-    await updateTrapSample(conn, id, chosen.sample);
-    expect(await methodOf(id)).toEqual(["malaise trap", "malaise trap", 12]);
-  });
-
   it("loads the stored count for a sample whose words state one and whose effort column is empty, and keeps it through an unrelated edit", async () => {
     const id = await insertCleanSample(conn, { kind: "'trap'", protocol: "'6 vane traps'", sample_number: "'OBAS-20400'" });
     await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${id})`);

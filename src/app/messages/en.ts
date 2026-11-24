@@ -1141,7 +1141,7 @@ export const en = {
       method: "Method",
       methodNet: "Net",
       methodTrap: "Trap",
-      effort: "Sampling effort",
+      trapCountRow: "Number of traps",
       place: "Place",
       /**
        * The observation's own place text, beside what the model made of it —

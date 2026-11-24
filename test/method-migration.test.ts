@@ -110,20 +110,32 @@ describe("migration 0123: a controlled list of methods", () => {
     expect(await rows(conn, `SELECT count(*) FROM sample_method`)).toEqual([[0n]]);
   });
 
-  it("is followed by one statement that repairs the rows an older release left, which the header gives", async () => {
+  it("is followed by two statements that repair what an older release left, which the header gives, in this order", async () => {
     const { conn, ids } = await storeBefore();
     expect(await migrateOnly(conn)).toEqual(["9999-under-test.sql"]);
-    // The old code, rolled back to: a method as written changed, or made, with no sample_method row.
+    // The old code, rolled back to: a method as written changed, or made, with no sample_method row, and its own effort text.
     await conn.run(`UPDATE sample SET protocol = 'pan trap' WHERE entity_id = ${ids.net}`);
     await conn.run(`UPDATE sample SET protocol = 'vacuum' WHERE entity_id = ${ids.unlisted}`);
     await conn.run(`UPDATE sample SET protocol = 'ground pitfall' WHERE entity_id = ${ids.pantrap}`);
-    expect(Number((await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`))[0]![0])).toBe(3);
+    await conn.run(`UPDATE sample SET protocol = 'pantrap', sampling_effort = '8 pantraps' WHERE entity_id = ${ids.count}`);
+    await conn.run(`UPDATE sample SET sampling_effort = '3 ground pitfalls' WHERE entity_id = ${ids.pantrap}`);
+    // The old code counted 10 traps on a sample whose stored count is 8.
+    await conn.run(`UPDATE sample SET sampling_effort = '10 vane traps' WHERE entity_id = ${ids.entered}`);
+    expect(Number((await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`))[0]![0])).toBe(5);
     const text = await readFile(join(MIGRATIONS_DIR, FILE), "utf8");
-    const statement = text.split("\n").filter((l) => l.startsWith("--   ")).map((l) => l.slice(5)).join("\n");
-    expect(statement).toMatch(/^MERGE INTO sample_method/);
-    await conn.run(statement);
-    expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
-    expect(await rows(conn, `SELECT method_code FROM sample_method WHERE sample_id IN (${ids.net}, ${ids.unlisted}) ORDER BY sample_id`)).toEqual([["pan trap"], ["vacuum"]]);
+    const statements = text.split("\n").filter((l) => l.startsWith("--   ")).map((l) => l.slice(5)).join("\n");
+    expect(statements).toMatch(/^MERGE INTO sample_method[\s\S]*;\nUPDATE sample SET sampling_effort/);
+    // The first alone leaves the effort column out of step, which the second repairs.
+    const [merge, update] = statements.split(/;\n(?=UPDATE sample)/);
+    await conn.run(`${merge};`);
+    expect(Number((await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`))[0]![0])).toBeGreaterThan(0);
+    await conn.run(update!);
+    expect(await rows(conn, `SELECT clause, count(*) FROM sample_method_out_of_step GROUP BY 1`)).toEqual([]);
+    expect(await rows(conn, `SELECT method_code, trap_count, sampling_effort FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${ids.count}`)).toEqual([["pan trap", 8, "8 pan traps"]]);
+    expect(await rows(conn, `SELECT method_code, trap_count FROM sample_method WHERE sample_id IN (${ids.net}, ${ids.unlisted}) ORDER BY sample_id`)).toEqual([["pan trap", null], ["vacuum", null]]);
     expect(await rows(conn, `SELECT count(*) FROM sample_method WHERE sample_id = ${ids.pantrap}`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${ids.pantrap}`)).toEqual([[null]]);
+    // The count the old code wrote into the effort wins over the stored one.
+    expect(await rows(conn, `SELECT trap_count FROM sample_method WHERE sample_id = ${ids.entered}`)).toEqual([[10]]);
   });
 });

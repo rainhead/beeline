@@ -225,8 +225,8 @@ export function SampleFacts({
         </>
       ),
     },
-    // Trap-only, and still free text pending the staff vocabulary answers.
-    sample.sampling_effort === null ? null : { term: s.effort, value: sample.sampling_effort },
+    // How many traps (`sample_method.trap_count`), for a trap sample that has a count; staff correct it from the pencil on the Method row.
+    sample.trap_count === null ? null : { term: s.trapCountRow, value: String(sample.trap_count) },
     {
       term: s.place,
       value: (
@@ -1271,12 +1271,38 @@ export function SamplePage({
 }
 
 /**
+ * The lines of a sample's history the panel shows. One act writes several lines, because the log records every field
+ * that changed: changing a method writes Method, Method as written and the old Sampling effort column, and changing a
+ * count writes Number of traps and Sampling effort. The panel shows one line for the act: it leaves out Sampling effort
+ * where the same act changed Number of traps or Method, and Method as written where the same act changed Method to the
+ * value the wording became. A Method as written line with no Method line (a wording corrected to another wording for the
+ * same method) is shown. Every line is still in the log and in what the API returns. An act is what one pass of the log
+ * recorded for the sample: its lines share their time, author, source and reason (`recordSampleChanges` takes one
+ * instant for a pass, and a correction records its own sample alone).
+ */
+export function historyForPanel(history: readonly SampleChange[]): SampleChange[] {
+  const act = (e: SampleChange) => JSON.stringify([e.at, e.author, e.source, e.reason, e.store, e.sample_id]);
+  const fields = new Map<string, Map<string, string>>();
+  for (const e of history) {
+    const own = fields.get(act(e)) ?? fields.set(act(e), new Map()).get(act(e))!;
+    own.set(e.field, e.new_value);
+  }
+  return history.filter((e) => {
+    const own = fields.get(act(e))!;
+    if (e.field === "sampling_effort") return !own.has("trap_count") && !own.has("method");
+    if (e.field === "protocol") return !(own.has("method") && own.get("method") === e.new_value);
+    return true;
+  });
+}
+
+/**
  * What the change log recorded about this sample, newest first (beeline-ewl,
  * the second instance of ADR 0007). Shaped like the person page's history —
  * same columns, same "set to"/"cleared" reading — because staff read both.
  */
-function SampleHistory({ m, history }: { m: Messages; history: readonly SampleChange[] }) {
+function SampleHistory({ m, history: logged }: { m: Messages; history: readonly SampleChange[] }) {
   const h = m.record.history;
+  const history = historyForPanel(logged);
   const value = (v: string) => (v === "" ? <Meta>{h.blank}</Meta> : <code>{v}</code>);
   return (
     <>

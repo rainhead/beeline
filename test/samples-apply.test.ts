@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { DuckDBConnection } from "@duckdb/node-api";
 import { describe as describeInOrder, expect, it } from "vitest";
 import { en } from "../src/app/messages/en.js";
 import { APPLY_JOB, APPLY_ROW_LIMIT, APPLY_TIME_LIMIT_MS, applyPending, applyWaiting, clearStopped } from "../src/app/samples-upload-apply.js";
@@ -7,7 +8,7 @@ import { startScheduler, runJob, type Job } from "../src/app/jobs/framework.js";
 import { onSample } from "../src/app/sample-queue.js";
 import { planSamples } from "../src/app/samples-upload-plan.js";
 import { SAMPLES_LAYOUT, parseUpload } from "../src/app/upload-plan.js";
-import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, mayEditTrapSample, seriesNumberProblem, DELETED_WITH_SAMPLE, NEVER_DELETED, deletable, highestSeriesNumber, seriesNumberHolder } from "../src/trap-sample.js";
+import { checkTrapSample, findLookalikes, createTrapSample, deleteTrapSample, mayEditTrapSample, seriesNumberProblem, DELETED_WITH_SAMPLE, NEVER_DELETED, deletable, highestSeriesNumber, findNumberHolder } from "../src/trap-sample.js";
 import { parseSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { duckdbReader } from "../src/person-change.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
@@ -80,6 +81,11 @@ const deps = (f: UploadFixture, over = {}) => ({
 });
 const baseline = (f: UploadFixture) => recordSampleChanges(duckdbReader(f.conn), { log: f.paths.sampleChangesPath, state: f.paths.sampleStatePath }, { source: "reconcile" });
 
+/** The program the old Beeline's Oregon samples file under, which a number in the program's series is held to. */
+const OBA = "(SELECT entity_id FROM program WHERE code = 'OBA')";
+const inOregon = (conn: DuckDBConnection, number: string) =>
+  conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) SELECT entity_id, ${OBA} FROM sample WHERE sample_number = '${number}'`);
+
 describe("the Apply button", () => {
   it("is offered to the staff member who uploaded the file, with a digest, and to nobody else", async () => {
     const f = await uploadFixture();
@@ -136,6 +142,7 @@ describe("applying", () => {
     // Somebody takes the number between the page and the button.
     await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
       VALUES ('trap', 'OBAS-00011', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'vane trap')`);
+    await inOregon(f.conn, 'OBAS-00011');
     const stale = await apply(f, location, { digest });
     expect(stale.status).toBe(409);
     expect(await stale.text()).toContain(esc(en.uploads.page.samplesChangedSince));
@@ -259,9 +266,10 @@ describe("the job", () => {
     await apply(f, location, { digest });
     await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
       VALUES ('trap', 'OBAS-00011', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'vane trap')`);
+    await inOregon(f.conn, 'OBAS-00011');
     expect(await applyPending(deps(f))).toEqual({ created: 1, refused: 1, skipped: 0, stopped: 0 });
     expect(await outcomes(f)).toEqual([
-      [expect.any(Number), "refused", "OBAS-00011", "Trap sample OBAS-00011 is already in Beeline."],
+      [expect.any(Number), "refused", "OBAS-00011", expect.stringContaining("Sample number OBAS-00011 is already used by another sample in Oregon Bee Atlas.")],
       [expect.any(Number), "created", "OBAS-00012", null],
     ]);
     const html = await pageAt(f, location);
@@ -406,7 +414,7 @@ describe("the series' numbers", () => {
   it("cannot be used when any other sample, of any kind, has the number, and the note names that sample", async () => {
     const f = await uploadFixture();
     // The old Beeline holds some trap bottles as net samples.
-    const held = await insertCleanSample(f.conn, { kind: "'net'", sample_number: "'OBAS-00033'", collector_id: String(f.staffer) });
+    const held = await insertCleanSample(f.conn, { kind: "'net'", sample_number: "'OBAS-00033'", collector_id: String(f.staffer), atlas_id: OBA });
     const { html } = await offered(f, [newRow(1, { fieldNumber: "OBAS-00033" })]);
     expect(html).toContain(esc(en.uploads.page.samplesCantUse(1, en.uploads.page.split(1, 0, 0))));
     const notes = matrixOf(new Uint8Array(await (await f.app.request(`${(await upload(f, edited(await download(f), [], { idColumn: "sampleId", addRows: [newRow(1, { fieldNumber: "OBAS-00033" })] })))}/notes`)).arrayBuffer()));
@@ -415,7 +423,7 @@ describe("the series' numbers", () => {
     const g = await uploadFixture();
     const queued = await offered(g, [newRow(1, { fieldNumber: "OBAS-00034" })]);
     await apply(g, queued.location, { digest: queued.digest });
-    const other = await insertCleanSample(g.conn, { kind: "'net'", sample_number: "'OBAS-00034'", collector_id: String(g.staffer) });
+    const other = await insertCleanSample(g.conn, { kind: "'net'", sample_number: "'OBAS-00034'", collector_id: String(g.staffer), atlas_id: OBA });
     expect(await applyPending(deps(g))).toEqual({ created: 0, refused: 1, skipped: 0, stopped: 0 });
     expect(String((await outcomes(g))[0]![3])).toContain(`sampleId ${other}`);
   });
@@ -828,7 +836,7 @@ describe("spellings of the program's series", () => {
     expect(twice.html).toContain(esc(en.uploads.page.samplesCantUse(2, en.uploads.page.split(2, 0, 0))));
     // A sample written another way holds the number.
     const h = await uploadFixture();
-    const holder = await insertCleanSample(h.conn, { kind: "'net'", sample_number: "'OBAS 00033'", collector_id: String(h.staffer) });
+    const holder = await insertCleanSample(h.conn, { kind: "'net'", sample_number: "'OBAS 00033'", collector_id: String(h.staffer), atlas_id: OBA });
     const held = await offered(h, [newRow(1, { fieldNumber: "OBAS-00033" })]);
     expect(held.html).toContain(esc(en.uploads.page.samplesCantUse(1, en.uploads.page.split(1, 0, 0))));
     expect(holder).toBeGreaterThan(0);
@@ -852,6 +860,7 @@ describe("rows with no number", () => {
     // Taken meanwhile: the row is refused, not renumbered, and the others are made.
     await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
       VALUES ('net', 'OBAS-00041', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'net')`);
+    await inOregon(f.conn, 'OBAS-00041');
     expect(await applyPending(deps(f))).toEqual({ created: 2, refused: 1, skipped: 0, stopped: 0 });
     expect((await outcomes(f)).map((r) => [r[1], r[2]])).toEqual([["refused", "OBAS-00041"], ["created", "OBAS-00042"], ["created", "OBAS-00043"]]);
   });
@@ -861,6 +870,7 @@ describe("rows with no number", () => {
     const { location, digest } = await offered(f, [newRow(1, { fieldNumber: "" })]);
     await f.conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, country, state_province, protocol)
       VALUES ('trap', 'OBAS-00011', DATE '${day(1)}', DATE '${day(2)}', 'USA', 'OR', 'vane trap')`);
+    await inOregon(f.conn, 'OBAS-00011');
     expect((await apply(f, location, { digest })).status).toBe(409);
   });
 
@@ -1161,8 +1171,9 @@ describe("the next number and the holder check", () => {
     expect(await highestSeriesNumber(f.conn)).toBe(40);
     // A holder in a spelling with separators among the letters.
     await sample("O.BAS-00033");
-    expect(await seriesNumberHolder(f.conn, "OBAS-00033")).toMatchObject({ kind: "net" });
-    expect(await seriesNumberHolder(f.conn, "OBAS-00034")).toBeNull();
+    const scope = (sampleNumber: string) => ({ sampleNumber, programId: null, collectorId: null, dateStart: null });
+    expect(await findNumberHolder(f.conn, scope("OBAS-00033"))).toMatchObject({ kind: "net" });
+    expect(await findNumberHolder(f.conn, scope("OBAS-00034"))).toBeNull();
     // And a blank row is numbered from the valid highest.
     const { html } = await offered(f, [newRow(1, { fieldNumber: "" })]);
     expect(html).toContain(esc(en.uploads.page.obasLine(1, null, null, 1, "OBAS-00041", "OBAS-00041")));

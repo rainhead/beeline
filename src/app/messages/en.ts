@@ -1347,7 +1347,7 @@ export const en = {
         inPrintRun:
           "Labels for this sample are in a print run that has not printed yet, which holds the method and dates it froze. Wait for the run to print or cancel it, then make the correction.",
         numberTaken: (number: string) =>
-          `Choosing a trap method makes this a trap sample, and trap sample ${number} is already in Beeline: a series number is one for each trap sample. Correct one of the two numbers first.`,
+          `This sample's first collector already has a sample numbered ${number} on the day you chose, and a plain number is its collector's for the day. Correct one of the two first.`,
         conflict: "Someone changed this sample's method or dates after you opened the form. Reload the page to see what they saved, then make your correction again.",
       },
       /** Staff correcting how many traps a trap sample had, from a second pencil on the Method row (beeline-kgyd.4.1). */

@@ -372,14 +372,14 @@ describe("a new trap sample", () => {
 
   it("cannot use two new rows with one number, nor one whose number another trap sample has", async () => {
     const f = await uploadFixture();
-    await insertCleanSample(f.conn, { kind: "'trap'", sample_number: "'OBAS-00019'", collector_id: String(f.volunteer) });
+    await insertCleanSample(f.conn, { kind: "'trap'", sample_number: "'OBAS-00019'", collector_id: String(f.volunteer), atlas_id: "(SELECT entity_id FROM program WHERE code = 'OBA')" });
     const p = await plan(
       f,
       edit(await download(f), [], { addRows: [ready, { ...ready, locality: "Elsewhere" }, { ...ready, fieldNumber: "OBAS-00019" }] }),
     );
     const added = p.rows.filter((r) => r.kind === "new");
     expect(added.map(reasons)).toEqual([["new_number_repeated"], ["new_number_repeated"], ["new_row_problem"]]);
-    expect(added[2]!.problems[0]!.detail).toContain("OBAS-00019 is already a trap sample in Beeline");
+    expect(added[2]!.problems[0]!.detail).toContain("Sample number OBAS-00019 is already used by another sample in Oregon Bee Atlas.");
   });
 
   it("cannot use a new row whose number is a formula or a date, whatever text it shows", async () => {

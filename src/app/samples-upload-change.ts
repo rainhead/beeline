@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { seriesTrapNumberTaken } from "../trap-sample.js";
+import { startMoveHolder } from "../trap-sample.js";
 import { refusalSentence, type AnyFailure } from "./api-corrections.js";
 import { localityReasonFor, methodProblemFor, specimenCountProblemFor, trapCountProblemFor } from "./correction-reasons.js";
 import { NO_POINT_TO_TAKE_AWAY } from "./locality-override.js";
@@ -204,7 +204,7 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
         else if (change.protocolDiffers && !offered.includes(change.protocol.trim())) {
           refusal = messages.record.sample.methodEdit.unlistedMethod(offered.join(", "));
         } else if (await inRun()) refusal = say("in_print_run", unit);
-        else if (!facts.entered && kind === "net" && change.protocolDiffers && ((await trapOfMethod(db, change.protocol.trim())) === true) && (await seriesTrapNumberTaken(conn, facts.number, facts.id))) {
+        else if (change.startDiffers && /^\d{4}-\d{2}-\d{2}$/.test(change.start.trim()) && (await startMoveHolder(conn, facts.id, change.start.trim())) !== null) {
           refusal = messages.record.sample.methodEdit.numberTaken(facts.number);
         }
         if (refusal === null) {

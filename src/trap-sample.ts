@@ -211,78 +211,206 @@ export function seriesNumberProblem(sampleNumber: string): string | null {
 export const isSeriesNumber = (sampleNumber: string): boolean => /^[A-Za-z]+-/.test(sampleNumber);
 
 /**
- * Whether another trap sample has this number, judged only for a number in a series (letters, a hyphen and what
- * follows; the program's own compared folded, so `OBAS 00011` is `OBAS-00011`). A plain number ("1") is the
- * collector's for the day and is held by many trap samples of the old Beeline, so it is never a clash. For a net sample
- * that a trap method would make a trap sample (the method correction).
+ * Where a sample number must be unique (Peter, 2026-11-24, beeline-ni5m.16), for a sample made or changed in Beeline
+ * and not from an iNaturalist observation. A series number (letters, a hyphen and what follows) is the program's: it
+ * is unique within the program the sample files under, the program's own series compared folded (`foldNumber`). A plain
+ * number ("3") is its collector's for the day: it is unique for the primary collector on the sample's start day, the
+ * rule `sample_number_conflict` (schema/120) holds iNaturalist's samples to, with the same exact comparison of the
+ * number. Neither reads the sample's kind or method, and every other sample counts, whoever made it.
  */
-export async function seriesTrapNumberTaken(conn: DuckDBConnection, sampleNumber: string, sampleId: number): Promise<boolean> {
-  if (isProgramSeries(sampleNumber)) {
-    const found = await rows<{ entity_id: number }>(
-      conn,
-      `SELECT entity_id FROM sample WHERE kind = 'trap' AND entity_id <> $2 AND ${FOLDED_NUMBER} = $1 LIMIT 1`,
-      [foldNumber(sampleNumber), sampleId],
-    );
-    return found.length > 0;
-  }
-  return isSeriesNumber(sampleNumber) && numberTaken(conn, sampleNumber, sampleId);
+export interface NumberScope {
+  sampleNumber: string;
+  /** The program the sample files under (`sample_atlas`); null where it files under none. */
+  programId: number | null;
+  /** The primary collector (`sample_primary_collector`); null while the collectors are not known. */
+  collectorId: number | null;
+  /** The day collecting started, YYYY-MM-DD; null while it is not known. */
+  dateStart: string | null;
 }
 
-/** A sample that holds a series number. */
-export interface SeriesHolder {
+/** A sample that holds a number in the scope asked about. */
+export interface NumberHolder {
   sampleId: number;
   kind: string;
 }
 
+/** Whether a number is a series number for the rule above: written as a series, or a spelling of the program's own. */
+const inSeries = (sampleNumber: string): boolean => isSeriesNumber(sampleNumber) || isProgramSeries(sampleNumber);
+
+/** Whether two scopes hold their number to the same thing, so that a sample whose scope has not changed is not judged again. */
+function sameScope(a: NumberScope, b: NumberScope): boolean {
+  if (inSeries(a.sampleNumber) !== inSeries(b.sampleNumber)) return false;
+  if (inSeries(a.sampleNumber)) {
+    const same = isProgramSeries(a.sampleNumber) && isProgramSeries(b.sampleNumber) ? foldNumber(a.sampleNumber) === foldNumber(b.sampleNumber) : a.sampleNumber === b.sampleNumber;
+    return same && a.programId === b.programId;
+  }
+  return a.sampleNumber === b.sampleNumber && a.collectorId === b.collectorId && a.dateStart === b.dateStart;
+}
+
+/** The holders asked of a read made once for many scopes: the first (lowest sampleId) that holds the scope's number, other than `except`. */
+export type NumberHolders = (scope: NumberScope, except?: number | null) => NumberHolder | null;
+
+interface HeldNumber extends NumberHolder {
+  sampleNumber: string;
+  programId: number | null;
+  collectorId: number | null;
+  dateStart: string | null;
+}
+
 /**
- * Who holds each of some series numbers, read at once. The one place the question is answered, so that a preview of a
- * file of a thousand rows (one read for the file) and the job's check under the print runs' lock (one number) cannot
- * judge differently. A series number is the program's and unique, though the old Beeline holds some trap bottles as
- * net samples, and a net sample's own plain numbers ("3") are the collector's for the day and shared, so only a series
- * number is judged. The program's own series is compared on the folded form (`foldNumber`), so a sample written
- * `OBAS 00700` holds `OBAS-00700`, and the lowest sampleId holds a number that several have. With `allProgramSeries`
- * every holder of a number in the program's series is read, for a caller that will ask about numbers it cannot name
- * yet (the next numbers after the highest).
+ * Who holds each of some numbers, read at once. The one place the question is answered, so that a preview of a file of
+ * a thousand rows (one read for the file) and the check of one number (the form, and the job under the print runs'
+ * lock) cannot judge differently. One query reads every sample that has one of the numbers (or, for the program's own
+ * series, a spelling that folds to it), with its program, primary collector and start day; the scope is judged in code.
  */
-export async function readSeriesHolders(
-  conn: DuckDBConnection,
-  sampleNumbers: readonly string[],
-  { allProgramSeries = false }: { allProgramSeries?: boolean } = {},
-): Promise<(sampleNumber: string) => SeriesHolder | null> {
-  const folded = new Map<string, SeriesHolder>();
-  const exact = new Map<string, SeriesHolder>();
+export async function readNumberHolders(conn: DuckDBConnection, sampleNumbers: readonly string[]): Promise<NumberHolders> {
+  const exact = [...new Set(sampleNumbers)];
   const program = [...new Set(sampleNumbers.filter(isProgramSeries).map(foldNumber))];
-  if (allProgramSeries || program.length > 0) {
-    const found = await rows<{ entity_id: number; kind: string; f: string }>(
+  const byNumber = new Map<string, HeldNumber[]>();
+  const byFolded = new Map<string, HeldNumber[]>();
+  if (exact.length > 0) {
+    const found = await rows<{ entity_id: number; kind: string; sample_number: string; f: string; atlas_id: number | null; person_id: number | null; date_start: string | null }>(
       conn,
-      allProgramSeries
-        ? `SELECT entity_id, kind, ${FOLDED_NUMBER} AS f FROM sample WHERE ${MAYBE_PROGRAM_SERIES} ORDER BY entity_id`
-        : `SELECT entity_id, kind, f FROM (SELECT entity_id, kind, ${FOLDED_NUMBER} AS f FROM sample WHERE ${MAYBE_PROGRAM_SERIES})
-           WHERE f IN (SELECT unnest(from_json($1::JSON, '["VARCHAR"]'))) ORDER BY entity_id`,
-      allProgramSeries ? [] : [JSON.stringify(program)],
+      `SELECT s.entity_id, s.kind, s.sample_number, ${FOLDED_NUMBER} AS f, a.atlas_id, pc.person_id, strftime(s.date_start, '%Y-%m-%d') AS date_start
+       FROM sample s
+       LEFT JOIN sample_atlas a ON a.sample_id = s.entity_id
+       LEFT JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+       WHERE s.sample_number IN (SELECT unnest(from_json($1::JSON, '["VARCHAR"]')))
+          ${program.length > 0 ? `OR (${MAYBE_PROGRAM_SERIES} AND ${FOLDED_NUMBER} IN (SELECT unnest(from_json($2::JSON, '["VARCHAR"]'))))` : ""}
+       ORDER BY s.entity_id`,
+      program.length > 0 ? [JSON.stringify(exact), JSON.stringify(program)] : [JSON.stringify(exact)],
     );
-    for (const r of found) if (!folded.has(r.f)) folded.set(r.f, { sampleId: r.entity_id, kind: r.kind });
+    for (const r of found) {
+      const held: HeldNumber = {
+        sampleId: Number(r.entity_id),
+        kind: r.kind,
+        sampleNumber: r.sample_number,
+        programId: r.atlas_id === null ? null : Number(r.atlas_id),
+        collectorId: r.person_id === null ? null : Number(r.person_id),
+        dateStart: r.date_start,
+      };
+      (byNumber.get(r.sample_number) ?? byNumber.set(r.sample_number, []).get(r.sample_number)!).push(held);
+      if (isProgramSeries(r.sample_number)) (byFolded.get(r.f) ?? byFolded.set(r.f, []).get(r.f)!).push(held);
+    }
   }
-  const others = [...new Set(sampleNumbers.filter((n) => !isProgramSeries(n) && isSeriesNumber(n)))];
-  if (others.length > 0) {
-    const found = await rows<{ entity_id: number; kind: string; sample_number: string }>(
-      conn,
-      `SELECT entity_id, kind, sample_number FROM sample WHERE sample_number IN (SELECT unnest(from_json($1::JSON, '["VARCHAR"]'))) ORDER BY entity_id`,
-      [JSON.stringify(others)],
-    );
-    for (const r of found) if (!exact.has(r.sample_number)) exact.set(r.sample_number, { sampleId: r.entity_id, kind: r.kind });
-  }
-  return (sampleNumber) => (isProgramSeries(sampleNumber) ? folded.get(foldNumber(sampleNumber)) : isSeriesNumber(sampleNumber) ? exact.get(sampleNumber) : undefined) ?? null;
+  return (scope, except = null) => {
+    const n = scope.sampleNumber;
+    let candidates: readonly HeldNumber[];
+    if (isProgramSeries(n)) candidates = (byFolded.get(foldNumber(n)) ?? []).filter((h) => h.programId === scope.programId);
+    else if (isSeriesNumber(n)) candidates = (byNumber.get(n) ?? []).filter((h) => h.programId === scope.programId);
+    else if (scope.collectorId === null || scope.dateStart === null) candidates = [];
+    else candidates = (byNumber.get(n) ?? []).filter((h) => h.collectorId === scope.collectorId && h.dateStart === scope.dateStart);
+    const found = candidates.find((h) => h.sampleId !== except);
+    return found === undefined ? null : { sampleId: found.sampleId, kind: found.kind };
+  };
 }
 
-/** The sample, of any kind, that has this number, if the number is a series number (readSeriesHolders, for one number). The trap form's own check counts trap samples only; the upload path asks this as well. */
-export async function seriesNumberHolder(conn: DuckDBConnection, sampleNumber: string): Promise<SeriesHolder | null> {
-  return (await readSeriesHolders(conn, [sampleNumber]))(sampleNumber);
+/** The holder of a number in a scope, for one number (`readNumberHolders`, for one). */
+export async function findNumberHolder(conn: DuckDBConnection, scope: NumberScope, except: number | null = null): Promise<NumberHolder | null> {
+  return (await readNumberHolders(conn, [scope.sampleNumber]))(scope, except);
 }
 
-/** What a series number that another sample already has is told, with how to compare the row with that sample. */
-export const seriesNumberHeldProblem = (sampleNumber: string, holder: SeriesHolder) =>
-  `${sampleNumber} is already a ${holder.kind} sample in Beeline, sampleId ${holder.sampleId}. To change that sample instead, edit its row in a fresh download, which carries its sampleId, sampleVersion and fieldNumber; otherwise give the new sample another number.`;
+/** The numbers in the program's own series that any sample has, folded: what a blank row's number must not repeat. */
+export async function readProgramSeriesTaken(conn: DuckDBConnection): Promise<ReadonlySet<string>> {
+  const found = await rows<{ f: string }>(conn, `SELECT DISTINCT ${FOLDED_NUMBER} AS f FROM sample WHERE ${MAYBE_PROGRAM_SERIES}`);
+  return new Set(found.map((r) => r.f));
+}
+
+/** The program each state or province files a new sample under, as `writeParts` assigns it. Read once by a caller that checks many forms. */
+export async function readStatePrograms(conn: DuckDBConnection): Promise<ReadonlyMap<string, number>> {
+  const found = await rows<{ state_province: string; atlas_id: number }>(conn, `SELECT state_province, min(atlas_id) AS atlas_id FROM atlas_region WHERE atlas_id IS NOT NULL GROUP BY state_province`);
+  return new Map(found.map((r) => [r.state_province, Number(r.atlas_id)]));
+}
+
+/**
+ * The program a sample files under: the one a person assigned to a sample already made (it stands), else the one its
+ * state gives, as `writeParts` and the place editor assign it. Null where none covers the state.
+ */
+export async function programOfSample(conn: DuckDBConnection, sampleId: number | null, stateProvince: string, statePrograms?: ReadonlyMap<string, number>): Promise<number | null> {
+  if (sampleId !== null) {
+    const assigned = await rows<{ atlas_id: number | null }>(conn, `SELECT atlas_id FROM sample_atlas WHERE sample_id = $1 AND assigned_by IS NOT NULL`, [sampleId]);
+    if (assigned[0] !== undefined) return assigned[0].atlas_id === null ? null : Number(assigned[0].atlas_id);
+  }
+  if (statePrograms !== undefined) return statePrograms.get(stateProvince) ?? null;
+  const found = await rows<{ atlas_id: number }>(conn, `SELECT atlas_id FROM atlas_region WHERE state_province = $1 AND atlas_id IS NOT NULL LIMIT 1`, [stateProvince]);
+  return found[0] === undefined ? null : Number(found[0].atlas_id);
+}
+
+/** The scope a sample ready to write has, new (`sampleId` null) or as it would be once rewritten. */
+export async function numberScopeOf(conn: DuckDBConnection, s: TrapSample, sampleId: number | null, statePrograms?: ReadonlyMap<string, number>): Promise<NumberScope> {
+  return {
+    sampleNumber: s.sample_number,
+    programId: await programOfSample(conn, sampleId, s.state_province, statePrograms),
+    collectorId: s.collector_ids[0] ?? null,
+    dateStart: s.date_start,
+  };
+}
+
+/** The scope a sample made has now; null if there is no such sample. */
+export async function storedNumberScope(conn: DuckDBConnection, sampleId: number): Promise<NumberScope | null> {
+  const found = await rows<{ sample_number: string; atlas_id: number | null; person_id: number | null; date_start: string | null }>(
+    conn,
+    `SELECT s.sample_number, a.atlas_id, pc.person_id, strftime(s.date_start, '%Y-%m-%d') AS date_start
+     FROM sample s
+     LEFT JOIN sample_atlas a ON a.sample_id = s.entity_id
+     LEFT JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+     WHERE s.entity_id = $1 ORDER BY pc.person_id LIMIT 1`,
+    [sampleId],
+  );
+  const r = found[0];
+  if (r === undefined) return null;
+  return {
+    sampleNumber: r.sample_number,
+    programId: r.atlas_id === null ? null : Number(r.atlas_id),
+    collectorId: r.person_id === null ? null : Number(r.person_id),
+    dateStart: r.date_start,
+  };
+}
+
+/**
+ * The sample that holds a number a sample is about to have, or null. A sample already made (`sampleId`) whose number,
+ * and what the number is held to (its program for a series number, its collector and start day for a plain one), have
+ * not changed is not judged: a pair that already shares a number, as two samples share OBAS-00366, stays editable.
+ * With `holders` the answer comes from a read made once for many scopes (`readNumberHolders`).
+ */
+export async function numberHolderFor(conn: DuckDBConnection, scope: NumberScope, sampleId: number | null, holders?: NumberHolders): Promise<NumberHolder | null> {
+  if (sampleId !== null) {
+    const was = await storedNumberScope(conn, sampleId);
+    if (was !== null && sameScope(was, scope)) return null;
+  }
+  return holders !== undefined ? holders(scope, sampleId) : findNumberHolder(conn, scope, sampleId);
+}
+
+/**
+ * The holder of the number a made sample would have if only its start day moved to `dateStart`, or null. A start day
+ * moves a plain number into another collector's day; the number, program and collector stay as stored.
+ */
+export async function startMoveHolder(conn: DuckDBConnection, sampleId: number, dateStart: string): Promise<NumberHolder | null> {
+  const was = await storedNumberScope(conn, sampleId);
+  if (was === null) return null;
+  return numberHolderFor(conn, { ...was, dateStart }, sampleId);
+}
+
+/**
+ * The sentence for a number another sample holds, saying what it is held to: the program for a series number, the
+ * collector and the day for a plain one. From an upload (`upload`) it also says which sample holds it and how to
+ * change that sample instead.
+ */
+export async function numberTakenProblem(conn: DuckDBConnection, scope: NumberScope, holder: NumberHolder, { upload = false }: { upload?: boolean } = {}): Promise<string> {
+  let sentence: string;
+  if (inSeries(scope.sampleNumber)) {
+    const program = scope.programId === null ? [] : await rows<{ name: string }>(conn, `SELECT name FROM program WHERE entity_id = $1`, [scope.programId]);
+    sentence = program[0] === undefined
+      ? `Sample number ${scope.sampleNumber} is already used by another sample that is in no program.`
+      : `Sample number ${scope.sampleNumber} is already used by another sample in ${program[0].name}.`;
+  } else {
+    const person = scope.collectorId === null ? [] : await rows<{ display_name: string }>(conn, `SELECT display_name FROM person WHERE entity_id = $1`, [scope.collectorId]);
+    sentence = `${person[0]?.display_name ?? "The collector"} already has a sample numbered ${scope.sampleNumber} on ${scope.dateStart ?? "that day"}.`;
+  }
+  return upload
+    ? `${sentence} It is the ${holder.kind} sample with sampleId ${holder.sampleId}. To change that sample instead, edit its row in a fresh download, which carries its sampleId, sampleVersion and fieldNumber; otherwise give the new sample another number.`
+    : sentence;
+}
 
 /** How near a new sample's point must be to an existing sample's, in metres, for the two to look like one sample. */
 export const LOOKALIKE_METRES = 100;
@@ -390,31 +518,12 @@ export function lookalikesAmong(candidates: ReadonlyMap<number, readonly Lookali
   return (candidates.get(sample.firstCollectorId) ?? []).filter((c) => c.sampleId !== excluding.sampleId && lookAlike(c, sample)).map((c) => ({ sampleId: c.sampleId, sampleNumber: c.sampleNumber }));
 }
 
-/**
- * Whether another trap sample has this number. Unique among trap samples
- * only (Peter, 2026-11-04): an OBAS- number is the program's, while a net
- * sample's number is its collector's for the day, so thousands of net
- * samples share "3". Asked once to answer the form, and again by the writers
- * inside the print runs' lock, which every trap write takes, so two saves of
- * the number the form offered both cannot pass (CodeRabbit).
- */
-export async function numberTaken(conn: DuckDBConnection, sampleNumber: string, sampleId: number | null): Promise<boolean> {
-  const taken = await rows<{ entity_id: number }>(
-    conn,
-    `SELECT entity_id FROM sample WHERE kind = 'trap' AND sample_number = $1 AND entity_id IS DISTINCT FROM $2 LIMIT 1`,
-    [sampleNumber, sampleId],
-  );
-  return taken.length > 0;
+/** The sentence for a sample whose number was taken between the check and the write (`createTrapSample`, `updateTrapSample` answered "taken"). */
+export async function numberClashSentence(conn: DuckDBConnection, s: TrapSample, sampleId: number | null): Promise<string> {
+  const scope = await numberScopeOf(conn, s, sampleId);
+  const holder = await numberHolderFor(conn, scope, sampleId);
+  return holder === null ? `Sample number ${s.sample_number} was taken just now. Save again.` : numberTakenProblem(conn, scope, holder);
 }
-
-/** Which of these numbers a trap sample has, read at once: `numberTaken` for a new sample, for many. */
-export async function readTrapNumbers(conn: DuckDBConnection, sampleNumbers: readonly string[]): Promise<ReadonlySet<string>> {
-  if (sampleNumbers.length === 0) return new Set();
-  const found = await rows<{ sample_number: string }>(conn, `SELECT DISTINCT sample_number FROM sample WHERE kind = 'trap' AND sample_number IN (SELECT unnest(from_json($1::JSON, '["VARCHAR"]')))`, [JSON.stringify([...new Set(sampleNumbers)])]);
-  return new Set(found.map((r) => r.sample_number));
-}
-
-export const numberTakenProblem = (sampleNumber: string) => `Trap sample ${sampleNumber} is already in Beeline.`;
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -444,7 +553,9 @@ export async function checkTrapSample(
   {
     staff = false,
     people,
-    taken,
+    holders,
+    statePrograms,
+    upload = false,
     methods,
   }: {
     staff?: boolean;
@@ -452,16 +563,17 @@ export async function checkTrapSample(
     methods?: readonly string[];
     /** Everyone Beeline knows (readPeople, src/collector-match.ts), read once by a caller that checks many forms. */
     people?: readonly MatchedCollector[];
-    /** Whether a trap sample has this number, answered by a caller that has read the numbers of many forms at once (readTrapNumbers). */
-    taken?: (sampleNumber: string) => boolean;
+    /** Who holds the numbers of many forms, read once by a caller that checks many forms (`readNumberHolders`). */
+    holders?: NumberHolders;
+    /** The program each state files under, read once by a caller that checks many forms (`readStatePrograms`). */
+    statePrograms?: ReadonlyMap<string, number>;
+    /** The form is a row of an uploaded file: a number a sample holds says which, and how to change it instead. */
+    upload?: boolean;
   } = {},
 ): Promise<{ sample: TrapSample } | { problems: FieldProblems }> {
   const problems: FieldProblems = {};
   const sampleNumber = form.sample_number.trim();
   if (sampleNumber === "") problems.sample_number = "A sample number is needed.";
-  else {
-    if (taken !== undefined ? taken(sampleNumber) : await numberTaken(conn, sampleNumber, sampleId)) problems.sample_number = numberTakenProblem(sampleNumber);
-  }
 
   // Named as every list of collectors is named (src/collector-match.ts).
   const matched = await matchCollectors(conn, form.collectors, { staff, people });
@@ -500,6 +612,14 @@ export async function checkTrapSample(
   const state = form.state_province.trim().toUpperCase();
   if (country === "") problems.country = "A country is needed.";
   if (state === "") problems.state_province = "A state or province is needed.";
+
+  // The number is judged by what it is held to (NumberScope): the program for a series number, the first collector and the start day for a plain one.
+  // What cannot be read yet is left to its own problem.
+  if (sampleNumber !== "") {
+    const scope: NumberScope = { sampleNumber, programId: await programOfSample(conn, sampleId, state, statePrograms), collectorId: collectorIds[0] ?? null, dateStart: start };
+    const holder = await numberHolderFor(conn, scope, sampleId, holders);
+    if (holder !== null) problems.sample_number = await numberTakenProblem(conn, scope, holder, { upload });
+  }
 
   if (Object.keys(problems).length > 0) return { problems };
   return {
@@ -578,8 +698,7 @@ async function releaseByStaff(conn: DuckDBConnection, sampleId: number, by: Staf
  * Write a new trap sample; its id. Behind the print runs' lock, on the print connection. `within` is run, with the
  * new id and its number, in the same transaction as the sample, so that whatever it writes stands or falls with the
  * sample: the apply-uploads job records the row's outcome there, so a crash cannot leave a sample that no upload row
- * names. With `anyKind` a series number that any other sample has, of any kind,
- * counts as taken (the upload path; the trap form counts trap samples only). With `staff`, staff entered it and
+ * names. A number another sample holds, of any kind, is taken (`numberHolderFor`). With `staff`, staff entered it and
  * the release is written with it, in the same transaction and in any season: staff entering a sample is staff
  * saying its bees need labels. The upload path never passes `staff` (see src/app/samples-upload-apply.ts).
  */
@@ -588,12 +707,11 @@ export function createTrapSample(
   s: TrapSample,
   enteredBy: number | null,
   within?: (id: number, sampleNumber: string) => Promise<void>,
-  options: { anyKind?: boolean; staff?: StaffRelease } = {},
+  options: { staff?: StaffRelease } = {},
 ): Promise<number | "taken"> {
   return withPrintRunLock(async () => {
     const number = s.sample_number;
-    if (await numberTaken(conn, number, null)) return "taken";
-    if (options.anyKind === true && (await seriesNumberHolder(conn, number)) !== null) return "taken";
+    if ((await numberHolderFor(conn, await numberScopeOf(conn, s, null), null)) !== null) return "taken";
     return inTransaction(conn, async () => {
       const created = await rows<{ entity_id: number }>(
         conn,
@@ -764,7 +882,7 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
   return withPrintRunLock(async () => {
     const current = await loadTrapSample(conn, id);
     if (current === null || !current.editable) return "printed";
-    if (await numberTaken(conn, s.sample_number, id)) return "taken";
+    if ((await numberHolderFor(conn, await numberScopeOf(conn, s, id), id)) !== null) return "taken";
     return inTransaction(conn, async () => {
       // Staff changing a settled season's count release it, read here, inside the
       // lock and the transaction, against the count the save is replacing.

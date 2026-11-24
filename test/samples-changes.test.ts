@@ -333,21 +333,21 @@ describe("a change a correction would refuse", () => {
     // An old sample with an observation: iNaturalist holds its start.
     const withObservation = await trapSample(f, { sample_number: "'X-1'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(20)}'`, inat_observation_id: "12345" }, false);
     await oldRecords(f, withObservation, "rec-x", "vane trap");
-    // An old net sample whose number a trap sample has, which a trap method would make a trap sample.
-    const net = await insertCleanSample(f.conn, { sample_number: "'N-2'", date_start: `DATE '${day(22)}'`, date_end: `DATE '${day(22)}'`, collector_id: String(f.volunteer) });
+    // An old net sample whose collector has a sample with the same number on the day the file moves it to.
+    const net = await insertCleanSample(f.conn, { sample_number: "'2'", date_start: `DATE '${day(22)}'`, date_end: `DATE '${day(22)}'`, collector_id: String(f.volunteer) });
     await oldRecords(f, net, "rec-n", "aerial net");
-    await trapSample(f, { sample_number: "'N-2'" });
+    await trapSample(f, { sample_number: "'2'", date_start: `DATE '${day(23)}'`, date_end: `DATE '${day(23)}'` });
     // A trap sample whose labels are in a print run that has not printed.
     await f.conn.run(`UPDATE sample SET kind = 'trap', date_end = date_end + 3, protocol = 'vane trap' WHERE entity_id = ${f.ids.sampleC}`);
     await f.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${f.ids.sampleC}, ${f.staffer})`);
     const { location } = await offered(f, [
       { id: withObservation, set: { eventDate: day(21) } },
-      { id: net, set: { samplingProtocol: "vane trap" } },
+      { id: net, set: { eventDate: day(23) } },
       { id: f.ids.sampleC!, set: { samplingProtocol: "pan trap" } },
       { id: f.ids.sampleB, set: { samplingProtocol: "pan trap" } },
     ]);
     expect(await noteOf(f, location, withObservation)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.problems.start_observation));
-    expect(await noteOf(f, location, net)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.numberTaken("N-2")));
+    expect(await noteOf(f, location, net)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.numberTaken("2")));
     expect(await noteOf(f, location, f.ids.sampleC!)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.inPrintRun));
     expect(await noteOf(f, location, f.ids.sampleB)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
   });
@@ -377,16 +377,16 @@ describe("a change a correction would refuse", () => {
 });
 
 describe("a change a correction refuses only when the job meets it", () => {
-  it("refuses a net sample made a trap sample whose number a trap sample took after the page", async () => {
+  it("refuses a sample moved to a day its collector took the number on after the page", async () => {
     const f = await uploadFixture();
-    const net = await insertCleanSample(f.conn, { sample_number: "'N-3'", date_start: `DATE '${day(22)}'`, date_end: `DATE '${day(22)}'`, collector_id: String(f.volunteer) });
+    const net = await insertCleanSample(f.conn, { sample_number: "'3'", date_start: `DATE '${day(22)}'`, date_end: `DATE '${day(22)}'`, collector_id: String(f.volunteer) });
     await oldRecords(f, net, "rec-n3", "aerial net");
-    const { location, digest } = await offered(f, [{ id: net, set: { samplingProtocol: "vane trap" } }]);
+    const { location, digest } = await offered(f, [{ id: net, set: { eventDate: day(23) } }]);
     expect((await apply(f, location, { digest })).status).toBe(303);
-    await trapSample(f, { sample_number: "'N-3'" });
+    await trapSample(f, { sample_number: "'3'", date_start: `DATE '${day(23)}'`, date_end: `DATE '${day(23)}'` });
     expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, notApplied: 1 });
-    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", en.record.sample.methodEdit.numberTaken("N-3")] });
-    expect(await rows(f.conn, `SELECT kind FROM sample WHERE entity_id = ${net}`)).toEqual([["net"]]);
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", en.record.sample.methodEdit.numberTaken("3")] });
+    expect(await rows(f.conn, `SELECT CAST(date_start AS VARCHAR) FROM sample WHERE entity_id = ${net}`)).toEqual([[day(22)]]);
   });
 
   it("refuses a method change when a print run that has not printed took the sample after the page", async () => {
@@ -657,23 +657,25 @@ describe("the method's number check", () => {
     return id;
   };
 
-  it("lets a net sample with a bare number become a trap sample although trap samples have that number", async () => {
+  it("lets a net sample become a trap sample whatever other samples have its number: the method decides nothing", async () => {
     const f = await uploadFixture();
-    await trapSample(f, { sample_number: "'7'" });
+    await trapSample(f, { sample_number: "'7'", date_start: `DATE '${day(22)}'`, date_end: `DATE '${day(22)}'` });
     const net = await netSample(f, "7", "rec-b");
     const res = await post(f, net, { protocol: "pan trap", date_end: day(25) });
     expect(res.status).toBeLessThan(400);
     expect(await rows(f.conn, `SELECT kind FROM sample WHERE entity_id = ${net}`)).toEqual([["trap"]]);
   });
 
-  it("refuses a net sample with a series number a trap sample has, in any spelling", async () => {
+  it("refuses a start day that gives the sample's number to a day its collector already has it on", async () => {
     const f = await uploadFixture();
-    await trapSample(f, { sample_number: "'OBAS 00031'" });
-    const net = await netSample(f, "OBAS-00031", "rec-s");
-    const res = await post(f, net, { protocol: "pan trap", date_end: day(25) });
+    await trapSample(f, { sample_number: "'7'", date_start: `DATE '${day(23)}'`, date_end: `DATE '${day(23)}'` });
+    const net = await netSample(f, "7", "rec-s");
+    const res = await post(f, net, { protocol: "aerial net", date_start: day(23), date_end: day(23) });
     expect(res.status).toBe(409);
-    expect(await res.text()).toBe(en.record.sample.methodEdit.numberTaken("OBAS-00031"));
-    expect(await rows(f.conn, `SELECT kind FROM sample WHERE entity_id = ${net}`)).toEqual([["net"]]);
+    expect(await res.text()).toBe(en.record.sample.methodEdit.numberTaken("7"));
+    expect(await rows(f.conn, `SELECT CAST(date_start AS VARCHAR) FROM sample WHERE entity_id = ${net}`)).toEqual([[day(22)]]);
+    // Another day is free.
+    expect((await post(f, net, { protocol: "aerial net", date_start: day(24), date_end: day(24) })).status).toBeLessThan(400);
   });
 });
 

@@ -798,25 +798,24 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
     }
   });
 
-  it("accepts a date range alone on a net sample whose series number another trap sample holds, and refuses a trap method for it", async () => {
+  it("gives a net sample a trap method although another trap sample holds its series number: the method decides nothing (beeline-ni5m.16)", async () => {
     const { app, conn, sampleId, later } = await methodApp("staff");
     await conn.run(`UPDATE sample SET sample_number = 'OBAS-00099' WHERE entity_id = ${sampleId}`);
     await insertCleanSample(conn, { sample_number: "'OBAS-00099'", kind: "'trap'", date_start: `DATE '${later(40)}'`, date_end: `DATE '${later(41)}'` });
     expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(2) })).status).toBe(302);
     const [kindNow, protocolNow, , endNow] = (await sampleRow(conn, sampleId))!;
     expect([kindNow, protocolNow, endNow]).toEqual(["net", "aerial net", later(2)]);
-    const refused = await post(app, `/samples/${sampleId}/method`, { protocol: "vane trap", date_end: later(2) });
-    expect(await refused.text()).toContain("OBAS-00099");
-    expect((await sampleRow(conn, sampleId))?.[0]).toBe("net");
+    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "vane trap", date_end: later(2) })).status).toBe(302);
+    expect((await sampleRow(conn, sampleId))?.[0]).toBe("trap");
   });
 
-  it("refuses the collector's edit that gives a net sample a trap method when another trap sample holds its series number", async () => {
+  it("lets the collector's edit give a net sample a trap method although another trap sample holds its series number (beeline-ni5m.16)", async () => {
     const { app, conn, sampleId, later } = await methodApp("collector", { observation: false });
     await conn.run(`UPDATE sample SET sample_number = 'OBAS-00098' WHERE entity_id = ${sampleId}`);
     await insertCleanSample(conn, { sample_number: "'OBAS-00098'", kind: "'trap'", date_start: `DATE '${later(40)}'`, date_end: `DATE '${later(41)}'` });
     const res = await post(app, `/samples/${sampleId}/edit`, { "base:protocol": "aerial net", protocol: "vane trap" });
-    expect(await res.text()).toContain("OBAS-00098");
-    expect(await rows(conn, `SELECT protocol, kind FROM sample WHERE entity_id = ${sampleId}`)).toEqual([["aerial net", "net"]]);
+    expect(res.status).toBeLessThan(400);
+    expect(await rows(conn, `SELECT protocol, kind FROM sample WHERE entity_id = ${sampleId}`)).toEqual([["vane trap", "trap"]]);
   });
 
 });

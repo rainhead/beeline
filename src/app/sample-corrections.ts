@@ -5,7 +5,7 @@ import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
 import { recordSampleChanges, type SampleChangeSource } from "../sample-change.js";
 import { setSampleMethodRow } from "../sample-method-row.js";
-import { loadTrapSample, mayEditTrapSample, seriesTrapNumberTaken, setTrapSampleLocality } from "../trap-sample.js";
+import { loadTrapSample, mayEditTrapSample, setTrapSampleLocality, startMoveHolder } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
 import {
@@ -316,20 +316,6 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
   };
   return correct(sampleId, input, gates, async (sample, form): Promise<EditSampleResult> => {
     const edit = { values: form.values, bases: form.bases, note: form.note ?? "", author: actor.login };
-    // A net sample given a trap method becomes a trap sample, and a series number is one for each trap sample (as in setMethod).
-    const given = typeof form.values.protocol === "string" ? form.values.protocol.trim() : null;
-    if (given !== null && given !== "") {
-      const baseline = form.bases.protocol !== undefined ? form.bases.protocol.trim() : (sample.protocol ?? "").trim();
-      const writer = deps.printWriter ?? deps.conn;
-      if (given !== baseline && writer !== undefined) {
-        const kept = await sql<{ is_trap: boolean; kind: string }>`
-          SELECT (SELECT is_trap FROM method WHERE code = ${given}) AS is_trap, s.kind FROM sample s WHERE s.entity_id = ${sample.entity_id}`.execute(deps.db);
-        const row = kept.rows[0];
-        if (row !== undefined && row.is_trap === true && row.kind !== "trap" && (await seriesTrapNumberTaken(writer, sample.sample_number, sample.entity_id))) {
-          return { ok: false, refusal: "invalid", problem: en.record.sample.methodEdit.numberTaken(sample.sample_number) };
-        }
-      }
-    }
     if (form.dryRun === true) {
       const plan = await planSampleEdit(deps.db, sample, edit);
       if (plan.outcome === "no_staging") return refused("no_staging");
@@ -775,7 +761,8 @@ export type SetMethodResult =
  * and the days. The rules are in src/app/sample-method.ts; what is added here is what its callers each did for
  * themselves: the sample's turn of the queue with the history entry before the turn ends, the print runs' lock, a
  * refusal while a print run that has not printed holds the sample (its labels froze the method and dates), and a
- * refusal when a net sample would become a trap sample whose number another trap sample already has. Staff only.
+ * refusal when a start day that moves would give the sample's plain number to a day its collector already holds it
+ * on. Staff only.
  */
 export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<SetMethodInput>): Promise<SetMethodResult> {
   const gates = async () => {
@@ -791,15 +778,10 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
       const now = await db.selectFrom("sample").where("entity_id", "=", sampleId).select(["kind", "sample_number", "date_start", "protocol"]).executeTakeFirst();
       if (now === undefined) return refused("not_found");
       if (await heldByUnprintedRun(db, sampleId)) return refused("in_print_run");
-      const entered = (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
-      // A sample whose method becomes a trap becomes a trap sample, and a series number (OBAS-00011) is one for each trap sample; a plain number is the collector's, and shared. The dates decide nothing.
+      // A start day that moves puts the sample's plain number on another day of its collector, which may already hold it; a series number is held to its program, which a day does not change. A start day the form left as it was is no move (startMoveHolder), and the method decides nothing, so a sample that already shares its number stays editable.
       const writer = deps.printWriter ?? deps.conn;
-      // A field the form left as it showed it is no change (setSampleMethod keeps the sample's own value for it).
-      const toMethod = form.protocol.trim();
-      const methodChanged = toMethod !== (form.bases?.protocol !== undefined ? form.bases.protocol.trim() : (now.protocol ?? "").trim());
-      const becomesTrap =
-        methodChanged && toMethod !== "" && (await sql<{ is_trap: boolean }>`SELECT is_trap FROM method WHERE code = ${toMethod}`.execute(db)).rows[0]?.is_trap === true;
-      if (!entered && now.kind !== "trap" && becomesTrap && writer !== undefined && (await seriesTrapNumberTaken(writer, now.sample_number, sampleId))) {
+      const toStart = form.dateStart?.trim() ?? "";
+      if (/^\d{4}-\d{2}-\d{2}$/.test(toStart) && writer !== undefined && (await startMoveHolder(writer, sampleId, toStart)) !== null) {
         return { ok: false, refusal: "number_taken", number: now.sample_number };
       }
       const saved = await setSampleMethod(db, deps.correctionsPath, sampleId, {

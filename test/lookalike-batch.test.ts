@@ -1,6 +1,6 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { beforeEach, describe, expect, it } from "vitest";
-import { LOOKALIKE_METRES, findLookalikes, lookalikesAmong, readLookalikeCandidates, readSeriesHolders, readTrapNumbers, seriesNumberHolder, numberTaken, type LookalikeFacts } from "../src/trap-sample.js";
+import { LOOKALIKE_METRES, findLookalikes, lookalikesAmong, readLookalikeCandidates, findNumberHolder, readNumberHolders, type LookalikeFacts } from "../src/trap-sample.js";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 let conn: DuckDBConnection;
@@ -64,29 +64,22 @@ describe("the look-alike rule, asked of the store and of candidates read once", 
   });
 });
 
-describe("series numbers read for a whole file", () => {
-  it("answer as seriesNumberHolder does, for any spelling", async () => {
+describe("number holders read for a whole file", () => {
+  it("answer as findNumberHolder does, for any spelling and every kind of sample", async () => {
     const a = await sample("OBAS 00700", ann, "2026-06-10", "2026-06-20", LAT);
     await sample("obas-00700", ann, "2026-06-10", "2026-06-20", LAT);
     await sample("WBAS-00012", ann, "2026-06-10", "2026-06-20", LAT, { kind: "'net'" });
     await sample("12", ann, "2026-06-10", "2026-06-20", LAT);
     const asked = ["OBAS-00700", "OBAS00700", "OBAS-00701", "WBAS-00012", "wbas-00012", "12", "OBAS 00700"];
-    const holderOf = await readSeriesHolders(conn, asked);
-    for (const n of asked) expect(holderOf(n), n).toEqual(await seriesNumberHolder(conn, n));
-    expect(holderOf("OBAS-00700")).toEqual({ sampleId: a, kind: "trap" });
-    expect(holderOf("WBAS-00012")?.kind).toBe("net");
-    expect(holderOf("OBAS-00701")).toBeNull();
-    // Every holder of the program's series, for numbers not named yet.
-    const all = await readSeriesHolders(conn, [], { allProgramSeries: true });
-    expect(all("OBAS-00700")).toEqual({ sampleId: a, kind: "trap" });
-    expect(all("OBAS-00701")).toBeNull();
-  });
-
-  it("find the trap numbers taken as numberTaken does", async () => {
-    await sample("UP-1", ann, "2026-06-10", "2026-06-20", LAT);
-    await sample("UP-2", ann, "2026-06-10", "2026-06-20", LAT, { kind: "'net'" });
-    const taken = await readTrapNumbers(conn, ["UP-1", "UP-2", "UP-3"]);
-    for (const n of ["UP-1", "UP-2", "UP-3"]) expect(taken.has(n), n).toBe(await numberTaken(conn, n, null));
-    expect([...taken]).toEqual(["UP-1"]);
+    const holders = await readNumberHolders(conn, asked);
+    for (const n of asked) {
+      const scope = { sampleNumber: n, programId: null, collectorId: ann, dateStart: "2026-06-10" };
+      expect(holders(scope), n).toEqual(await findNumberHolder(conn, scope));
+    }
+    const at = (n: string) => holders({ sampleNumber: n, programId: null, collectorId: ann, dateStart: "2026-06-10" });
+    expect(at("OBAS-00700")).toEqual({ sampleId: a, kind: "trap" });
+    expect(at("WBAS-00012")?.kind).toBe("net");
+    expect(at("OBAS-00701")).toBeNull();
+    expect(at("12")?.kind).toBe("trap");
   });
 });

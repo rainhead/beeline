@@ -29,6 +29,7 @@ import { duckdbReader, recordPersonChanges } from "../../person-change.js";
 import { recordSampleChanges, type SampleLogPaths } from "../../sample-change.js";
 import { promoteObservations } from "../../promote-observations.js";
 import { checkObservationFields } from "../../refresh-observation-fields.js";
+import { checkSampleMethods } from "../../check-sample-methods.js";
 import { fetchObservationsById, pruneSightings, syncINat, type FetchByIdOptions } from "../../sync-inat.js";
 import { DEFAULT_QUERY_COPY_PATH, type AppConfig } from "../config.js";
 import { deploymentPath } from "../../deployment-path.js";
@@ -563,6 +564,17 @@ export async function pipelineTail(
     if (ctx.signal?.aborted) throw err;
     staleFields = err instanceof Error ? err : new Error(String(err));
   }
+  // The same for the methods: every writer of a sample's method as written
+  // writes its method with it, and a row the view names is one that did not
+  // (beeline-ni5m.15). Counted, never named.
+  let staleMethods: Error | null = null;
+  try {
+    await ctx.step("check stored sample methods", () => checkSampleMethods(ctx.conn));
+  } catch (err) {
+    if (ctx.signal?.aborted) throw err;
+    staleMethods = err instanceof Error ? err : new Error(String(err));
+  }
+  const stale = [staleFields, staleMethods].filter((e): e is Error => e !== null).map((e) => e.message).join("; ");
   // A refused snapshot (beeline-hrw) fails the run — after every store step
   // has done its work, so nothing the nightly is for waits on it — because a
   // refusal is a standing condition that needs a person, and a run marked
@@ -574,10 +586,10 @@ export async function pipelineTail(
   // this message as the detail.
   if (refused !== null) {
     throw new Error(
-      `sample history not recorded: ${refused} (${parts.join("; ")})` + (staleFields ? `; ${staleFields.message}` : ""),
+      `sample history not recorded: ${refused} (${parts.join("; ")})` + (stale !== "" ? `; ${stale}` : ""),
     );
   }
-  if (staleFields) throw new Error(`${staleFields.message} (${parts.join("; ")})`);
+  if (stale !== "") throw new Error(`${stale} (${parts.join("; ")})`);
   return parts.join("; ");
 }
 

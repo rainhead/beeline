@@ -1,0 +1,88 @@
+import { copyFile, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import type { DuckDBConnection } from "@duckdb/node-api";
+import { migrate, MIGRATIONS_DIR, schemaDrift } from "../src/migrate.js";
+import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+
+/**
+ * migrations/0123 makes the controlled list of methods, each sample's method
+ * and the three views over them (beeline-ni5m.15), and backfills sample_method
+ * from sample.protocol. Checked by putting a store back as the migration before
+ * it left it, with samples of several wordings, migrating, and finding the
+ * store as a fresh build.
+ */
+
+const FILE = "0123-a-controlled-list-of-methods.sql";
+const VIEWS = ["sample_without_method", "sample_method_text_mismatch", "sample_kind_method_mismatch"];
+const OLD_PROTOCOL_COMMENT = "Free text today ('vane trap', '6 Vane Traps'); controlled vocabulary pending staff answers (docs/questions.md, Trap sampling q3).";
+
+/** A store as 0122 left it: none of the new objects, and the old comment on sample.protocol. */
+async function storeBefore() {
+  const made = await createMemoryDb();
+  const { conn } = made;
+  await conn.run(`INSERT INTO person (display_name) VALUES ('Ada Collector')`);
+  const ids: Record<string, number> = {};
+  const wordings: [string, string][] = [
+    ["net", "'aerial net'"],
+    ["old-net", "'net'"],
+    ["count", "'6 Vane Traps'"],
+    ["pantrap", "'pantrap'"],
+    ["mixed", "'pan traps and vane traps'"],
+    ["unlisted", "'ground pitfall'"],
+    ["empty", "NULL"],
+  ];
+  for (const [i, [name, protocol]] of wordings.entries()) {
+    ids[name] = await insertCleanSample(conn, { sample_number: `'${i + 1}'`, protocol, kind: name === "count" || name === "pantrap" ? "'trap'" : "'net'" });
+  }
+  for (const view of VIEWS) await conn.run(`DROP VIEW ${view}`);
+  for (const table of ["sample_method", "method_text", "method"]) await conn.run(`DROP TABLE ${table}`);
+  await conn.run(`COMMENT ON COLUMN sample.protocol IS '${OLD_PROTOCOL_COMMENT.replaceAll("'", "''")}'`);
+  return { ...made, ids };
+}
+
+const migrateOnly = async (conn: DuckDBConnection) => {
+  const dir = await mkdtemp(join(tmpdir(), "migration-0123-"));
+  await copyFile(join(MIGRATIONS_DIR, FILE), join(dir, "9999-under-test.sql"));
+  return migrate(conn, { dir });
+};
+
+describe("migration 0123: a controlled list of methods", () => {
+  it("gives each sample its method from the text, and the store is a fresh build", async () => {
+    const { conn, ids } = await storeBefore();
+    expect(await migrateOnly(conn)).toEqual(["9999-under-test.sql"]);
+
+    const got = await rows(conn, `SELECT sample_id, method_code, trap_count FROM sample_method ORDER BY sample_id`);
+    expect(got).toEqual([
+      [ids.net, "aerial net", null],
+      [ids["old-net"], "aerial net", null],
+      [ids.count, "vane trap", 6],
+      [ids.pantrap, "pan trap", null],
+      [ids.mixed, "pan and vane traps", null],
+    ]);
+    // The unlisted text and the empty one have no method, and are on the worklist.
+    expect(await rows(conn, `SELECT sample_id FROM sample_without_method ORDER BY 1`)).toEqual([[ids.unlisted], [ids.empty]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    // The kinds were set by the old rules, here as fixtures: the mixed sample is a net, and its method is a trap.
+    expect(await rows(conn, `SELECT sample_id FROM sample_kind_method_mismatch ORDER BY 1`)).toEqual([[ids.mixed]]);
+
+    // The comment on the column is restated, and the store has what a fresh build has.
+    expect(await schemaDrift(conn)).toEqual([]);
+    const fresh = await createMemoryDb();
+    const same = async (sql: string) => expect(await rows(conn, sql)).toEqual(await rows(fresh.conn, sql));
+    await same(`SELECT code, label_word, is_trap FROM method ORDER BY code`);
+    await same(`SELECT text, method_code, trap_count FROM method_text ORDER BY text`);
+    await same(`SELECT table_name, comment FROM duckdb_tables() WHERE table_name IN ('method', 'sample_method', 'method_text') ORDER BY 1`);
+    await same(`SELECT table_name, column_name, comment FROM duckdb_columns() WHERE table_name IN ('method', 'sample_method', 'method_text') OR (table_name = 'sample' AND column_name = 'protocol') ORDER BY 1, 2`);
+    await same(`SELECT view_name, comment FROM duckdb_views() WHERE view_name IN (${VIEWS.map((v) => `'${v}'`).join(", ")}) ORDER BY 1`);
+  });
+
+  it("is safe to run on a store with no samples", async () => {
+    const { conn } = await createMemoryDb();
+    for (const view of VIEWS) await conn.run(`DROP VIEW ${view}`);
+    for (const table of ["sample_method", "method_text", "method"]) await conn.run(`DROP TABLE ${table}`);
+    expect(await migrateOnly(conn)).toEqual(["9999-under-test.sql"]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method`)).toEqual([[0n]]);
+  });
+});

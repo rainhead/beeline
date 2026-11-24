@@ -179,6 +179,13 @@ export async function insertCleanSample(
     `INSERT INTO sample (${keys.join(", ")}) VALUES (${keys.map((k) => cols[k]).join(", ")}) RETURNING entity_id`,
   );
   const [[id]] = (await result.getRows()) as [[number]];
+  // The method, as every writer gives it: whatever method_text says the method
+  // as written means. A text it does not know gives no row, as for a real sample.
+  await conn.run(
+    `INSERT INTO sample_method (sample_id, method_code, trap_count)
+     SELECT s.entity_id, t.method_code, t.trap_count FROM sample s JOIN method_text t ON t.text = s.protocol
+     WHERE s.entity_id = ${id}`,
+  );
   // Position 1 is the primary collector — the head every "my samples" query
   // and attribution read (beeline-77j, beeline-6e9).
   await conn.run(

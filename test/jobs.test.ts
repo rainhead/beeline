@@ -829,9 +829,10 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
     // The taxon cache is filled after the store's other steps and before the
     // refusal fails the run, so the refusal neither skips it nor waits on it.
     expect(steps.indexOf("fetch taxa")).toBe(steps.indexOf("name localities") + 1);
-    // Then the stored observation fields are checked, last of all.
-    expect(steps.at(-1)).toBe("check stored observation fields");
+    // Then the stored observation fields are checked, and the stored methods after them, last of all.
+    expect(steps.at(-1)).toBe("check stored sample methods");
     expect(steps.indexOf("check stored observation fields")).toBe(steps.indexOf("fetch taxa") + 1);
+    expect(steps.indexOf("check stored sample methods")).toBe(steps.indexOf("check stored observation fields") + 1);
     expect(run.detail).toContain("taxa cache complete");
     expect(run.detail).toContain("areas: no gazetteer on this machine");
     expect(run.detail).toContain("localities: no gazetteer on this machine");
@@ -872,13 +873,43 @@ describe("the nightly and a county from the coordinates (beeline-313x)", () => {
     expect(run.outcome).toBe("succeeded");
     expect(run.detail).toContain("1 county(ies) written from the coordinates");
     expect(steps.indexOf("record county changes")).toBe(steps.indexOf("find areas") + 1);
-    // A clean store passes the closing check on the stored observation fields.
-    expect(steps.at(-1)).toBe("check stored observation fields");
+    // A clean store passes the closing checks on the stored observation fields and the stored methods.
+    expect(steps.at(-1)).toBe("check stored sample methods");
     const sample = await deps.db.selectFrom("sample").select("county").where("entity_id", "=", id).executeTakeFirstOrThrow();
     expect(sample.county).toBe("Benton");
     // The first pass baselined the log; the county is the second pass's, and
     // says where it came from.
     const log = await readFile(samplePaths.log, "utf8");
     expect(log).toMatch(/,county,BentonCo,Benton,,coordinates,/);
+  });
+});
+
+describe("the nightly and the stored methods (beeline-ni5m.15)", () => {
+  it("fails, naming how many and never which, when a sample's method disagrees with its method as written", async () => {
+    const deps = await jobDeps();
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "nightly-methods-"));
+    const samplePaths = { log: join(dir, "sample-change.csv"), state: join(dir, "sample-state.csv") };
+    await deps.conn.run(`INSERT INTO person (display_name) VALUES ('Ada Adams')`);
+    const id = await insertCleanSample(deps.conn, { sample_number: "'SECRET-7'" });
+    // A deliberately broken row: the text says aerial net and the stored method says vacuum.
+    await deps.conn.run(`UPDATE sample_method SET method_code = 'vacuum' WHERE sample_id = ${id}`);
+    const job: Job = {
+      name: "nightly-pipeline",
+      schedule: { kind: "dailyLA", hour: 2 },
+      window: "night",
+      run: (ctx: JobContext) =>
+        pipelineTail(ctx, [], join(dir, "person-change.csv"), samplePaths, undefined, {
+          demDir: join(dir, "dem"),
+          gazetteerPath: join(dir, "gazetteer.duckdb"),
+        }),
+    };
+    await runJob(deps, job);
+    const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+    expect(run.outcome).toBe("failed");
+    expect(run.detail).toContain("1 sample(s) have a stored method that disagrees with their method as written");
+    expect(run.detail).not.toContain("SECRET-7");
   });
 });

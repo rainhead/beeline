@@ -268,6 +268,8 @@ export interface EditSampleInput {
    * asks for it.
    */
   dryRun?: boolean;
+  /** The sentence for a method that is not on the list, naming the methods that are (the catalogue's `unlistedMethod`). */
+  unlistedMethodProblem: (methods: readonly string[]) => string;
 }
 
 /** One field an edit changes: its value now, and the value after. A cleared field is null. */
@@ -285,7 +287,8 @@ export type EditSampleResult =
       /** The fields changed, or that a dry run would change. */
       changes: FieldChange[];
     }
-  | Refused<"impersonating" | "not_editable" | "no_staging" | "not_applied">;
+  | Refused<"impersonating" | "not_editable" | "no_staging" | "not_applied">
+  | Invalid;
 
 /** The changes an edit makes to these fields, as the plan and the writer both trim them. */
 function fieldChanges(sample: EditableSample, fields: EditableFieldName[], values: EditSampleInput["values"]): FieldChange[] {
@@ -315,6 +318,7 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
     if (form.dryRun === true) {
       const plan = await planSampleEdit(deps.db, sample, edit);
       if (plan.outcome === "no_staging") return refused("no_staging");
+      if (plan.outcome === "unlisted_method") return { ok: false, refusal: "invalid", problem: form.unlistedMethodProblem(plan.methods) };
       if (plan.outcome === "unchanged") return { ok: true, outcome: "unchanged", changes: [] };
       return { ok: true, outcome: "would_save", changes: fieldChanges(sample, plan.changed, form.values) };
     }
@@ -327,6 +331,7 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
       throw err;
     }
     if (result.outcome === "no_staging") return refused("no_staging");
+    if (result.outcome === "unlisted_method") return { ok: false, refusal: "invalid", problem: form.unlistedMethodProblem(result.methods) };
     // Record what just changed, credited to whoever typed it. Narrowed to
     // this sample, so the author is charged with this sample's pending
     // differences and no other sample's; in the rare case another writer

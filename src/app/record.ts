@@ -97,6 +97,9 @@ export interface SampleDetail {
   country: string | null;
   protocol: string | null;
   sampling_effort: string | null;
+  /** The code of the sample's method from the list, null where its method as written is none of them (beeline-ni5m.15). */
+  method: string | null;
+  trap_count: number | null;
   inat_observation_id: bigint | null;
   /**
    * The day iNaturalist first answered without the observation, where it has
@@ -402,7 +405,7 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
   s.kind, s.sample_number, s.date_start, s.date_end, s.specimen_count,
   ${placeColumns(reader).locality} AS locality, ${placeColumns(reader).county} AS county,
   s.state_province, s.country,
-  s.protocol, s.sampling_effort,
+  s.protocol, s.sampling_effort, smeth.method_code AS method, smeth.trap_count,
   s.inat_observation_id, s.host_inat_taxon_id, s.host_name_as_observed, s.host_rank,
   sh.standing AS host_standing, sh.current_name AS host_current_name, sh.current_rank AS host_current_rank,
   CASE WHEN sh.standing = 'split' THEN coalesce(sh.genus_name, sh.family_name) END AS host_split_within_name,
@@ -469,6 +472,7 @@ const sampleJoins = (reader: Reader) => sql`
   FROM sample s
   LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
   LEFT JOIN sample_host sh ON sh.sample_id = s.entity_id
+  LEFT JOIN sample_method smeth ON smeth.sample_id = s.entity_id
   LEFT JOIN program a ON a.entity_id = sa.atlas_id
   LEFT JOIN program mm ON mm.code = 'MM'
   LEFT JOIN ${ownSamplesSql(reader)} own ON own.sample_id = s.entity_id

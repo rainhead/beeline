@@ -182,6 +182,12 @@ describe("the job", () => {
       ["created", "OBAS-00012", "OBAS-00012", "trap", f.staffer],
     ]);
     expect(await rows(f.conn, `SELECT p.person_id, p.position FROM sample_collector p JOIN sample s ON s.entity_id = p.sample_id WHERE s.sample_number = 'OBAS-00012' ORDER BY 2`)).toEqual([[f.volunteer, 1], [f.staffer, 2]]);
+    // The method as the trap form writes it, with the count the file gave beside it (beeline-ni5m.15).
+    expect(await rows(f.conn, `SELECT s.sample_number, s.protocol, s.sampling_effort, m.method_code, m.trap_count FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.sample_number LIKE 'OBAS-%' ORDER BY 1`)).toEqual([
+      ["OBAS-00011", "vane trap", "6 vane traps", "vane trap", 6],
+      ["OBAS-00012", "vane trap", "6 vane traps", "vane trap", 6],
+    ]);
+    expect(await rows(f.conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
     const log = parseSampleChanges(await readFile(f.paths.sampleChangesPath, "utf8")).changes.filter((c) => c.sample_number.startsWith("OBAS-"));
     expect(log.length).toBeGreaterThan(0);
     expect(new Set(log.map((c) => c.source))).toEqual(new Set(["upload"]));

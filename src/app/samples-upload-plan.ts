@@ -6,7 +6,7 @@ import { oregonToday } from "../oregon-today.js";
 import { en } from "./messages/en.js";
 import type { Messages } from "./messages/index.js";
 import { distanceMetres, effortBecomes, predictRefusals, type AreaValues, type ChangeUnit, type CollectorsPreview, type SampleFacts, type UnitChange } from "./samples-upload-change.js";
-import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, lookalikesAmong, readLookalikeCandidates, readSeriesHolders, readTrapNumbers, seriesNumberHeldProblem, seriesNumberProblem, type Lookalike, type LookalikeCandidate, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
+import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, lookalikesAmong, methodCodes, readLookalikeCandidates, readSeriesHolders, readTrapNumbers, seriesNumberHeldProblem, seriesNumberProblem, type Lookalike, type LookalikeCandidate, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import { otherPrograms, programsOfNewState, type ChangedRecord, type OtherProgram } from "./upload-atlases.js";
@@ -518,6 +518,8 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   const fileNumbers = rows.flatMap(({ cells }, i) => (idOf[i]!.given === "" ? [text(cells, "fieldNumber")] : [])).filter((n) => n !== "");
   const holderOf = await readSeriesHolders(conn, fileNumbers);
   const trapNumbers = await readTrapNumbers(conn, fileNumbers);
+  // The methods a new row may name, read once for the file (src/trap-sample.ts).
+  const trapMethodCodes = await methodCodes(conn, { trapOnly: true });
   const candidates = new Map<number, LookalikeCandidate[]>();
   const candidatesOf = async (collectorId: number) => {
     if (!candidates.has(collectorId)) for (const [id, own] of await readLookalikeCandidates(conn, [collectorId])) candidates.set(id, own);
@@ -597,7 +599,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         county: full.get("county")!.fileText,
         locality: full.get("locality")!.fileText,
       };
-      const checked = await checkTrapSample(conn, form, null, { staff: true, people, taken: (n) => trapNumbers.has(n) });
+      const checked = await checkTrapSample(conn, form, null, { staff: true, people, taken: (n) => trapNumbers.has(n), methods: trapMethodCodes });
       if ("problems" in checked) {
         for (const [field, sentence] of Object.entries(checked.problems) as Array<[keyof TrapSampleForm, string]>) {
           if (FORM_COLUMNS[field].some((c) => flagged.has(c))) continue;

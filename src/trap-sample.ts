@@ -480,7 +480,7 @@ export async function checkTrapSample(
 
   const method = form.method.trim();
   const offered = methods ?? (await methodCodes(conn, { trapOnly: true }));
-  if (method === "") problems.method = `Say what kind of trap: ${offered.join(", ")}.`;
+  if (method === "") problems.method = "Say what kind of trap.";
   else if (!offered.includes(method)) problems.method = unlistedMethodProblem(offered);
   const trapCount = parseNumber(form.trap_count);
   if (form.trap_count.trim() !== "" && (trapCount === null || !Number.isInteger(trapCount) || trapCount < 1)) {

@@ -517,6 +517,7 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
       bases: {},
       note: b.note as string | undefined,
       dryRun: b.dry_run === true,
+      unlistedMethodProblem: corrections!.messages.record.sample.methodEdit.unlistedMethod,
     }),
     { values: "strings", note: "string", dry_run: "boolean" },
     ["values"],

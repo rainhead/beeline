@@ -295,6 +295,22 @@ describe("each correction writes what the page's form writes", () => {
     expect(await w.entries("A-3")).toContainEqual(expect.objectContaining({ field: "waivers", author: "samstaff", source: "api" }));
   });
 
+  it("takes the collector's method only from the list, for a real edit and a dry run alike (beeline-ni5m.15)", async () => {
+    const w = await world();
+    const listed = "Choose one of the listed methods: aerial net, bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vacuum, vane trap.";
+    for (const dry_run of [false, true]) {
+      const refused = await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { protocol: "six pan traps" }, dry_run });
+      expect(refused.status).toBe(422);
+      expect(JSON.stringify(await json(refused))).toContain(listed);
+    }
+    expect(await rows(w.conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    const saved = await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { protocol: "pan trap" } });
+    expect(saved.status).toBe(200);
+    expect(await rows(w.conn, `SELECT s.protocol, m.method_code FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${w.legacy}`)).toEqual([["pan trap", "pan trap"]]);
+    expect(await rows(w.conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await w.entries("OBAS-00657")).toContainEqual(expect.objectContaining({ field: "method", to: "pan trap", author: w.beaLogin }));
+  });
+
   it("edits the collector's own sample, writing the corrections file and the sample as the form does", async () => {
     const w = await world();
     const res = await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: "Walla Walla" }, note: "in town" });

@@ -84,7 +84,7 @@ describe("sample corrections: refusals", () => {
     const alice = { ...s.alice, impersonating: true };
     const sam = { ...s.sam, impersonating: true };
     const gone = { ok: false, refusal: "impersonating" };
-    expect(await editSample(s.deps, alice, s.unlinked, { values: { locality: "X" }, bases: {}, note: undefined })).toEqual(gone);
+    expect(await editSample(s.deps, alice, s.unlinked, { values: { locality: "X" }, bases: {}, note: undefined, unlistedMethodProblem: (methods) => methods.join(",") })).toEqual(gone);
     expect(await adoptLocality(s.deps, alice, s.linked, { locality: "X", reasonFor })).toEqual(gone);
     expect(await setPlace(s.deps, alice, s.linked, { locality: "X", reasonFor })).toEqual(gone);
     expect(await setCoordinates(s.deps, sam, s.linked, coordinates)).toEqual(gone);
@@ -104,7 +104,7 @@ describe("sample corrections: refusals", () => {
 
   it("says a sample is not found when it is not the collector's, or does not exist", async () => {
     const s = await setup();
-    expect(await editSample(s.deps, s.bob, s.unlinked, { values: { locality: "X" }, bases: {}, note: undefined })).toEqual({
+    expect(await editSample(s.deps, s.bob, s.unlinked, { values: { locality: "X" }, bases: {}, note: undefined, unlistedMethodProblem: (methods) => methods.join(",") })).toEqual({
       ok: false,
       refusal: "not_editable",
     });
@@ -454,6 +454,29 @@ describe("setTrapCount", () => {
     });
   const effortOf = async (s: Awaited<ReturnType<typeof setup>>, id: number) =>
     ((await rows(s.conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${id}`)) as (string | null)[][])[0]![0];
+
+  it("sets the count beside the method too, and a blank takes it away, or restores the count the text states (beeline-ni5m.15)", async () => {
+    const s = await setup();
+    const held = async (id: number) => (await rows(s.conn, `SELECT trap_count FROM sample_method WHERE sample_id = ${id}`))[0]![0];
+    const id = await trapSample(s);
+    await recordSampleChanges(duckdbReader(s.conn), s.deps.samplePaths, { source: "observation_promotion" });
+    expect(await held(id)).toBe(6);
+    await setTrapCount(s.deps, s.sam, id, { count: "9", note: "recount", problemFor });
+    expect(await held(id)).toBe(9);
+    // The history says who changed the count, as a field of its own.
+    const log = (await readSampleChanges(s.paths.sampleChangesPath)).filter((c) => c.field === "trap_count");
+    expect(log.map((c) => [c.old_value, c.new_value, c.author])).toEqual([["6", "9", "samstaff"]]);
+    await setTrapCount(s.deps, s.sam, id, { count: "", note: "", problemFor });
+    expect(await held(id)).toBeNull();
+    // A sample whose method as written states the count keeps it when the count is taken away, as the text still says it.
+    const stated = await trapSample(s, { sample_number: "'T-2'", protocol: "'6 vane traps'", sampling_effort: "NULL" });
+    expect(await held(stated)).toBe(6);
+    await setTrapCount(s.deps, s.sam, stated, { count: "8", note: "", problemFor });
+    expect(await held(stated)).toBe(8);
+    await setTrapCount(s.deps, s.sam, stated, { count: "", note: "", problemFor });
+    expect(await held(stated)).toBe(6);
+    expect(await rows(s.conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+  });
 
   it("sets the count with the sample's method, and records it under staff", async () => {
     const s = await setup();

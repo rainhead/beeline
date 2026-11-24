@@ -230,7 +230,12 @@ const ENDPOINTS: Endpoint[] = [
     route: "/samples/:id/edit",
     summary: "The collector's edit of a sample that has no observation.",
     needs: "edit key",
-    body: { values: "object of locality, country, state_province, county, protocol to text", note: "string", dry_run: "boolean", reference: REFERENCE },
+    body: {
+      values: "object of locality, country, state_province, county, protocol to text; a protocol that differs from the sample's own words must be one of the listed methods (see `methods`), and is refused with a 422 that names them",
+      note: "string",
+      dry_run: "boolean",
+      reference: REFERENCE,
+    },
     answers: "{ sample_id, outcome, dry_run, changes }",
   },
   {
@@ -388,8 +393,8 @@ const ENDPOINTS: Endpoint[] = [
 /** The routes the description lists, as the router names them: "GET /samples/:id". */
 export const describedRoutes = (): string[] => ENDPOINTS.map((e) => `${e.method} ${e.route}`);
 
-/** The description of the API. `atlasCodes` are the atlases; `programCodes` the programs a scope can name besides mine, all and outside. */
-export function describeApi(origin: string, atlasCodes: readonly string[], programCodes: readonly string[] = atlasCodes) {
+/** The description of the API. `atlasCodes` are the atlases; `programCodes` the programs a scope can name besides mine, all and outside; `methodCodes` the methods a sample may be given, read from the `method` table. */
+export function describeApi(origin: string, atlasCodes: readonly string[], programCodes: readonly string[] = atlasCodes, methodCodes: readonly string[] = []) {
   const withAtlases = (name: string, values: readonly string[] | undefined) =>
     name === "scope" ? [...(values ?? []), CATCH_ALL, ...programCodes] : name === "member" ? [...(values ?? []), ...atlasCodes] : values;
   const endpoints = ENDPOINTS.map((e) => ({
@@ -427,6 +432,11 @@ export function describeApi(origin: string, atlasCodes: readonly string[], progr
       one_record:
         "By id: GET /samples/<id> or /specimens/<id>. By what a person has in hand, use the exact lookups on the listings with scope=all: sample_number (the collector's number), field_number (a specimen's), catalog_number, inat_observation_id.",
       counting: "Use /samples/count and /specimens/count for how many, and group_by for how many by season, atlas or kind, rather than paging through a listing.",
+    },
+    methods: {
+      list: [...methodCodes],
+      meaning:
+        "The ways a sample's bees are caught, as the controlled list Beeline keeps. A sample's JSON carries its method as `method` (one of these, or null for the few samples whose method as written is none of them) and its trap count as `trap_count` (null where nobody has said), beside `kind`, `protocol` (the method as written, which is never parsed) and `sampling_effort`. A method supplied to a correction is one of these.",
     },
     columns: {
       samples: SAMPLE_CSV_HEADER.map((name) => ({ name, meaning: COLUMN_MEANING[name] })),

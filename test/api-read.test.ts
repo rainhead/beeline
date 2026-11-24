@@ -671,6 +671,16 @@ describe("the description at /api/v1", () => {
     expect(body.limits.requests_per_minute_per_key).toBeUndefined();
   });
 
+  it("names the methods from the table, and says where a method is supplied and returned (beeline-ni5m.15)", async () => {
+    const w = await world();
+    const body = await w.json(w.keys.alice, "");
+    expect(body.methods.list).toEqual(["aerial net", "bottle trap", "malaise trap", "pan and vane traps", "pan trap", "trap nest", "vacuum", "vane trap"]);
+    expect(body.methods.meaning).toContain("`method`");
+    expect(body.methods.meaning).toContain("`trap_count`");
+    const edit = body.endpoints.find((e: any) => e.method === "POST" && e.route === "/samples/:id/edit");
+    expect(edit.body.values).toContain("one of the listed methods");
+  });
+
   it("lists every route the router registers, and no other", async () => {
     const w = await world();
     const api = createApi({ db: w.db, isStaff: async () => false, corrections: undefined, read: { changesPath: "", origin: ORIGIN } });
@@ -814,10 +824,12 @@ describe("what the API publishes of a record, field by field", () => {
         "host_current_name", "host_family", "host_inat_taxon_id", "host_name_as_observed", "host_override", "host_rank", "id", "inat_observation_id", "kind", "label_diverged", "latitude", "locality",
         "locality_alternatives", "locality_override", "locality_suggestion", "location_override", "location_source",
         "location_withheld", "longitude", "mine", "observation_gone_since", "observation_notes", "observation_place_guess", "place_disagreement", "printed",
-        "program_code", "program_name", "protocol", "sample_id", "sample_number", "sampling_effort", "specimen_count", "state_province",
+        "program_code", "program_name", "protocol", "sample_id", "sample_number", "sampling_effort", "specimen_count", "state_province", "method", "trap_count",
         "taxon_geoprivacy", "url", "wildernesses",
       ].sort(),
     );
+    // The method as the list has it, beside the words as written (beeline-ni5m.15).
+    expect([sample.sample.method, sample.sample.protocol, sample.sample.trap_count]).toEqual(["aerial net", "net", null]);
     // A collector as a listing names them; where the page links them for staff is the page's (beeline-3ugg).
     expect(Object.keys(sample.sample.collectors[0]).sort()).toEqual(["display", "label", "orcid"]);
     expect(Object.keys(sample).sort()).toEqual(["findings", "history", "hold", "sample", "specimens", "waivers"]);

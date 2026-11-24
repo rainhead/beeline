@@ -1049,7 +1049,7 @@ export const en = {
       country: "Country",
       state_province: "State / province",
       county: "County",
-      protocol: "Sampling protocol",
+      protocol: "Method",
     } as Record<string, string>,
     noteLabel: "Note (optional)",
     noteHint: "Reason for this change (optional)",

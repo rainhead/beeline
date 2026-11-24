@@ -32,9 +32,16 @@ async function storeBefore() {
     ["mixed", "'pan traps and vane traps'"],
     ["unlisted", "'ground pitfall'"],
     ["empty", "NULL"],
+    ["entered", "'vane trap'"],
   ];
   for (const [i, [name, protocol]] of wordings.entries()) {
-    ids[name] = await insertCleanSample(conn, { sample_number: `'${i + 1}'`, protocol, kind: name === "count" || name === "pantrap" ? "'trap'" : "'net'" });
+    ids[name] = await insertCleanSample(conn, {
+      sample_number: `'${i + 1}'`,
+      protocol,
+      kind: name === "count" || name === "pantrap" ? "'trap'" : "'net'",
+      // A sample entered in Beeline keeps its count as the number its effort starts with.
+      ...(name === "entered" ? { sampling_effort: "'8 vane traps'" } : {}),
+    });
   }
   for (const view of VIEWS) await conn.run(`DROP VIEW ${view}`);
   for (const table of ["sample_method", "method_text", "method"]) await conn.run(`DROP TABLE ${table}`);
@@ -60,12 +67,13 @@ describe("migration 0123: a controlled list of methods", () => {
       [ids.count, "vane trap", 6],
       [ids.pantrap, "pan trap", null],
       [ids.mixed, "pan and vane traps", null],
+      [ids.entered, "vane trap", 8],
     ]);
     // The unlisted text and the empty one have no method, and are on the worklist.
     expect(await rows(conn, `SELECT sample_id FROM sample_without_method ORDER BY 1`)).toEqual([[ids.unlisted], [ids.empty]]);
     expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
-    // The kinds were set by the old rules, here as fixtures: the mixed sample is a net, and its method is a trap.
-    expect(await rows(conn, `SELECT sample_id FROM sample_kind_method_mismatch ORDER BY 1`)).toEqual([[ids.mixed]]);
+    // The kinds were set by the old rules, here as fixtures: the mixed sample and the entered one are nets here, and their methods are traps.
+    expect(await rows(conn, `SELECT sample_id FROM sample_kind_method_mismatch ORDER BY 1`)).toEqual([[ids.mixed], [ids.entered]]);
 
     // The comment on the column is restated, and the store has what a fresh build has.
     expect(await schemaDrift(conn)).toEqual([]);

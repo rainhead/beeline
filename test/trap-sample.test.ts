@@ -237,12 +237,13 @@ describe("the method of an entered sample (beeline-ni5m.15)", () => {
   });
 
   it("refuses a method that is not listed, naming the methods that are", async () => {
-    for (const method of ["six vane traps", "Vane trap", "aerial net", "", "  "]) {
+    for (const method of ["six vane traps", "Vane trap", "aerial net"]) {
       const checked = await checkTrapSample(conn, form({ method }));
       if (!("problems" in checked)) throw new Error(`expected a refusal of "${method}"`);
       expect(Object.keys(checked.problems)).toEqual(["method"]);
       expect(checked.problems.method).toContain("bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap");
     }
+    for (const method of ["", "  "]) expect(await checkTrapSample(conn, form({ method }))).toEqual({ problems: { method: "Say what kind of trap." } });
     expect(await checkTrapSample(conn, form({ method: "unlisted" }))).toEqual({
       problems: { method: "Choose one of the listed methods: bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap." },
     });

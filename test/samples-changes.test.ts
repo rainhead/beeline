@@ -674,6 +674,12 @@ describe("the method's number check", () => {
     expect(res.status).toBe(409);
     expect(await res.text()).toBe(en.record.sample.methodEdit.numberTaken("7"));
     expect(await rows(f.conn, `SELECT CAST(date_start AS VARCHAR) FROM sample WHERE entity_id = ${net}`)).toEqual([[day(22)]]);
+    // A form left open while another edit moved the sample still submits the old day as its base: untouched, so no check.
+    await trapSample(f, { sample_number: "'8'", date_start: `DATE '${day(22)}'`, date_end: `DATE '${day(22)}'` });
+    const moved = await netSample(f, "8", "rec-m");
+    await f.conn.run(`UPDATE sample SET date_start = DATE '${day(24)}', date_end = DATE '${day(24)}' WHERE entity_id = ${moved}`);
+    const stale = await post(f, moved, { protocol: "aerial net", date_start: day(22), date_end: day(22), "base:date_start": day(22), "base:date_end": day(22) });
+    expect(stale.status).not.toBe(409);
     // Another day is free.
     expect((await post(f, net, { protocol: "aerial net", date_start: day(24), date_end: day(24) })).status).toBeLessThan(400);
   });

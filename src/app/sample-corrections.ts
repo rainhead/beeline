@@ -781,7 +781,11 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
       // A start day that moves puts the sample's plain number on another day of its collector, which may already hold it; a series number is held to its program, which a day does not change. A start day the form left as it was is no move (startMoveHolder), and the method decides nothing, so a sample that already shares its number stays editable.
       const writer = deps.printWriter ?? deps.conn;
       const toStart = form.dateStart?.trim() ?? "";
-      if (/^\d{4}-\d{2}-\d{2}$/.test(toStart) && writer !== undefined && (await startMoveHolder(writer, sampleId, toStart)) !== null) {
+      // Touched as setSampleMethod reads it: against the form's base where it has one, else against the stored day. An untouched day keeps the stored one, whatever the form still shows.
+      const baseStart = form.bases?.dateStart?.trim();
+      const storedStart = (await sql<{ d: string }>`SELECT strftime(date_start, '%Y-%m-%d') AS d FROM sample WHERE entity_id = ${sampleId}`.execute(db)).rows[0]?.d;
+      const startTouched = toStart !== (baseStart ?? storedStart);
+      if (startTouched && /^\d{4}-\d{2}-\d{2}$/.test(toStart) && writer !== undefined && (await startMoveHolder(writer, sampleId, toStart)) !== null) {
         return { ok: false, refusal: "number_taken", number: now.sample_number };
       }
       const saved = await setSampleMethod(db, deps.correctionsPath, sampleId, {

@@ -1,8 +1,9 @@
 import { sql, type Kysely } from "kysely";
-import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
+import { correctionKey, readCorrectionRows, restoreCorrections, upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
 import { mirrorCorrections } from "./correction-store.js";
 import { methodCodesSql } from "../trap-sample.js";
+import { liveEndOf } from "../live-end.js";
 import { setSampleMethodRow } from "../sample-method-row.js";
 import { isWriteConflict } from "../write-conflict.js";
 
@@ -24,16 +25,10 @@ import { isWriteConflict } from "../write-conflict.js";
  *
  * The method is chosen from the list (`method`, schema/031): the code is what is written, as the method as written (for
  * a sample from old records, as the corrected text of every record) and as the sample's method (`sample_method`), in
- * the same transaction. The sample's kind is untouched by it.
- *
- * The kind is not a field of its own. Promotion makes a sample a trap sample
- * when its records give an end date, unless every end given is that record's
- * start and every record's method is a net (src/old-sample-kind.ts,
- * CONTEXT.md, *Trap sample*), so an end date given here usually makes it one,
- * and none makes it a net sample collected on its start day, which is what a
- * rebuild would make of the corrected records. The save below sets the kind
- * from the end date alone, whatever the method; src/app/sample-kind.ts works
- * it out again by the whole rule, without correcting any old record.
+ * the same transaction. The sample's kind follows the method (`setSampleMethodRow`), and the dates are the dates: an end
+ * is a date range whatever the method, and a blank end means one day, for every sample (beeline-ni5m.15, stage three).
+ * Each old record is written only where the new value differs from its own, so a one-day sample whose records state no
+ * end gains none.
  *
  * The start date is editable where iNaturalist does not hold it: on a sample
  * with no observation (Peter, 2026-11-15, beeline-0wbq). Promotion groups
@@ -89,11 +84,9 @@ export type MethodResult =
   /** No old record behind this sample: nothing durable to name. */
   | { outcome: "no_old_records" }
   /**
-   * The store write lost a write conflict. For a sample with old records the
-   * events are already in the corrections file, which nothing reads again on
-   * production (ADR 0006); a sample entered in Beeline is written directly,
-   * with no events, so nothing was kept. Either way the change is applied only by saving it
-   * again, which does not record it twice (beeline-kgyd.4.8).
+   * The store write lost a write conflict. The file rows this save wrote are put back, so nothing was kept anywhere
+   * (a sample entered in Beeline is written directly, with no events), and the change is applied only by saving it
+   * again. If putting them back fails too, the file still holds them and the failure is logged.
    */
   | { outcome: "not_applied" };
 
@@ -126,6 +119,7 @@ export async function changeSampleMethod(trx: Kysely<Database>, sampleId: number
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 
+
 /**
  * Whether the sample was built from the old Beeline's records. The table that
  * says so is legacy promotion's (ingest/promote-legacy.sql), not the schema's,
@@ -150,7 +144,7 @@ export async function setSampleMethod(
   const sample = await db
     .selectFrom("sample")
     .where("entity_id", "=", sampleId)
-    .select(["entity_id", "kind", "protocol", "date_start", "date_end", "inat_observation_id"])
+    .select(["entity_id", "protocol", "date_start", "date_end", "inat_observation_id"])
     .executeTakeFirst();
   if (sample === undefined) return { outcome: "no_old_records" };
 
@@ -159,7 +153,8 @@ export async function setSampleMethod(
   // words as written, and a stray space would refuse every save as stale.
   const liveStart = isoDate(sample.date_start);
   const liveProtocol = (sample.protocol ?? "").trim();
-  const liveEnd = sample.kind === "trap" ? isoDate(sample.date_end) : "";
+  // A one-day sample shows no end: a blank end means one day, whatever the sample's method.
+  const liveEnd = liveEndOf(sample.date_start, sample.date_end);
   const touched = (submitted: string, base: string | undefined, live: string) =>
     base === undefined ? submitted !== live : submitted !== base.trim();
   const stale = (isTouched: boolean, base: string | undefined, live: string) =>
@@ -210,19 +205,19 @@ export async function setSampleMethod(
   // The trap form never makes a trap sample without its method, and the
   // effort it writes holds the trap count beside it, so neither is lost here.
   if (entered && protocol === "") return { outcome: "invalid", problem: "method_required" };
-  // A trap sample entered in Beeline stays one; an old sample's kind follows its end date.
-  const kind: "net" | "trap" = entered ? "trap" : dateEnd === "" ? "net" : "trap";
+  // The sample's kind is its method's, set by changeSampleMethod: the dates decide nothing but themselves.
   const end = dateEnd === "" ? start : dateEnd;
   const protocolChanged = protocol !== liveProtocol;
   const startChanged = start !== liveStart;
-  const endChanged = kind !== sample.kind || (kind === "trap" ? end !== isoDate(sample.date_end) : false);
-  // A net sample's end is its start, so a new start moves it too.
+  // One day is decided by the dates, not by a blank input: an end typed equal to the start is one day too.
+  const oneDay = end === start;
+  const endChanged = end !== isoDate(sample.date_end);
+  // A one-day sample's end is its start, so a new start moves it too.
   const datesChanged = startChanged || endChanged;
   if (!protocolChanged && !datesChanged) return { outcome: "unchanged" };
-
   const update = {
     ...(protocolChanged ? { protocol: protocol === "" ? null : protocol } : {}),
-    ...(datesChanged ? { kind, date_start: start, date_end: end } : {}),
+    ...(datesChanged ? { date_start: start, date_end: end } : {}),
   };
   if (entered) {
     try {
@@ -247,31 +242,52 @@ export async function setSampleMethod(
     `.execute(db)
   ).rows;
   if (members.length === 0) return { outcome: "no_old_records" };
+  // What each record says now, as the export reads it: its staged value with every correction over it.
+  const FIELDS = ["samplingProtocol", "day", "month", "year", "day2", "month2", "year2"] as const;
+  const view = (
+    await sql<{ table_name: string }>`SELECT view_name AS table_name FROM duckdb_views() WHERE view_name = 'legacy_occurrence_corrected'`.execute(db)
+  ).rows.length > 0;
+  const stored = view
+    ? (
+        await sql<Member>`
+          SELECT c._id, c."samplingProtocol" AS "samplingProtocol", c.day, c.month, c.year, c.day2, c.month2, c.year2
+          FROM legacy_specimen_number n JOIN legacy_occurrence_corrected c ON c._id = n._id
+          WHERE n.sample_id = ${sampleId}`.execute(db)
+      ).rows
+    : members;
+  const storeValue = new Map<string, string>();
+  for (const r of stored) for (const f of FIELDS) storeValue.set(`${r._id}|${f}`, (r[f] ?? "").toString());
 
   // The old records write a date as three columns, without leading zeros.
   const parts = (d: string) => d.split("-").map((p) => String(Number(p)));
   const [sy, smo, sd] = parts(start);
-  const [y, mo, d] = dateEnd === "" ? ["", "", ""] : parts(dateEnd);
+  const [ey, emo, ed] = oneDay ? ["", "", ""] : parts(end);
   const reason = input.note.trim() !== "" ? input.note.trim() : "edited in Beeline";
   const events: CorrectionEvent[] = [];
+  const writesEnd = endChanged || (startChanged && oneDay);
+  // What each field is to hold on every record, where this save sets it.
+  const target: Partial<Record<(typeof FIELDS)[number], string>> = {
+    ...(protocolChanged ? { samplingProtocol: protocol } : {}),
+    ...(startChanged ? { day: sd!, month: smo!, year: sy! } : {}),
+    // A one-day sample's end is blank on every record, as a blank end always wrote it (the legacy-format export reads
+    // each record's own end), and one that spans days is the end on every record.
+    ...(writesEnd ? { day2: ed!, month2: emo!, year2: ey! } : {}),
+  };
+  // Written only where the record's own value differs, so a record that never stated an end gains none.
   for (const member of members) {
-    const event = (field: keyof Member, value: string) =>
-      events.push({ _id: member._id, field, base_value: member[field] ?? "", new_value: value, author: input.author, reason });
-    if (protocolChanged) event("samplingProtocol", protocol);
-    if (startChanged) {
-      event("day", sd!);
-      event("month", smo!);
-      event("year", sy!);
-    }
-    if (endChanged) {
-      event("day2", d!);
-      event("month2", mo!);
-      event("year2", y!);
+    for (const f of FIELDS) {
+      if (target[f] !== undefined && target[f] !== (storeValue.get(`${member._id}|${f}`) ?? "")) {
+        events.push({ _id: member._id, field: f, base_value: (member[f] ?? "").toString(), new_value: target[f]!, author: input.author, reason });
+      }
     }
   }
-  // Durability before immediacy: if the event write fails, nothing applied.
-  // Should a write to the store fail after it, the file is ahead of the
-  // sample until the next save, which is what a rebuild would apply.
+  // Durability before immediacy: if the event write fails, nothing applied. Should the store then refuse or fail, the
+  // rows this save wrote are put back below. A crash between the file write and the store's commit still leaves the
+  // file ahead of the sample, as it always did, which is what a rebuild would apply.
+  // The rows the file holds for these keys now, to put back if the store does not take the save.
+  const ids = new Set(members.map((m) => m._id));
+  const was = new Map<string, CorrectionEvent | null>(events.map((e) => [correctionKey(e), null]));
+  for (const row of await readCorrectionRows(correctionsPath, ids)) if (was.has(correctionKey(row))) was.set(correctionKey(row), row);
   await upsertCorrections(correctionsPath, events);
   // Everything in the store at once: the correction tables, the sample, and
   // the settled finding, so neither a failure part-way nor an export reading
@@ -279,7 +295,7 @@ export async function setSampleMethod(
   try {
     await db.transaction().execute(async (trx) => {
       await mirrorCorrections(trx, events);
-      await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
+      if (Object.keys(update).length > 0) await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
       if (protocolChanged) await changeSampleMethod(trx, sampleId, protocol);
       // A disagreement among the records over the method is settled by the
       // edit, as on the collector's form.
@@ -293,7 +309,17 @@ export async function setSampleMethod(
       }
     });
   } catch (err) {
-    // The file may hold the change, and the store does not; saving again applies it once.
+    // Put back only the rows this save wrote (never the rest of the file, which another sample's save may have written
+    // since), through the file's own queue; then say what happened as before.
+    try {
+      await restoreCorrections(correctionsPath, was);
+    } catch (restoreErr) {
+      // The user still gets the store's own answer; the file is left ahead, which is said where staff can see it.
+      console.error(
+        `method save for sample ${sampleId}: the corrections file still holds this save's rows (${[...was.keys()].map((k) => k.replace(" ", ":")).join(", ")}) ` +
+          `because they could not be put back: ${(restoreErr as Error).message}`,
+      );
+    }
     if (isWriteConflict(err)) return { outcome: "not_applied" };
     throw err;
   }

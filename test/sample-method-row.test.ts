@@ -77,14 +77,19 @@ describe("the view that asserts it", () => {
     const { conn, id } = await store();
     await checkSampleMethods(conn);
     await conn.run(`UPDATE sample_method SET method_code = 'pan trap' WHERE sample_id = ${id}`);
-    await expect(checkSampleMethods(conn)).rejects.toThrow("1 sample(s) have a method, trap count or effort out of step with what they say (method: 1)");
+    await expect(checkSampleMethods(conn)).rejects.toThrow("1 sample(s) have a method, trap count, effort or kind out of step with what they say (method: 1)");
     await conn.run(`UPDATE sample_method SET method_code = 'vane trap' WHERE sample_id = ${id}`);
     await conn.run(`UPDATE sample SET sampling_effort = '9 vane traps' WHERE entity_id = ${id}`);
     await expect(checkSampleMethods(conn)).rejects.toThrow("(effort: 1)");
     await conn.run(`UPDATE sample SET sampling_effort = NULL WHERE entity_id = ${id}`);
     await conn.run(`UPDATE sample SET protocol = 'aerial net' WHERE entity_id = ${id}`);
     await conn.run(`UPDATE sample_method SET method_code = 'aerial net', trap_count = 2 WHERE sample_id = ${id}`);
+    await conn.run(`UPDATE sample SET kind = 'net' WHERE entity_id = ${id}`);
     await expect(checkSampleMethods(conn)).rejects.toThrow("(count: 1)");
+    // And a kind that is not the method's is a clause of its own.
+    await conn.run(`UPDATE sample_method SET trap_count = NULL WHERE sample_id = ${id}`);
+    await conn.run(`UPDATE sample SET kind = 'trap' WHERE entity_id = ${id}`);
+    await expect(checkSampleMethods(conn)).rejects.toThrow("(kind: 1)");
   });
 });
 

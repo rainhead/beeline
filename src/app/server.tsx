@@ -1416,7 +1416,7 @@ export function createApp({
         : undefined;
     // Also for a deletion cut short, which has no entry mark any more and is finished by deleting again.
     const deleteHref =
-      conn !== undefined && sample.kind === "trap" && c.get("admin") && !c.get("acting").impersonating && "number" in (await deletable(conn, sample.sample_id))
+      conn !== undefined && c.get("admin") && !c.get("acting").impersonating && "number" in (await deletable(conn, sample.sample_id))
         ? `/samples/${sample.sample_id}/delete`
         : undefined;
     return c.html(

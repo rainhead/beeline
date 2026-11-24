@@ -46,7 +46,8 @@ export async function setSampleMethodRow(target: MethodTarget, sampleId: number,
      ON CONFLICT (sample_id) DO UPDATE SET method_code = excluded.method_code, trap_count = excluded.trap_count`,
     [sampleId, code, kept],
   );
-  await run(target, `UPDATE sample SET sampling_effort = $1 WHERE entity_id = $2`, [kept === null ? null : trapEffort(kept, code), sampleId]);
+  // The sample's kind is the method's: trap where the method is a trap (beeline-ni5m.15, stage three).
+  await run(target, `UPDATE sample SET sampling_effort = $1, kind = $2 WHERE entity_id = $3`, [kept === null ? null : trapEffort(kept, code), trap ? "trap" : "net", sampleId]);
 }
 
 /** Write the old effort column of samples that already have their method row, from it: for the rows a SQL statement made. */

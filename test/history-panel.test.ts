@@ -37,4 +37,10 @@ describe("the lines of a sample's history the panel shows", () => {
     expect(fields(h)).toEqual(["locality", "method"]);
     expect(h).toHaveLength(3);
   });
+
+  it("leaves out the old Kind lines, which stay in the log (beeline-ni5m.15, stage three)", () => {
+    const h = [line("t1", "kind", "net", "trap", ""), line("t1", "locality", "a", "b")];
+    expect(fields(h)).toEqual(["locality"]);
+    expect(h).toHaveLength(2);
+  });
 });

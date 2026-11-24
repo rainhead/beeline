@@ -1055,9 +1055,8 @@ const ASSOCIATION_PAGE = 5_000;
  * specimen record, so the two would disagree after a plant is renamed (Peter
  * decided, 2026-11-22). A trap sample has no row at all, and a trap sample is
  * one whose method is a trap (`method.is_trap`, as the archives and
- * downloads decide). A sample with no method has no row either, because nothing says whether its plant is a host or near a trap. Old records disagree
- * between kind and method for 976 samples, and the method decides, so a netted
- * sample recorded as a trap keeps its host (beeline-ni5m.15). Symbiota applies one relationship, `hasHost`, to
+ * downloads decide). A sample with no method has no row either, because nothing says whether its plant is a host or near a trap. Kind is the method's
+ * (stage three of beeline-ni5m.15), and this reads the method. Symbiota applies one relationship, `hasHost`, to
  * the whole file, and the plant near a trap is not a host. UTF-8 with no byte order mark and no formula guard. The
  * program's CSV downloads have both for the sake of spreadsheets; this file is
  * read by Symbiota, which loaded it the same with and without a mark (tried

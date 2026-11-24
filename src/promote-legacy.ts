@@ -12,7 +12,6 @@ import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
 import { describeFiling, type FilingResult } from "./file-animals.js";
 import { refreshPlantCommonNames } from "./plant-common-names.js";
 import { applyTaxonCuration, CURATED_TAXON_CURATION, readTaxonCuration, type Unplaced } from "./taxon-curation.js";
-import { oldSampleKindSql } from "./old-sample-kind.js";
 import { PrintedStoreRefused, refusePromotionIntoPrintedStore } from "./registry-guard.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
@@ -160,7 +159,6 @@ export async function promoteLegacy(
   const promoteSql = await readFile(`${INGEST_DIR}promote-legacy.sql`, "utf8");
   await conn.run(
     promoteSql
-      .replaceAll("{{OLD_SAMPLE_KIND}}", oldSampleKindSql({ end: "r.p_date_end", start: "r.p_date_start", method: "r.samplingProtocol" }))
       .replaceAll("{{LEGACY_CORRECTIONS}}", legacyCorrections.replaceAll("'", "''"))
       .replaceAll("{{APP_CORRECTIONS}}", appCorrections.replaceAll("'", "''"))
       .replaceAll("{{COLLECTOR_ALIASES}}", collectorAliases.replaceAll("'", "''")),

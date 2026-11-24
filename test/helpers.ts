@@ -172,7 +172,9 @@ export async function insertCleanSample(
     state_province: "'OR'",
     county: "'BentonCo'",
     locality: "'Corvallis'",
-    protocol: "'net'",
+    // The kind is the method's (beeline-ni5m.15, stage three): a trap sample made here without a method of its own is a
+    // vane trap, so that fixtures do not break the view that asserts it.
+    protocol: sampleOverrides.kind === "'trap'" ? "'vane trap'" : "'net'",
     ...sampleOverrides,
   };
   const keys = Object.keys(cols);

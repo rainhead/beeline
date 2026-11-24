@@ -183,6 +183,9 @@ describe("carrying over old records a correction made whole", { timeout: 120_000
     // Its method, from the text as written, with the text left as written (beeline-ni5m.15).
     expect(made.method).toEqual([["vane trap", null]]);
     expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
+    // Its kind is its method's: the trap-worded record is a trap sample, set by the one writer of the method row (stage three).
+    expect(made.sample[0]![0]).toBe("trap");
+    expect(await rows(conn, `SELECT count(*) FROM sample_kind_method_mismatch`)).toEqual([[0n]]);
 
     // The corrections are the store's now, so the views promotion left read the dates as corrected.
     expect(await rows(conn, `SELECT count(*) FROM legacy_promotion_finding WHERE _id LIKE 'carry-%' AND rule = 'bad_date'`)).toEqual([[0n]]);

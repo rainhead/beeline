@@ -46,6 +46,9 @@ import { DEFAULT_DB } from "./person-change.js";
  * provenance (elevation_source), and self-heals on a moved coordinate
  * (beeline-x5c); logging it would record the derive job doing its job.
  *
+ * `kind` stays in the snapshot and in the field type so that the log and the snapshot read as they always have, but
+ * no pass logs it from stage three of beeline-ni5m.15 (see the diff loop in recordSampleChanges).
+ *
  * The last three are the components of the reference itself (MOVERS). They
  * are filed last, and the reader relies on the collector not being the first
  * entry of an arrival (sinceArrival).
@@ -1304,6 +1307,10 @@ async function recordPass(
     // and keeps the file legible.
     const ref = before ?? state;
     for (const field of SAMPLE_FIELDS) {
+      // The kind is the method's, which is logged, and a change of kind is no act of anyone's (beeline-ni5m.15,
+      // stage three): the snapshot still holds it, so it is restated and nothing re-baselines, and the old Kind lines
+      // stay in the log. Nothing is logged for it.
+      if (field === "kind") continue;
       const was = before?.fields[field] ?? ABSENT;
       if (was === state.fields[field]) continue;
       rows.push({

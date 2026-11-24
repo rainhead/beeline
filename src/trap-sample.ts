@@ -214,7 +214,7 @@ export const isSeriesNumber = (sampleNumber: string): boolean => /^[A-Za-z]+-/.t
  * Whether another trap sample has this number, judged only for a number in a series (letters, a hyphen and what
  * follows; the program's own compared folded, so `OBAS 00011` is `OBAS-00011`). A plain number ("1") is the
  * collector's for the day and is held by many trap samples of the old Beeline, so it is never a clash. For a net sample
- * that an end day would make a trap sample (the method correction).
+ * that a trap method would make a trap sample (the method correction).
  */
 export async function seriesTrapNumberTaken(conn: DuckDBConnection, sampleNumber: string, sampleId: number): Promise<boolean> {
   if (isProgramSeries(sampleNumber)) {
@@ -686,9 +686,9 @@ export function deleteTrapSample(
  * collector left, may be deleted again to finish it.
  */
 export async function deletable(conn: DuckDBConnection, id: number): Promise<{ number: string; cutShort: boolean } | { refused: DeleteRefusal }> {
-  const found = await rows<{ sample_number: string; kind: string; entered: boolean; cut_short: boolean; printed: boolean; in_run: boolean; specimens: number }>(
+  const found = await rows<{ sample_number: string; entered: boolean; cut_short: boolean; printed: boolean; in_run: boolean; specimens: number }>(
     conn,
-    `SELECT s.sample_number, s.kind,
+    `SELECT s.sample_number,
             EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id) AS entered,
             EXISTS (SELECT 1 FROM sample_deletion d WHERE d.sample_id = s.entity_id)
               AND NOT EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id)
@@ -701,8 +701,8 @@ export async function deletable(conn: DuckDBConnection, id: number): Promise<{ n
   );
   const r = found[0];
   if (r === undefined) return { refused: "not_found" };
-  // Only a trap sample is entered in Beeline; a net sample is never deleted here, whatever marks it carries.
-  if ((!r.entered && !r.cut_short) || r.kind !== "trap") return { refused: "not_entered" };
+  // Only a sample entered in Beeline (or one whose deletion was cut short) is deleted here, whatever else it carries.
+  if (!r.entered && !r.cut_short) return { refused: "not_entered" };
   if (r.printed) return { refused: "printed" };
   if (r.in_run) return { refused: "in_print_run" };
   if (r.specimens > 0) return { refused: "has_specimens" };

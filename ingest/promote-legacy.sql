@@ -12,10 +12,8 @@
 -- (beeline-eyk); a difference of an actual letter still does, and is
 -- curation, not a wider fold.
 --
--- kind: a sample is a trap sample when some old record gives an end date,
--- unless every end given equals that record's start and every record's method
--- is a net (src/old-sample-kind.ts, CONTEXT.md, beeline-lmlh); the old
--- records wrote a one-day netting trip as a range ending on its start day.
+-- kind: the method's (src/sample-method-row.ts): trap where the method the sample's text maps to is a
+-- trap, net otherwise (beeline-ni5m.15, stage three).
 -- sampleId prefixes also occur on net data (G/R/…).
 
 -- ── Corrections over staging (ADR 0004, frozen-upstream case) ───────────
@@ -684,8 +682,6 @@ SELECT
   m.person_id,
   r.sid, r.p_date_start, k.obs_key,
   coalesce(max(r.p_date_end), r.p_date_start)      AS date_end,
-  -- The rule is src/old-sample-kind.ts's, put in here when the file is read.
-  {{OLD_SAMPLE_KIND}}                               AS kind,
   count(*)                                          AS specimen_count,
   arg_min(r.country, r._id)                         AS country,
   arg_min(r.stateProvince, r._id)                   AS state_province,
@@ -749,7 +745,9 @@ INSERT INTO sample (entity_id, kind, sample_number,
                     date_start, date_end, specimen_count, inat_observation_id,
                     host_name_as_observed, host_rank, country, state_province, county,
                     locality, protocol)
-SELECT s.sample_id, s.kind,
+-- kind is the method's: trap where the method the text maps to is a trap, net otherwise (a text method_text
+-- does not list, or none, gives net). setSampleMethodRow keeps it so afterwards (beeline-ni5m.15, stage three).
+SELECT s.sample_id, CASE WHEN d.is_trap THEN 'trap' ELSE 'net' END,
        s.sid, s.p_date_start, s.date_end, s.specimen_count, s.inat_obs_id,
        -- No host where the name is a taxon that means none: old Beeline copied
        -- iNaturalist's taxon into its plant columns, Homo sapiens (a user's
@@ -768,7 +766,9 @@ SELECT s.sample_id, s.kind,
        nullif(s.state_province, ''),
        nullif(s.county, ''), nullif(s.locality, ''), nullif(s.protocol, '')
 FROM legacy_sample_map s
-LEFT JOIN inat_taxon_not_a_host x ON x.name = s.host_name;
+LEFT JOIN inat_taxon_not_a_host x ON x.name = s.host_name
+LEFT JOIN method_text mt ON mt.text = s.protocol
+LEFT JOIN method d ON d.code = mt.method_code;
 
 -- Each sample's method, from the method as written through method_text
 -- (beeline-ni5m.15): what the migration that introduced sample_method does to

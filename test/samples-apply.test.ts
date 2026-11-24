@@ -508,11 +508,7 @@ describe("deleting a trap sample", () => {
     await f.conn.run(`UPDATE sample SET kind = 'trap' WHERE entity_id = ${sampleC}`);
     await f.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${sampleC}, ${f.staffer})`);
     expect(await refused(sampleC)).toContain(esc(en.trapSample.delete.refused.in_print_run!));
-    // A net sample is never deleted here, whatever marks it carries.
-    const net = await entered("OBAS-00034");
-    await f.conn.run(`UPDATE sample SET kind = 'net' WHERE entity_id = ${net}`);
-    expect(await refused(net)).toContain(esc(en.trapSample.delete.refused.not_entered!));
-    expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE entity_id IN (${bare}, ${withSpecimen}, ${printed}, ${sampleC}, ${net})`)).toEqual([[5n]]);
+    expect(await rows(f.conn, `SELECT count(*) FROM sample WHERE entity_id IN (${bare}, ${withSpecimen}, ${printed}, ${sampleC})`)).toEqual([[4n]]);
   });
 
   it("finds its satellite tables in the store, so one added later is deleted too", async () => {

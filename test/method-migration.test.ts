@@ -48,6 +48,10 @@ async function storeBefore() {
       ...(name === "corrected" ? { sampling_effort: "'9 vane traps'" } : {}),
     });
   }
+  // The kinds as the old rules set them, whatever the methods say (the fixture's writer makes them agree).
+  for (const [name, id] of Object.entries(ids)) {
+    await conn.run(`UPDATE sample SET kind = '${name === "count" || name === "pantrap" ? "trap" : "net"}' WHERE entity_id = ${id}`);
+  }
   // The efforts as the store before the migration held them, which the fixture's own writer has tidied.
   for (const [name, effort] of [["entered", "'8 vane traps'"], ["corrected", "'9 vane traps'"], ["netted", "'6 aerial nets'"], ["count", "NULL"]] as const) {
     await conn.run(`UPDATE sample SET sampling_effort = ${effort} WHERE entity_id = ${ids[name]}`);
@@ -91,7 +95,11 @@ describe("migration 0123: a controlled list of methods", () => {
     // The kinds were set by the old rules, here as fixtures: the mixed, entered and corrected samples are nets here, and their methods are traps.
     expect(await rows(conn, `SELECT sample_id FROM sample_kind_method_mismatch ORDER BY 1`)).toEqual([[ids.mixed], [ids.entered], [ids.corrected]]);
 
-    // The comment on the column is restated, and the store has what a fresh build has.
+    // Migration 0126 then corrects the kinds and restates what it changed, and the store has what a fresh build has.
+    const later = await mkdtemp(join(tmpdir(), "migration-0126-"));
+    await copyFile(join(MIGRATIONS_DIR, "0126-kind-follows-the-method.sql"), join(later, "9999-kind-under-test.sql"));
+    await migrate(conn, { dir: later });
+    expect(await rows(conn, `SELECT sample_id FROM sample_kind_method_mismatch`)).toEqual([]);
     expect(await schemaDrift(conn)).toEqual([]);
     const fresh = await createMemoryDb();
     const same = async (sql: string) => expect(await rows(conn, sql)).toEqual(await rows(fresh.conn, sql));

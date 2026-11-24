@@ -8,7 +8,7 @@ import { loadEcdysisTaxonomy } from "../src/load-ecdysis-taxonomy.js";
 import { applyTaxonCuration, type TaxonCurationRow } from "../src/taxon-curation.js";
 import { ecdysisTaxonHref, parseTaxonomyQuery, taxonHref, taxonomyHref } from "../src/app/taxonomy.js";
 import { parseCsv } from "../src/corrections.js";
-import { CURRENT_SEASON, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
+import { CURRENT_SEASON, createMemoryDb, insertCleanSample, scratchPaths, setMethodText } from "./helpers.js";
 
 /**
  * The taxonomy pages (beeline-45v.5).
@@ -519,7 +519,7 @@ describe("the reader's own specimens on a name's page (beeline-nstp)", () => {
       between(await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" })), `<h2 id="yours">`, "</section>");
     const rubus = '<span class="taxon"><i>Rubus</i> <i>armeniacus</i></span>';
     const t = en.taxonomy.yours;
-    await conn.run(`UPDATE sample SET protocol = 'pan traps' WHERE sample_number = '2'`);
+    await setMethodText(conn, "sample_number = '2'", "pan traps");
     expect(await yours()).toContain(`, ${t.nearTrap} ${rubus}, in `);
     // A second sample of Ada's at Bald Hill, netted off the same plant on the same day: still one line, which says both.
     const netted = await insertCleanSample(conn, {

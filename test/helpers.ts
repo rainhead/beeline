@@ -290,3 +290,19 @@ export async function buildTestGazetteer(path: string, buildId: string): Promise
   conn.closeSync();
   instance.closeSync();
 }
+
+/**
+ * Change the method as written of the samples a WHERE clause picks, and their method with it: the row of sample_method
+ * that method_text gives the new words (none for words it does not know). A test that only updates `sample.protocol`
+ * leaves the method as it was, which the readers now ask (beeline-ni5m.15, stage two).
+ */
+export async function setMethodText(conn: DuckDBConnection, where: string, protocol: string | null): Promise<void> {
+  await conn.run(`DELETE FROM sample_method WHERE sample_id IN (SELECT entity_id FROM sample WHERE ${where})`);
+  await conn.run(`UPDATE sample SET protocol = ${protocol === null ? "NULL" : `'${protocol.replaceAll("'", "''")}'`} WHERE ${where}`);
+  await conn.run(
+    `INSERT INTO sample_method (sample_id, method_code, trap_count)
+     SELECT s.entity_id, t.method_code, t.trap_count
+     FROM sample s JOIN method_text t ON t.text = s.protocol
+     WHERE ${where.replaceAll(/\b(sample_number|entity_id)\b/g, "s.$1")}`,
+  );
+}

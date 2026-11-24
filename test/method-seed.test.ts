@@ -75,6 +75,19 @@ describe("the list of methods and the wordings that mean them (schema/031)", () 
     expect(got.size).toBe(WORDINGS.length + 3);
   });
 
+  it("gives each wording a label word and trap-ness that agree with the words, as the text rule did, bar one stated exception", async () => {
+    const { conn } = await createMemoryDb();
+    const all = (await rows(conn, `SELECT t.text, d.label_word, d.is_trap FROM method_text t JOIN method d ON d.code = t.method_code`)) as [string, string, boolean][];
+    expect(all.length).toBeGreaterThan(30);
+    for (const [text, word, isTrap] of all) {
+      const lower = text.toLowerCase();
+      const wordRule = lower.includes("nest") ? "nest" : lower.includes("trap") ? "trap" : lower.includes("net") ? "net" : word;
+      expect(word, text).toBe(wordRule);
+      // The one exception: OBAS-00218 wrote "pan", which names no trap but is the pan trap method.
+      expect(isTrap, text).toBe(text === "pan" ? true : lower.includes("trap"));
+    }
+  });
+
   it("matches on the exact text: a stray space or another capital is not a wording", async () => {
     const { conn } = await createMemoryDb();
     expect(await rows(conn, `SELECT count(*) FROM method_text WHERE text IN (' net', 'Aerial net', 'pan  trap')`)).toEqual([[0n]]);

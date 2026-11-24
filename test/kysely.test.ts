@@ -45,6 +45,9 @@ async function seed(): Promise<number> {
     .executeTakeFirstOrThrow();
   expect(sample.entity_id).toBeGreaterThan(person.entity_id); // one global entity sequence
 
+  // Its method, which a sample needs to be printable (beeline-ni5m.15).
+  await db.insertInto("sample_method").values({ sample_id: sample.entity_id, method_code: "aerial net" }).execute();
+
   // The primary collector is the head of the list, not a column (beeline-6e9).
   await db
     .insertInto("sample_collector")

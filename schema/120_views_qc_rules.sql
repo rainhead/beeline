@@ -13,6 +13,10 @@
 -- when geoprivacy is in play, the obscured_no_true_coordinates rule carries
 -- the actionable instructions instead, and firing both would double-flag one
 -- root cause.
+-- The method is required as the presence of a sample_method row (beeline-ni5m.15),
+-- the way the location is: a sample with no method text, or one the list of
+-- methods does not know, has none. The finding still names it "protocol", the
+-- word the flag chips, the legacy reconciliation and the QC page read.
 CREATE VIEW qc_rule_missing_required_field AS
 SELECT sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
@@ -22,17 +26,19 @@ SELECT sample_id,
          CASE WHEN country IS NULL THEN 'country' END,
          CASE WHEN state_province IS NULL THEN 'state_province' END,
          CASE WHEN locality IS NULL THEN 'locality' END,
-         CASE WHEN protocol IS NULL THEN 'protocol' END
+         CASE WHEN missing_method THEN 'protocol' END
        ) AS details
 FROM (
-  SELECT s.entity_id AS sample_id, s.country, s.state_province, s.locality, s.protocol,
-         (loc.sample_id IS NULL AND s.geoprivacy IS NULL AND s.taxon_geoprivacy IS NULL) AS missing_location
+  SELECT s.entity_id AS sample_id, s.country, s.state_province, s.locality,
+         (loc.sample_id IS NULL AND s.geoprivacy IS NULL AND s.taxon_geoprivacy IS NULL) AS missing_location,
+         (m.sample_id IS NULL) AS missing_method
   FROM sample s
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
+  LEFT JOIN sample_method m ON m.sample_id = s.entity_id
 ) t
 WHERE missing_location
    OR country IS NULL OR state_province IS NULL
-   OR locality IS NULL OR protocol IS NULL;
+   OR locality IS NULL OR missing_method;
 
 -- Flagged when empty but not label-blocking (reference nonEmptyFields minus
 -- LABEL_REQUIRED_FIELDS). Elevation is deliberately absent from both rules:

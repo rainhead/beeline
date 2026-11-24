@@ -846,7 +846,7 @@ export const en = {
       methodAny: "Any",
       methodNet: "Net",
       methodTrap: "Trap",
-      /** After a plant in the host column, where the sample's method names a trap: a plant beside the trap, not a flower its bees visited (beeline-vjqy). */
+      /** After a plant in the host column, where the sample's method is a trap: a plant beside the trap, not a flower its bees visited (beeline-vjqy). */
       nearTrap: "near the trap",
       qc: "Flags",
       qcAny: "Any",
@@ -1188,7 +1188,7 @@ export const en = {
       /** The program the sample was collected for (beeline-8w8n): its atlas, else Master Melittology itself. */
       program: "Program",
       host: "Floral host",
-      /** In place of the floral host where the sample's method names a trap (beeline-vjqy). */
+      /** In place of the floral host where the sample's method is a trap (beeline-vjqy). */
       plantNearTrap: "Plant near the trap",
       /**
        * Directly under the host's scientific name, whenever iNaturalist's

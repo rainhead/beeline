@@ -42,6 +42,19 @@ describe("QC findings and printability", () => {
     expect(await isPrintable(id)).toBe(false);
   });
 
+  test("a sample is missing its method when it has no method, not when its words are missing", async () => {
+    const id = await insertCleanSample(conn);
+    await conn.run(`DELETE FROM sample_method WHERE sample_id = ${id}`);
+    expect(await findings(id)).toEqual([{ rule: "missing_required_field", details: "protocol" }]);
+    // Words as written that the list does not know give no method either, and the same finding.
+    const unknown = await insertCleanSample(conn, { sample_number: "'2'", protocol: "'sweeping a hedge'" });
+    expect(await findings(unknown)).toEqual([{ rule: "missing_required_field", details: "protocol" }]);
+    // A method with the words missing is fine: the method decides.
+    const bare = await insertCleanSample(conn, { sample_number: "'3'" });
+    await conn.run(`UPDATE sample SET protocol = NULL WHERE entity_id = ${bare}`);
+    expect(await findings(bare)).toEqual([]);
+  });
+
   test("an unobscured sample without a location row is missing its location", async () => {
     const id = await insertCleanSample(conn, {}, null);
     expect(await findings(id)).toEqual([

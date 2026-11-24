@@ -131,7 +131,7 @@ interface PendingRow {
   state_province: string | null;
   county: string | null;
   locality: string | null;
-  protocol: string | null;
+  method_label_word: string | null;
   latitude: number | null;
   longitude: number | null;
   elevation_m: number | null;
@@ -337,12 +337,14 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
     const samplesInRun = await rows<PendingRow & { pending: boolean }>(
       conn,
       `SELECT s.entity_id AS sample_id, s.kind, s.sample_number, s.date_start, s.date_end,
-              s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol,
+              s.specimen_count, s.country, s.state_province, s.county, s.locality, md.label_word AS method_label_word,
               loc.latitude, loc.longitude, loc.elevation_m,
               pc.person_id AS primary_id,
               (scope.sample_id IS NOT NULL) AS pending
        FROM freeze_samples fs
        JOIN sample s ON s.entity_id = fs.sample_id
+       LEFT JOIN sample_method sm ON sm.sample_id = s.entity_id
+       LEFT JOIN method md ON md.code = sm.method_code
        LEFT JOIN freeze_scope scope ON scope.sample_id = s.entity_id
        LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
        JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id`,
@@ -453,7 +455,7 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
       sample_number: sample.sample_number,
       specimen_number: specimenNumber,
       kind: sample.kind,
-      protocol: sample.protocol,
+      method_label_word: sample.method_label_word,
       collectors: collectorsOf.get(sample.sample_id) ?? [],
     });
     for (const sample of samplesInRun) {

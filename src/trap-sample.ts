@@ -83,20 +83,27 @@ async function rows<T>(conn: DuckDBConnection, sql: string, params: unknown[] = 
 }
 
 /**
- * Who may enter trap samples: staff, and anyone who is a collector on a trap
- * sample already (Peter, 2026-11-04). Derived rather than granted, so nobody
- * has to be set up first; a grant for someone new to trapping is beeline-3vs.1.
+ * Who may enter samples directly rather than through iNaturalist: staff, anyone
+ * who leads a program (`program_lead`), and anyone who is a collector on a
+ * sample whose method is a trap (Peter, 2026-11-24). Derived rather than granted,
+ * so nobody has to be set up first. It reads the method, not `sample.kind`,
+ * because kind is to follow the method and must not carry this right
+ * (beeline-ni5m.15); a trap nest is a trap. An explicit grant for someone new
+ * is beeline-3vs.1.
  */
 export async function mayEnterTrapSamples(conn: DuckDBConnection, personId: number | null, admin: boolean): Promise<boolean> {
   if (admin) return true;
   if (personId === null) return false;
-  const found = await rows<{ n: number }>(
+  const found = await rows<{ ok: boolean }>(
     conn,
-    `SELECT count(*)::INTEGER AS n FROM sample_collector c JOIN sample s ON s.entity_id = c.sample_id
-     WHERE c.person_id = $1 AND s.kind = 'trap'`,
+    `SELECT EXISTS (SELECT 1 FROM program_lead pl WHERE pl.person_id = $1)
+         OR EXISTS (SELECT 1 FROM sample_collector c
+                      JOIN sample_method sm ON sm.sample_id = c.sample_id
+                      JOIN method m ON m.code = sm.method_code
+                    WHERE c.person_id = $1 AND m.is_trap) AS ok`,
     [personId],
   );
-  return (found[0]?.n ?? 0) > 0;
+  return found[0]?.ok === true;
 }
 
 /**

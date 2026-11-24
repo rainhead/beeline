@@ -35,9 +35,9 @@ async function trapApp() {
     staffer: await person("Sam Staff"),
   };
   await conn.run(`INSERT INTO person_admin (person_id) VALUES (${people.staffer})`);
-  await insertCleanSample(conn, { kind: "'trap'", sample_number: "'OBAS-00657'", collector_id: String(people.trapper) });
+  await insertCleanSample(conn, { kind: "'trap'", protocol: "'vane trap'", sample_number: "'OBAS-00657'", collector_id: String(people.trapper) });
   await insertCleanSample(conn, { kind: "'net'", collector_id: String(people.netter) });
-  await insertCleanSample(conn, { kind: "'trap'", sample_number: "'OBAS-00600'", collector_id: String(people.otherTrapper) });
+  await insertCleanSample(conn, { kind: "'trap'", protocol: "'pan trap'", sample_number: "'OBAS-00600'", collector_id: String(people.otherTrapper) });
   const db = createKysely(instance);
   const paths = await scratchPaths();
   // What the nightly does: find the areas against a gazetteer and stamp each sample's place from its point.

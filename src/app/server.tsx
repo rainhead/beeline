@@ -34,6 +34,7 @@ import { csvGenerationTiming, requestTiming } from "./request-timing.js";
 import { securityHeaders } from "./security-headers.js";
 import { countListingView, listingAttributes, rosterAttributes, type Viewer } from "./usage.js";
 import { Glossary } from "./views/glossary.js";
+import { Calendar } from "./views/calendar.js";
 import { HowItWorks } from "./views/how-it-works.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { ProgramIndex, ProgramPage, ProgramTabs } from "./views/programs.js";
@@ -2090,6 +2091,13 @@ export function createApp({
   app.get("/glossary", async (c) => {
     const m = c.get("m");
     return c.html(await page(c, m.glossary.title, <Glossary m={m} />));
+  });
+
+  // The program calendar (beeline-2zej.1.12): Google's embed in a frame, for
+  // everyone signed in. security-headers.ts lets this path alone frame it.
+  app.get("/calendar", async (c) => {
+    const m = c.get("m");
+    return c.html(await page(c, m.calendar.title, <Calendar m={m} />));
   });
 
   // The process, step by step, for volunteers (beeline-kgwd): catalog copy

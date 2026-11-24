@@ -277,6 +277,7 @@ export const en = {
       samples: "Samples",
       specimens: "Specimens",
       glossary: "Glossary",
+      calendar: "Calendar",
       howItWorks: "How Beeline works",
       people: "People",
       design: "Design",
@@ -4202,6 +4203,19 @@ export const en = {
       ],
       ["Print runs happen when staff prepare them, not on a schedule."],
     ],
+  },
+
+  /**
+   * The calendar (/calendar, beeline-2zej.1.12): the Master Melittologist
+   * Google Calendar, which staff keep, shown as it is. Beeline holds none of
+   * its events.
+   */
+  calendar: {
+    title: "Calendar",
+    heading: "Calendar",
+    lede: "Trainings, talks and collecting events, as staff post them to the program's Google Calendar.",
+    /** The frame's accessible name, for a screen reader. */
+    frameTitle: "Master Melittologist program calendar",
   },
 
   /**

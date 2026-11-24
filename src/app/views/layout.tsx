@@ -77,6 +77,7 @@ function MoreLinks({ m, admin, jobsFailing }: { m: Messages; admin: boolean; job
   return (
     <nav class="menu-section" aria-label={m.layout.more}>
       {[
+        { href: "/calendar", label: m.layout.nav.calendar, shown: true },
         { href: "/glossary", label: m.layout.nav.glossary, shown: true },
         { href: "/taxonomy", label: m.layout.nav.taxonomy, shown: true },
         { href: "/programs", label: m.layout.nav.programs, shown: true },

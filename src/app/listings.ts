@@ -605,6 +605,8 @@ export interface SampleRow {
   state_province: string | null;
   country: string | null;
   protocol: string | null;
+  /** The sample's method is a trap (`method.is_trap`; false where it has no method): its plant is near the trap, not a host. */
+  near_trap: boolean;
   /** How many traps (`sample_method.trap_count`); the samples file's trapCount column. */
   trap_count: number | null;
   specimen_count: number;
@@ -689,6 +691,8 @@ export interface SpecimenRow {
   state_province: string | null;
   country: string | null;
   protocol: string | null;
+  /** The sample's method is a trap (`method.is_trap`; false where it has no method): its plant is near the trap, not a host. */
+  near_trap: boolean;
   /** How the sample was collected, as the sample says: netted, or the contents of a trap. Unlike `protocol`, which is free text. */
   sample_kind: SampleKind;
   /** The museum's catalog number, as Ecdysis reports it; null where no museum has said (gh-98). */
@@ -1656,6 +1660,7 @@ export async function listSamples(
       )
       .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
       .leftJoin("sample_method as smt", "smt.sample_id", "s.entity_id")
+      .leftJoin("method as mth", "mth.code", "smt.method_code")
       // The flag roll-up, as `qc`: the page's own copy of it where the page was chosen by it, else computed here.
       .$if(rolled, (qb) => qb.leftJoin("pg as qc", "qc.sample_id", "s.entity_id"))
       .$if(!rolled, (qb) =>
@@ -1682,6 +1687,7 @@ export async function listSamples(
         "s.state_province",
         "s.country",
         "s.protocol",
+        sql<boolean>`coalesce(mth.is_trap, false)`.as("near_trap"),
         "smt.trap_count as trap_count",
         "s.specimen_count",
         "s.inat_observation_id",
@@ -2026,6 +2032,8 @@ export async function listSpecimens(
           .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
       )
       .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
+      .leftJoin("sample_method as smt", "smt.sample_id", "s.entity_id")
+      .leftJoin("method as mth", "mth.code", "smt.method_code")
       .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
       .leftJoin("animal as an", "an.entity_id", "d.animal_id")
       .leftJoin("person as det", "det.entity_id", "d.determiner_id")
@@ -2050,6 +2058,7 @@ export async function listSpecimens(
         "s.state_province",
         "s.country",
         "s.protocol",
+        sql<boolean>`coalesce(mth.is_trap, false)`.as("near_trap"),
         "s.kind as sample_kind",
         sql<string | null>`(SELECT c.catalog_number FROM specimen_catalog_number c WHERE c.specimen_id = sp.entity_id)`.as(
           "catalog_number",
@@ -2479,12 +2488,12 @@ export const alpha3Of = (alpha2: string): string | undefined => Object.entries(A
 /**
  * dwc:associatedTaxa: the floral host, in the term's own quoted form
  * ("host":"Quercus alba"), with the relationship the legacy records used; or,
- * where the method names a trap, the plant near the trap ("near":"Ceanothus"),
+ * where the sample's method is a trap, the plant near the trap ("near":"Ceanothus"),
  * since a trap does not say which flower its bees visited (beeline-vjqy).
  */
-const associatedTaxa = (host: string | null, method: string | null) => associatedTaxaFor(host, plantRelationship(method));
+const associatedTaxa = (host: string | null, nearTrap: boolean) => associatedTaxaFor(host, plantRelationship(nearTrap));
 
-/** The same term with the relationship given: the upload to Ecdysis decides it by the sample's kind, not by words in its method. */
+/** The same term with the relationship given. */
 export const associatedTaxaFor = (host: string | null, relationship: "near" | "visits flowers of") =>
   host === null || host === "" ? null : `"${relationship}":"${host.replaceAll('"', "'")}"`;
 
@@ -2569,7 +2578,7 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   r.coordinate_uncertainty_m,
   r.elevation_m,
   r.elevation_m,
-  associatedTaxa(r.host_name, r.protocol),
+  associatedTaxa(r.host_name, r.near_trap),
   r.kind,
   r.specimen_count,
   r.host_rank,
@@ -2774,7 +2783,7 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.coordinate_uncertainty_m,
   r.elevation_m,
   r.elevation_m,
-  associatedTaxa(r.host_name, r.protocol),
+  associatedTaxa(r.host_name, r.near_trap),
   r.scientific_name,
   r.authorship,
   r.taxon_rank,

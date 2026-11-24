@@ -115,7 +115,7 @@ COMMENT ON COLUMN printed_label.location_text IS 'e.g. USA:OR:BentonCo Corvallis
 COMMENT ON COLUMN printed_label.coordinates_text IS 'e.g. 44.565 -123.262 72m — three decimals, elevation when known.';
 COMMENT ON COLUMN printed_label.date_text IS 'e.g. 14.VII2025-3.2 — day.RomanMonth[-day.RomanMonth]year-sample.specimen; a trap range prints both ends.';
 COMMENT ON COLUMN printed_label.collector_text IS 'The collector line: labelName() for one collector, both joined with & for a pair (Andony, gh-17: paired trap collectors always both print).';
-COMMENT ON COLUMN printed_label.method_text IS 'The word the method box prints (methodText, src/label-text.ts): nest, trap or net where the method text of the sample contains it, in that order; otherwise a short plain-ASCII method text as itself for a net sample (vacuum); otherwise the kind of the sample.';
+COMMENT ON COLUMN printed_label.method_text IS 'The word the method box prints (methodText, src/label-text.ts): the label word of the sample''s method (net, trap, nest or vacuum), or the kind of the sample where it has no method.';
 COMMENT ON COLUMN printed_label.number_text IS 'The field number as printed, which is also what the DataMatrix encodes.';
 COMMENT ON COLUMN printed_label.warnings IS 'What the proofer should look at, semicolon-separated: a missing county, a line the label had to shrink to fit (location over 38 characters, collector over 22, method over 5). Never a block — the run prints regardless — and NULL when there is nothing to say.';
 

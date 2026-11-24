@@ -27,7 +27,8 @@ export interface LabelInput {
   sample_number: string;
   specimen_number: number;
   kind: "net" | "trap";
-  protocol: string | null;
+  /** The label word of the sample's method (method.label_word); null where it has no method. */
+  method_label_word: string | null;
   /** In sample_collector position order; position 1 first. */
   collectors: PersonNameParts[];
 }
@@ -233,38 +234,16 @@ export function collectorText(collectors: PersonNameParts[]): string {
 export const METHOD_WORD_LIMIT = 6;
 
 /**
- * The word a label's method box prints, worked out from the sample's method
- * text (Peter, 2026-11-23: the word comes from the method text, not from the
- * kind). The text has its tabs, line breaks and non-breaking spaces made
- * spaces and its outer spaces removed; then, ignoring case, the word is `nest`
- * if the text contains "nest"; otherwise `trap` if it contains "trap";
- * otherwise `net` if it contains "net". Old Beeline's label code
- * (LabelsSubtaskHandler.js, in use since January 2025; what it printed before
- * is not known from code) took the word from the text the same way, but tested
- * net, then trap, then nest, and each test replaced the text, so the first
- * match won: it printed "trap" for "trap nest", where this prints "nest" as
- * Beeline has (554 old samples). For every other text production holds the
- * two agree. A text that names none of the three is printed as itself only
- * for a sample of kind net ("vacuum", Peter, 2026-11-23) and only when it is
- * plain ASCII, tested before lowercasing so that no letter whose lowercase
- * differs between JavaScript and the store's SQL gets in, and at most
- * {@link METHOD_WORD_LIMIT} characters, so it always fits its box. In every
- * other case, an empty or missing text, one too long or not plain ASCII, or a
- * sample of kind trap, the label says the sample's kind, so a trap sample's
- * label never says more than "trap". Mirrored in `now_method` of
- * printed_label_out_of_date (schema/155_views_print_run.sql), which spells the
- * whitespace rule with translate() and trim() so both agree on tab, newline
- * and no-break space; test/label-out-of-date-method.test.ts holds the two
- * together.
+ * The word a label's method box prints: the label word of the sample's method
+ * (`method.label_word`: "net", "trap", "nest", "vacuum"), or the sample's kind
+ * where it has no method row (beeline-ni5m.15, stage two; before it the word
+ * was worked out from the method text). The caller supplies `method_label_word`
+ * from a LEFT JOIN of sample_method and method. Mirrored in `now_method` of
+ * printed_label_out_of_date (schema/155_views_print_run.sql);
+ * test/label-out-of-date-method.test.ts holds the two together.
  */
-export function methodText(input: Pick<LabelInput, "kind" | "protocol">): string {
-  const raw = (input.protocol ?? "").replace(/[\t\n\v\f\r\u00a0]/g, " ").replace(/^ +| +$/g, "");
-  const text = raw.toLowerCase();
-  if (text === "") return input.kind;
-  if (text.includes("nest")) return "nest";
-  if (text.includes("trap")) return "trap";
-  if (text.includes("net")) return "net";
-  return input.kind === "net" && /^[ -~]+$/.test(raw) && raw.length <= METHOD_WORD_LIMIT ? text : input.kind;
+export function methodText(input: Pick<LabelInput, "kind" | "method_label_word">): string {
+  return input.method_label_word ?? input.kind;
 }
 
 export function composeLabel(input: LabelInput, fieldNumber: string): LabelText {

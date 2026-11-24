@@ -3,7 +3,7 @@ import type { Database, DraftCaste, DraftSex } from "../model.js";
 import { BEE_FAMILIES, notABee } from "../bee-families.js";
 import { DETERMINATION_STATES, inRankBand, observationGone, type DeterminationState } from "./listings.js";
 import { NumberIndex, type NumberEntry, type NumberProblem } from "../determination-numbers.js";
-import { methodNamesTrapSql } from "../trap-method.js";
+import { nearTrapSql } from "../trap-method.js";
 
 /**
  * Volunteers naming their own specimens (beeline-bcq): what the entry screen
@@ -172,7 +172,7 @@ async function loadRows(
            s.kind, s.locality, s.county,
            -- Only to link to, so none where iNaturalist no longer has it (beeline-wcc6).
            CASE WHEN ${observationGone} THEN NULL ELSE CAST(s.inat_observation_id AS TEXT) END AS observation,
-           s.host_name_as_observed AS host, ${sql.raw(methodNamesTrapSql("s.protocol"))} AS host_near_trap,
+           s.host_name_as_observed AS host, ${sql.raw(nearTrapSql("s.entity_id"))} AS host_near_trap,
            vol.animal_id AS prior_animal, vol.sex AS prior_sex, vol.caste AS prior_caste,
            CAST(vol.determined_on AS TEXT) AS prior_on, vol.channel AS prior_channel,
            dd.animal_id AS draft_animal, CAST(dd.ecdysis_tid AS INTEGER) AS draft_ecdysis, dd.sex AS draft_sex, dd.caste AS draft_caste,

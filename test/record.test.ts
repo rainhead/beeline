@@ -6,7 +6,7 @@ import { ACTING_COOKIE } from "../src/app/acting.js";
 import { determinationHistory, visibleFindings, visibleHistory, type RecordFinding, type SampleDetail } from "../src/app/record.js";
 import type { SampleChange } from "../src/sample-change.js";
 import { refreshPlantCommonNames } from "../src/plant-common-names.js";
-import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, scratchPaths, setMethodText } from "./helpers.js";
 import { en } from "../src/app/messages/en.js";
 
 /**
@@ -476,7 +476,7 @@ describe("the floral host on the sample page", () => {
     protocol?: string,
   ) {
     const t = await recordApp();
-    if (protocol !== undefined) await t.conn.run(`UPDATE sample SET protocol = $1 WHERE entity_id = ${t.aliceSample}`, [protocol]);
+    if (protocol !== undefined) await setMethodText(t.conn, `entity_id = ${t.aliceSample}`, protocol);
     for (const [key, id, hitName] of lookups) {
       await t.conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ($1, 'species', 1, true)", [key]);
       await t.conn.run("INSERT INTO plant_name_lookup_hit VALUES ($1, 'species', $2, $3, 'species', true, $3)", [key, id, hitName]);

@@ -44,7 +44,7 @@ import type { GovernancePaths } from "../src/program-governance.js";
 import { refreshPlantCommonNames } from "../src/plant-common-names.js";
 import { GENUS_ORDINAL, SPECIES_ORDINAL, rankBand } from "../src/app/listings.js";
 import { oregonToday } from "../src/oregon-today.js";
-import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths, setMethodText } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -998,11 +998,18 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
 
   it("gives a trap's plant as near the trap, not visited, and still finds it by name (beeline-vjqy)", async () => {
     const { app, conn } = await hostApp();
-    await conn.run(`UPDATE sample SET protocol = 'pan traps' WHERE sample_number = 'C-1'`);
+    await setMethodText(conn, "sample_number = 'C-1'", "pan traps");
     const csv = parseCsv(await (await app.request("/samples.csv?scope=all")).text());
     const taxa = (n: string) => csv.find((l) => l[0] === n)![csv[0]!.indexOf("associatedTaxa")];
     expect(taxa("C-1")).toBe(`"near":"Plain name"`);
     expect(taxa("A-1")).toBe(`"visits flowers of":"Alpha oldname"`);
+    // The method decides, not the kind: a trap sample recorded as a net is still near a trap, and a net one recorded as a trap is not.
+    await conn.run(`UPDATE sample SET kind = 'net' WHERE sample_number = 'C-1'`);
+    await conn.run(`UPDATE sample SET kind = 'trap' WHERE sample_number = 'A-1'`);
+    const again = parseCsv(await (await app.request("/samples.csv?scope=all")).text());
+    const taxaAgain = (n: string) => again.find((l) => l[0] === n)![again[0]!.indexOf("associatedTaxa")];
+    expect(taxaAgain("C-1")).toBe(`"near":"Plain name"`);
+    expect(taxaAgain("A-1")).toBe(`"visits flowers of":"Alpha oldname"`);
     const page = await get(app, "/samples?scope=all&host=plain");
     expect(numbers(page)).toEqual(["C-1"]);
     expect(page).toContain(en.listings.filters.nearTrap);

@@ -1,7 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import { BEE_FAMILIES } from "../bee-families.js";
 import type { Database, DeterminationQualifier } from "../model.js";
-import { methodNamesTrapSql } from "../trap-method.js";
+import { nearTrapSql } from "../trap-method.js";
 
 /**
  * What the "Your bees" page and the front page read about a person's
@@ -700,7 +700,7 @@ export async function collectedOf(db: Kysely<Database>, personId: number, animal
       SELECT a.entity_id, below.depth + 1 FROM animal_tree a JOIN below ON a.filed_under_id = below.entity_id WHERE below.depth < 32
     )
     SELECT s.locality, s.county, s.state_province, s.host_name_as_observed AS host_name, s.host_rank,
-           ${sql.raw(methodNamesTrapSql("s.protocol"))} AS near_trap, ss.season,
+           ${sql.raw(nearTrapSql("s.entity_id"))} AS near_trap, ss.season,
            s.date_start, s.date_end
     FROM specimen sp
     JOIN sample s ON s.entity_id = sp.sample_id

@@ -551,20 +551,22 @@ describe("the associations file", () => {
     expect(csv.charCodeAt(0)).not.toBe(0xfeff);
   });
 
-  it("decides a trap sample by the sample's method naming a trap, as the archives and downloads do, and not by its kind (beeline-lmlh)", async () => {
+  it("decides a trap sample by the sample's method being a trap, as the archives and downloads do, and not by its kind or the words of its method (beeline-ni5m.15)", async () => {
     const f = await fixture();
     const trap = await f.specimen({ field: "2500007", sample: { kind: "'trap'", protocol: "'blue vane trap'", inat_observation_id: "666", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } });
     const nettedButTrap = await f.specimen({ field: "2500008", sample: { kind: "'trap'", protocol: "'aerial net'", inat_observation_id: "667", host_name_as_observed: "'Rosa'", host_rank: "'genus'" } });
     const trapWordedButNet = await f.specimen({ field: "2500011", sample: { kind: "'net'", protocol: "'pan traps'", inat_observation_id: "670", host_name_as_observed: "'Aster'", host_rank: "'genus'" } });
-    const trapNestButNet = await f.specimen({ field: "2500012", sample: { kind: "'net'", protocol: "'Trap nest'", inat_observation_id: "671", host_name_as_observed: "'Mentha'", host_rank: "'genus'" } });
+    const trapNestButNet = await f.specimen({ field: "2500012", sample: { kind: "'net'", protocol: "'trap nest'", inat_observation_id: "671", host_name_as_observed: "'Mentha'", host_rank: "'genus'" } });
     const netWithTheWord = await f.specimen({ field: "2500010", sample: { kind: "'net'", protocol: "'netting near the trap line'", inat_observation_id: "669", host_name_as_observed: "'Aster'", host_rank: "'genus'" } });
     const vacuum = await f.specimen({ field: "2500015", sample: { kind: "'net'", protocol: "'vacuum'", inat_observation_id: "672", host_name_as_observed: "'Salvia'", host_rank: "'genus'" } });
     const net = await f.specimen({ field: "2500009", sample: { inat_observation_id: "668", host_name_as_observed: "'Salvia'", host_rank: "'genus'" } });
     const ids = [trap, nettedButTrap, trapWordedButNet, trapNestButNet, netWithTheWord, vacuum, net].map((s) => s.id);
     const csv = await associationsCsv(f.db, await written(f, ids));
-    // The netted sample recorded as a trap gets its row; the trap-worded ones recorded as nets get none.
+    // The netted sample recorded as a trap gets its row; the trap-worded ones recorded as nets get none. A sample whose
+    // words are not one of the listed methods has no method, so it is not near a trap, whatever its words say.
     expect(csv.split("\n").filter((l) => l !== "").slice(1)).toEqual([
       "BCBA_2500008,https://www.inaturalist.org/observations/667,Rosa",
+      "BCBA_2500010,https://www.inaturalist.org/observations/669,Aster",
       "BCBA_2500015,https://www.inaturalist.org/observations/672,Salvia",
       "BCBA_2500009,https://www.inaturalist.org/observations/668,Salvia",
     ]);
@@ -578,7 +580,7 @@ describe("the associations file", () => {
       n += 1;
       made.push(await f.specimen({ field: `25000${n}`, sample: { kind: "'trap'", protocol: `'${method}'`, inat_observation_id: String(800 + n), host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } }));
     }
-    // A method written in, naming nothing ("pan", as OBAS-00218 has), stays out as it was when kind decided.
+    // A method written "pan", as OBAS-00218 has, is the pan trap method, so it stays out.
     made.push(await f.specimen({ field: "2500030", sample: { kind: "'trap'", protocol: "'pan'", inat_observation_id: "830", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } }));
     const csv = await associationsCsv(f.db, await written(f, made.map((s) => s.id)));
     expect(csv.split("\n").filter((l) => l !== "")).toEqual(["subject identifier: catalogNumber,resourceUrl,verbatimSciname"]);

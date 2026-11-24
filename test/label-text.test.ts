@@ -27,7 +27,7 @@ const corvallis: LabelInput = {
   sample_number: "1",
   specimen_number: 3,
   kind: "net",
-  protocol: "net",
+  method_label_word: "net",
   collectors: [{ display_name: "Peter Abrahamsen", given_name: "Peter", family_name: "Abrahamsen" }],
 };
 
@@ -137,49 +137,17 @@ describe("the six label fields", () => {
     ).toBe("28.XII2025-4.I2026-WBAS1.1");
   });
 
-  it("reads the word off the method text: nest, then trap, then net", () => {
-    // Stated by hand. Old Beeline's code tested net, then trap, then nest, the first match winning, so it
-    // printed "trap" for "trap nest"; Beeline prints "nest" (554 old samples), and agrees for the rest.
-    expect(methodText({ kind: "trap", protocol: "Trap nest" })).toBe("nest");
-    expect(methodText({ kind: "net", protocol: "trap nest" })).toBe("nest");
-    expect(methodText({ kind: "net", protocol: "nest box netting" })).toBe("nest");
-    expect(methodText({ kind: "net", protocol: "Net trap" })).toBe("trap");
-    expect(methodText({ kind: "net", protocol: "netting near the trap line" })).toBe("trap");
-    expect(methodText({ kind: "trap", protocol: "vane trap" })).toBe("trap");
-    expect(methodText({ kind: "net", protocol: "pan traps" })).toBe("trap");
-    expect(methodText({ kind: "trap", protocol: "aerial net" })).toBe("net");
-    expect(methodText({ kind: "net", protocol: "6 Vane Traps" })).toBe("trap");
-    expect(methodText({ kind: "net", protocol: "  Aerial NET  " })).toBe("net");
+  it("prints the label word of the sample's method, whatever its kind", () => {
+    // Stage two of beeline-ni5m.15: the word is the method's label_word, not read off the text.
+    expect(methodText({ kind: "trap", method_label_word: "net" })).toBe("net");
+    expect(methodText({ kind: "net", method_label_word: "nest" })).toBe("nest");
+    expect(methodText({ kind: "net", method_label_word: "trap" })).toBe("trap");
+    expect(methodText({ kind: "trap", method_label_word: "vacuum" })).toBe("vacuum");
   });
 
-  it("prints a net sample's method that names none of the three as itself, when it is short plain ASCII that always fits the box", () => {
-    expect(methodText({ kind: "net", protocol: "vacuum" })).toBe("vacuum");
-    expect(methodText({ kind: "net", protocol: " Vacuum " })).toBe("vacuum");
-    expect(methodText({ kind: "net", protocol: "x".repeat(6) })).toBe("x".repeat(6));
-    expect(methodText({ kind: "net", protocol: "x".repeat(7) })).toBe("net");
-    expect(methodText({ kind: "net", protocol: "pollen traps" })).toBe("trap");
-    expect(methodText({ kind: "net", protocol: "hand collecting by eye" })).toBe("net");
-    expect(methodText({ kind: "net", protocol: "aspiración" })).toBe("net");
-    expect(methodText({ kind: "net", protocol: "\tVacuum\n" })).toBe("vacuum");
-    expect(methodText({ kind: "net", protocol: "\u00a0vacuum\u00a0" })).toBe("vacuum");
-    // An em space or ideographic space is not an ASCII space, so it is not trimmed and the text is not plain ASCII.
-    expect(methodText({ kind: "net", protocol: "\u2003vacuum" })).toBe("net");
-    expect(methodText({ kind: "net", protocol: "vacuum\u3000" })).toBe("net");
-    expect(methodText({ kind: "net", protocol: "\u0130" })).toBe("net");
-    expect(methodText({ kind: "net", protocol: "\u212a" })).toBe("net");
-    expect(methodText({ kind: "trap", protocol: "handcollected" })).toBe("trap");
-  });
-
-  it("never says more than trap for a trap sample whose method names none of the three", () => {
-    expect(methodText({ kind: "trap", protocol: "pan" })).toBe("trap");
-    expect(methodText({ kind: "trap", protocol: "vacuum" })).toBe("trap");
-    expect(methodText({ kind: "trap", protocol: "bowl" })).toBe("trap");
-  });
-
-  it("prints the kind only where the method is empty or missing", () => {
-    expect(methodText({ kind: "net", protocol: null })).toBe("net");
-    expect(methodText({ kind: "trap", protocol: "" })).toBe("trap");
-    expect(methodText({ kind: "trap", protocol: "   " })).toBe("trap");
+  it("prints the kind only where the sample has no method", () => {
+    expect(methodText({ kind: "net", method_label_word: null })).toBe("net");
+    expect(methodText({ kind: "trap", method_label_word: null })).toBe("trap");
   });
 });
 

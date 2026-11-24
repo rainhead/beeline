@@ -28,7 +28,6 @@ import {
 } from "../listings.js";
 import { sampleHref, specimenHref, type LocalitySuggestion } from "../record.js";
 import { ChevronDownIcon } from "./icons.js";
-import { methodNamesTrap } from "../../trap-method.js";
 import { MAX_ROWS as UPLOAD_MAX_ROWS } from "../upload-plan.js";
 import type { Messages } from "../messages/index.js";
 import {
@@ -976,7 +975,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                   ) : (
                     <>
                       <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} vernacular={row.host_common_name} />
-                      {methodNamesTrap(row.protocol) && <Meta block>{f.nearTrap}</Meta>}
+                      {row.near_trap && <Meta block>{f.nearTrap}</Meta>}
                     </>
                   )}
                 </td>
@@ -1267,7 +1266,7 @@ export function SpecimenListing(
                   ) : (
                     <>
                       <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} vernacular={row.host_common_name} />
-                      {methodNamesTrap(row.protocol) && <Meta block>{f.nearTrap}</Meta>}
+                      {row.near_trap && <Meta block>{f.nearTrap}</Meta>}
                     </>
                   )}
                 </td>

@@ -212,16 +212,17 @@ export async function setSampleMethod(
   const end = dateEnd === "" ? start : dateEnd;
   const protocolChanged = protocol !== liveProtocol;
   const startChanged = start !== liveStart;
+  // One day is decided by the dates, not by a blank input: an end typed equal to the start is one day too.
+  const oneDay = end === start;
   const endChanged = end !== isoDate(sample.date_end);
   // A one-day sample's end is its start, so a new start moves it too.
   const datesChanged = startChanged || endChanged;
-  if (!protocolChanged && !datesChanged) return { outcome: "unchanged" };
-
   const update = {
     ...(protocolChanged ? { protocol: protocol === "" ? null : protocol } : {}),
     ...(datesChanged ? { date_start: start, date_end: end } : {}),
   };
   if (entered) {
+    if (!protocolChanged && !datesChanged) return { outcome: "unchanged" };
     try {
       await db.transaction().execute(async (trx) => {
         await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
@@ -244,26 +245,32 @@ export async function setSampleMethod(
     `.execute(db)
   ).rows;
   if (members.length === 0) return { outcome: "no_old_records" };
-  // What the corrections already say of each record's end, over its staged value: the app's over the curated file's.
-  const corrected = new Map<string, string>();
+  // What each record says now, as the export reads it: its staged value with every correction over it.
+  const FIELDS = ["samplingProtocol", "day", "month", "year", "day2", "month2", "year2"] as const;
+  const view = (
+    await sql<{ table_name: string }>`SELECT view_name AS table_name FROM duckdb_views() WHERE view_name = 'legacy_occurrence_corrected'`.execute(db)
+  ).rows.length > 0;
+  const storeValue = new Map<string, string>();
+  const stored = view
+    ? (
+        await sql<Member>`
+          SELECT c._id, c."samplingProtocol" AS "samplingProtocol", c.day, c.month, c.year, c.day2, c.month2, c.year2
+          FROM legacy_specimen_number n JOIN legacy_occurrence_corrected c ON c._id = n._id
+          WHERE n.sample_id = ${sampleId}`.execute(db)
+      ).rows
+    : members;
+  for (const r of stored) for (const f of FIELDS) storeValue.set(`${r._id}|${f}`, (r[f] ?? "").toString());
+  // And what the durable file says, which is newer than the store where a save wrote the file and then lost its store
+  // transaction (not_applied). It is read before the sample is judged unchanged: a later save that changes nothing in
+  // the sample still finishes or reverts what that save left in the file.
   const inFile = new Map<string, string>();
-  const stores = (await sql<{ table_name: string }>`
-    SELECT table_name FROM duckdb_tables() WHERE table_name IN ('legacy_correction', 'legacy_app_correction') AND NOT temporary`.execute(db)).rows.map((r) => r.table_name);
-  for (const table of ["legacy_correction", "legacy_app_correction"].filter((t) => stores.includes(t))) {
-    const found = await sql<{ _id: string; field: string; new_value: string | null }>`
-      SELECT _id, field, new_value FROM ${sql.table(table)}
-      WHERE field IN ('day2', 'month2', 'year2') AND _id IN (SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId})`.execute(db);
-    for (const r of found.rows) corrected.set(`${r._id}|${r.field}`, r.new_value ?? "");
-  }
-  // And what the durable file says, which is newer than the store's tables where a save wrote the file and then lost
-  // its store transaction (not_applied): a component that save left must be replaced or kept on purpose, not forgotten.
   try {
     const [head = [], ...body] = parseCsv(await readFile(correctionsPath, "utf8"));
     const col = (name: string) => head.indexOf(name);
     const ids = new Set(members.map((m) => m._id));
     for (const r of body) {
       const field = r[col("field")] ?? "";
-      if (["day2", "month2", "year2"].includes(field) && ids.has(r[col("_id")] ?? "")) inFile.set(`${r[col("_id")]}|${field}`, r[col("new_value")] ?? "");
+      if ((FIELDS as readonly string[]).includes(field) && ids.has(r[col("_id")] ?? "")) inFile.set(`${r[col("_id")]}|${field}`, r[col("new_value")] ?? "");
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -272,33 +279,31 @@ export async function setSampleMethod(
   // The old records write a date as three columns, without leading zeros.
   const parts = (d: string) => d.split("-").map((p) => String(Number(p)));
   const [sy, smo, sd] = parts(start);
-  const [y, mo, d] = dateEnd === "" ? ["", "", ""] : parts(dateEnd);
+  const [ey, emo, ed] = oneDay ? ["", "", ""] : parts(end);
   const reason = input.note.trim() !== "" ? input.note.trim() : "edited in Beeline";
   const events: CorrectionEvent[] = [];
+  const writesEnd = endChanged || (startChanged && oneDay);
+  // What each field is to hold on every record, where this save sets it; elsewhere each record keeps what the store says.
+  const target: Partial<Record<(typeof FIELDS)[number], string>> = {
+    ...(protocolChanged ? { samplingProtocol: protocol } : {}),
+    ...(startChanged ? { day: sd!, month: smo!, year: sy! } : {}),
+    // A one-day sample's end is blank on every record, as a blank end always wrote it (the legacy-format export reads
+    // each record's own end), and one that spans days is the end on every record.
+    ...(writesEnd ? { day2: ed!, month2: emo!, year2: ey! } : {}),
+  };
   for (const member of members) {
-    const event = (field: keyof Member, value: string) =>
-      events.push({ _id: member._id, field, base_value: member[field] ?? "", new_value: value, author: input.author, reason });
-    if (protocolChanged) event("samplingProtocol", protocol);
-    if (startChanged) {
-      event("day", sd!);
-      event("month", smo!);
-      event("year", sy!);
-    }
-    if (endChanged) {
-      // Each old row is written only where the new value differs from what that row says now (its staged value with
-      // the corrections over it, the store's and the file's). A one-day sample's end is blank on every row, as the
-      // form's blank end always wrote it, so a row that never stated an end gains none and one that did loses it
-      // (the legacy-format export reads each row's own end).
-      const raw = [member.day2, member.month2, member.year2].map((v) => v ?? "");
-      const target = dateEnd !== "" ? [d!, mo!, y!] : ["", "", ""];
-      (["day2", "month2", "year2"] as const).forEach((f, i) => {
-        // Written where the store's value or the file's differs, so both end up holding the target: a save whose file
-        // write succeeded and whose store write failed is finished by the retry.
-        const key = `${member._id}|${f}`;
-        if ((corrected.get(key) ?? raw[i]) !== target[i] || (inFile.get(key) ?? (corrected.get(key) ?? raw[i])) !== target[i]) event(f, target[i]!);
-      });
+    for (const f of FIELDS) {
+      const key = `${member._id}|${f}`;
+      const store = storeValue.get(key) ?? "";
+      const want = target[f] ?? store;
+      // Written where the store's value or the file's differs from it, so both end up holding it: a save whose file
+      // write succeeded and whose store write failed is finished (or undone) by the next save, whatever that one changes.
+      if (want !== store || want !== (inFile.get(key) ?? store)) {
+        events.push({ _id: member._id, field: f, base_value: (member[f] ?? "").toString(), new_value: want, author: input.author, reason });
+      }
     }
   }
+  if (!protocolChanged && !datesChanged && events.length === 0) return { outcome: "unchanged" };
   // Durability before immediacy: if the event write fails, nothing applied.
   // Should a write to the store fail after it, the file is ahead of the
   // sample until the next save, which is what a rebuild would apply.
@@ -309,7 +314,7 @@ export async function setSampleMethod(
   try {
     await db.transaction().execute(async (trx) => {
       await mirrorCorrections(trx, events);
-      await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
+      if (Object.keys(update).length > 0) await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
       if (protocolChanged) await changeSampleMethod(trx, sampleId, protocol);
       // A disagreement among the records over the method is settled by the
       // edit, as on the collector's form.

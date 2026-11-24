@@ -80,6 +80,12 @@ JOIN observation_host h ON h.inat_id = m.lead_inat_id
 LEFT JOIN observation_place pl ON pl.inat_id = m.lead_inat_id
 LEFT JOIN observation_locality loc ON loc.inat_id = m.lead_inat_id;
 
+-- Their method: the constant the protocol above is, as the method it names
+-- (beeline-ni5m.15). Written beside the sample, so that sample_method_text_mismatch
+-- stays empty and the nightly's check on it passes.
+INSERT INTO sample_method (sample_id, method_code)
+SELECT m.sample_id, 'aerial net' FROM minted_sample m;
+
 -- Geography assigns the atlas, through the same lookup legacy promotion uses
 -- (schema/010). No row means "no member atlas covers this", which is
 -- ordinary; qc_rule_place_unrecognised is what fires when the place did not

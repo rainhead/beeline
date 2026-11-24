@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   checkTrapSample,
   createTrapSample,
+  deleteTrapSample,
   loadTrapSample,
+  methodCodes,
   mayEnterTrapSamples,
   nextSampleNumber,
   updateTrapSample,
@@ -206,5 +208,67 @@ describe("the next sample number", () => {
     await insertCleanSample(conn, { kind: "'trap'", sample_number: "'OBAS-20204'" });
     await insertCleanSample(conn, { kind: "'trap'", sample_number: "'OBAS-1204'" });
     expect(await nextSampleNumber(conn)).toBe("OBAS-20205");
+  });
+});
+
+describe("the method of an entered sample (beeline-ni5m.15)", () => {
+  const made = async (over: Partial<TrapSampleForm> = {}) => {
+    const checked = await checkTrapSample(conn, form(over));
+    if (!("sample" in checked)) throw new Error(JSON.stringify(checked.problems));
+    return (await createTrapSample(conn, checked.sample, null)) as number;
+  };
+  const methodOf = async (id: number) =>
+    (await rows(conn, `SELECT s.protocol, m.method_code, m.trap_count FROM sample s LEFT JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${id}`))[0];
+  const mismatches = async () => (await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`))[0]![0];
+
+  it("offers the methods that are traps, read from the table", async () => {
+    expect(await methodCodes(conn, { trapOnly: true })).toEqual(["bottle trap", "malaise trap", "pan and vane traps", "pan trap", "trap nest", "vane trap"]);
+    expect(await methodCodes(conn)).toEqual(["aerial net", "bottle trap", "malaise trap", "pan and vane traps", "pan trap", "trap nest", "vacuum", "vane trap"]);
+  });
+
+  it("writes the code as the method as written, and the method and the count beside it", async () => {
+    const id = await made();
+    expect(await methodOf(id)).toEqual(["vane trap", "vane trap", 12]);
+    expect(await mismatches()).toBe(0n);
+  });
+
+  it("writes no count when none is given", async () => {
+    expect(await methodOf(await made({ trap_count: "", method: "malaise trap" }))).toEqual(["malaise trap", "malaise trap", null]);
+  });
+
+  it("refuses a method that is not listed, naming the methods that are", async () => {
+    for (const method of ["six vane traps", "Vane trap", "aerial net", "", "  "]) {
+      const checked = await checkTrapSample(conn, form({ method }));
+      if (!("problems" in checked)) throw new Error(`expected a refusal of "${method}"`);
+      expect(Object.keys(checked.problems)).toEqual(["method"]);
+      expect(checked.problems.method).toContain("bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap");
+    }
+    expect(await checkTrapSample(conn, form({ method: "unlisted" }))).toEqual({
+      problems: { method: "Choose one of the listed methods: bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap." },
+    });
+  });
+
+  it("follows an edit of the method and the count, and keeps the two in step", async () => {
+    const id = await made();
+    const edited = await checkTrapSample(conn, form({ method: "pan trap", trap_count: "" }), id);
+    if (!("sample" in edited)) throw new Error("unexpected problems");
+    expect(await updateTrapSample(conn, id, edited.sample)).toBe("saved");
+    expect(await methodOf(id)).toEqual(["pan trap", "pan trap", null]);
+    expect(await rows(conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${id}`)).toEqual([[null]]);
+    expect(await mismatches()).toBe(0n);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method WHERE sample_id = ${id}`)).toEqual([[1n]]);
+  });
+
+  it("shows the method as the list has it when the form is opened on a sample with an old wording", async () => {
+    const id = await made();
+    await conn.run(`UPDATE sample SET protocol = 'Vane trap' WHERE entity_id = ${id}`);
+    expect(await loadTrapSample(conn, id)).toMatchObject({ method: "vane trap" });
+  });
+
+  it("is deleted with the sample", async () => {
+    const id = await made();
+    const staff = await personId("Dan O'Loughlin");
+    expect(await deleteTrapSample(conn, id, staff)).toEqual({ deleted: "OBAS-20300" });
+    expect(await rows(conn, `SELECT count(*) FROM sample_method`)).toEqual([[0n]]);
   });
 });

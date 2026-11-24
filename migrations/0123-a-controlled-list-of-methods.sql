@@ -6,7 +6,9 @@
 -- method_text, so a sample whose text is empty or not listed gets no row and is
 -- on sample_without_method; on production on 2026-11-23 that was one sample of
 -- 70,859. Nothing is added to sample itself, which DuckDB refuses for a table
--- that other tables reference. Nothing that reads a sample's method changes.
+-- that other tables reference. The trap count is the one the text states, or
+-- failing that the number the sample's effort starts with, where a sample
+-- entered in Beeline keeps it. Nothing that reads a sample's method changes.
 --
 -- What a deploy loses in the change log: this change adds the method and the
 -- trap count to the fields the sample history records (src/sample-change.ts),
@@ -90,7 +92,10 @@ INSERT INTO method_text (text, method_code, trap_count) VALUES
   ('pan traps and vane traps', 'pan and vane traps', NULL);
 
 INSERT INTO sample_method (sample_id, method_code, trap_count)
-SELECT s.entity_id, t.method_code, t.trap_count
+SELECT s.entity_id, t.method_code,
+       -- The count the text states, or else the one the sample's effort starts with ("6 vane traps"), which is where a
+       -- sample entered in Beeline has kept it.
+       coalesce(t.trap_count, nullif(TRY_CAST(regexp_extract(s.sampling_effort, '^([0-9]+) ', 1) AS INTEGER), 0))
 FROM sample s
 JOIN method_text t ON t.text = s.protocol;
 

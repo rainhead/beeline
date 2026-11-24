@@ -205,7 +205,7 @@ import {
   type Actor,
   type CorrectionDeps,
 } from "./sample-corrections.js";
-import { localityReasonFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
+import { localityReasonFor, methodProblemFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
 import { isWriteConflict } from "../write-conflict.js";
@@ -215,6 +215,7 @@ import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from ".
 import {
   checkTrapSample,
   collectorChoices,
+  methodCodes,
   createTrapSample,
   deletable,
   deleteTrapSample,
@@ -274,6 +275,7 @@ import {
   sampleHref,
 } from "./record.js";
 import { SamplePage, SpecimenPage } from "./views/record.js";
+import { readMethodCodes } from "./sample-method.js";
 import { AtlasMark } from "./views/components/atlas-mark.js";
 import { ATLAS_IDENTITY } from "./theme/atlas.js";
 
@@ -1435,6 +1437,7 @@ export function createApp({
           deleteHref={deleteHref}
           entered={entered !== null}
           enteredPastItsForm={entered !== null && !entered.editable}
+          methodChoices={c.get("admin") ? await readMethodCodes(db, { trapOnly: entered !== null }) : []}
           placePending={c.get("admin") && c.req.query("place") === "pending"}
         />,
       ),
@@ -1518,6 +1521,7 @@ export function createApp({
         form={form}
         problems={problems}
         collectorNames={await collectorChoices(conn!)}
+        methods={await methodCodes(conn!, { trapOnly: true })}
         action={action}
         sampleId={sampleId}
         // A new sample's form shows staff the note from the start, worded for either season,
@@ -1825,7 +1829,7 @@ export function createApp({
       ...(typeof body.date_start === "string" ? { dateStart: body.date_start } : {}),
       note,
       today: new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date()),
-      problemFor: (problem) => t.problems[problem],
+      problemFor: methodProblemFor(m),
     });
     if (!result.ok) {
       switch (result.refusal) {

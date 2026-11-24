@@ -1,6 +1,6 @@
 import type { Messages } from "../messages/index.js";
-import { TRAP_METHODS, type FieldProblems, type TrapSampleForm } from "../../trap-sample.js";
-import { Button, Callout, Field, Meta, PageHeader, TextField } from "./components/index.js";
+import { type FieldProblems, type TrapSampleForm } from "../../trap-sample.js";
+import { Button, Callout, Field, Meta, PageHeader, SelectField, TextField } from "./components/index.js";
 import { Combobox } from "./components/combobox.js";
 
 /** How many collector boxes the form offers: the old records name at most three. */
@@ -17,6 +17,7 @@ export function TrapSampleFormPage({
   form,
   problems,
   collectorNames,
+  methods,
   action,
   sampleId,
   releasesLabels = false,
@@ -25,6 +26,8 @@ export function TrapSampleFormPage({
   form: TrapSampleForm;
   problems: FieldProblems;
   collectorNames: readonly { name: string; trap: boolean }[];
+  /** The codes of the methods the form offers (`methodCodes` with `trapOnly`, src/trap-sample.ts). */
+  methods: readonly string[];
   action: string;
   /** The sample being edited; absent when entering a new one. */
   sampleId?: number;
@@ -58,13 +61,12 @@ export function TrapSampleFormPage({
         ))}
         {date("date_start", t.fields.dateStart, t.hints.dateStart)}
         {date("date_end", t.fields.dateEnd, t.hints.dateEnd)}
-        <Combobox
+        <SelectField
           id="trap-method"
           name="method"
           label={t.fields.method}
           value={form.method}
-          choices={TRAP_METHODS.map((value) => ({ value }))}
-          free
+          options={[["", t.hints.methodChoose], ...methods.map((code) => [code, code] as const)]}
           hint={problem("method") ?? t.hints.method}
         />
         <TextField id="trap-trap_count" name="trap_count" label={t.fields.trapCount} value={form.trap_count} hint={problem("trap_count") ?? t.hints.trapCount} />

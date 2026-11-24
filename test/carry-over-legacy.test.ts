@@ -149,7 +149,8 @@ async function sampleOf(conn: DuckDBConnection, recordId: string) {
      WHERE n.sample_id = ${sampleId} ORDER BY sp.specimen_number`,
   );
   const entered = await rows(conn, `SELECT count(*) FROM sample_entry WHERE sample_id = ${sampleId}`);
-  return { sample, location, collectors, atlas, specimens, entered };
+  const method = await rows(conn, `SELECT method_code, trap_count FROM sample_method WHERE sample_id = ${sampleId}`);
+  return { sample, location, collectors, atlas, specimens, entered, method };
 }
 
 describe("carrying over old records a correction made whole", { timeout: 120_000 }, () => {
@@ -179,6 +180,9 @@ describe("carrying over old records a correction made whole", { timeout: 120_000
     expect(made.atlas).toEqual([["OBA"]]);
     expect(made.specimens).toEqual([["carry-1", 1, "2461832"], ["carry-2", 2, "2461833"]]);
     expect(made.entered).toEqual([[0n]]);
+    // Its method, from the text as written, with the text left as written (beeline-ni5m.15).
+    expect(made.method).toEqual([["vane trap", null]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
 
     // The corrections are the store's now, so the views promotion left read the dates as corrected.
     expect(await rows(conn, `SELECT count(*) FROM legacy_promotion_finding WHERE _id LIKE 'carry-%' AND rule = 'bad_date'`)).toEqual([[0n]]);

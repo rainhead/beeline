@@ -41,3 +41,9 @@ export const hostProblemFor =
     const sentences = m.record.sample.staffHost.problems;
     return problem === "inactive" ? sentences.inactive(replacedBy) : sentences[problem];
   };
+
+/** The sentence for each way a method or the dates of a sample are refused, in the catalogue's words; an unlisted method names the methods that may be chosen. */
+export const methodProblemFor =
+  (m: Messages) =>
+  (problem: keyof Messages["record"]["sample"]["methodEdit"]["problems"] | "unlisted_method", methods: readonly string[]): string =>
+    problem === "unlisted_method" ? m.record.sample.methodEdit.unlistedMethod(methods) : m.record.sample.methodEdit.problems[problem];

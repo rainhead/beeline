@@ -235,6 +235,13 @@ export async function carryOverLegacyRecords(
         params,
       );
       const sampleId = Number(made!.entity_id);
+      // Its method, from the method as written through method_text, as promotion gives it (beeline-ni5m.15).
+      await conn.run(
+        `INSERT INTO sample_method (sample_id, method_code, trap_count)
+         SELECT s.entity_id, t.method_code, t.trap_count FROM sample s JOIN method_text t ON t.text = s.protocol
+         WHERE s.entity_id = $1`,
+        [sampleId] as never,
+      );
       // The atlas of its state, as geography assigns it (schema/010).
       await conn.run(
         `INSERT INTO sample_atlas (sample_id, atlas_id)

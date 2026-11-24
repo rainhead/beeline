@@ -770,6 +770,17 @@ SELECT s.sample_id, s.kind,
 FROM legacy_sample_map s
 LEFT JOIN inat_taxon_not_a_host x ON x.name = s.host_name;
 
+-- Each sample's method, from the method as written through method_text
+-- (beeline-ni5m.15): what the migration that introduced sample_method does to
+-- a deployed store. A text method_text does not list gives no row, and the
+-- sample is on sample_without_method. The text stays in sample.protocol as
+-- the old records wrote it.
+INSERT INTO sample_method (sample_id, method_code, trap_count)
+SELECT s.entity_id, t.method_code, t.trap_count
+FROM sample s
+JOIN legacy_sample_map m ON m.sample_id = s.entity_id
+JOIN method_text t ON t.text = s.protocol;
+
 -- Geography assigns the atlas, through the lookup that also knows the
 -- regions no atlas covers (schema/010). No row here means one thing —
 -- outside the six — and qc_rule_place_unrecognised is what fires when the

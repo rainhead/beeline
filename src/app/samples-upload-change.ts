@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { seriesTrapNumberTaken, trapCountOf, trapEffort } from "../trap-sample.js";
 import { refusalSentence, type AnyFailure } from "./api-corrections.js";
-import { localityReasonFor, specimenCountProblemFor, trapCountProblemFor } from "./correction-reasons.js";
+import { localityReasonFor, methodProblemFor, specimenCountProblemFor, trapCountProblemFor } from "./correction-reasons.js";
 import { NO_POINT_TO_TAKE_AWAY } from "./locality-override.js";
 import type { Messages } from "./messages/index.js";
 import { fromOldRecords } from "./sample-method.js";
@@ -352,7 +352,7 @@ export async function applyUnit(env: ApplyEnv, ctx: UnitContext, change: UnitCha
         note: ctx.note,
         today: env.today,
         bases: { protocol: change.bases.protocol, dateStart: change.bases.start, dateEnd: change.bases.end },
-        problemFor: (problem) => m.record.sample.methodEdit.problems[problem],
+        problemFor: methodProblemFor(m),
       });
       const done = fromCorrection(env, "method_dates", result);
       return done.outcome === "applied" && change.effortBecomes !== null ? { outcome: "applied", followUp: () => rewriteEffort(env, ctx, change) } : done;

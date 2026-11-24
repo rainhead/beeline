@@ -705,9 +705,19 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
       if (method === "") return invalid(form.problemFor("method"));
       effort = trapEffort(Number(given), method);
     }
-    if (effort === (sample.sampling_effort ?? null)) return { ok: true, outcome: "unchanged", effort };
+    // The count beside the method (beeline-ni5m.15): the number given, and where it is taken away, the count the method
+    // as written states, if it states one, so that the sample's method keeps the count its text gives.
+    const stated = await sql<{ trap_count: number | null }>`
+      SELECT t.trap_count FROM sample s JOIN method_text t ON t.text = s.protocol WHERE s.entity_id = ${sampleId}`.execute(deps.db);
+    const count = given !== "" ? Number(given) : (stated.rows[0]?.trap_count ?? null);
+    const held = await deps.db.selectFrom("sample_method").where("sample_id", "=", sampleId).select("trap_count").executeTakeFirst();
+    if (effort === (sample.sampling_effort ?? null) && (held === undefined || held.trap_count === count)) return { ok: true, outcome: "unchanged", effort };
     try {
-      await deps.db.updateTable("sample").set({ sampling_effort: effort }).where("entity_id", "=", sampleId).execute();
+      // The effort and the count in one transaction, so that neither is changed without the other.
+      await deps.db.transaction().execute(async (trx) => {
+        await trx.updateTable("sample").set({ sampling_effort: effort }).where("entity_id", "=", sampleId).execute();
+        await trx.updateTable("sample_method").set({ trap_count: count }).where("sample_id", "=", sampleId).execute();
+      });
     } catch (err) {
       // Nothing is recorded anywhere else, so a conflict means nothing was done: say so, and let the caller send it again.
       if (isWriteConflict(err)) return refused("busy");
@@ -724,7 +734,7 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
 export type MethodProblem = Extract<MethodResult, { outcome: "invalid" }>["problem"];
 
 export interface SetMethodInput {
-  /** The method in words; blank for none. */
+  /** The code of the method chosen from the list, or the sample's method as written unchanged (`setSampleMethod`). */
   protocol: string;
   /** The day collecting ended; blank for a net sample collected on one day. */
   dateEnd: string;
@@ -740,8 +750,8 @@ export interface SetMethodInput {
    * the end is the start. Without it a blank end makes an old sample a net sample, as the method page's form does.
    */
   keepTrap?: boolean;
-  /** The sentence for each way the method or dates are refused as invalid. */
-  problemFor: (problem: MethodProblem) => string;
+  /** The sentence for each way the method or dates are refused as invalid; for an unlisted method, with the codes that may be chosen. */
+  problemFor: (problem: MethodProblem, methods: readonly string[]) => string;
 }
 
 export type SetMethodResult =
@@ -799,7 +809,7 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
         case "unchanged":
           return { ok: true, outcome: "unchanged" };
         case "invalid":
-          return { ok: false, refusal: "invalid", problem: form.problemFor(saved.problem) };
+          return { ok: false, refusal: "invalid", problem: form.problemFor(saved.problem, saved.methods ?? []) };
         case "no_old_records":
         case "conflict":
         case "not_applied":

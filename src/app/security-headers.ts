@@ -1,5 +1,9 @@
 import { secureHeaders } from "hono/secure-headers";
 
+/** The one page that frames another site, and the one site it may frame (beeline-2zej.1.12). */
+export const CALENDAR_PATH = "/calendar";
+export const CALENDAR_FRAME_ORIGIN = "https://calendar.google.com";
+
 /**
  * Security headers on every response, from one place (beeline-m9o) — the
  * way the session gate covers every route: registered first in createApp, so
@@ -21,6 +25,9 @@ import { secureHeaders } from "hono/secure-headers";
  * - forms: same-origin only. Sign-in starts from a link, not a form, so the
  *   redirect to iNaturalist is a top-level navigation `form-action` does not
  *   govern.
+ * - frames: none, except that the calendar page (CALENDAR_PATH) may frame
+ *   Google Calendar. The directive's value is chosen per request, so every
+ *   other page still answers `frame-src 'none'`.
  * - framing: nobody, which `frame-ancestors` says and the old
  *   X-Frame-Options header repeats for browsers that predate it.
  *
@@ -42,6 +49,7 @@ export function securityHeaders(environment: string) {
       fontSrc: ["'self'"],
       connectSrc: ["'self'"],
       formAction: ["'self'"],
+      frameSrc: [(c) => (c.req.path === CALENDAR_PATH ? CALENDAR_FRAME_ORIGIN : "'none'")],
       frameAncestors: ["'none'"],
       baseUri: ["'none'"],
       objectSrc: ["'none'"],

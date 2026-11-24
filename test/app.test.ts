@@ -371,6 +371,26 @@ describe("app scaffold", () => {
     expect(front).toContain(en.qc.howItWorksLink);
   });
 
+  it("the calendar is behind the gate, in the menu, and frames the program's Google Calendar", async () => {
+    expect((await (await appOnMemoryDb(null)).request("/calendar")).status).toBe(401);
+    const app = await appOnMemoryDb("someone");
+    const res = await app.request("/calendar");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain(en.calendar.heading);
+    expect(body).toContain("https://calendar.google.com/calendar/embed?src=oregonstate.edu_igc7gl5p7kkg1hjin0j2ao3lpc%40group.calendar.google.com");
+    expect(body).toContain("ctz=America%2FLos_Angeles");
+    // One frame, the agenda view, at every width.
+    expect(body.match(/<iframe/g)).toHaveLength(1);
+    expect(body).toContain("mode=AGENDA");
+    expect(body).not.toContain("mode=MONTH");
+    // In the menu for everyone, not in the header nav.
+    const home = await (await app.request("/")).text();
+    const menu = home.slice(home.indexOf(`aria-label="${en.layout.more}"`));
+    expect(menu).toContain(`href="/calendar"`);
+    expect(home.slice(0, home.indexOf(`aria-label="${en.layout.more}"`))).not.toContain(`href="/calendar"`);
+  });
+
   it("the glossary is volunteer-facing, and every linked term resolves to an anchor", async () => {
     const app = await appOnMemoryDb("testuser");
     const glossary = await (await app.request("/glossary")).text();
@@ -411,6 +431,20 @@ describe("security headers", () => {
       expect(csp).not.toMatch(/(script|style)-src 'self'[^;]*'unsafe-inline'/);
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
       expect(res.headers.get("x-frame-options")).toBe("DENY");
+    }
+  });
+
+  // beeline-2zej.1.12: the calendar page frames Google Calendar, and only it.
+  it("only the calendar page may frame Google Calendar", async () => {
+    const app = await appOnMemoryDb("someone");
+    const calendar = await app.request("/calendar");
+    const csp = calendar.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("frame-src https://calendar.google.com;");
+    expect(csp).toContain("frame-ancestors 'none'");
+    for (const path of ["/", "/glossary", "/no/such/page"]) {
+      const other = (await app.request(path)).headers.get("content-security-policy") ?? "";
+      expect(other, path).toContain("frame-src 'none'");
+      expect(other, path).not.toContain("calendar.google.com");
     }
   });
 

@@ -380,7 +380,10 @@ describe("app scaffold", () => {
     expect(body).toContain(en.calendar.heading);
     expect(body).toContain("https://calendar.google.com/calendar/embed?src=oregonstate.edu_igc7gl5p7kkg1hjin0j2ao3lpc%40group.calendar.google.com");
     expect(body).toContain("ctz=America%2FLos_Angeles");
+    // One frame, the agenda view, at every width.
+    expect(body.match(/<iframe/g)).toHaveLength(1);
     expect(body).toContain("mode=AGENDA");
+    expect(body).not.toContain("mode=MONTH");
     // In the menu for everyone, not in the header nav.
     const home = await (await app.request("/")).text();
     const menu = home.slice(home.indexOf(`aria-label="${en.layout.more}"`));

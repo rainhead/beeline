@@ -849,28 +849,13 @@ details.found-by-others ul.found-species { color: var(--md-sys-color-on-surface-
    wraps instead of running off a phone's screen. */
 code.secret { user-select: all; overflow-wrap: anywhere; }
 
-/* The program calendar: Google's embed, filling the page. A month grid on a
-   wide screen, an agenda list on a phone; the other frame is hidden, so it
-   is never fetched (loading="lazy"). */
+/* The program calendar: Google's agenda embed, filling the page. */
 .calendar-frame {
   display: block;
   width: 100%;
-  height: 75vh;
-  min-height: 32rem;
+  height: 70vh;
+  min-height: 28rem;
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: 0.5rem;
   background: #fff;
-}
-.calendar-frame-narrow {
-  display: none;
-}
-@media (max-width: 640px) {
-  .calendar-frame-wide {
-    display: none;
-  }
-  .calendar-frame-narrow {
-    display: block;
-    height: 70vh;
-    min-height: 28rem;
-  }
 }

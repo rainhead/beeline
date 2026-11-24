@@ -246,6 +246,7 @@ export async function setSampleMethod(
   if (members.length === 0) return { outcome: "no_old_records" };
   // What the corrections already say of each record's end, over its staged value: the app's over the curated file's.
   const corrected = new Map<string, string>();
+  const inFile = new Map<string, string>();
   const stores = (await sql<{ table_name: string }>`
     SELECT table_name FROM duckdb_tables() WHERE table_name IN ('legacy_correction', 'legacy_app_correction') AND NOT temporary`.execute(db)).rows.map((r) => r.table_name);
   for (const table of ["legacy_correction", "legacy_app_correction"].filter((t) => stores.includes(t))) {
@@ -262,7 +263,7 @@ export async function setSampleMethod(
     const ids = new Set(members.map((m) => m._id));
     for (const r of body) {
       const field = r[col("field")] ?? "";
-      if (["day2", "month2", "year2"].includes(field) && ids.has(r[col("_id")] ?? "")) corrected.set(`${r[col("_id")]}|${field}`, r[col("new_value")] ?? "");
+      if (["day2", "month2", "year2"].includes(field) && ids.has(r[col("_id")] ?? "")) inFile.set(`${r[col("_id")]}|${field}`, r[col("new_value")] ?? "");
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -291,7 +292,10 @@ export async function setSampleMethod(
       const raw = [member.day2, member.month2, member.year2].map((v) => v ?? "");
       const target = dateEnd !== "" ? [d!, mo!, y!] : ["", "", ""];
       (["day2", "month2", "year2"] as const).forEach((f, i) => {
-        if ((corrected.get(`${member._id}|${f}`) ?? raw[i]) !== target[i]) event(f, target[i]!);
+        // Written where the store's value or the file's differs, so both end up holding the target: a save whose file
+        // write succeeded and whose store write failed is finished by the retry.
+        const key = `${member._id}|${f}`;
+        if ((corrected.get(key) ?? raw[i]) !== target[i] || (inFile.get(key) ?? (corrected.get(key) ?? raw[i])) !== target[i]) event(f, target[i]!);
       });
     }
   }

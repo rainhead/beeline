@@ -1032,7 +1032,7 @@ const PRIMARY_COLLECTOR_SORT = sql`(SELECT concat_ws(' ', p.family_name, p.given
  * stable across equal values, and a key a listing does not have falls back
  * to the default rather than erroring — the URL is typed by hand sometimes.
  */
-export function sampleOrder(query: ListingQuery, p: PlaceColumns) {
+function sampleOrder(query: ListingQuery, p: PlaceColumns) {
   const dir = query.dir === "desc" ? sql`DESC` : sql`ASC`;
   const nulls = sql`NULLS LAST`;
   const byDate = sql`s.date_start ${dir}, ${sampleNumber(query.dir)}`;
@@ -1064,7 +1064,7 @@ export const sortsOnDetermination = (query: ListingQuery) =>
 /** The specimens' filters that read the name of record: a taxon, and any state of being named. */
 export const filtersOnDetermination = (query: ListingQuery) => query.taxon !== "" || query.det !== "any";
 
-export function specimenOrder(query: ListingQuery, p: PlaceColumns) {
+function specimenOrder(query: ListingQuery, p: PlaceColumns) {
   const dir = query.dir === "desc" ? sql`DESC` : sql`ASC`;
   const nulls = sql`NULLS LAST`;
   const byDate = sql`s.date_start ${dir}, ${sampleNumber(query.dir)}`;
@@ -1398,7 +1398,7 @@ function qcPredicate(status: QcStatus) {
  * download, and the API's counts and groupings, so a count cannot be made
  * from a second copy of the filters and disagree with the listing.
  */
-export async function filteredSamples(
+async function filteredSamples(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,

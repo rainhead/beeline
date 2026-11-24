@@ -224,6 +224,48 @@ describe("in-app editing of non-iNat samples", () => {
     expect(records).toHaveLength(0);
   });
 
+  it("takes a method from the list, writing it as the corrected text and as the method together", async () => {
+    const { app, conn, beaSample, correctionsPath } = await editApp();
+    expect(await rows(conn, `SELECT method_code, trap_count FROM sample_method WHERE sample_id = ${beaSample}`)).toEqual([["vane trap", 6]]);
+    const res = await post(app, `/samples/${beaSample}/edit`, { "base:protocol": "6 Vane Traps", protocol: "pan trap" });
+    expect(res.status).toBe(302);
+    expect(await rows(conn, `SELECT s.protocol, m.method_code, m.trap_count FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${beaSample}`)).toEqual([["pan trap", "pan trap", 6]]);
+    expect(parseCsv(await readFile(correctionsPath, "utf8")).find((r) => r[1] === "samplingProtocol")?.[3]).toBe("pan trap");
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
+  });
+
+  it("keeps the trap count where the new method is a trap, and takes it away where it is not", async () => {
+    const { app, conn, beaSample } = await editApp();
+    const held = async () => (await rows(conn, `SELECT s.sampling_effort, m.method_code, m.trap_count FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${beaSample}`))[0];
+    expect(await held()).toEqual(["6 vane traps", "vane trap", 6]);
+    await post(app, `/samples/${beaSample}/edit`, { "base:protocol": "6 Vane Traps", protocol: "pan trap" });
+    expect(await held()).toEqual(["6 pan traps", "pan trap", 6]);
+    await post(app, `/samples/${beaSample}/edit`, { "base:protocol": "pan trap", protocol: "vacuum" });
+    expect(await held()).toEqual([null, "vacuum", null]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
+  });
+
+  it("refuses words that are not on the list, naming the methods, and writes nothing", async () => {
+    const { app, conn, beaSample, correctionsPath } = await editApp();
+    for (const protocol of ["six vane traps", "pan traps", ""]) {
+      const res = await post(app, `/samples/${beaSample}/edit`, { "base:protocol": "6 Vane Traps", protocol, locality: "Walla Walla" });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("Choose one of the listed methods: aerial net, bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vacuum, vane trap.");
+    }
+    expect(await rows(conn, `SELECT s.protocol, m.method_code FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${beaSample}`)).toEqual([["6 Vane Traps", "vane trap"]]);
+    // Nothing else the form carried was written either: the edit is refused whole.
+    expect(await rows(conn, `SELECT locality FROM sample WHERE entity_id = ${beaSample}`)).toEqual([["5th St, Walla Walla vicinity"]]);
+    expect(parseCsv(await readFile(correctionsPath, "utf8")).slice(1)).toHaveLength(0);
+  });
+
+  it("offers the method as a list, keeping the words as written that are not on it", async () => {
+    const { app, beaSample } = await editApp();
+    const form = await (await app.request(`/samples/${beaSample}/edit`)).text();
+    expect(form).toContain("6 Vane Traps (as written)");
+    expect(form).toContain(`<option value="aerial net">aerial net</option>`);
+    expect(form).toContain(`<option value="vane trap">vane trap</option>`);
+  });
+
   it("edits survive the blow-away rebuild: a fresh promote re-derives them", async () => {
     const { app, beaSample, correctionsPath } = await editApp();
     await post(app, `/samples/${beaSample}/edit`, { locality: "Walla Walla", county: "WallaWallaCo" });

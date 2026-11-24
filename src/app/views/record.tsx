@@ -20,7 +20,6 @@ import { programHref } from "../programs.js";
 import { plantNameKey } from "../../plant-name-key.js";
 import type { ListedFlag } from "../listings.js";
 import { methodNamesTrap } from "../../trap-method.js";
-import { trapCountOf } from "../../trap-sample.js";
 import {
   Absent,
   AtlasMark,
@@ -173,6 +172,7 @@ export function SampleFacts({
   sample,
   placeEdit = null,
   methodEdit = false,
+  methodChoices = [],
   trapCountEdit = false,
   hostEdit = false,
   personLinks = false,
@@ -190,6 +190,8 @@ export function SampleFacts({
    * its own form (beeline-0wbq).
    */
   methodEdit?: boolean;
+  /** The codes of the methods the Method form offers (`readMethodCodes`, src/app/sample-method.ts), the traps alone for a sample entered in Beeline. */
+  methodChoices?: readonly string[];
   /** Whether the reader may correct a trap sample's trap count: staff, on any trap sample (beeline-kgyd.4.1). */
   trapCountEdit?: boolean;
   /** Whether the reader may set the floral host: staff, on a sample a host can be kept against (beeline-hlay). */
@@ -218,13 +220,13 @@ export function SampleFacts({
             {sample.kind === "trap" ? <Term m={m} slug="trap-sample">{s.methodTrap}</Term> : s.methodNet}
             {protocolSaysMore(sample) && <Meta> · {sample.protocol}</Meta>}
           </span>
-          {methodEdit && <MethodEdit m={m} sample={sample} />}
+          {methodEdit && <MethodEdit m={m} sample={sample} methods={methodChoices} />}
           {trapCountEdit && sample.kind === "trap" && <TrapCountEdit m={m} sample={sample} />}
         </>
       ),
     },
-    // Trap-only, and still free text pending the staff vocabulary answers.
-    sample.sampling_effort === null ? null : { term: s.effort, value: sample.sampling_effort },
+    // How many traps (`sample_method.trap_count`), for a trap sample that has a count; staff correct it from the pencil on the Method row.
+    sample.trap_count === null ? null : { term: s.trapCountRow, value: String(sample.trap_count) },
     {
       term: s.place,
       value: (
@@ -678,7 +680,7 @@ function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDet
  * collecting ended, which makes an old sample a trap sample, and the day it
  * started where iNaturalist does not hold it (src/app/sample-method.ts).
  */
-function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
+function MethodEdit({ m, sample, methods }: { m: Messages; sample: SampleDetail; methods: readonly string[] }) {
   const t = m.record.sample.methodEdit;
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   const startEditable = sample.inat_observation_id === null;
@@ -693,7 +695,20 @@ function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
       <Meta block>{sample.from_old_records ? t.hint : t.hintEntered}</Meta>
       {/* What the form shows rides along as base:*, so a save can tell a
           field nobody touched from a stale one (beeline-0br). */}
-      <TextField id="method-protocol" name="protocol" label={t.protocol} hint={t.protocolHint} value={sample.protocol} base={sample.protocol} />
+      <input type="hidden" name="base:protocol" value={sample.protocol ?? ""} />
+      <SelectField
+        id="method-protocol"
+        name="protocol"
+        label={t.protocol}
+        hint={t.protocolHint}
+        value={sample.protocol ?? ""}
+        options={[
+          // What the sample has now, when it is not a method on the list: kept as written unless another is chosen.
+          ...((sample.protocol ?? "").trim() === "" || methods.includes(sample.protocol ?? "") ? [] : [[sample.protocol ?? "", t.protocolAsWritten(sample.protocol ?? "")] as const]),
+          ...((sample.protocol ?? "").trim() === "" ? [["", t.protocolChoose] as const] : []),
+          ...methods.map((code) => [code, code] as const),
+        ]}
+      />
       {startEditable && (
         <>
           <input type="hidden" name="base:date_start" value={iso(sample.date_start)} />
@@ -719,8 +734,8 @@ function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
 
 /**
  * Staff correcting how many traps a trap sample had, from its own pencil on
- * the Method row. The count is the leading number of the sample's effort, so
- * the form shows that number and a blank takes it away (src/trap-sample.ts).
+ * the Method row. The count is the sample's `sample_method.trap_count`, so the
+ * form shows it and a blank takes it away.
  */
 function TrapCountEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
   const t = m.record.sample.trapCount;
@@ -733,7 +748,7 @@ function TrapCountEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
       cancel={m.listings.samples.placeEdit.cancel}
     >
       <Meta block>{t.hint}</Meta>
-      <TextField id="trap-count" name="count" label={t.count} value={trapCountOf(sample.sampling_effort)?.toString() ?? null} />
+      <TextField id="trap-count" name="count" label={t.count} value={sample.trap_count?.toString() ?? null} />
       <TextField id="trap-count-note" name="note" label={t.note} />
     </InlineEdit>
   );
@@ -1161,6 +1176,7 @@ export function SamplePage({
   deleteHref,
   entered = false,
   enteredPastItsForm = false,
+  methodChoices = [],
   placePending = false,
 }: {
   m: Messages;
@@ -1182,6 +1198,8 @@ export function SamplePage({
   enteredPastItsForm?: boolean;
   /** Whether the sample was entered in Beeline rather than imported (beeline-3vs.2). */
   entered?: boolean;
+  /** The codes of the methods staff may choose on the Method form. */
+  methodChoices?: readonly string[];
   /**
    * Staff just set the point and its county and state could not be written
    * from it at once (beeline-1kb.17.1); the page says so, since a reprint
@@ -1210,6 +1228,7 @@ export function SamplePage({
           sample={sample}
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
           methodEdit={admin && (sample.from_old_records || enteredPastItsForm)}
+          methodChoices={methodChoices}
           trapCountEdit={admin}
           hostEdit={admin && (sample.inat_observation_id !== null || (sample.from_old_records && !entered))}
           personLinks={admin}
@@ -1252,12 +1271,38 @@ export function SamplePage({
 }
 
 /**
+ * The lines of a sample's history the panel shows. One act writes several lines, because the log records every field
+ * that changed: changing a method writes Method, Method as written and the old Sampling effort column, and changing a
+ * count writes Number of traps and Sampling effort. The panel shows one line for the act: it leaves out Sampling effort
+ * where the same act changed Number of traps or Method, and Method as written where the same act changed Method to the
+ * value the wording became. A Method as written line with no Method line (a wording corrected to another wording for the
+ * same method) is shown. Every line is still in the log and in what the API returns. An act is what one pass of the log
+ * recorded for the sample: its lines share their time, author, source and reason (`recordSampleChanges` takes one
+ * instant for a pass, and a correction records its own sample alone).
+ */
+export function historyForPanel(history: readonly SampleChange[]): SampleChange[] {
+  const act = (e: SampleChange) => JSON.stringify([e.at, e.author, e.source, e.reason, e.store, e.sample_id]);
+  const fields = new Map<string, Map<string, string>>();
+  for (const e of history) {
+    const own = fields.get(act(e)) ?? fields.set(act(e), new Map()).get(act(e))!;
+    own.set(e.field, e.new_value);
+  }
+  return history.filter((e) => {
+    const own = fields.get(act(e))!;
+    if (e.field === "sampling_effort") return !own.has("trap_count") && !own.has("method");
+    if (e.field === "protocol") return !(own.has("method") && own.get("method") === e.new_value);
+    return true;
+  });
+}
+
+/**
  * What the change log recorded about this sample, newest first (beeline-ewl,
  * the second instance of ADR 0007). Shaped like the person page's history —
  * same columns, same "set to"/"cleared" reading — because staff read both.
  */
-function SampleHistory({ m, history }: { m: Messages; history: readonly SampleChange[] }) {
+function SampleHistory({ m, history: logged }: { m: Messages; history: readonly SampleChange[] }) {
   const h = m.record.history;
+  const history = historyForPanel(logged);
   const value = (v: string) => (v === "" ? <Meta>{h.blank}</Meta> : <code>{v}</code>);
   return (
     <>

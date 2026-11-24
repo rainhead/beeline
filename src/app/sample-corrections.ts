@@ -3,7 +3,8 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
 import { recordSampleChanges, type SampleChangeSource } from "../sample-change.js";
-import { loadTrapSample, mayEditTrapSample, seriesTrapNumberTaken, setTrapSampleLocality, trapEffort } from "../trap-sample.js";
+import { setSampleMethodRow } from "../sample-method-row.js";
+import { loadTrapSample, mayEditTrapSample, seriesTrapNumberTaken, setTrapSampleLocality } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
 import {
@@ -268,6 +269,8 @@ export interface EditSampleInput {
    * asks for it.
    */
   dryRun?: boolean;
+  /** The sentence for a method that is not on the list, naming the methods that are (the catalogue's `unlistedMethod`). */
+  unlistedMethodProblem: (methods: readonly string[]) => string;
 }
 
 /** One field an edit changes: its value now, and the value after. A cleared field is null. */
@@ -285,7 +288,8 @@ export type EditSampleResult =
       /** The fields changed, or that a dry run would change. */
       changes: FieldChange[];
     }
-  | Refused<"impersonating" | "not_editable" | "no_staging" | "not_applied">;
+  | Refused<"impersonating" | "not_editable" | "no_staging" | "not_applied">
+  | Invalid;
 
 /** The changes an edit makes to these fields, as the plan and the writer both trim them. */
 function fieldChanges(sample: EditableSample, fields: EditableFieldName[], values: EditSampleInput["values"]): FieldChange[] {
@@ -315,6 +319,7 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
     if (form.dryRun === true) {
       const plan = await planSampleEdit(deps.db, sample, edit);
       if (plan.outcome === "no_staging") return refused("no_staging");
+      if (plan.outcome === "unlisted_method") return { ok: false, refusal: "invalid", problem: form.unlistedMethodProblem(plan.methods) };
       if (plan.outcome === "unchanged") return { ok: true, outcome: "unchanged", changes: [] };
       return { ok: true, outcome: "would_save", changes: fieldChanges(sample, plan.changed, form.values) };
     }
@@ -327,6 +332,7 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
       throw err;
     }
     if (result.outcome === "no_staging") return refused("no_staging");
+    if (result.outcome === "unlisted_method") return { ok: false, refusal: "invalid", problem: form.unlistedMethodProblem(result.methods) };
     // Record what just changed, credited to whoever typed it. Narrowed to
     // this sample, so the author is charged with this sample's pending
     // differences and no other sample's; in the rare case another writer
@@ -663,24 +669,23 @@ export interface TrapCountInput {
 }
 
 export type TrapCountResult =
-  | { ok: true; outcome: Outcome; /** The effort now held, as the sample's page shows it; null when none. */ effort: string | null }
+  | { ok: true; outcome: Outcome; /** The trap count now held; null when none. */ trap_count: number | null }
   | Common
   | StaffOnly
   | Refused<"busy">
   | Invalid;
 
 /**
- * Staff set how many traps a trap sample had, or take the count away. The count
- * is kept only as the first number of the sample's effort ("6 vane traps",
- * `trapEffort`), so this writes the effort with the sample's current method; a
- * blank count clears it. Any trap sample may be corrected, printed or not,
- * since nothing prints or exports the count. Staff only, and refused while
+ * Staff set how many traps a trap sample had, or take the count away: a blank
+ * count clears it. A sample with no method, or a method that is not a trap,
+ * has no count to set. Any trap sample may be corrected, printed or not, since
+ * nothing prints or exports the count. Staff only, and refused while
  * impersonating.
  *
- * It is written straight to the sample and recorded in its history, with no
- * overlay file: a count has no old record to be kept against, and production
- * is never promoted again (ADR 0006). A development store rebuilt from the
- * old records loses it.
+ * It is written straight to `sample_method.trap_count` and recorded in the
+ * sample's history, with no overlay file: a count has no old record to be kept
+ * against, and production is never promoted again (ADR 0006). A development
+ * store rebuilt from the old records loses it.
  */
 export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<TrapCountInput>): Promise<TrapCountResult> {
   const gates = async () => {
@@ -689,7 +694,7 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
     const sample = await deps.db
       .selectFrom("sample")
       .where("entity_id", "=", sampleId)
-      .select(["kind", "protocol", "sampling_effort"])
+      .select(["kind", "protocol"])
       .executeTakeFirst();
     if (sample === undefined) return refused("not_found");
     return { ready: sample };
@@ -697,24 +702,29 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
   return correct(sampleId, input, gates, async (sample, form): Promise<TrapCountResult> => {
     const invalid = (problem: string): Invalid => ({ ok: false, refusal: "invalid", problem });
     const given = String(form.count).trim();
-    let effort: string | null = null;
+    const held = await sql<{ method_code: string; is_trap: boolean; trap_count: number | null }>`
+      SELECT m.method_code, d.is_trap, m.trap_count FROM sample_method m JOIN method d ON d.code = m.method_code WHERE m.sample_id = ${sampleId}`.execute(deps.db);
+    const stored = held.rows[0];
     if (given !== "") {
       if (!/^[1-9]\d{0,5}$/.test(given)) return invalid(form.problemFor("count"));
       if (sample.kind !== "trap") return invalid(form.problemFor("net"));
-      const method = (sample.protocol ?? "").trim();
-      if (method === "") return invalid(form.problemFor("method"));
-      effort = trapEffort(Number(given), method);
+      // A count is the count of a method's traps: a sample with no method has none to count, and a method that is not a
+      // trap takes none.
+      if (stored === undefined) return invalid(form.problemFor("method"));
+      if (!stored.is_trap) return invalid(form.problemFor("net"));
     }
-    if (effort === (sample.sampling_effort ?? null)) return { ok: true, outcome: "unchanged", effort };
+    const count = given === "" ? null : Number(given);
+    // Nothing to take away from a sample with no method row.
+    if (stored === undefined || stored.trap_count === count) return { ok: true, outcome: "unchanged", trap_count: stored?.trap_count ?? null };
     try {
-      await deps.db.updateTable("sample").set({ sampling_effort: effort }).where("entity_id", "=", sampleId).execute();
+      await deps.db.transaction().execute((trx) => setSampleMethodRow(trx, sampleId, stored.method_code, count));
     } catch (err) {
       // Nothing is recorded anywhere else, so a conflict means nothing was done: say so, and let the caller send it again.
       if (isWriteConflict(err)) return refused("busy");
       throw err;
     }
     await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "trap count change");
-    return { ok: true, outcome: effort === null ? "removed" : "saved", effort };
+    return { ok: true, outcome: count === null ? "removed" : "saved", trap_count: count };
   });
 }
 
@@ -724,7 +734,7 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
 export type MethodProblem = Extract<MethodResult, { outcome: "invalid" }>["problem"];
 
 export interface SetMethodInput {
-  /** The method in words; blank for none. */
+  /** The code of the method chosen from the list, or the sample's method as written unchanged (`setSampleMethod`). */
   protocol: string;
   /** The day collecting ended; blank for a net sample collected on one day. */
   dateEnd: string;
@@ -740,8 +750,8 @@ export interface SetMethodInput {
    * the end is the start. Without it a blank end makes an old sample a net sample, as the method page's form does.
    */
   keepTrap?: boolean;
-  /** The sentence for each way the method or dates are refused as invalid. */
-  problemFor: (problem: MethodProblem) => string;
+  /** The sentence for each way the method or dates are refused as invalid; for an unlisted method, with the codes that may be chosen. */
+  problemFor: (problem: MethodProblem, methods: readonly string[]) => string;
 }
 
 export type SetMethodResult =
@@ -799,7 +809,7 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
         case "unchanged":
           return { ok: true, outcome: "unchanged" };
         case "invalid":
-          return { ok: false, refusal: "invalid", problem: form.problemFor(saved.problem) };
+          return { ok: false, refusal: "invalid", problem: form.problemFor(saved.problem, saved.methods ?? []) };
         case "no_old_records":
         case "conflict":
         case "not_applied":

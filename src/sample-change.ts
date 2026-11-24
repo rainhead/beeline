@@ -65,6 +65,8 @@ export const SAMPLE_FIELDS = [
   "locality",
   "protocol",
   "sampling_effort",
+  "method",
+  "trap_count",
   "host",
   "atlas",
   "atlas_assigned_by",
@@ -276,6 +278,8 @@ export const SAMPLE_STATE_SQL = `
          coalesce(s.locality, '') AS locality,
          coalesce(s.protocol, '') AS protocol,
          coalesce(s.sampling_effort, '') AS sampling_effort,
+         coalesce(sm.method_code, '') AS method,
+         coalesce(CAST(sm.trap_count AS VARCHAR), '') AS trap_count,
          CASE WHEN sa.sample_id IS NULL THEN ''
               WHEN sa.atlas_id IS NULL THEN 'none'
               ELSE coalesce(atl.code, '') END AS atlas,
@@ -293,6 +297,7 @@ export const SAMPLE_STATE_SQL = `
   JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
   JOIN person_ref pr ON pr.entity_id = pc.person_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
+  LEFT JOIN sample_method sm ON sm.sample_id = s.entity_id
   LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
   LEFT JOIN program atl ON atl.entity_id = sa.atlas_id
   LEFT JOIN person_ref apr ON apr.entity_id = sa.assigned_by`;

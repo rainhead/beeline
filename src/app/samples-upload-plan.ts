@@ -5,8 +5,8 @@ import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
 import { en } from "./messages/en.js";
 import type { Messages } from "./messages/index.js";
-import { distanceMetres, effortBecomes, predictRefusals, type AreaValues, type ChangeUnit, type CollectorsPreview, type SampleFacts, type UnitChange } from "./samples-upload-change.js";
-import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, lookalikesAmong, readLookalikeCandidates, readSeriesHolders, readTrapNumbers, seriesNumberHeldProblem, seriesNumberProblem, type Lookalike, type LookalikeCandidate, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
+import { distanceMetres, predictRefusals, type AreaValues, type ChangeUnit, type CollectorsPreview, type SampleFacts, type UnitChange } from "./samples-upload-change.js";
+import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, lookalikesAmong, methodCodes, readLookalikeCandidates, readSeriesHolders, readTrapNumbers, seriesNumberHeldProblem, seriesNumberProblem, type Lookalike, type LookalikeCandidate, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import { otherPrograms, programsOfNewState, type ChangedRecord, type OtherProgram } from "./upload-atlases.js";
@@ -289,6 +289,9 @@ export async function readNow(db: Kysely<Database>, ids: number[], reader: Reade
   for (let i = 0; i < ids.length; i += CHUNK) {
     const chunk = ids.slice(i, i + CHUNK);
     const page = await listSamples(db, query, 0, reader, { ids: chunk, limit: chunk.length, offset: 0, withTotal: false, withFlagWords: false, hostNames: "common" });
+    const methodOf = new Map(
+      (await sql<{ sample_id: number; method_code: string }>`SELECT sample_id, method_code FROM sample_method WHERE sample_id IN (${sql.join(chunk.map((id) => sql`${id}`))})`.execute(db)).rows.map((m) => [Number(m.sample_id), m.method_code] as const),
+    );
     for (const r of page.rows) {
       const written = samplesFileRow(r, page);
       const cells = new Map<string, string>();
@@ -303,7 +306,7 @@ export async function readNow(db: Kysely<Database>, ids: number[], reader: Reade
           protocol: (r.protocol ?? "").trim(),
           hasObservation: r.inat_observation_id !== null,
           entered: r.entered,
-          effort: r.sampling_effort,
+          methodCode: methodOf.get(r.sample_id) ?? null,
         },
       });
     }
@@ -410,7 +413,6 @@ function changeFor(unit: SamplesUnit, full: Map<string, Evaluated>, cells: Map<s
         wasProtocol: was,
         // What the method page's form shows: the end day of a trap sample, blank for a net sample.
         bases: { protocol: was, start: nowStart ?? "", end: kind === "trap" ? (nowEnd ?? nowStart ?? "") : "" },
-        effortBecomes: null,
       };
     }
     case "trap_count":
@@ -518,6 +520,8 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   const fileNumbers = rows.flatMap(({ cells }, i) => (idOf[i]!.given === "" ? [text(cells, "fieldNumber")] : [])).filter((n) => n !== "");
   const holderOf = await readSeriesHolders(conn, fileNumbers);
   const trapNumbers = await readTrapNumbers(conn, fileNumbers);
+  // The methods a new row may name, read once for the file (src/trap-sample.ts).
+  const trapMethodCodes = await methodCodes(conn, { trapOnly: true });
   const candidates = new Map<number, LookalikeCandidate[]>();
   const candidatesOf = async (collectorId: number) => {
     if (!candidates.has(collectorId)) for (const [id, own] of await readLookalikeCandidates(conn, [collectorId])) candidates.set(id, own);
@@ -597,7 +601,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         county: full.get("county")!.fileText,
         locality: full.get("locality")!.fileText,
       };
-      const checked = await checkTrapSample(conn, form, null, { staff: true, people, taken: (n) => trapNumbers.has(n) });
+      const checked = await checkTrapSample(conn, form, null, { staff: true, people, taken: (n) => trapNumbers.has(n), methods: trapMethodCodes });
       if ("problems" in checked) {
         for (const [field, sentence] of Object.entries(checked.problems) as Array<[keyof TrapSampleForm, string]>) {
           if (FORM_COLUMNS[field].some((c) => flagged.has(c))) continue;
@@ -696,7 +700,6 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
     }
     // What each correction would say to the row's changes, in the order they are applied, over the kinds ticked.
     if (queued.length > 0) {
-      for (const q of queued) if (q.change.unit === "method_dates") q.change.effortBecomes = await effortBecomes(db, known!.facts, q.change);
       const predicted = await predictRefusals({ db, conn, messages }, known!.facts, queued.map((q) => q.change), (u) => kinds.has(u));
       for (const q of queued) {
         const p = predicted.get(q.unit as ChangeUnit);

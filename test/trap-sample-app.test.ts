@@ -272,6 +272,7 @@ describe("entering a trap sample", () => {
     const after = (await readSampleChanges(paths.sampleChangesPath)).slice(made.length);
     expect(after.map((e) => [e.sample_number, e.field, e.old_value, e.new_value, e.author])).toEqual([
       ["OBAS-00658", "sampling_effort", "6 vane traps", "8 vane traps", "staffer"],
+      ["OBAS-00658", "trap_count", "6", "8", "staffer"],
       ["OBAS-00658", "sample_number", "OBAS-00658", "OBAS-00659", "staffer"],
     ]);
   });

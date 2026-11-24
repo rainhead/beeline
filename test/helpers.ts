@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applySchema } from "../src/build-db.js";
 import { loadSpatial, openDuckDb } from "../src/db.js";
+import { fillEffortFromStored } from "../src/sample-method-row.js";
 import type { PromotionInputs } from "../src/promote-legacy.js";
 
 /**
@@ -179,6 +180,19 @@ export async function insertCleanSample(
     `INSERT INTO sample (${keys.join(", ")}) VALUES (${keys.map((k) => cols[k]).join(", ")}) RETURNING entity_id`,
   );
   const [[id]] = (await result.getRows()) as [[number]];
+  // The method, as the migration that made sample_method gives it: whatever method_text says the method as written
+  // means, with a count only for a trap: the one the effort states ("6 vane traps"), else the text's. A text it does not
+  // know gives no row, as for a real sample. Then the old effort column, by the one function that writes it.
+  await conn.run(
+    `INSERT INTO sample_method (sample_id, method_code, trap_count)
+     SELECT s.entity_id, t.method_code,
+            CASE WHEN d.is_trap THEN coalesce(
+              TRY_CAST(nullif(regexp_extract(s.sampling_effort, '^([1-9][0-9]{0,5}) .+$', 1), '') AS INTEGER),
+              t.trap_count) END
+     FROM sample s JOIN method_text t ON t.text = s.protocol JOIN method d ON d.code = t.method_code
+     WHERE s.entity_id = ${id}`,
+  );
+  await fillEffortFromStored(conn, [id]);
   // Position 1 is the primary collector — the head every "my samples" query
   // and attribution read (beeline-77j, beeline-6e9).
   await conn.run(

@@ -205,7 +205,7 @@ import {
   type Actor,
   type CorrectionDeps,
 } from "./sample-corrections.js";
-import { localityReasonFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
+import { localityReasonFor, methodProblemFor, takeLocationDefaultReason, trapCountProblemFor, unlistedMethodFor } from "./correction-reasons.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
 import { isWriteConflict } from "../write-conflict.js";
@@ -215,6 +215,7 @@ import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from ".
 import {
   checkTrapSample,
   collectorChoices,
+  methodCodes,
   createTrapSample,
   deletable,
   deleteTrapSample,
@@ -274,6 +275,7 @@ import {
   sampleHref,
 } from "./record.js";
 import { SamplePage, SpecimenPage } from "./views/record.js";
+import { readMethodCodes } from "./sample-method.js";
 import { AtlasMark } from "./views/components/atlas-mark.js";
 import { ATLAS_IDENTITY } from "./theme/atlas.js";
 
@@ -1013,7 +1015,7 @@ export function createApp({
           problem={extra.problem}
           acting={c.get("acting").actingFor !== null}
           now={new Date()}
-          description={describeApi(config.origin, (await atlasOptions(db)).map((a) => a.code), (await scopePrograms(db)).map((a) => a.code))}
+          description={describeApi(config.origin, (await atlasOptions(db)).map((a) => a.code), (await scopePrograms(db)).map((a) => a.code), await readMethodCodes(db))}
         />,
       ),
       status,
@@ -1435,6 +1437,7 @@ export function createApp({
           deleteHref={deleteHref}
           entered={entered !== null}
           enteredPastItsForm={entered !== null && !entered.editable}
+          methodChoices={c.get("admin") ? await readMethodCodes(db, { trapOnly: entered !== null }) : []}
           placePending={c.get("admin") && c.req.query("place") === "pending"}
         />,
       ),
@@ -1518,6 +1521,7 @@ export function createApp({
         form={form}
         problems={problems}
         collectorNames={await collectorChoices(conn!)}
+        methods={await methodCodes(conn!, { trapOnly: true })}
         action={action}
         sampleId={sampleId}
         // A new sample's form shows staff the note from the start, worded for either season,
@@ -1669,7 +1673,7 @@ export function createApp({
     // gate reads the effective person (beeline-oyl).
     const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("acting").personId);
     if (sample === undefined) return errorResponse(c, "notFound", { heading: m.sampleEdit.notEditableHeading, message: m.sampleEdit.notEditable });
-    return c.html(await page(c, m.sampleEdit.title, <SampleEditForm m={m} sample={sample} />));
+    return c.html(await page(c, m.sampleEdit.title, <SampleEditForm m={m} sample={sample} methods={await readMethodCodes(db)} />));
   });
 
   // One at a time for the sample: its corrections and the change log
@@ -1685,11 +1689,13 @@ export function createApp({
       const names = ["locality", "country", "state_province", "county", "protocol"] as const;
       const values = Object.fromEntries(names.map((name) => [name, field(name)]).filter(([, v]) => v !== undefined));
       const bases = Object.fromEntries(names.map((name) => [name, field(`base:${name}`)]).filter(([, v]) => v !== undefined));
-      return { values, bases, note: field("note") };
+      return { values, bases, note: field("note"), unlistedMethodProblem: unlistedMethodFor(m) };
     };
     const result = await editSample(corrective, actorOf(c), id, form);
     if (result.ok) return c.redirect("/");
     switch (result.refusal) {
+      case "invalid":
+        return c.text(result.problem, 400);
       case "impersonating":
         return c.text(m.errors.readOnlyImpersonating, 403);
       case "not_editable":
@@ -1825,7 +1831,7 @@ export function createApp({
       ...(typeof body.date_start === "string" ? { dateStart: body.date_start } : {}),
       note,
       today: new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date()),
-      problemFor: (problem) => t.problems[problem],
+      problemFor: methodProblemFor(m),
     });
     if (!result.ok) {
       switch (result.refusal) {
@@ -1855,7 +1861,7 @@ export function createApp({
   });
 
   // How many traps a trap sample had (beeline-kgyd.4.1): staff only, on any
-  // trap sample, kept as the leading number of its effort.
+  // trap sample, kept in sample_method.trap_count.
   app.post("/samples/:id/trap-count", async (c) => {
     const m = c.get("m");
     const id = Number(c.req.param("id"));

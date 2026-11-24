@@ -802,6 +802,7 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     await unlinked("8");
     await record();
     await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${gone}`);
+    await conn.run(`DELETE FROM sample_method WHERE sample_id = ${gone}`);
     await conn.run(`DELETE FROM sample WHERE entity_id = ${gone}`);
     await unlinked("7", { locality: "'Adair'" });
     await record();
@@ -968,6 +969,7 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     const newest = await unlinked("4");
     await record();
     await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${newest}`);
+    await conn.run(`DELETE FROM sample_method WHERE sample_id = ${newest}`);
     await conn.run(`DELETE FROM sample WHERE entity_id = ${newest}`);
     await renumber(id, "9");
     expect((await record()).appended).toBe(1);
@@ -999,6 +1001,7 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
       const lost = await unlinked("7", { locality: "'Alsea'" });
       await record();
       await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${lost}`);
+      await conn.run(`DELETE FROM sample_method WHERE sample_id = ${lost}`);
       await conn.run(`DELETE FROM sample WHERE entity_id = ${lost}`);
       const text = await readFile(paths.state, "utf8");
       const [origin, ...rest] = text.split("\n");
@@ -1278,6 +1281,7 @@ describe("what the pass deliberately does not say", () => {
     await record();
     await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${id}`);
     await conn.run(`DELETE FROM sample_location WHERE sample_id = ${id}`);
+    await conn.run(`DELETE FROM sample_method WHERE sample_id = ${id}`);
     await conn.run(`DELETE FROM sample WHERE entity_id = ${id}`);
     const result = await record();
     expect(result.appended).toBe(0);
@@ -1291,7 +1295,7 @@ describe("what the pass deliberately does not say", () => {
 
 describe("a snapshot another store wrote", () => {
   const replaceCorpus = async (numbers: string[]) => {
-    for (const t of ["sample_atlas", "sample_location", "sample_collector", "sample"]) await conn.run(`DELETE FROM ${t}`);
+    for (const t of ["sample_atlas", "sample_location", "sample_collector", "sample_method", "sample"]) await conn.run(`DELETE FROM ${t}`);
     for (const n of numbers) await insertCleanSample(conn, { sample_number: `'${n}'` });
   };
 
@@ -1477,6 +1481,7 @@ describe("a history is read by the sample's id", () => {
       await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${one}`);
       await record();
       await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${two}`);
+      await conn.run(`DELETE FROM sample_method WHERE sample_id = ${two}`);
       await conn.run(`DELETE FROM sample WHERE entity_id = ${two}`);
       await record();
       await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${one}`);

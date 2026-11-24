@@ -63,8 +63,28 @@ describe("the trap count pencil on the Method row", () => {
     expect(page).toContain(`/samples/${s.trap}/trap-count`);
     expect(page).toContain(t.open);
     expect(page).toMatch(/name="count"[^>]*value="6"|value="6"[^>]*name="count"/);
+    // The count is the stored one: with the old effort column emptied the form still shows it.
+    await s.conn.run(`UPDATE sample SET sampling_effort = NULL WHERE entity_id = ${s.trap}`);
+    expect(await (await s.staff.request(`/samples/${s.trap}`)).text()).toMatch(/name="count"[^>]*value="6"|value="6"[^>]*name="count"/);
     expect(await (await s.staff.request(`/samples/${s.net}`)).text()).not.toContain(`/trap-count`);
     expect(await (await s.collector.request(`/samples/${s.trap}`)).text()).not.toContain(`/trap-count`);
+  });
+
+  it("shows the count as a fact of its own to anyone, read-only where there is no pencil, and never the old effort column", async () => {
+    const s = await setup();
+    const row = (page: string) => /<dt[^>]*>(?:<[^>]+>)*Number of traps(?:<[^>]+>)*<\/dt>\s*<dd[^>]*>\s*6\s*<\/dd>/.test(page) || page.includes("Number of traps");
+    const asCollector = await (await s.collector.request(`/samples/${s.trap}`)).text();
+    expect(row(asCollector)).toBe(true);
+    expect(asCollector).not.toContain(`/trap-count`);
+    expect(asCollector).not.toContain("Sampling effort");
+    // The old effort column is not shown: emptied, the count still is; filled where there is no count, nothing is.
+    await s.conn.run(`UPDATE sample SET sampling_effort = NULL WHERE entity_id = ${s.trap}`);
+    expect(await (await s.collector.request(`/samples/${s.trap}`)).text()).toContain("Number of traps");
+    await s.conn.run(`UPDATE sample_method SET trap_count = NULL WHERE sample_id = ${s.trap}`);
+    await s.conn.run(`UPDATE sample SET sampling_effort = '6 vane traps' WHERE entity_id = ${s.trap}`);
+    const without = await (await s.collector.request(`/samples/${s.trap}`)).text();
+    expect(without).not.toContain("Number of traps");
+    expect(without).not.toContain("6 vane traps");
   });
 
   it("saves a count and takes it away, and refuses the rest in the catalogue's words", async () => {

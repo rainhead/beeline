@@ -1022,6 +1022,60 @@ export interface SampleAtlasTable {
   assigned_by: number | null;
 }
 
+/** schema/031: the controlled list of ways a sample's bees are caught (beeline-ni5m.15). */
+export interface MethodTable {
+  code: string;
+  /** One to six plain ASCII characters, what a label prints. */
+  label_word: string;
+  /** Set out and collected later: the plant is near the trap, the sample may span days. */
+  is_trap: boolean;
+}
+
+/** schema/031: a sample's method, one per sample, and the one place its trap count is kept. No row ⇒ no method yet (sample_without_method). */
+export interface SampleMethodTable {
+  sample_id: number;
+  method_code: string;
+  trap_count: number | null;
+}
+
+/** schema/031: which method each wording of sample.protocol means, matched on the exact text. */
+export interface MethodTextTable {
+  text: string;
+  method_code: string;
+  trap_count: number | null;
+}
+
+/** schema/121: a sample with no method. */
+export interface SampleWithoutMethodView {
+  sample_id: number;
+  sample_number: string;
+  protocol: string | null;
+}
+
+/**
+ * schema/121: a sample whose method, trap count or old effort column is out of step. Always empty. `clause` is the first
+ * clause the row fails: method, count or effort. The joins to the method's row and to `method_text` are LEFT joins, so
+ * every column read through them can be null.
+ */
+export interface SampleMethodOutOfStepView {
+  sample_id: number;
+  protocol: string | null;
+  sampling_effort: string | null;
+  stored_method_code: string | null;
+  text_method_code: string | null;
+  stored_trap_count: number | null;
+  expected_effort: string | null;
+  clause: "method" | "count" | "effort";
+}
+
+/** schema/121: a sample whose kind disagrees with its method's is_trap. */
+export interface SampleKindMethodMismatchView {
+  sample_id: number;
+  kind: SampleKind;
+  method_code: string;
+  is_trap: boolean;
+}
+
 /** A sample entered in Beeline rather than imported (beeline-3vs.2). */
 export interface SampleEntryTable {
   sample_id: number;
@@ -2212,6 +2266,12 @@ export interface Database {
   sample_primary_collector_invalid: SamplePrimaryCollectorInvalidView;
   sample_atlas: SampleAtlasTable;
   sample_entry: SampleEntryTable;
+  method: MethodTable;
+  sample_method: SampleMethodTable;
+  method_text: MethodTextTable;
+  sample_without_method: SampleWithoutMethodView;
+  sample_method_out_of_step: SampleMethodOutOfStepView;
+  sample_kind_method_mismatch: SampleKindMethodMismatchView;
   sample_locality_override: SampleLocalityOverrideTable;
   sample_locality_override_stale: SampleLocalityOverrideStaleView;
   sample_locality_override_diverged: SampleLocalityOverrideDivergedView;

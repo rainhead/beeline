@@ -227,6 +227,29 @@ the app no longer reads such a file.
 `fly deploy -c fly.production.toml`. The machine is replaced in place: migrations run, then the app
 starts. Downtime is one boot.
 
+**Rolling back past migration 0123, then forward again** (beeline-ni5m.15). The old code writes a sample's method as written without its `sample_method` row, so after the release goes forward again the nightly's last check ("check stored sample methods") fails until the rows are repaired. Repair them with the app stopped, with these two statements in this order, which are also in the header of `migrations/0123-a-controlled-list-of-methods.sql`. The first repairs the methods and counts from `method_text` and the count the old code wrote into the effort; the second writes the old effort column from the stored count (a sample with no method has no count, so its effort is emptied):
+
+```sql
+MERGE INTO sample_method m
+USING (SELECT s.entity_id AS sample_id, t.method_code,
+              CASE WHEN d.is_trap THEN coalesce(
+                TRY_CAST(nullif(regexp_extract(s.sampling_effort, '^([1-9][0-9]{0,5}) .+$', 1), '') AS INTEGER),
+                t.trap_count) END AS trap_count
+       FROM sample s JOIN method_text t ON t.text = s.protocol JOIN method d ON d.code = t.method_code) x
+ON m.sample_id = x.sample_id
+WHEN MATCHED AND (m.method_code IS DISTINCT FROM x.method_code OR m.trap_count IS DISTINCT FROM x.trap_count)
+  THEN UPDATE SET method_code = x.method_code, trap_count = x.trap_count
+WHEN NOT MATCHED THEN INSERT (sample_id, method_code, trap_count) VALUES (x.sample_id, x.method_code, x.trap_count)
+WHEN NOT MATCHED BY SOURCE THEN DELETE;
+
+UPDATE sample SET sampling_effort = x.expected
+FROM (SELECT s.entity_id AS sample_id,
+             CASE WHEN m.trap_count IS NULL THEN NULL
+                  ELSE concat(m.trap_count, ' ', m.method_code, CASE WHEN m.trap_count = 1 OR lower(m.method_code) LIKE '%s' THEN '' ELSE 's' END) END AS expected
+      FROM sample s LEFT JOIN sample_method m ON m.sample_id = s.entity_id) x
+WHERE sample.entity_id = x.sample_id AND sample.sampling_effort IS DISTINCT FROM x.expected;
+```
+
 **A deploy while a samples file is being applied** (beeline-kgyd.4.10) loses nothing. The `apply-uploads` job stops at a row boundary when the machine is told to shut down (a minute's grace, the nightly's rule; a row cut short by the interruption stays `pending` too, never refused), the rows it did have their outcome and the rest stay `pending` in `upload_sample_outcome`, and the scheduler starts the job again within a minute of the app coming back. The uploader's page shows "Applying: N of M" meanwhile. A creation already begun when the machine is told to stop is finished, not cut off (one creation behind the print runs' lock, seconds); none begins after. Migration 0110 adds two empty tables and two columns on `upload_applied`; no existing row changes. An upload the job stopped on because of an error (the Jobs page shows the job failing, and Sentry has the error) is left alone until staff press Try again on its page.
 
 **A change to the curated person overlay is not live after a deploy.** The

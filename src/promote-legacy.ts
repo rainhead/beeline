@@ -2,6 +2,7 @@ import { DuckDBConnection } from "@duckdb/node-api";
 import { openDuckDb } from "./db.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { fillEffortFromStored } from "./sample-method-row.js";
 import { pathToFileURL } from "node:url";
 import { ensureCorrectionsFile } from "./corrections.js";
 import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
@@ -164,6 +165,10 @@ export async function promoteLegacy(
       .replaceAll("{{APP_CORRECTIONS}}", appCorrections.replaceAll("'", "''"))
       .replaceAll("{{COLLECTOR_ALIASES}}", collectorAliases.replaceAll("'", "''")),
   );
+  // A trap count the method as written states is a count of the method's traps, and the old effort column is kept
+  // filled from it by the one function that writes it (src/sample-method-row.ts).
+  const counted = await conn.runAndReadAll(`SELECT sample_id FROM sample_method WHERE trap_count IS NOT NULL ORDER BY sample_id`);
+  await fillEffortFromStored(conn, counted.getRowObjectsJS().map((r) => Number(r.sample_id)));
   // Names come apart before anything reads them apart (beeline-qcd).
   await conn.run(
     (await readFile(`${INGEST_DIR}parse-names.sql`, "utf8"))

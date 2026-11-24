@@ -81,9 +81,11 @@ describe("the samples download", () => {
     expect((await volunteer.app.request("/samples.xlsx?scope=all")).status).toBe(403);
   });
 
-  it("writes the trap count from the effort, and takes the listing's filters", async () => {
+  it("writes the trap count from the stored count, never from the effort, and takes the listing's filters", async () => {
     const f = await uploadFixture();
-    await insertCleanSample(f.conn, { kind: "'trap'", sample_number: "'OBAS-00001'", protocol: "'vane trap'", sampling_effort: "'6 vane traps'", collector_id: String(f.volunteer) });
+    const trapId = await insertCleanSample(f.conn, { kind: "'trap'", sample_number: "'OBAS-00001'", protocol: "'vane trap'", sampling_effort: "'6 vane traps'", collector_id: String(f.volunteer) });
+    // The old effort column says something else: the file still has the count the sample holds.
+    await f.conn.run(`UPDATE sample SET sampling_effort = '9 vane traps' WHERE entity_id = ${trapId}`);
     const matrix = matrixOf(await download(f));
     const head = matrix[0]!;
     const trap = matrix.find((r) => r[head.indexOf("fieldNumber")] === "OBAS-00001")!;
@@ -178,6 +180,71 @@ describe("comparing the samples file", () => {
       expect(p.counts.differ).toEqual({ active: 1, settled: 0, unplaced: 0 });
     });
   }
+
+  describe("a change of method (beeline-ni5m.15)", () => {
+    const TRAPS = "bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap";
+    const ALL = "aerial net, bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vacuum, vane trap";
+    const refusalOf = async (f: Awaited<ReturnType<typeof uploadFixture>>, protocol: string) => {
+      const p = await plan(f, edit(await download(f), [{ id: f.ids.sampleA, set: { samplingProtocol: protocol } }]));
+      const r = rowOf(p, f.ids.sampleA);
+      expect(r.problems).toEqual([]);
+      return r.differences.find((d) => d.unit === "method_dates")?.refusal;
+    };
+    const enter = (f: Awaited<ReturnType<typeof uploadFixture>>) => f.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${f.ids.sampleA})`);
+
+    it("is refused, with a sentence naming the methods, when the words are not a method on the list", async () => {
+      const f = await uploadFixture();
+      await enter(f);
+      expect(await refusalOf(f, "pan traps")).toBe(`Choose one of the listed methods: ${TRAPS}.`);
+      expect(await refusalOf(f, "Vane Trap")).toBe(`Choose one of the listed methods: ${TRAPS}.`);
+      // A sample entered in Beeline is a trap sample, so a method that is not a trap is not offered for it.
+      expect(await refusalOf(f, "aerial net")).toBe(`Choose one of the listed methods: ${TRAPS}.`);
+      expect(await refusalOf(f, "pan trap")).toBeNull();
+    });
+
+    it("is refused for a sample from old records with every method named, and taken when it is on the list", async () => {
+      const f = await uploadFixture();
+      await f.conn.run(`CREATE TABLE legacy_specimen_number (_id TEXT, sample_id INTEGER, specimen_number INTEGER)`);
+      await f.conn.run(`INSERT INTO legacy_specimen_number VALUES ('x', ${f.ids.sampleA}, 1)`);
+      expect(await refusalOf(f, "pan traps")).toBe(`Choose one of the listed methods: ${ALL}.`);
+      expect(await refusalOf(f, "vacuum")).toBeNull();
+    });
+
+    it("is no change when the cell is the sample's own words, listed or not", async () => {
+      const f = await uploadFixture();
+      await enter(f);
+      await f.conn.run(`UPDATE sample SET protocol = 'pantrap' WHERE entity_id = ${f.ids.sampleA}`);
+      const p = await plan(f, await download(f));
+      expect(rowOf(p, f.ids.sampleA).differences).toEqual([]);
+      expect(rowOf(p, f.ids.sampleA).problems).toEqual([]);
+    });
+
+    it("on a new row must be a method on the list for a trap", async () => {
+      const f = await uploadFixture();
+      const ready = { fieldNumber: "OBAS-00011", recordedBy: "Vera Volunteer", eventDate: THIS_YEAR(10, "07"), trapCount: "6", specimenCount: "", decimalLatitude: "44.5", decimalLongitude: "-123.2", coordinateUncertaintyInMeters: "50", countryCode: "US", stateProvince: "OR", county: "Benton", locality: "Fir Butte" };
+      const p = await plan(f, edit(await download(f), [], { addRows: [{ ...ready, samplingProtocol: "6 vane traps" }, { ...ready, fieldNumber: "OBAS-00012", samplingProtocol: "vane trap" }] }));
+      const added = p.rows.filter((r) => r.kind === "new");
+      expect(added.map((r) => r.problems.map((x) => x.detail))).toEqual([[`Choose one of the listed methods: ${TRAPS}.`], []]);
+    });
+  });
+
+  it("refuses a trap count on a net sample and on a method that is not a trap, with the net sentence, and ignores none", async () => {
+    const f = await uploadFixture();
+    await f.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${f.ids.sampleA})`);
+    const refusal = async () => {
+      const p = await plan(f, edit(await download(f), [{ id: f.ids.sampleA, set: { trapCount: "3" } }]));
+      return rowOf(p, f.ids.sampleA).differences.find((d) => d.unit === "trap_count")?.refusal;
+    };
+    // A net sample (kind net, aerial net).
+    expect(await refusal()).toBe(en.record.sample.trapCount.problems.net);
+    // A trap sample whose method is not a trap: it takes none.
+    await f.conn.run(`UPDATE sample SET kind = 'trap', date_end = date_start + 2 WHERE entity_id = ${f.ids.sampleA}`);
+    expect(await refusal()).toBe(en.record.sample.trapCount.problems.net);
+    // And one whose method is a trap takes it.
+    await f.conn.run(`UPDATE sample SET protocol = 'pan trap' WHERE entity_id = ${f.ids.sampleA}`);
+    await f.conn.run(`UPDATE sample_method SET method_code = 'pan trap' WHERE sample_id = ${f.ids.sampleA}`);
+    expect(await refusal()).toBeNull();
+  });
 
   it("takes a list of collectors as the names in it, so `A|B` is `A | B`, and a two-letter country without case", async () => {
     const f = await uploadFixture();

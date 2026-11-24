@@ -33,7 +33,8 @@ import {
   type Include,
   type UploadPlan,
 } from "../src/app/ecdysis-upload.js";
-import { TRAP_METHODS } from "../src/trap-sample.js";
+/** Four trap methods, as fixed words: what is asserted below is written for these, and must not move when the `method` table gains one. */
+const TRAP_METHODS = ["vane trap", "pan trap", "malaise trap", "trap nest"] as const;
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
 import { BC, BC_OFFERED_YEARS_IN_CODE, fixture, HOUR, WABA } from "./ecdysis-upload-fixture.js";
 

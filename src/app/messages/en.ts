@@ -997,7 +997,8 @@ export const en = {
       collector: "The first collector's name comes first on the label.",
       dateStart: "The day the traps went out.",
       dateEnd: "The day they were brought in. Leave it empty if it was the same day.",
-      method: "Choose one, or write it in.",
+      method: "Choose one from the list.",
+      methodChoose: "Choose a method",
       trapCount: "How many traps went into this sample, if you know.",
       specimenCount: "Leave at 0 until the bees are pinned and counted: a sample with no specimens prints no labels.",
       // An example in the hint, never as a placeholder: grey text in an empty box read as a value (Peter, 2026-11-04).
@@ -1048,7 +1049,7 @@ export const en = {
       country: "Country",
       state_province: "State / province",
       county: "County",
-      protocol: "Sampling protocol",
+      protocol: "Method",
     } as Record<string, string>,
     noteLabel: "Note (optional)",
     noteHint: "Reason for this change (optional)",
@@ -1105,8 +1106,10 @@ export const en = {
         state_province: "State/Province",
         county: "County",
         locality: "Locality",
-        protocol: "Method",
+        protocol: "Method as written",
         sampling_effort: "Sampling effort",
+        method: "Method",
+        trap_count: "Number of traps",
         host: "Floral host",
         atlas: "Atlas",
         atlas_assigned_by: "Atlas assigned by",
@@ -1138,7 +1141,7 @@ export const en = {
       method: "Method",
       methodNet: "Net",
       methodTrap: "Trap",
-      effort: "Sampling effort",
+      trapCountRow: "Number of traps",
       place: "Place",
       /**
        * The observation's own place text, beside what the model made of it —
@@ -1320,8 +1323,13 @@ export const en = {
         hintEntered: "This sample's labels are printed or about to be, so its own form no longer opens. A correction here changes the sample; ask for a reprint if the labels should change too.",
         dateStart: "Collecting started",
         dateStartHint: "The day collecting began, or the day of a net sample.",
-        protocol: "Method, in the record's words",
-        protocolHint: "For example, pan traps, blue vane traps or aerial net.",
+        protocol: "Method",
+        protocolHint: "Choose one from the list. A method that is not on the list can be left as it was written, but not typed in.",
+        /** The option for a method as written that is not on the list, which keeps it. */
+        protocolAsWritten: (text: string) => `${text} (as written)`,
+        protocolChoose: "Choose a method",
+        /** For a method that is blank or not on the list, naming the methods that are. */
+        unlistedMethod: (names: string) => `Choose one of the listed methods: ${names}.`,
         dateEnd: "Collecting ended",
         dateEndHint: "Give the day the traps came in to make this a trap sample. Leave it blank for a net sample collected on one day.",
         note: "Reason (optional)",
@@ -1346,7 +1354,7 @@ export const en = {
       trapCount: {
         /** The pencil, for a screen reader: it has no visible words. */
         open: "Correct how many traps this sample had",
-        hint: "The count is kept with the kind of trap, as the sample's effort. Nothing prints it. Leave it blank to take it away.",
+        hint: "The count is kept with the kind of trap. Nothing prints it. Leave it blank to take it away.",
         count: "Number of traps",
         note: "Reason (optional)",
         save: "Save",
@@ -2686,15 +2694,12 @@ export const en = {
       notAppliedNothingKept: "The store did not take this change because another write got there first, and nothing was kept elsewhere. Try again sends it again.",
       notAppliedRefused:
         "The corrections file holds an event for this change that the store never got, and the sample has changed since. Tell staff, who can check the file.",
-      effortRewritten: (text: string) => `The effort text became ${text}.`,
-      effortNotRewritten: (why: string) => `The method changed, but the effort text was not rewritten: ${why}`,
       unexpected: "something went wrong, and was reported.",
       pointDeferred: "The point is saved, but the country, state and county that follow it are not worked out yet.",
       areaFollowsDeferred: "Not changed on its own: the country, state and county follow the point that was just set, and will follow it when it is worked out.",
       notAppliedUndone: "The corrections file still holds this change, which the store never got. Tell staff, who can check the file.",
       /** What a change refused as changed in Beeline says to somebody who is not staff, with no value of Beeline's in it. */
       changedSinceBare: "This changed in Beeline after the file was downloaded, so it was not made. Download a new file and make the change again.",
-      effortBusy: "another write got there first, so it was left as it was.",
       localityPrinted: "This sample was entered in Beeline and its labels are printed or about to be, so its locality can no longer be changed from here, by staff or anyone.",
       conflict: "This sample changed while the change was being worked out, so nothing was done. Download a new file and make the change again.",
       noLongerStaff: "The person who applied this file is no longer staff, so its changes were not made.",
@@ -2731,7 +2736,6 @@ export const en = {
       /** An existing sample's change, before and after applying. */
       moves: (distance: string) => `The point moves ${distance}.`,
       mayNot: (label: string, why: string) => `May not be applied (${label}): ${why}`,
-      effortBecomes: (text: string) => `The effort text becomes ${text}.`,
       collectorsWarning: (warnings: string) => `Collectors: ${warnings}`,
       /** The distance a point moves: metres below a kilometre, else kilometres to one decimal. */
       distance: (metres: number) => (metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`),

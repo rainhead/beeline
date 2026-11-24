@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   checkTrapSample,
   createTrapSample,
+  deleteTrapSample,
   loadTrapSample,
+  methodCodes,
   mayEnterTrapSamples,
   nextSampleNumber,
   updateTrapSample,
@@ -42,11 +44,11 @@ const personId = async (name: string) =>
   ((await rows(conn, `SELECT entity_id FROM person WHERE display_name = '${name.replaceAll("'", "''")}'`))[0]![0] as number);
 
 describe("checking a trap sample", () => {
-  it("resolves collectors in order and writes effort from the trap count", async () => {
+  it("resolves collectors in order and takes the trap count", async () => {
     const checked = await checkTrapSample(conn, form());
     if (!("sample" in checked)) throw new Error(JSON.stringify(checked.problems));
     expect(checked.sample.collector_ids).toEqual([await personId("Dan O'Loughlin"), await personId("Michael O'Loughlin")]);
-    expect(checked.sample.sampling_effort).toBe("12 vane traps");
+    expect(checked.sample.trap_count).toBe(12);
     expect(checked.sample.specimen_count).toBe(0);
     expect(checked.sample.state_province).toBe("OR");
   });
@@ -206,5 +208,92 @@ describe("the next sample number", () => {
     await insertCleanSample(conn, { kind: "'trap'", sample_number: "'OBAS-20204'" });
     await insertCleanSample(conn, { kind: "'trap'", sample_number: "'OBAS-1204'" });
     expect(await nextSampleNumber(conn)).toBe("OBAS-20205");
+  });
+});
+
+describe("the method of an entered sample (beeline-ni5m.15)", () => {
+  const made = async (over: Partial<TrapSampleForm> = {}) => {
+    const checked = await checkTrapSample(conn, form(over));
+    if (!("sample" in checked)) throw new Error(JSON.stringify(checked.problems));
+    return (await createTrapSample(conn, checked.sample, null)) as number;
+  };
+  const methodOf = async (id: number) =>
+    (await rows(conn, `SELECT s.protocol, m.method_code, m.trap_count FROM sample s LEFT JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${id}`))[0];
+  const mismatches = async () => (await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`))[0]![0];
+
+  it("offers the methods that are traps, read from the table", async () => {
+    expect(await methodCodes(conn, { trapOnly: true })).toEqual(["bottle trap", "malaise trap", "pan and vane traps", "pan trap", "trap nest", "vane trap"]);
+    expect(await methodCodes(conn)).toEqual(["aerial net", "bottle trap", "malaise trap", "pan and vane traps", "pan trap", "trap nest", "vacuum", "vane trap"]);
+  });
+
+  it("writes the code as the method as written, and the method and the count beside it", async () => {
+    const id = await made();
+    expect(await methodOf(id)).toEqual(["vane trap", "vane trap", 12]);
+    expect(await mismatches()).toBe(0n);
+  });
+
+  it("writes no count when none is given", async () => {
+    expect(await methodOf(await made({ trap_count: "", method: "malaise trap" }))).toEqual(["malaise trap", "malaise trap", null]);
+  });
+
+  it("refuses a method that is not listed, naming the methods that are", async () => {
+    for (const method of ["six vane traps", "Vane trap", "aerial net"]) {
+      const checked = await checkTrapSample(conn, form({ method }));
+      if (!("problems" in checked)) throw new Error(`expected a refusal of "${method}"`);
+      expect(Object.keys(checked.problems)).toEqual(["method"]);
+      expect(checked.problems.method).toContain("bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap");
+    }
+    for (const method of ["", "  "]) expect(await checkTrapSample(conn, form({ method }))).toEqual({ problems: { method: "Say what kind of trap." } });
+    expect(await checkTrapSample(conn, form({ method: "unlisted" }))).toEqual({
+      problems: { method: "Choose one of the listed methods: bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap." },
+    });
+  });
+
+  it("follows an edit of the method and the count, and keeps the two in step", async () => {
+    const id = await made();
+    const edited = await checkTrapSample(conn, form({ method: "pan trap", trap_count: "" }), id);
+    if (!("sample" in edited)) throw new Error("unexpected problems");
+    expect(await updateTrapSample(conn, id, edited.sample)).toBe("saved");
+    expect(await methodOf(id)).toEqual(["pan trap", "pan trap", null]);
+    expect(await rows(conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${id}`)).toEqual([[null]]);
+    expect(await mismatches()).toBe(0n);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method WHERE sample_id = ${id}`)).toEqual([[1n]]);
+  });
+
+  it("shows the method as the list has it when the form is opened on a sample with an old wording", async () => {
+    const id = await made();
+    await conn.run(`UPDATE sample SET protocol = 'Vane trap' WHERE entity_id = ${id}`);
+    expect(await loadTrapSample(conn, id)).toMatchObject({ method: "vane trap" });
+  });
+
+  it("loads the stored count for a sample whose words state one and whose effort column is empty, and keeps it through an unrelated edit", async () => {
+    const id = await insertCleanSample(conn, { kind: "'trap'", protocol: "'6 vane traps'", sample_number: "'OBAS-20400'" });
+    await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${id})`);
+    // The effort column is never read: emptied, the form still shows the count the sample holds.
+    await conn.run(`UPDATE sample SET sampling_effort = NULL WHERE entity_id = ${id}`);
+    expect(await loadTrapSample(conn, id)).toMatchObject({ method: "vane trap", trap_count: "6" });
+    const checked = await checkTrapSample(conn, form({ sample_number: "OBAS-20400", method: "vane trap", trap_count: "6", locality: "Elsewhere" }), id);
+    if (!("sample" in checked)) throw new Error(JSON.stringify(checked.problems));
+    expect(await updateTrapSample(conn, id, checked.sample)).toBe("saved");
+    expect(await methodOf(id)).toEqual(["vane trap", "vane trap", 6]);
+    expect(await rows(conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${id}`)).toEqual([["6 vane traps"]]);
+    expect(await mismatches()).toBe(0n);
+  });
+
+  it("never gives a count to a method that is not a trap, however the form is filled", async () => {
+    const id = await made();
+    const edited = await checkTrapSample(conn, form({ method: "malaise trap", trap_count: "3" }), id);
+    if (!("sample" in edited)) throw new Error("unexpected problems");
+    // A hand-made request cannot name a method that is not a trap; the row writer would drop the count if one were let through.
+    const { setSampleMethodRow } = await import("../src/sample-method-row.js");
+    await setSampleMethodRow(conn, id, "aerial net", 3);
+    expect(await rows(conn, `SELECT method_code, trap_count FROM sample_method WHERE sample_id = ${id}`)).toEqual([["aerial net", null]]);
+  });
+
+  it("is deleted with the sample", async () => {
+    const id = await made();
+    const staff = await personId("Dan O'Loughlin");
+    expect(await deleteTrapSample(conn, id, staff)).toEqual({ deleted: "OBAS-20300" });
+    expect(await rows(conn, `SELECT count(*) FROM sample_method`)).toEqual([[0n]]);
   });
 });

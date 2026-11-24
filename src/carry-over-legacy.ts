@@ -2,6 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
+import { fillEffortFromStored } from "./sample-method-row.js";
 import { oldSampleKindSql } from "./old-sample-kind.js";
 
 /**
@@ -235,6 +236,15 @@ export async function carryOverLegacyRecords(
         params,
       );
       const sampleId = Number(made!.entity_id);
+      // Its method, from the method as written through method_text, as promotion gives it (beeline-ni5m.15).
+      await conn.run(
+        `INSERT INTO sample_method (sample_id, method_code, trap_count)
+         SELECT s.entity_id, t.method_code, CASE WHEN d.is_trap THEN t.trap_count END
+         FROM sample s JOIN method_text t ON t.text = s.protocol JOIN method d ON d.code = t.method_code
+         WHERE s.entity_id = $1`,
+        [sampleId] as never,
+      );
+      await fillEffortFromStored(conn, [sampleId]);
       // The atlas of its state, as geography assigns it (schema/010).
       await conn.run(
         `INSERT INTO sample_atlas (sample_id, atlas_id)

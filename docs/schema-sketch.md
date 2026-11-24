@@ -181,7 +181,7 @@ CREATE TABLE protocol (
   code             TEXT UNIQUE NOT NULL,   -- 'net', 'trap', 'net-10min', 'pan-6h', 'plot-day'
   name             TEXT NOT NULL,
   grain            TEXT NOT NULL CHECK (grain IN ('sample', 'event')),
-  method           TEXT CHECK (method IN ('net', 'pan trap', 'vane trap', 'nest block')),
+  method_code      TEXT REFERENCES method(code),  -- the controlled list of methods (schema/031), not a list of its own
   duration_minutes INTEGER,                -- fixed by the protocol: 10, 360; NULL = not fixed
   records_times    BOOLEAN,                -- start and end are recorded, not assumed
   host_per_sample  BOOLEAN,                -- one floral host per sample (one vial per plant)
@@ -189,10 +189,14 @@ CREATE TABLE protocol (
   label_host       BOOLEAN,                -- the host prints on the label
   label_time       BOOLEAN                 -- the collection time prints on the label
 );
--- sample gains time_start TIME and time_end TIME, and a sample_protocol table beside it
--- (sample_id, protocol_id), since a migration cannot add a column with a reference.
--- The legacy protocol strings ("6 Vane Traps") map onto protocol rows by curation and
--- stay verbatim beside them; they never constrain the table.
+-- sample gains time_start TIME and time_end TIME, and a sample_standard_protocol table
+-- beside it (sample_id, protocol_id), since a migration cannot add a column with a
+-- reference. Named for the standardized protocol it links to, and not sample_protocol,
+-- which would be read as the column sample.protocol: that column is the method as
+-- written, never parsed, and the sample's method is sample_method (schema/031).
+-- The legacy protocol strings ("6 Vane Traps") stay verbatim in sample.protocol; the
+-- standardized protocol rows they correspond to are chosen by curation and never
+-- constrained by them.
 
 -- A place a program returns to: a BLM plot, which is a permanent hectare that is never
 -- moved and is visited several times a year, and probably the spot a trap is serviced

@@ -605,8 +605,8 @@ export interface SampleRow {
   state_province: string | null;
   country: string | null;
   protocol: string | null;
-  /** The effort as the old records wrote it ('6 vane traps'); null for most net samples. The samples file's trapCount is read from it. */
-  sampling_effort: string | null;
+  /** How many traps (`sample_method.trap_count`); the samples file's trapCount column. */
+  trap_count: number | null;
   specimen_count: number;
   inat_observation_id: bigint | null;
   /** iNaturalist no longer has the observation (`observationGone`): nothing to link to. */
@@ -1655,6 +1655,7 @@ export async function listSamples(
           .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
       )
       .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
+      .leftJoin("sample_method as smt", "smt.sample_id", "s.entity_id")
       // The flag roll-up, as `qc`: the page's own copy of it where the page was chosen by it, else computed here.
       .$if(rolled, (qb) => qb.leftJoin("pg as qc", "qc.sample_id", "s.entity_id"))
       .$if(!rolled, (qb) =>
@@ -1681,7 +1682,7 @@ export async function listSamples(
         "s.state_province",
         "s.country",
         "s.protocol",
-        "s.sampling_effort",
+        "smt.trap_count as trap_count",
         "s.specimen_count",
         "s.inat_observation_id",
         observationGone.as("observation_gone"),

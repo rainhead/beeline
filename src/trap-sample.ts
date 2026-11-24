@@ -1,6 +1,8 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { matchCollectors, type MatchedCollector } from "./collector-match.js";
 import { withPrintRunLock } from "./print-run.js";
+import { en } from "./app/messages/en.js";
+import { setSampleMethodRow } from "./sample-method-row.js";
 
 /**
  * Trap samples entered in Beeline (beeline-3vs.2).
@@ -38,8 +40,20 @@ export interface TrapSampleForm {
   locality: string;
 }
 
-/** The methods the spreadsheets use most; anything else may be written in. */
-export const TRAP_METHODS = ["vane trap", "pan trap", "malaise trap", "trap nest"] as const;
+/**
+ * The query for the codes of the methods a sample can be given (`method`, schema/031), the one place it is written:
+ * `methodCodes` here and `readMethodCodes` (src/app/sample-method.ts) run it on the two kinds of connection. With
+ * `trapOnly` only the methods whose device is set out and collected later: a sample entered in Beeline is a trap
+ * sample, so the trap form and a samples file's new rows offer those.
+ */
+export const methodCodesSql = (trapOnly: boolean): string => `SELECT code FROM method ${trapOnly ? "WHERE is_trap" : ""} ORDER BY code`;
+
+export async function methodCodes(conn: DuckDBConnection, { trapOnly = false }: { trapOnly?: boolean } = {}): Promise<string[]> {
+  return (await rows<{ code: string }>(conn, methodCodesSql(trapOnly))).map((r) => r.code);
+}
+
+/** The sentence for a method that is not one of the list, naming the list, from the message catalog. */
+export const unlistedMethodProblem = (offered: readonly string[]): string => en.record.sample.methodEdit.unlistedMethod(offered.join(", "));
 
 /** A sample ready to write. */
 export interface TrapSample {
@@ -47,8 +61,10 @@ export interface TrapSample {
   collector_ids: number[];
   date_start: string;
   date_end: string;
+  /** The method chosen from the list: its code, which is also the method as written for a sample made here. */
   protocol: string;
-  sampling_effort: string | null;
+  /** How many traps, null when not said. */
+  trap_count: number | null;
   specimen_count: number;
   latitude: number;
   longitude: number;
@@ -71,20 +87,6 @@ async function rows<T>(conn: DuckDBConnection, sql: string, params: unknown[] = 
  * sample already (Peter, 2026-11-04). Derived rather than granted, so nobody
  * has to be set up first; a grant for someone new to trapping is beeline-3vs.1.
  */
-/**
- * A trap sample's effort as the old records wrote it: the count and the trap
- * kind, plural where there is more than one ('6 vane traps'). Staff correcting
- * the method on the sample page may already have written it plural.
- */
-export const trapEffort = (count: number, method: string): string =>
-  `${count} ${method}${count === 1 || /s$/i.test(method) ? "" : "s"}`;
-
-/** The trap count an effort written by trapEffort starts with, or null. */
-export const trapCountOf = (effort: string | null): number | null => {
-  const found = /^(\d+) /.exec(effort ?? "");
-  return found === null ? null : Number(found[1]);
-};
-
 export async function mayEnterTrapSamples(conn: DuckDBConnection, personId: number | null, admin: boolean): Promise<boolean> {
   if (admin) return true;
   if (personId === null) return false;
@@ -436,8 +438,11 @@ export async function checkTrapSample(
     staff = false,
     people,
     taken,
+    methods,
   }: {
     staff?: boolean;
+    /** The methods the form may name (`methodCodes` with `trapOnly`), read once by a caller that checks many forms. */
+    methods?: readonly string[];
     /** Everyone Beeline knows (readPeople, src/collector-match.ts), read once by a caller that checks many forms. */
     people?: readonly MatchedCollector[];
     /** Whether a trap sample has this number, answered by a caller that has read the numbers of many forms at once (readTrapNumbers). */
@@ -463,7 +468,9 @@ export async function checkTrapSample(
   else if (start !== null && end < start) problems.date_end = "The traps were collected before they were set.";
 
   const method = form.method.trim();
+  const offered = methods ?? (await methodCodes(conn, { trapOnly: true }));
   if (method === "") problems.method = "Say what kind of trap.";
+  else if (!offered.includes(method)) problems.method = unlistedMethodProblem(offered);
   const trapCount = parseNumber(form.trap_count);
   if (form.trap_count.trim() !== "" && (trapCount === null || !Number.isInteger(trapCount) || trapCount < 1)) {
     problems.trap_count = "The number of traps is a whole number, 1 or more.";
@@ -495,8 +502,7 @@ export async function checkTrapSample(
       date_start: start!,
       date_end: end!,
       protocol: method,
-      // Effort as the old records wrote it ('6 vane traps'), from its own field.
-      sampling_effort: trapCount === null ? null : trapEffort(trapCount, method),
+      trap_count: trapCount,
       specimen_count: specimens!,
       latitude: latitude!,
       longitude: longitude!,
@@ -584,12 +590,13 @@ export function createTrapSample(
     return inTransaction(conn, async () => {
       const created = await rows<{ entity_id: number }>(
         conn,
-        `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol, sampling_effort)
-         VALUES ('trap', $1, $2::DATE, $3::DATE, $4, $5, $6, $7, $8, $9, $10) RETURNING entity_id`,
-        [number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort],
+        `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol)
+         VALUES ('trap', $1, $2::DATE, $3::DATE, $4, $5, $6, $7, $8, $9) RETURNING entity_id`,
+        [number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol],
       );
       const id = created[0]!.entity_id;
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);
+      await setSampleMethodRow(conn, id, s.protocol, s.trap_count);
       await writeParts(conn, id, s);
       await within?.(id, number);
       if (options.staff !== undefined) await releaseByStaff(conn, id, options.staff);
@@ -618,6 +625,7 @@ export const DELETED_WITH_SAMPLE = [
   "sample_locality_override",
   "sample_location",
   "sample_location_override",
+  "sample_method",
   "sample_place_stamped",
   "sample_print_release_event",
   "sample_qc_waiver",
@@ -705,7 +713,7 @@ export async function loadTrapSample(conn: DuckDBConnection, id: number): Promis
   const found = await rows<Record<string, unknown>>(
     conn,
     `SELECT s.sample_number, strftime(s.date_start, '%Y-%m-%d') AS date_start, strftime(s.date_end, '%Y-%m-%d') AS date_end,
-            s.protocol, s.sampling_effort, s.specimen_count, s.country, s.state_province, s.county, s.locality,
+            s.protocol, m.method_code, m.trap_count, s.specimen_count, s.country, s.state_province, s.county, s.locality,
             l.latitude, l.longitude, l.coordinate_uncertainty_m,
             (SELECT list(p.display_name ORDER BY c.position) FROM sample_collector c JOIN person p ON p.entity_id = c.person_id
              WHERE c.sample_id = s.entity_id) AS collectors,
@@ -714,20 +722,21 @@ export async function loadTrapSample(conn: DuckDBConnection, id: number): Promis
               AS editable
      FROM sample s JOIN sample_entry e ON e.sample_id = s.entity_id
      LEFT JOIN sample_location l ON l.sample_id = s.entity_id
+     LEFT JOIN sample_method m ON m.sample_id = s.entity_id
      WHERE s.entity_id = $1`,
     [id],
   );
   const r = found[0];
   if (r === undefined) return null;
   const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
-  const effort = /^(\d+) /.exec(str(r.sampling_effort));
   return {
     sample_number: str(r.sample_number),
     collectors: (r.collectors as string[] | null) ?? [],
     date_start: str(r.date_start),
     date_end: str(r.date_end),
-    method: str(r.protocol),
-    trap_count: effort?.[1] ?? "",
+    // The method as the list has it, so that saving the form as it stands names a listed method; the text as written otherwise.
+    method: str(r.method_code ?? r.protocol),
+    trap_count: str(r.trap_count),
     specimen_count: str(r.specimen_count),
     latitude: str(r.latitude),
     longitude: str(r.longitude),
@@ -767,10 +776,11 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
       await conn.run(`DELETE FROM sample_atlas WHERE sample_id = $1 AND assigned_by IS NULL`, [id] as never);
       await conn.run(
         `UPDATE sample SET sample_number = $2, date_start = $3::DATE, date_end = $4::DATE, specimen_count = $5, country = $6,
-                state_province = $7, county = $8, locality = $9, protocol = $10, sampling_effort = $11
+                state_province = $7, county = $8, locality = $9, protocol = $10
          WHERE entity_id = $1`,
-        [id, s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort] as never,
+        [id, s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol] as never,
       );
+      await setSampleMethodRow(conn, id, s.protocol, s.trap_count);
       // An atlas a person assigned stands; otherwise it follows the state.
       const assigned = await rows<{ n: number }>(conn, `SELECT count(*)::INTEGER AS n FROM sample_atlas WHERE sample_id = $1`, [id]);
       await writeParts(conn, id, s, (assigned[0]?.n ?? 0) === 0);

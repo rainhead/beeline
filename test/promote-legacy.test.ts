@@ -527,3 +527,25 @@ describe("promotion into a store whose thesaurus holds tribes", () => {
     expect(result.filing.needsCachedLoad).toBe(true);
   });
 });
+
+describe("each sample's method (beeline-ni5m.15)", () => {
+  test("is the method its text as written means, with a count where the text states one", async () => {
+    expect(
+      await rows(
+        conn,
+        `SELECT s.protocol, m.method_code, m.trap_count, count(*)
+         FROM sample s LEFT JOIN sample_method m ON m.sample_id = s.entity_id
+         GROUP BY ALL ORDER BY 1 NULLS LAST`,
+      ),
+    ).toEqual([
+      ["6 Vane Traps", "vane trap", 6, 2n],
+      ["aerial net", "aerial net", null, 1n],
+    ]);
+  });
+
+  test("leaves the text as the old records wrote it, and the checks empty", async () => {
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
+    // The fixture's record with no method is held back, so no sample lacks one.
+    expect(await rows(conn, `SELECT count(*) FROM sample_without_method`)).toEqual([[0n]]);
+  });
+});

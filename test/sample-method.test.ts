@@ -9,6 +9,7 @@ import type { Database } from "../src/model.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { parseCsv } from "../src/corrections.js";
+import { readSampleChanges as correctionsLog } from "../src/sample-change.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
 import { en } from "../src/app/messages/en.js";
@@ -145,7 +146,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     expect(page).toContain(t.open);
     const collector = await methodApp("collector");
     expect(await (await collector.app.request(`/samples/${collector.sampleId}`)).text()).not.toContain(`/samples/${collector.sampleId}/method`);
-    const res = await post(collector.app, `/samples/${collector.sampleId}/method`, { protocol: "pan traps", date_end: collector.later(2) });
+    const res = await post(collector.app, `/samples/${collector.sampleId}/method`, { protocol: "pan trap", date_end: collector.later(2) });
     expect(res.status).toBe(403);
   });
 
@@ -153,15 +154,15 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     const { app, conn, sampleId, start, later, correctionsPath, sampleChangesPath } = await methodApp("staff");
     const [[records]] = (await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[bigint]];
     const end = later(2);
-    const res = await post(app, `/samples/${sampleId}/method`, { protocol: " pan traps ", date_end: end, note: "the trap records say so" });
+    const res = await post(app, `/samples/${sampleId}/method`, { protocol: " pan trap ", date_end: end, note: "the trap records say so" });
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe(`/samples/${sampleId}`);
-    expect(await sampleRow(conn, sampleId)).toEqual(["trap", "pan traps", start, end]);
+    expect(await sampleRow(conn, sampleId)).toEqual(["trap", "pan trap", start, end]);
 
     const events = await correctionsIn(correctionsPath);
     const [y, mo, d] = end.split("-").map((p) => String(Number(p)));
     expect(events.filter((e) => e.field === "samplingProtocol")).toHaveLength(Number(records));
-    for (const [field, value] of [["samplingProtocol", "pan traps"], ["day2", d], ["month2", mo], ["year2", y]] as const) {
+    for (const [field, value] of [["samplingProtocol", "pan trap"], ["day2", d], ["month2", mo], ["year2", y]] as const) {
       const of = events.filter((e) => e.field === field);
       expect(of).toHaveLength(Number(records));
       for (const e of of) expect(e).toMatchObject({ new_value: value, author: "samstaff", reason: "the trap records say so" });
@@ -169,17 +170,17 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     // Who changed what, in the sample's own history.
     const history = await readFile(sampleChangesPath, "utf8");
     expect(history).toContain("samstaff");
-    expect(history).toContain("pan traps");
+    expect(history).toContain("pan trap");
 
     // The page now says trap, with the method's words.
     const page = await (await app.request(`/samples/${sampleId}`)).text();
     expect(page).toContain(en.record.sample.methodTrap);
-    expect(page).toContain("pan traps");
+    expect(page).toContain("pan trap");
   });
 
   it("makes it a net sample of one day again when the end date is taken away", async () => {
     const { app, conn, sampleId, start, later } = await methodApp("staff");
-    await post(app, `/samples/${sampleId}/method`, { protocol: "pan traps", date_end: later(2) });
+    await post(app, `/samples/${sampleId}/method`, { protocol: "pan trap", date_end: later(2) });
     await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "" });
     expect(await sampleRow(conn, sampleId)).toEqual(["net", "aerial net", start, start]);
   });
@@ -202,7 +203,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
       ["2999-01-01", t.problems.future],
     ];
     for (const [dateEnd, problem] of cases) {
-      const res = await post(app, `/samples/${sampleId}/method`, { protocol: "pan traps", date_end: dateEnd });
+      const res = await post(app, `/samples/${sampleId}/method`, { protocol: "pan trap", date_end: dateEnd });
       expect(res.status).toBe(400);
       expect(await res.text()).toBe(problem);
     }
@@ -214,22 +215,22 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     const [[shown]] = (await rows(conn, `SELECT coalesce(protocol, '') FROM sample WHERE entity_id = ${sampleId}`)) as [[string]];
     const opened = { "base:protocol": shown, "base:date_end": "" };
     // One staff member corrects the method.
-    await post(app, `/samples/${sampleId}/method`, { ...opened, protocol: "pan traps", date_end: "" });
+    await post(app, `/samples/${sampleId}/method`, { ...opened, protocol: "pan trap", date_end: "" });
     // Another, on a form opened before that, sets only the end date: the method they were shown goes unsaid.
     const end = later(2);
     expect((await post(app, `/samples/${sampleId}/method`, { ...opened, protocol: shown, date_end: end })).status).toBe(302);
-    expect((await sampleRow(conn, sampleId))?.slice(0, 2)).toEqual(["trap", "pan traps"]);
+    expect((await sampleRow(conn, sampleId))?.slice(0, 2)).toEqual(["trap", "pan trap"]);
     // And a change to the method from that old form is refused, not written over the first.
-    const res = await post(app, `/samples/${sampleId}/method`, { ...opened, protocol: "vane traps", date_end: end });
+    const res = await post(app, `/samples/${sampleId}/method`, { ...opened, protocol: "vane trap", date_end: end });
     expect(res.status).toBe(409);
     expect(await res.text()).toBe(t.conflict);
-    expect((await sampleRow(conn, sampleId))?.[1]).toBe("pan traps");
+    expect((await sampleRow(conn, sampleId))?.[1]).toBe("pan trap");
   });
 
   it("keeps the corrections file and the sample agreeing when two saves arrive together", async () => {
     const { app, conn, sampleId, correctionsPath } = await methodApp("staff");
     await Promise.all(
-      ["pan traps", "vane traps", "blue vane traps"].map((protocol) => post(app, `/samples/${sampleId}/method`, { protocol, date_end: "" })),
+      ["pan trap", "vane trap", "vane trap"].map((protocol) => post(app, `/samples/${sampleId}/method`, { protocol, date_end: "" })),
     );
     const [[live]] = (await rows(conn, `SELECT protocol FROM sample WHERE entity_id = ${sampleId}`)) as [[string]];
     const written = (await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol").map((e) => e.new_value);
@@ -240,7 +241,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", { losesOnce: "transaction" });
     const before = await sampleRow(conn, sampleId);
     const [[records]] = (await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[bigint]];
-    const body = { protocol: "pan traps", date_end: later(2) };
+    const body = { protocol: "pan trap", date_end: later(2) };
     const lost = await post(app, `/samples/${sampleId}/method`, body);
     expect(lost.status).toBe(409);
     expect(await lost.text()).toBe(en.sampleEdit.notApplied);
@@ -249,7 +250,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     expect(await sampleRow(conn, sampleId)).toEqual(before);
     const again = await post(app, `/samples/${sampleId}/method`, body);
     expect(again.status).toBe(302);
-    expect((await sampleRow(conn, sampleId))![1]).toBe("pan traps");
+    expect((await sampleRow(conn, sampleId))![1]).toBe("pan trap");
     expect((await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol")).toHaveLength(Number(records));
   });
 
@@ -262,15 +263,15 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     const res = await app.request(`/samples/${sampleId}/method`, {
       method: "POST",
       headers: { cookie: `${IMPERSONATING_COOKIE}=${encodeURIComponent(name)}` },
-      body: new URLSearchParams({ protocol: "pan traps", date_end: later(2) }),
+      body: new URLSearchParams({ protocol: "pan trap", date_end: later(2) }),
     });
     expect(res.status).toBe(403);
-    expect((await sampleRow(conn, sampleId))?.[1]).not.toBe("pan traps");
+    expect((await sampleRow(conn, sampleId))?.[1]).not.toBe("pan trap");
   });
 
   it("is what a rebuild from the corrections file makes of the sample", async () => {
     const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff");
-    await post(app, `/samples/${sampleId}/method`, { protocol: "pan traps", date_end: later(2) });
+    await post(app, `/samples/${sampleId}/method`, { protocol: "pan trap", date_end: later(2) });
     const [[record]] = (await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
     const rebuild = async () => {
       const rebuilt = await createMemoryDb();
@@ -295,7 +296,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     await conn.run(`UPDATE legacy_occurrence SET "samplingProtocol" = 'pan traps', day2 = '${d}', month2 = '${m}', year2 = '${y}' WHERE _id = '${odd}'`);
     await conn.run(`INSERT INTO sample_promotion_finding (sample_id, rule_name, details) VALUES (${sampleId}, 'within_sample_disagreement', 'protocol: aerial net, pan traps')`);
     const end = later(3);
-    await post(app, `/samples/${sampleId}/method`, { protocol: "blue vane traps", date_end: end });
+    await post(app, `/samples/${sampleId}/method`, { protocol: "vane trap", date_end: end });
 
     const path = join(await mkdtemp(join(tmpdir(), "beeline-method-export-")), "occurrences.csv");
     await writeLegacyExport(conn, path);
@@ -308,7 +309,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     expect(mine.length).toBe(numbers.size);
     const [ey, , ed] = end.split("-").map((p) => String(Number(p)));
     for (const r of mine) {
-      expect(r[col("samplingProtocol")]).toBe("blue vane traps");
+      expect(r[col("samplingProtocol")]).toBe("vane trap");
       expect(r[col("day2")]).toBe(ed);
       expect(r[col("year2")]).toBe(ey);
     }
@@ -362,7 +363,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
         [{ date_start: "2999-01-01", date_end: "" }, t.problems.start_future],
       ];
       for (const [dates, problem] of cases) {
-        const res = await post(app, `/samples/${sampleId}/method`, { protocol: "pan traps", ...dates });
+        const res = await post(app, `/samples/${sampleId}/method`, { protocol: "pan trap", ...dates });
         expect(res.status).toBe(400);
         expect(await res.text()).toBe(problem);
       }
@@ -371,7 +372,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
 
     it("is what a rebuild from the corrections file makes of the sample", async () => {
       const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", { observation: false });
-      await post(app, `/samples/${sampleId}/method`, { protocol: "pan traps", date_start: later(-3), date_end: later(-1) });
+      await post(app, `/samples/${sampleId}/method`, { protocol: "pan trap", date_start: later(-3), date_end: later(-1) });
       const [[record]] = (await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
       const rebuilt = await createMemoryDb();
       await loadLegacyStaging(rebuilt.conn, FIXTURE);
@@ -410,12 +411,12 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
       // And a blank method is refused, so the count is never lost.
       const blank = await post(app, `/samples/${entered}/method`, { protocol: "", date_start: start, date_end: "" });
       expect(blank.status).toBe(400);
-      expect(await blank.text()).toBe(t.problems.method_required);
+      expect(await blank.text()).toBe(t.unlistedMethod("bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap"));
       expect(await rows(conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${entered}`)).toEqual([["pan trap", "6 pan traps"]]);
     });
 
     it("says a change to an entered sample that lost a write conflict is not applied, and saving again applies it", async () => {
-      const { app, conn, correctionsPath } = await methodApp("staff", { losesOnce: "updateTable" });
+      const { app, conn, correctionsPath } = await methodApp("staff", { losesOnce: "transaction" });
       const entered = await insertCleanSample(conn, {
         kind: "'trap'",
         sample_number: "'OBAS-09998'",
@@ -440,8 +441,138 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     const { app, conn } = await methodApp("staff");
     const fresh = await insertCleanSample(conn, { sample_number: "'B-1'" });
     expect(await (await app.request(`/samples/${fresh}`)).text()).not.toContain(`/samples/${fresh}/method`);
-    const res = await post(app, `/samples/${fresh}/method`, { protocol: "pan traps", date_end: "" });
+    const res = await post(app, `/samples/${fresh}/method`, { protocol: "pan trap", date_end: "" });
     expect(res.status).toBe(409);
     expect(await res.text()).toBe(t.noOldRecords);
+  });
+});
+
+describe("the method is chosen from the list (beeline-ni5m.15)", { timeout: 120_000 }, () => {
+  const ALL = "aerial net, bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vacuum, vane trap";
+  const TRAPS = "bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap";
+  const stored = async (conn: DuckDBConnection, id: number) =>
+    (await rows(conn, `SELECT s.protocol, m.method_code, m.trap_count FROM sample s LEFT JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${id}`))[0];
+  const mismatches = async (conn: DuckDBConnection) => (await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`))[0]![0];
+
+  it("on a sample from old records writes the code as the corrected text of every record, and as the method, together", async () => {
+    const { app, conn, sampleId, later, correctionsPath, sampleChangesPath } = await methodApp("staff");
+    const [[records]] = (await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[bigint]];
+    expect(await stored(conn, sampleId)).toEqual(["aerial net", "aerial net", null]);
+    const res = await post(app, `/samples/${sampleId}/method`, { protocol: "vacuum", date_end: "" });
+    expect(res.status).toBe(302);
+    expect(await stored(conn, sampleId)).toEqual(["vacuum", "vacuum", null]);
+    expect((await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol" && e.new_value === "vacuum")).toHaveLength(Number(records));
+    expect(await mismatches(conn)).toBe(0n);
+    // The history names the method and who changed it.
+    const history = await readFile(sampleChangesPath, "utf8");
+    expect(history).toMatch(/,method,aerial net,vacuum,/);
+    expect(history).toContain("samstaff");
+  });
+
+  it("refuses words that are not on the list, naming the methods, and changes nothing", async () => {
+    const { app, conn, sampleId, correctionsPath } = await methodApp("staff");
+    const before = await stored(conn, sampleId);
+    for (const protocol of ["pan traps", "Vane trap", "something else", ""]) {
+      const res = await post(app, `/samples/${sampleId}/method`, { "base:protocol": "aerial net", protocol, date_end: "" });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe(`Choose one of the listed methods: ${ALL}.`);
+    }
+    expect(await stored(conn, sampleId)).toEqual(before);
+    expect(await correctionsIn(correctionsPath)).toEqual([]);
+  });
+
+  it("keeps a method as written that is not on the list when the form is saved as it stands, and replaces it with a listed method", async () => {
+    const { app, conn, sampleId } = await methodApp("staff");
+    await conn.run(`UPDATE sample SET protocol = 'pantrap' WHERE entity_id = ${sampleId}`);
+    await conn.run(`UPDATE sample_method SET method_code = 'pan trap' WHERE sample_id = ${sampleId}`);
+    const page = await (await app.request(`/samples/${sampleId}`)).text();
+    expect(page).toContain(en.record.sample.methodEdit.protocolAsWritten("pantrap"));
+    expect(page).toContain(`<option value="vane trap">vane trap</option>`);
+    // Saved as it stands, with another field changed: the method as written stays.
+    expect((await post(app, `/samples/${sampleId}/method`, { "base:protocol": "pantrap", protocol: "pantrap", date_end: "" })).status).toBe(302);
+    expect(await stored(conn, sampleId)).toEqual(["pantrap", "pan trap", null]);
+    expect((await post(app, `/samples/${sampleId}/method`, { "base:protocol": "pantrap", protocol: "bottle trap", date_end: "" })).status).toBe(302);
+    expect(await stored(conn, sampleId)).toEqual(["bottle trap", "bottle trap", null]);
+    expect(await mismatches(conn)).toBe(0n);
+  });
+
+  it("offers an entered sample only the methods that are traps, and refuses aerial net for it", async () => {
+    const { app, conn } = await methodApp("staff");
+    const entered = await insertCleanSample(conn, {
+      kind: "'trap'",
+      sample_number: "'OBAS-09997'",
+      date_start: `DATE '${currentSeasonDate(6, 1)}'`,
+      date_end: `DATE '${currentSeasonDate(6, 8)}'`,
+      protocol: "'vane trap'",
+      sampling_effort: "'6 vane traps'",
+    });
+    await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${entered}, 1, 'TEST0003')`);
+    const page = await (await app.request(`/samples/${entered}`)).text();
+    expect(page).toContain(`<option value="pan trap">pan trap</option>`);
+    expect(page).not.toContain(`<option value="aerial net">`);
+    expect(page).not.toContain(`<option value="vacuum">`);
+    const res = await post(app, `/samples/${entered}/method`, { "base:protocol": "vane trap", protocol: "aerial net", date_start: currentSeasonDate(6, 1), date_end: "" });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe(`Choose one of the listed methods: ${TRAPS}.`);
+    // A trap method is taken, and the count stays beside it.
+    expect((await post(app, `/samples/${entered}/method`, { "base:protocol": "vane trap", protocol: "malaise trap", date_start: currentSeasonDate(6, 1), date_end: "" })).status).toBe(302);
+    expect(await stored(conn, entered)).toEqual(["malaise trap", "malaise trap", 6]);
+    expect(await mismatches(conn)).toBe(0n);
+  });
+
+  it("gives a sample with no method one, where it had none", async () => {
+    const { app, conn, sampleId } = await methodApp("staff");
+    await conn.run(`DELETE FROM sample_method WHERE sample_id = ${sampleId}`);
+    await conn.run(`UPDATE sample SET protocol = NULL WHERE entity_id = ${sampleId}`);
+    expect((await rows(conn, `SELECT count(*) FROM sample_without_method WHERE sample_id = ${sampleId}`))[0]![0]).toBe(1n);
+    expect((await post(app, `/samples/${sampleId}/method`, { "base:protocol": "", protocol: "pan trap", date_end: "" })).status).toBe(302);
+    expect(await stored(conn, sampleId)).toEqual(["pan trap", "pan trap", null]);
+    expect((await rows(conn, `SELECT count(*) FROM sample_without_method`))[0]![0]).toBe(0n);
+  });
+
+  describe("the trap count goes with the method", () => {
+    const sixVane = async () => {
+      const w = await methodApp("staff");
+      await w.conn.run(`UPDATE sample SET protocol = '6 vane traps' WHERE entity_id = ${w.sampleId}`);
+      await w.conn.run(`UPDATE sample_method SET method_code = 'vane trap', trap_count = 6 WHERE sample_id = ${w.sampleId}`);
+      await recordSampleChanges(duckdbReader(w.conn), { log: w.sampleChangesPath, state: w.sampleStatePath }, { source: "reconcile" });
+      return w;
+    };
+    const effortOf = async (conn: DuckDBConnection, id: number) => (await rows(conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${id}`))[0]![0];
+
+    it("is kept where the new method is a trap, and written as the effort the forms write", async () => {
+      const w = await sixVane();
+      expect((await post(w.app, `/samples/${w.sampleId}/method`, { "base:protocol": "6 vane traps", protocol: "pan trap", date_end: "" })).status).toBe(302);
+      expect(await stored(w.conn, w.sampleId)).toEqual(["pan trap", "pan trap", 6]);
+      expect(await effortOf(w.conn, w.sampleId)).toBe("6 pan traps");
+      expect(await mismatches(w.conn)).toBe(0n);
+    });
+
+    it("goes where the new method is not a trap, with the effort that stated it, and the history shows it with its author", async () => {
+      const w = await sixVane();
+      expect((await post(w.app, `/samples/${w.sampleId}/method`, { "base:protocol": "6 vane traps", protocol: "aerial net", date_end: "" })).status).toBe(302);
+      expect(await stored(w.conn, w.sampleId)).toEqual(["aerial net", "aerial net", null]);
+      expect(await effortOf(w.conn, w.sampleId)).toBeNull();
+      expect(await mismatches(w.conn)).toBe(0n);
+      const history = (await correctionsLog(w.sampleChangesPath)).filter((e) => e.sample_id === String(w.sampleId));
+      expect(history.map((e) => [e.field, e.old_value, e.new_value, e.author])).toEqual(
+        expect.arrayContaining([
+          ["method", "vane trap", "aerial net", "samstaff"],
+          ["trap_count", "6", "", "samstaff"],
+          ["protocol", "6 vane traps", "aerial net", "samstaff"],
+        ]),
+      );
+    });
+
+    it("gives a sample with no method row one with no count, and no effort", async () => {
+      const w = await methodApp("staff");
+      await w.conn.run(`DELETE FROM sample_method WHERE sample_id = ${w.sampleId}`);
+      await w.conn.run(`UPDATE sample SET protocol = NULL, sampling_effort = NULL WHERE entity_id = ${w.sampleId}`);
+      expect((await post(w.app, `/samples/${w.sampleId}/method`, { "base:protocol": "", protocol: "pan trap", date_end: "" })).status).toBe(302);
+      expect(await stored(w.conn, w.sampleId)).toEqual(["pan trap", "pan trap", null]);
+      expect(await effortOf(w.conn, w.sampleId)).toBeNull();
+      expect(await mismatches(w.conn)).toBe(0n);
+    });
   });
 });

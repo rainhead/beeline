@@ -2,7 +2,8 @@ import { sql, type Kysely } from "kysely";
 import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
 import { mirrorCorrections } from "./correction-store.js";
-import { trapCountOf, trapEffort } from "../trap-sample.js";
+import { methodCodesSql } from "../trap-sample.js";
+import { setSampleMethodRow } from "../sample-method-row.js";
 import { isWriteConflict } from "../write-conflict.js";
 
 /**
@@ -20,6 +21,10 @@ import { isWriteConflict } from "../write-conflict.js";
  * once from the iNaturalist observation with its default "aerial net", and
  * promotion kept that copy, so Beeline published Pat Wheeler's six trap
  * samples of 2021 as netted on one day (beeline-iuva).
+ *
+ * The method is chosen from the list (`method`, schema/031): the code is what is written, as the method as written (for
+ * a sample from old records, as the corrected text of every record) and as the sample's method (`sample_method`), in
+ * the same transaction. The sample's kind is untouched by it.
  *
  * The kind is not a field of its own. Promotion makes a sample a trap sample
  * when its records give an end date, unless every end given is that record's
@@ -45,7 +50,11 @@ import { isWriteConflict } from "../write-conflict.js";
  */
 
 export interface MethodInput {
-  /** The method in words, as the old records write it ("pan traps"); blank for none. */
+  /**
+   * The method as it stands in the form: the code of a listed method ("pan trap"), or, for a sample whose method as
+   * written is not a code, that text unchanged ("pantrap"), which is not a change. A different text must be the code of
+   * a listed method, and for a sample entered in Beeline of a method that is a trap (beeline-ni5m.15).
+   */
   protocol: string;
   /** The day collecting ended, YYYY-MM-DD; blank for a net sample collected on one day. */
   dateEnd: string;
@@ -69,7 +78,12 @@ export interface MethodInput {
 export type MethodResult =
   | { outcome: "saved" }
   | { outcome: "unchanged" }
-  | { outcome: "invalid"; problem: "date" | "start_date" | "before_start" | "future" | "start_future" | "start_observation" | "method_required" }
+  | {
+      outcome: "invalid";
+      problem: "date" | "start_date" | "before_start" | "future" | "start_future" | "start_observation" | "method_required" | "unlisted_method";
+      /** For `unlisted_method`: the codes of the methods that may be chosen. */
+      methods?: string[];
+    }
   /** Someone changed a field this form touched since it was opened. */
   | { outcome: "conflict" }
   /** No old record behind this sample: nothing durable to name. */
@@ -92,6 +106,22 @@ interface Member {
   day2: string | null;
   month2: string | null;
   year2: string | null;
+}
+
+/** The codes of the methods that may be chosen: all, or with `trapOnly` those whose device is set out and collected later. */
+export async function readMethodCodes(db: Kysely<Database>, { trapOnly = false }: { trapOnly?: boolean } = {}): Promise<string[]> {
+  const found = await sql<{ code: string }>`${sql.raw(methodCodesSql(trapOnly))}`.execute(db);
+  return found.rows.map((r) => r.code);
+}
+
+/**
+ * Change a sample's method to `code`, in the caller's transaction. The sample's trap count (`sample_method.trap_count`)
+ * stays where the new method is a trap and goes where it is not; a sample with no method row gets one with no count.
+ * The caller writes `sample.protocol`. `setSampleMethodRow` does the writing, and the old effort column with it.
+ */
+export async function changeSampleMethod(trx: Kysely<Database>, sampleId: number, code: string): Promise<void> {
+  const row = await trx.selectFrom("sample_method").where("sample_id", "=", sampleId).select("trap_count").executeTakeFirst();
+  await setSampleMethodRow(trx, sampleId, code, row?.trap_count ?? null);
 }
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -170,6 +200,13 @@ export async function setSampleMethod(
   if (!oldRecords && !entered) return { outcome: "no_old_records" };
 
   const protocol = protocolTouched ? protocolIn : liveProtocol;
+  // A method that is changed is chosen from the list, whoever the sample was entered by. A sample entered in Beeline
+  // stays a trap sample whatever the dates, so it may be given only a method that is a trap; an old sample may be given
+  // any, as it could be given any words before. The unchanged text of a sample is never a change, so it is not checked.
+  if (protocolTouched) {
+    const offered = await readMethodCodes(db, { trapOnly: entered });
+    if (!offered.includes(protocol)) return { outcome: "invalid", problem: "unlisted_method", methods: offered };
+  }
   // The trap form never makes a trap sample without its method, and the
   // effort it writes holds the trap count beside it, so neither is lost here.
   if (entered && protocol === "") return { outcome: "invalid", problem: "method_required" };
@@ -188,16 +225,11 @@ export async function setSampleMethod(
     ...(datesChanged ? { kind, date_start: start, date_end: end } : {}),
   };
   if (entered) {
-    // The trap form writes the effort as the count and the trap kind, so a
-    // new method rewrites it with the same count (CodeRabbit on this branch).
-    let effort = {};
-    if (protocolChanged) {
-      const current = await db.selectFrom("sample").where("entity_id", "=", sampleId).select("sampling_effort").executeTakeFirst();
-      const count = trapCountOf(current?.sampling_effort ?? null);
-      if (count !== null) effort = { sampling_effort: trapEffort(count, protocol) };
-    }
     try {
-      await db.updateTable("sample").set({ ...update, ...effort }).where("entity_id", "=", sampleId).execute();
+      await db.transaction().execute(async (trx) => {
+        await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
+        if (protocolChanged) await changeSampleMethod(trx, sampleId, protocol);
+      });
     } catch (err) {
       // Nothing was kept anywhere, so saving again is all that is needed.
       if (isWriteConflict(err)) return { outcome: "not_applied" };
@@ -248,6 +280,7 @@ export async function setSampleMethod(
     await db.transaction().execute(async (trx) => {
       await mirrorCorrections(trx, events);
       await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
+      if (protocolChanged) await changeSampleMethod(trx, sampleId, protocol);
       // A disagreement among the records over the method is settled by the
       // edit, as on the collector's form.
       if (protocolChanged) {

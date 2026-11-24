@@ -257,7 +257,7 @@ const pick = <T extends object>(row: T, spec: Publish<T>) =>
 
 export const SAMPLE_PUBLISHED: Publish<SampleDetail> = {
   sample_id: true, kind: true, sample_number: true, date_start: true, date_end: true, specimen_count: true,
-  locality: true, county: true, state_province: true, country: true, protocol: true, sampling_effort: true,
+  locality: true, county: true, state_province: true, country: true, protocol: true, sampling_effort: true, method: true, trap_count: true,
   inat_observation_id: true, observation_gone_since: true, host_inat_taxon_id: true, host_name_as_observed: true,
   host_rank: true, observation_place_guess: true, observation_notes: true, geoprivacy: true, taxon_geoprivacy: true,
   atlas_code: true, atlas_name: true, program_code: true, program_name: true, latitude: true, longitude: true,

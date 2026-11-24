@@ -167,6 +167,36 @@ describe("minting a sample from an observation", () => {
   });
 });
 
+describe("a minted sample's method (beeline-ni5m.15)", () => {
+  test("is aerial net, written with the sample, and the stored method agrees with the text", async () => {
+    await stage(obs(7));
+    await stage(obs(8, { ofvs: ofvs("8", "2") }));
+    expect((await promoteObservations(conn)).samplesMinted).toBe(2);
+    expect(await rows(conn, "SELECT s.protocol, m.method_code, m.trap_count FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id ORDER BY s.sample_number")).toEqual([
+      ["aerial net", "aerial net", null],
+      ["aerial net", "aerial net", null],
+    ]);
+    expect(await count("SELECT count(*) FROM sample_method_out_of_step")).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_without_method")).toBe(0);
+  });
+
+  test("a pass that mints nothing writes no method, and does not fail", async () => {
+    await stage(obs(7));
+    await promoteObservations(conn);
+    expect((await promoteObservations(conn)).samplesMinted).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_method")).toBe(1);
+  });
+
+  test("a pass that only links an existing sample to its observation leaves that sample's method alone", async () => {
+    const sampleId = await insertCleanSample(conn, { sample_number: "'7'", protocol: "'pantrap'" });
+    await stage(obs(7));
+    expect(await promoteObservations(conn)).toMatchObject({ samplesMinted: 0, freeLinks: 1 });
+    expect(await rows(conn, `SELECT method_code FROM sample_method WHERE sample_id = ${sampleId}`)).toEqual([["pan trap"]]);
+    expect(await count("SELECT count(*) FROM sample_method")).toBe(1);
+    expect(await count("SELECT count(*) FROM sample_method_out_of_step")).toBe(0);
+  });
+});
+
 describe("what is not minted", () => {
   test("an observer the store holds no account for is staged, not minted", async () => {
     await stage(obs(7, { user: { id: 999, login: "stranger" } }));

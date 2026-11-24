@@ -214,6 +214,11 @@ describe("reseeding a store that cannot be blown away", () => {
     // The whole point: the model is empty, so promotion may run against it.
     expect(await rows(conn, `SELECT count(*) FROM person`)).toEqual([[0n]]);
     expect(await rows(conn, `SELECT count(*) FROM sample`)).toEqual([[0n]]);
+    // A sample's method is derived with the sample, as promotion and minting write it (beeline-ni5m.15), so a reseed carries
+    // no sample_method row: it would name a sample a reseed redraws. The target has the list and the mapping from its schema.
+    expect(await rows(conn, `SELECT count(*) FROM sample_method`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT count(*) FROM method`)).toEqual([[8n]]);
+    expect(CARRIED_TABLES).not.toContain("sample_method");
   });
 
   test("a source that has printed is refused, and no target is built", async () => {

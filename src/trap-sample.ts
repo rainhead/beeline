@@ -214,7 +214,7 @@ export const isSeriesNumber = (sampleNumber: string): boolean => /^[A-Za-z]+-/.t
  * Whether another trap sample has this number, judged only for a number in a series (letters, a hyphen and what
  * follows; the program's own compared folded, so `OBAS 00011` is `OBAS-00011`). A plain number ("1") is the
  * collector's for the day and is held by many trap samples of the old Beeline, so it is never a clash. For a net sample
- * that an end day would make a trap sample (the method correction).
+ * that a trap method would make a trap sample (the method correction).
  */
 export async function seriesTrapNumberTaken(conn: DuckDBConnection, sampleNumber: string, sampleId: number): Promise<boolean> {
   if (isProgramSeries(sampleNumber)) {

@@ -1,3 +1,4 @@
+import { en } from "./messages/en.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
@@ -315,6 +316,20 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
   };
   return correct(sampleId, input, gates, async (sample, form): Promise<EditSampleResult> => {
     const edit = { values: form.values, bases: form.bases, note: form.note ?? "", author: actor.login };
+    // A net sample given a trap method becomes a trap sample, and a series number is one for each trap sample (as in setMethod).
+    const given = typeof form.values.protocol === "string" ? form.values.protocol.trim() : null;
+    if (given !== null && given !== "") {
+      const baseline = form.bases.protocol !== undefined ? form.bases.protocol.trim() : (sample.protocol ?? "").trim();
+      const writer = deps.printWriter ?? deps.conn;
+      if (given !== baseline && writer !== undefined) {
+        const kept = await sql<{ is_trap: boolean; kind: string }>`
+          SELECT (SELECT is_trap FROM method WHERE code = ${given}) AS is_trap, s.kind FROM sample s WHERE s.entity_id = ${sample.entity_id}`.execute(deps.db);
+        const row = kept.rows[0];
+        if (row !== undefined && row.is_trap === true && row.kind !== "trap" && (await seriesTrapNumberTaken(writer, sample.sample_number, sample.entity_id))) {
+          return { ok: false, refusal: "invalid", problem: en.record.sample.methodEdit.numberTaken(sample.sample_number) };
+        }
+      }
+    }
     if (form.dryRun === true) {
       const plan = await planSampleEdit(deps.db, sample, edit);
       if (plan.outcome === "no_staging") return refused("no_staging");
@@ -773,15 +788,17 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
   return correct(sampleId, input, gates, (_, form): Promise<SetMethodResult> =>
     withPrintRunLock(async (): Promise<SetMethodResult> => {
       const { db } = deps;
-      const now = await db.selectFrom("sample").where("entity_id", "=", sampleId).select(["kind", "sample_number", "date_start"]).executeTakeFirst();
+      const now = await db.selectFrom("sample").where("entity_id", "=", sampleId).select(["kind", "sample_number", "date_start", "protocol"]).executeTakeFirst();
       if (now === undefined) return refused("not_found");
       if (await heldByUnprintedRun(db, sampleId)) return refused("in_print_run");
       const entered = (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
       // A sample whose method becomes a trap becomes a trap sample, and a series number (OBAS-00011) is one for each trap sample; a plain number is the collector's, and shared. The dates decide nothing.
       const writer = deps.printWriter ?? deps.conn;
+      // A field the form left as it showed it is no change (setSampleMethod keeps the sample's own value for it).
       const toMethod = form.protocol.trim();
+      const methodChanged = toMethod !== (form.bases?.protocol !== undefined ? form.bases.protocol.trim() : (now.protocol ?? "").trim());
       const becomesTrap =
-        toMethod !== "" && (await sql<{ is_trap: boolean }>`SELECT is_trap FROM method WHERE code = ${toMethod}`.execute(db)).rows[0]?.is_trap === true;
+        methodChanged && toMethod !== "" && (await sql<{ is_trap: boolean }>`SELECT is_trap FROM method WHERE code = ${toMethod}`.execute(db)).rows[0]?.is_trap === true;
       if (!entered && now.kind !== "trap" && becomesTrap && writer !== undefined && (await seriesTrapNumberTaken(writer, now.sample_number, sampleId))) {
         return { ok: false, refusal: "number_taken", number: now.sample_number };
       }

@@ -171,7 +171,7 @@ const isPrinted = async (db: Kysely<Database>, id: number): Promise<boolean> =>
  * not made, so it changes nothing for the rest). It is shown to people and never enforced: it ignores the writes of
  * the row that have not happened (collectors are judged against dates a method change of the same row is about to
  * move), and the job asks the correction itself. The kind of sample a method change would leave and the method are
- * carried along, since a trap count is refused on a net sample unless the dates make it a trap sample.
+ * carried along, since a trap count is refused on a net sample unless its method is a trap.
  */
 export async function predictRefusals(env: PredictEnv, facts: SampleFacts, changes: readonly UnitChange[], chosen: (unit: ChangeUnit) => boolean): Promise<Map<ChangeUnit, Prediction>> {
   const { db, conn, messages } = env;

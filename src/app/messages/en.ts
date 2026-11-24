@@ -1331,7 +1331,7 @@ export const en = {
         /** For a method that is blank or not on the list, naming the methods that are. */
         unlistedMethod: (names: string) => `Choose one of the listed methods: ${names}.`,
         dateEnd: "Collecting ended",
-        dateEndHint: "Give the day the traps came in to make this a trap sample. Leave it blank for a net sample collected on one day.",
+        dateEndHint: "The last day of collecting, if it took more than one day. Leave it blank for a sample collected on one day. The method, not this date, says whether it is a net or a trap sample.",
         note: "Reason (optional)",
         save: "Save",
         problems: {
@@ -1347,7 +1347,7 @@ export const en = {
         inPrintRun:
           "Labels for this sample are in a print run that has not printed yet, which holds the method and dates it froze. Wait for the run to print or cancel it, then make the correction.",
         numberTaken: (number: string) =>
-          `Giving this net sample an end day makes it a trap sample, and trap sample ${number} is already in Beeline: a series number is one for each trap sample. Correct one of the two numbers first.`,
+          `Choosing a trap method makes this a trap sample, and trap sample ${number} is already in Beeline: a series number is one for each trap sample. Correct one of the two numbers first.`,
         conflict: "Someone changed this sample's method or dates after you opened the form. Reload the page to see what they saved, then make your correction again.",
       },
       /** Staff correcting how many traps a trap sample had, from a second pencil on the Method row (beeline-kgyd.4.1). */

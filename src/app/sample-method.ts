@@ -1,5 +1,6 @@
+import { readFile } from "node:fs/promises";
 import { sql, type Kysely } from "kysely";
-import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
+import { parseCsv, upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
 import { mirrorCorrections } from "./correction-store.js";
 import { methodCodesSql } from "../trap-sample.js";
@@ -253,6 +254,19 @@ export async function setSampleMethod(
       WHERE field IN ('day2', 'month2', 'year2') AND _id IN (SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId})`.execute(db);
     for (const r of found.rows) corrected.set(`${r._id}|${r.field}`, r.new_value ?? "");
   }
+  // And what the durable file says, which is newer than the store's tables where a save wrote the file and then lost
+  // its store transaction (not_applied): a component that save left must be replaced or kept on purpose, not forgotten.
+  try {
+    const [head = [], ...body] = parseCsv(await readFile(correctionsPath, "utf8"));
+    const col = (name: string) => head.indexOf(name);
+    const ids = new Set(members.map((m) => m._id));
+    for (const r of body) {
+      const field = r[col("field")] ?? "";
+      if (["day2", "month2", "year2"].includes(field) && ids.has(r[col("_id")] ?? "")) corrected.set(`${r[col("_id")]}|${field}`, r[col("new_value")] ?? "");
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
 
   // The old records write a date as three columns, without leading zeros.
   const parts = (d: string) => d.split("-").map((p) => String(Number(p)));
@@ -271,11 +285,11 @@ export async function setSampleMethod(
     }
     if (endChanged) {
       // Each old row is written only where the new value differs from what that row says now (its staged value with
-      // the corrections over it). A one-day sample's end is blank on a row whose own end was blank, and is the new
-      // start on a row that stated one, so a row that never stated an end gains none (beeline-ni5m.15, stage three).
+      // the corrections over it, the store's and the file's). A one-day sample's end is blank on every row, as the
+      // form's blank end always wrote it, so a row that never stated an end gains none and one that did loses it
+      // (the legacy-format export reads each row's own end).
       const raw = [member.day2, member.month2, member.year2].map((v) => v ?? "");
-      const states = raw.some((v) => v !== "");
-      const target = dateEnd !== "" ? [d!, mo!, y!] : states ? [sd!, smo!, sy!] : ["", "", ""];
+      const target = dateEnd !== "" ? [d!, mo!, y!] : ["", "", ""];
       (["day2", "month2", "year2"] as const).forEach((f, i) => {
         if ((corrected.get(`${member._id}|${f}`) ?? raw[i]) !== target[i]) event(f, target[i]!);
       });

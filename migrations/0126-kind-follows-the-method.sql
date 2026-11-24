@@ -18,6 +18,8 @@
 -- Uploads queued before the deploy: production had 0 pending method_dates outcomes.
 -- A queued one would apply through the new code, which sets kind from the method.
 --
+-- Rolling the release back has a second hazard: after this migration 13 netted samples span days with kind net,
+-- and the old code's Method form shows a net sample a blank end, so a save there sets its end to its start.
 -- Rolling the release back: the old code writes kind from the end date. This
 -- migration never runs again, so a repair after a rollback is a new migration that
 -- repeats the UPDATE below. Rehearsed on the backup of 2026-11-24: 976 rows, 17 ms.

@@ -1430,7 +1430,10 @@ describe("releasing a settled season's sample for printing", () => {
 describe("a sample's kind is no longer corrected from its old records (beeline-ni5m.15, stage three)", () => {
   it("has no route for it: kind follows the method", async () => {
     const w = await world();
-    const res = await w.send(w.keys.sam, "/samples/1/kind-from-old-records", { note: "x" });
+    const id = Number(((await rows(w.conn, `SELECT min(entity_id) FROM sample`)) as number[][])[0]![0]);
+    const res = await w.send(w.keys.sam, `/samples/${id}/kind-from-old-records`, { note: "x" });
     expect(res.status).toBe(404);
+    // The sample is there: its other routes answer.
+    expect((await w.send(w.keys.sam, `/samples/${id}/hold`, { lift: false, note: "x" })).status).not.toBe(404);
   });
 });

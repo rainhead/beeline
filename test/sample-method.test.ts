@@ -8,7 +8,7 @@ import { createKysely } from "../src/db.js";
 import type { Database } from "../src/model.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
-import { parseCsv } from "../src/corrections.js";
+import { parseCsv, upsertCorrections } from "../src/corrections.js";
 import { readSampleChanges as correctionsLog } from "../src/sample-change.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
@@ -623,23 +623,67 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
     expect(await rows(conn, `SELECT CAST(date_end AS VARCHAR) FROM sample WHERE entity_id = ${sampleId}`)).toEqual([[moved]]);
   });
 
-  it("moving the start of a one-day sample moves the end of records that state one", async () => {
+  it("moving the start of a one-day sample blanks the end of records that stated one", async () => {
     const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", { observation: false });
     await conn.run(
       `UPDATE legacy_occurrence SET day2 = day, month2 = month, year2 = year WHERE _id IN (SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId})`,
     );
     const [[records]] = (await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[bigint]];
-    const moved = later(-1);
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_start: moved, date_end: "" })).status).toBe(302);
-    const [y, mo, d] = moved.split("-").map((p) => String(Number(p)));
+    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_start: later(-1), date_end: "" })).status).toBe(302);
     const events = await correctionsIn(correctionsPath);
-    expect(events.filter((e) => e.field === "day2")).toHaveLength(Number(records));
-    for (const [field, value] of [["day2", d], ["month2", mo], ["year2", y]] as const) {
-      const of = events.filter((e) => e.field === field);
-      // A record whose end already says the new value is not written (the month and year of a start a day earlier);
-      // the rest follow the start.
-      expect(of.length).toBeLessThanOrEqual(Number(records));
-      for (const e of of) expect(e.new_value).toBe(value);
+    for (const f of ["day2", "month2", "year2"]) {
+      const of = events.filter((e) => e.field === f);
+      expect(of).toHaveLength(Number(records));
+      for (const e of of) expect(e.new_value).toBe("");
     }
   });
+
+  it("clearing the end of a multi-day sample whose records disagree blanks the record that stated one, and writes nothing to the one that did not", async () => {
+    const { app, conn, sampleId, start, later, correctionsPath } = await methodApp("staff");
+    const ids = ((await rows(conn, `SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId} ORDER BY _id`)) as string[][]).map((r) => r[0]!);
+    expect(ids.length).toBeGreaterThan(1);
+    const end = later(2);
+    const [ey, emo, ed] = end.split("-").map((p) => String(Number(p)));
+    await conn.run(`UPDATE sample SET date_end = DATE '${end}' WHERE entity_id = ${sampleId}`);
+    await conn.run(`UPDATE legacy_occurrence SET day2 = '${ed}', month2 = '${emo}', year2 = '${ey}' WHERE _id = '${ids[0]}'`);
+    await conn.run(`UPDATE legacy_occurrence SET day2 = NULL, month2 = NULL, year2 = NULL WHERE _id IN (${ids.slice(1).map((i) => `'${i}'`).join(", ")})`);
+    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "" })).status).toBe(302);
+    expect(await sampleRow(conn, sampleId)).toEqual(["net", "aerial net", start, start]);
+    const events = (await correctionsIn(correctionsPath)).filter((e) => (e.field ?? "").endsWith("2"));
+    expect(new Set(events.map((e) => e._id))).toEqual(new Set([ids[0]]));
+    expect(events.map((e) => e.new_value)).toEqual(["", "", ""]);
+  });
+
+  it("compares against a correction the file holds that the store does not, from a save that was not applied", async () => {
+    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff");
+    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(2) })).status).toBe(302);
+    const [[id]] = (await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
+    // A later save reached the file and lost its store transaction: the file says month 8, the store still says the start's month.
+    await upsertCorrections(correctionsPath, [{ _id: id, field: "month2", base_value: "", new_value: "8", author: "x", reason: "lost" }]);
+    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(3) })).status).toBe(302);
+    const mine = (await correctionsIn(correctionsPath)).filter((e) => e._id === id && e.field === "month2");
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.new_value).toBe(String(Number(later(3).slice(5, 7))));
+  });
+
+  it("accepts a date range alone on a net sample whose series number another trap sample holds, and refuses a trap method for it", async () => {
+    const { app, conn, sampleId, later } = await methodApp("staff");
+    await conn.run(`UPDATE sample SET sample_number = 'OBAS-00099' WHERE entity_id = ${sampleId}`);
+    await insertCleanSample(conn, { sample_number: "'OBAS-00099'", kind: "'trap'", date_start: `DATE '${later(40)}'`, date_end: `DATE '${later(41)}'` });
+    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(2) })).status).toBe(302);
+    expect((await sampleRow(conn, sampleId))?.[0]).toBe("net");
+    const refused = await post(app, `/samples/${sampleId}/method`, { protocol: "vane trap", date_end: later(2) });
+    expect(await refused.text()).toContain("OBAS-00099");
+    expect((await sampleRow(conn, sampleId))?.[0]).toBe("net");
+  });
+
+  it("refuses the collector's edit that gives a net sample a trap method when another trap sample holds its series number", async () => {
+    const { app, conn, sampleId, later } = await methodApp("collector", { observation: false });
+    await conn.run(`UPDATE sample SET sample_number = 'OBAS-00098' WHERE entity_id = ${sampleId}`);
+    await insertCleanSample(conn, { sample_number: "'OBAS-00098'", kind: "'trap'", date_start: `DATE '${later(40)}'`, date_end: `DATE '${later(41)}'` });
+    const res = await post(app, `/samples/${sampleId}/edit`, { "base:protocol": "aerial net", protocol: "vane trap" });
+    expect(await res.text()).toContain("OBAS-00098");
+    expect(await rows(conn, `SELECT protocol, kind FROM sample WHERE entity_id = ${sampleId}`)).toEqual([["aerial net", "net"]]);
+  });
+
 });

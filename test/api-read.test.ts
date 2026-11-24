@@ -174,7 +174,7 @@ async function world({ extras = false }: { extras?: boolean } = {}) {
       { collector_id: String(bob), atlas_id: atlas("WaBA"), sample_number: "'B-5'", locality: "'Taxon Meadow'", state_province: "'WA'", taxon_geoprivacy: "'obscured'" },
       { latitude: "48.9001", longitude: "-122.9002", elevation_m: "1999" },
     );
-    // Cites an observation Beeline never fetched, so nobody here knows whether it is protected.
+    // Cites an observation Beeline never fetched; with no setting stored its location is shown (beeline-gab9).
     extra.b6 = await insertCleanSample(
       conn,
       { collector_id: String(bob), atlas_id: atlas("WaBA"), sample_number: "'B-6'", locality: "'Unfetched Flats'", state_province: "'WA'", inat_observation_id: "888" },
@@ -439,6 +439,16 @@ describe("the counts", () => {
           expect(grouped.group_by).toBe(group);
           expect(grouped.groups.reduce((n: number, g: any) => n + g.total, 0), `${kind} ${f} ${group}`).toBe(listed.total);
         }
+      }
+    }
+    // Staff's query joins nothing for the location rule, and grouping the
+    // specimens awaiting Ecdysis by season once failed there with a DuckDB
+    // binding error (beeline-zzeg).
+    for (const kind of ["samples", "specimens"] as const) {
+      const listed = await w.json(w.keys.sam, `/${kind}?scope=all&ecdysis=expected&page_size=1`);
+      for (const group of COUNT_GROUPS) {
+        const grouped = await w.json(w.keys.sam, `/${kind}/count?scope=all&ecdysis=expected&group_by=${group}`);
+        expect(grouped.total, `${kind} ${group}`).toBe(listed.total);
       }
     }
     const seasons = await w.json(w.keys.alice, "/samples/count?scope=all&group_by=season");
@@ -835,21 +845,23 @@ describe("what the API publishes of a record, field by field", () => {
 describe("what a volunteer's page and key may not learn, for every kind of withholding", () => {
   const SECRETS = [
     "Private Cove", "Candidate One", "Candidate Two", "Hidden Wilderness", "Hidden Ecoregion", "Override Place", "Override Reason", "Point Reason",
-    "Guess Harbor", "Private Guess Cove", "48.7001", "-122.5002", "1888", "Taxon Meadow", "48.9001", "-122.9002", "1999", "Unfetched Flats", "48.8001", "-122.8002", "1777",
+    "Guess Harbor", "Private Guess Cove", "48.7001", "-122.5002", "1888", "Taxon Meadow", "48.9001", "-122.9002", "1999", 
   ];
   const leaks = (value: unknown) => SECRETS.filter((x) => JSON.stringify(value).includes(x));
 
-  it("keeps a private observation's county, a taxon-obscured point, and a point on an observation never fetched out of every answer", async () => {
+  it("keeps a private observation's county and a taxon-obscured point out of every answer, and shows a point on an observation never fetched", async () => {
     const w = await world({ extras: true });
     const all = await w.json(w.keys.alice, "/samples?scope=all&page_size=500");
     const byNumber = (n: string) => all.rows.find((r: any) => r.fieldNumber === n);
     // The private observation loses its county as well; the other two keep it.
     expect(byNumber("B-4")).toMatchObject({ county: null, stateProvince: "WA", locality: null, location_withheld: true });
     expect(byNumber("B-5")).toMatchObject({ locality: null, decimalLatitude: null, location_withheld: true });
-    expect(byNumber("B-6")).toMatchObject({ locality: null, decimalLatitude: null, location_withheld: true });
+    // Never fetched, so no setting is stored: shown (Peter, 2026-11-23, beeline-gab9).
+    expect(byNumber("B-6")).toMatchObject({ locality: "Unfetched Flats", location_withheld: false });
+    expect(Number(byNumber("B-6").decimalLatitude)).toBeCloseTo(48.8001, 4);
     expect(leaks(all)).toEqual([]);
     expect(leaks(await w.json(w.keys.alice, "/specimens?scope=all&page_size=500"))).toEqual([]);
-    for (const [n, id] of Object.entries({ "B-4": w.extra.b4, "B-5": w.extra.b5, "B-6": w.extra.b6 })) {
+    for (const [n, id] of Object.entries({ "B-4": w.extra.b4, "B-5": w.extra.b5 })) {
       const record = await w.json(w.keys.alice, `/samples/${id}`);
       expect(record.sample, n).toMatchObject({ location_withheld: true, locality: null, observation_place_guess: null, locality_suggestion: null, locality_override: null, location_override: null, ecoregion: null, place_disagreement: null });
       expect(record.sample.locality_alternatives).toEqual([]);
@@ -859,9 +871,9 @@ describe("what a volunteer's page and key may not learn, for every kind of withh
       for (const x of SECRETS) expect(html, `${n} ${x}`).not.toContain(x);
     }
     // Nor can a filter find them by what they hide.
-    for (const place of ["Private", "Wilderness", "Ecoregion", "Override", "Candidate", "Taxon", "Unfetched", "Skagit"]) {
+    for (const place of ["Private", "Wilderness", "Ecoregion", "Override", "Candidate", "Taxon", "Skagit"]) {
       const found = await w.json(w.keys.alice, `/samples?scope=all&place=${place}`);
-      expect(found.rows.map((r: any) => r.fieldNumber).filter((n: string) => ["B-4", "B-5", "B-6"].includes(n)), place).toEqual([]);
+      expect(found.rows.map((r: any) => r.fieldNumber).filter((n: string) => ["B-4", "B-5"].includes(n)), place).toEqual([]);
     }
     expect((await w.json(w.keys.alice, "/samples?scope=all&q=Private")).total).toBe(0);
   });
@@ -897,11 +909,11 @@ describe("what a volunteer's page and key may not learn, for every kind of withh
     // Rows with no locality to show come last, the withheld ones among them, in the order of what is shown.
     const firstBlank = forAlice.findIndex(([, l]: any) => l === null);
     expect(forAlice.slice(firstBlank).every(([, l]: any) => l === null)).toBe(true);
-    expect(forAlice.slice(firstBlank).map(([n]: any) => n)).toEqual(expect.arrayContaining(["B-2", "B-4", "B-5", "B-6"]));
+    expect(forAlice.slice(firstBlank).map(([n]: any) => n)).toEqual(expect.arrayContaining(["B-2", "B-4", "B-5"]));
     // Staff sort by the real thing: the Anacortes landing comes first.
     expect((await places(w.keys.sam))[0][0]).toBe("B-2");
     // And the order of the withheld rows says nothing about their places: the same however the secret localities read.
-    await w.conn.run(`UPDATE sample SET locality = 'Zzz' WHERE sample_number IN ('B-4', 'B-5', 'B-6', 'B-2')`);
+    await w.conn.run(`UPDATE sample SET locality = 'Zzz' WHERE sample_number IN ('B-4', 'B-5', 'B-2')`);
     expect((await places(w.keys.alice)).map(([n]: any) => n)).toEqual(forAlice.map(([n]: any) => n));
   });
 });

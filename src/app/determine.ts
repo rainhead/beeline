@@ -273,14 +273,14 @@ const TAXA_TTL_MS = 10 * 60_000;
 export async function entryTaxa(db: Kysely<Database>, now = Date.now()): Promise<EntryTaxon[]> {
   if (taxaMemo !== null && now - taxaMemo.at < TAXA_TTL_MS) return taxaMemo.taxa;
   const nodes = (
-    await sql<{ id: number; rank: string; name: string; parent_id: number | null; castes: boolean }>`
-      SELECT a.entity_id AS id, a.rank, a.scientific_name AS name, a.parent_id, c.has_castes AS castes
-      FROM animal a
+    await sql<{ id: number; rank: string; name: string; filed_under_id: number | null; castes: boolean }>`
+      SELECT a.entity_id AS id, a.rank, a.scientific_name AS name, a.filed_under_id, c.has_castes AS castes
+      FROM animal_tree a
       JOIN animal_castes c ON c.animal_id = a.entity_id`.execute(db)
   ).rows;
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const above = (id: number, rank: string): string | null => {
-    for (let n = byId.get(id); n !== undefined; n = n.parent_id === null ? undefined : byId.get(n.parent_id)) {
+    for (let n = byId.get(id); n !== undefined; n = n.filed_under_id === null ? undefined : byId.get(n.filed_under_id)) {
       if (n.rank === rank) return n.name;
     }
     return null;

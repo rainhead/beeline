@@ -37,7 +37,7 @@ const ARCHIVE_DECLARED_OWN = new Set<string>(["caste"]);
  * classification where it does not know the name itself: a genus or a rank it
  * does not use falls all the way to "Animalia" without one.
  */
-export const CLASSIFICATION_RANKS = ["kingdom", "phylum", "class", "order", "family", "genus", "subgenus"] as const;
+export const CLASSIFICATION_RANKS = ["kingdom", "phylum", "class", "order", "family", "subfamily", "tribe", "subtribe", "genus", "subgenus"] as const;
 export type ClassificationRank = (typeof CLASSIFICATION_RANKS)[number];
 /** One specimen's classification; a rank the tree has no ancestor at is absent. */
 export type Classification = Partial<Record<ClassificationRank, string>>;
@@ -123,7 +123,7 @@ import type { Database, DeterminationQualifier } from "../model.js";
  * Which volunteer determinations go downstream is the atlas staff's call after
  * downloading (beeline-pyr), so every determination is in the file.
  *
- * - `occurrence.txt`, the core: one row per specimen behind an `id`, in the
+ * - `occurrence.tsv`, the core: one row per specimen behind an `id`, in the
  *   archive's own columns (`ARCHIVE_DWC_COLUMNS`). Most cells are the CSV's, but
  *   the list is not: the archive adds `recordNumber`, `caste` and the higher
  *   classification, and writes the numbers as Darwin Core defines them (see
@@ -131,7 +131,7 @@ import type { Database, DeterminationQualifier } from "../model.js";
  *   Beeline's own (geoprivacy, coordinate provenance, the atlas) follow them
  *   undeclared, so a reader of the archive ignores them and a person opening
  *   the file still sees them.
- * - `identification.txt`, the extension: one row per determination, oldest
+ * - `identification.tsv`, the extension: one row per determination, oldest
  *   first, joined to the core by `coreid`, with Symbiota's flag for the
  *   current one, then the determination's own sex and caste, declared as
  *   Darwin Core terms; whether an expert made it follows undeclared.
@@ -302,7 +302,7 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
 /**
  * The higher classification of every animal in the tree, by animal id: the
  * ranks `CLASSIFICATION_RANKS` names that sit at or above it, found by walking
- * up `animal.parent_id`. A classification belongs to the animal and not to the
+ * up the tree (`animal_tree`). A classification belongs to the animal and not to the
  * specimen, so it is built once for a whole run of archives from the tree alone
  * (a few thousand nodes) and each specimen's is looked up by the animal its
  * determination of record names. Asking per page of specimens instead scanned
@@ -311,12 +311,12 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
  */
 export async function classificationsByAnimal(db: Kysely<Database>): Promise<Map<number, Classification>> {
   const result = await sql<{ animal_id: number | bigint; rank: ClassificationRank; scientific_name: string }>`
-    WITH RECURSIVE walk(animal_id, rank, scientific_name, parent_id) AS (
-      SELECT entity_id, rank, scientific_name, parent_id FROM animal
+    WITH RECURSIVE walk(animal_id, rank, scientific_name, filed_under_id) AS (
+      SELECT entity_id, rank, scientific_name, filed_under_id FROM animal_tree
       UNION ALL
-      SELECT w.animal_id, up.rank, up.scientific_name, up.parent_id
+      SELECT w.animal_id, up.rank, up.scientific_name, up.filed_under_id
       FROM walk w
-      JOIN animal up ON up.entity_id = w.parent_id
+      JOIN animal_tree up ON up.entity_id = w.filed_under_id
     )
     SELECT animal_id, rank, scientific_name FROM walk
     WHERE rank IN (${sql.join([...CLASSIFICATION_RANKS])})`.execute(db);
@@ -372,12 +372,12 @@ export const archiveDescriptor = (
 ) => `<?xml version="1.0" encoding="UTF-8"?>
 <archive xmlns="http://rs.tdwg.org/dwc/text/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://rs.tdwg.org/dwc/text/ http://rs.tdwg.org/dwc/text/tdwg_dwc_text.xsd">
   <core encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Occurrence">
-    <files><location>occurrence.txt</location></files>
+    <files><location>occurrence.tsv</location></files>
     <id index="0"/>
 ${fields(coreTerms)}
 ${opts.license == null ? "" : `    <field default="${xmlAttr(opts.license)}" term="http://purl.org/dc/terms/license"/>\n`}${opts.coreComment === undefined ? "" : `    <!-- ${opts.coreComment} -->\n`}  </core>
   <extension encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Identification">
-    <files><location>identification.txt</location></files>
+    <files><location>identification.tsv</location></files>
     <coreid index="0"/>
 ${fields(identificationTerms)}
 ${opts.identificationComment === undefined ? "" : `    <!-- ${opts.identificationComment} -->\n`}  </extension>
@@ -487,9 +487,9 @@ export function specimenArchiveStream(
     {
       head: () => {
         file("meta.xml").push(encoder.encode(layout.meta), true);
-        core = file("occurrence.txt");
+        core = file("occurrence.tsv");
         core.push(encoder.encode(tabLine(layout.occurrenceHeader)));
-        identifications = file("identification.txt");
+        identifications = file("identification.tsv");
         identifications.push(encoder.encode(tabLine(layout.identificationHeader)));
         return take();
       },

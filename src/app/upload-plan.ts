@@ -277,7 +277,24 @@ const layout = (recognise: readonly string[], read: readonly string[], refuses: 
   shaded: [...recognise, ...BOOKKEEPING_COLUMNS],
 });
 
-const RECOGNISE = ["fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa"];
+const RECOGNISE = [
+  "fieldNumber",
+  "sampleNumber",
+  "specimenNumber",
+  "recordedBy",
+  "eventDate",
+  "samplingProtocol",
+  "locality",
+  "county",
+  "stateProvince",
+  "decimalLatitude",
+  "decimalLongitude",
+  "coordinateUncertaintyInMeters",
+  "minimumElevationInMeters",
+  "maximumElevationInMeters",
+  "associatedTaxa",
+  "hostFamily",
+];
 
 export const SPECIMENS_LAYOUT: Layout = layout(RECOGNISE, [
   "scientificName",

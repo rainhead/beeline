@@ -70,7 +70,7 @@ async function archiveOf(rows: SpecimenRow[], opts: { catalogPrefix?: string | n
   const files = Object.fromEntries(
     Object.entries(unzipSync(new Uint8Array(await new Response(stream).arrayBuffer()))).map(([n, d]) => [n, strFromU8(d)]),
   );
-  const [header, ...body] = files["occurrence.txt"]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
+  const [header, ...body] = files["occurrence.tsv"]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
   return { files, header: header!, body, cell: (r: number, name: string) => body[r]![header!.indexOf(name)] };
 }
 
@@ -151,7 +151,7 @@ describe("sex and caste in the archive", () => {
   it("declares both on the identification, and caste on the occurrence beside sex", async () => {
     const a = await archiveOf([specimen({ sex: "female", caste: "worker" })]);
     const meta = a.files["meta.xml"]!;
-    const [identHeader] = a.files["identification.txt"]!.split("\n").map((l) => l.split("\t"));
+    const [identHeader] = a.files["identification.tsv"]!.split("\n").map((l) => l.split("\t"));
     for (const term of ["sex", "caste"]) {
       expect(meta).toContain(`<field index="${identHeader!.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
       expect(meta).toContain(`<field index="${a.header.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
@@ -213,10 +213,28 @@ describe("the higher classification", () => {
     expect(map.size).toBe(10);
   });
 
+  it("carries a subfamily, tribe and subtribe, read from where the tree files the node now", async () => {
+    const { db, conn } = await tree();
+    const under = (name: string) => `(SELECT entity_id FROM animal WHERE scientific_name = '${name}')`;
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('family', 'Apidae', ${under("Hymenoptera")})`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('subfamily', 'Apinae', ${under("Apidae")})`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('tribe', 'Eucerini', ${under("Apinae")})`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('subtribe', 'Eucerina', ${under("Eucerini")})`);
+    // Made under the family, then filed under the subtribe, as the filing step does.
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Melissodes', ${under("Apidae")})`);
+    await conn.run(`INSERT INTO animal_filing (animal_id, parent_id) SELECT g.entity_id, s.entity_id FROM animal g, animal s WHERE g.scientific_name = 'Melissodes' AND s.scientific_name = 'Eucerina'`);
+    const map = await classificationsByAnimal(db);
+    const id = Number((await conn.runAndReadAll(`SELECT entity_id FROM animal WHERE scientific_name = 'Melissodes'`)).getRows()[0]![0]);
+    expect(map.get(id)).toEqual({
+      kingdom: "Animalia", phylum: "Arthropoda", class: "Insecta", order: "Hymenoptera",
+      family: "Apidae", subfamily: "Apinae", tribe: "Eucerini", subtribe: "Eucerina", genus: "Melissodes",
+    });
+  });
+
   it("is written on the occurrence row under Darwin Core's terms, and empty where there is none", async () => {
     const classifications = new Map([[99, { kingdom: "Animalia", order: "Hymenoptera", family: "Apidae", genus: "Bombus" }]]);
     const a = await archiveOf([specimen({ animal_id: 99 }), specimen({ specimen_id: 8 })], { classifications });
-    for (const term of ["kingdom", "phylum", "class", "order", "family", "genus", "subgenus"]) {
+    for (const term of ["kingdom", "phylum", "class", "order", "family", "subfamily", "tribe", "subtribe", "genus", "subgenus"]) {
       expect(a.files["meta.xml"]).toContain(`<field index="${a.header.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
     }
     expect([a.cell(0, "kingdom"), a.cell(0, "order"), a.cell(0, "family"), a.cell(0, "genus"), a.cell(0, "phylum")]).toEqual([

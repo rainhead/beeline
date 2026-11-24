@@ -47,8 +47,8 @@ async function cases(bench: Bench): Promise<Case[]> {
   const busiestSpecimen = await one(`SELECT specimen_id FROM determination GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`);
   const genus = await one(
     `SELECT g.scientific_name FROM determination_of_record d
-       JOIN animal a ON a.entity_id = d.animal_id
-       JOIN animal g ON g.entity_id = a.parent_id AND g.rank = 'genus'
+       JOIN animal_tree a ON a.entity_id = d.animal_id
+       JOIN animal g ON g.entity_id = a.filed_under_id AND g.rank = 'genus'
       GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`,
   );
   // Hosts (beeline-rfkj.4): the genus most samples name as observed, and the common name most samples' hosts have.

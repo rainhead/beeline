@@ -57,9 +57,9 @@ describe("animal nodes against Ecdysis's thesaurus", () => {
 
   test("loading matches each node, and names what an unmatched one is", async () => {
     const result = await loadEcdysisTaxonomy(conn, ECDYSIS_TAXONOMY);
-    // 15 of the 60 are a subphylum, subclasses, infraclasses, subfamilies and
-    // tribes, which the store does not admit.
-    expect(result).toMatchObject({ taxa: 45, synonyms: 2, notAdmitted: 15, synonymsWithoutAcceptedName: 0, fetchedOn: "2026-10-24" });
+    // 6 of the 60 are a subphylum, subclasses and infraclasses, which the
+    // store does not admit; the subfamilies and tribes it keeps (beeline-stoi).
+    expect(result).toMatchObject({ taxa: 54, synonyms: 2, notAdmitted: 6, synonymsWithoutAcceptedName: 0, fetchedOn: "2026-10-24" });
     expect(await standings()).toEqual([
       ["Lasioglossum", "accepted", 186125n, null],
       ["Lasioglossum (Dialictus)", "accepted", 487834n, null],
@@ -83,7 +83,9 @@ describe("animal nodes against Ecdysis's thesaurus", () => {
     expect(await parent("Insecta")).toEqual([["Arthropoda"]]); // past the subphylum Hexapoda
     expect(await parent("Hymenoptera")).toEqual([["Insecta"]]); // past Pterygota and Neoptera
     expect(await parent("Apoidea")).toEqual([["Apocrita"]]); // past the infraorder Aculeata
-    expect(await parent("Bombus")).toEqual([["Apidae"]]); // past Bombini and Apinae
+    expect(await parent("Bombus")).toEqual([["Bombini"]]); // a genus's parent is its tribe
+    expect(await parent("Bombini")).toEqual([["Apinae"]]);
+    expect(await parent("Apinae")).toEqual([["Apidae"]]);
     // Ecdysis files the species under Lasioglossum (Dialictus); the tree files
     // every species under its genus.
     expect(await parent("Lasioglossum tenax")).toEqual([["Lasioglossum"]]);
@@ -116,7 +118,7 @@ describe("animal nodes against Ecdysis's thesaurus", () => {
     const dir = await variant((csv) => `${csv.split("\n")[0]}\n`);
     try {
       await expect(loadEcdysisTaxonomy(conn, dir)).rejects.toThrow(/no name at a rank the store admits/);
-      expect(await rows(conn, "SELECT count(*) FROM ecdysis_taxon")).toEqual([[45n]]);
+      expect(await rows(conn, "SELECT count(*) FROM ecdysis_taxon")).toEqual([[54n]]);
       expect(await rows(conn, "SELECT ecdysis_tid FROM animal WHERE scientific_name = 'Lasioglossum tenax'")).toEqual([[248008n]]);
     } finally {
       await rm(dir, { recursive: true, force: true });

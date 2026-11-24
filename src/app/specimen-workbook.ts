@@ -47,12 +47,12 @@ type Rows = Array<Array<string | null>>;
  */
 export async function nameRows(db: Kysely<Database>): Promise<Rows> {
   const nodes = (
-    await sql<{ id: number; parent_id: number | null; rank: string; name: string }>`
-      SELECT entity_id AS id, parent_id, rank, scientific_name AS name FROM animal`.execute(db)
+    await sql<{ id: number; filed_under_id: number | null; rank: string; name: string }>`
+      SELECT entity_id AS id, filed_under_id, rank, scientific_name AS name FROM animal_tree`.execute(db)
   ).rows;
   const byId = new Map(nodes.map((n) => [Number(n.id), n]));
   const familyOf = (start: number): string | null => {
-    for (let n = byId.get(start); n !== undefined; n = n.parent_id === null ? undefined : byId.get(Number(n.parent_id))) {
+    for (let n = byId.get(start); n !== undefined; n = n.filed_under_id === null ? undefined : byId.get(Number(n.filed_under_id))) {
       if (n.rank === "family") return n.name;
     }
     return null;
@@ -155,11 +155,12 @@ export interface SpecimenWorkbook {
  * any length, so these columns wrap: a long value makes its row taller and
  * never reaches the next cell.
  */
-export const WRAPPED_COLUMNS: readonly string[] = ["recordedBy", "locality", "county", "associatedTaxa", "scientificName", "identifiedBy", "occurrenceRemarks"];
+export const WRAPPED_COLUMNS: readonly string[] = ["recordedBy", "samplingProtocol", "locality", "county", "associatedTaxa", "scientificName", "identifiedBy", "occurrenceRemarks"];
 
 /** How wide each wrapped column is drawn, in characters (the rest are 16): wide enough that most rows stay one line, narrow enough to leave the sheet readable. */
 export const COLUMN_WIDTHS: Readonly<Record<string, number>> = {
   recordedBy: 26,
+  samplingProtocol: 20,
   locality: 32,
   county: 18,
   associatedTaxa: 56,

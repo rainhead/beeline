@@ -774,7 +774,7 @@ export const en = {
       chooseProgram: "Choose a program",
       /** Above a listing of other people's records, for anyone but staff. */
       withheldNote:
-        "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not read the observation, or cannot find it on iNaturalist.",
+        "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected.",
     },
     /** In a Place cell whose locality, and perhaps county, is somebody else's to see. */
     locationHidden: "location hidden",
@@ -1456,14 +1456,8 @@ export const en = {
          * everyone but its observer — and which of the two kept it, since
          * one is the collector's choice and the other is about a rare plant.
          */
-        withheld: (why: { geoprivacy: string | null; taxonGeoprivacy: string | null; gone: boolean }) =>
-          // Before "not read yet", which would promise a read that cannot
-          // come: the observation is no longer on iNaturalist (beeline-wcc6).
-          why.gone
-            ? "Beeline cannot find this sample's observation on iNaturalist, so it cannot tell whether the collector kept its location private there. Only its collectors and staff see where it was collected."
-            : why.geoprivacy === null && why.taxonGeoprivacy === null
-            ? "Beeline has not read this sample's observation from iNaturalist, so it cannot tell whether the collector keeps its location private there. Until it can, only its collectors and staff see where it was collected."
-            : why.geoprivacy !== null
+        withheld: (why: { geoprivacy: string | null; taxonGeoprivacy: string | null }) =>
+          why.geoprivacy !== null
             ? `The collector keeps this observation's location ${why.geoprivacy === "private" ? "private" : "obscured"} on iNaturalist, so only its collectors and staff see where it was collected.`
             : `iNaturalist ${why.taxonGeoprivacy === "private" ? "hides" : "obscures"} this observation's location because its host plant is rare, so only its collectors and staff see where it was collected.`,
         coordinates: "Coordinates",

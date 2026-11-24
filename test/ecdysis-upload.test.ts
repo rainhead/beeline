@@ -33,6 +33,7 @@ import {
   type Include,
   type UploadPlan,
 } from "../src/app/ecdysis-upload.js";
+import { TRAP_METHODS } from "../src/trap-sample.js";
 import { CURRENT_SEASON, SETTLED_SEASON, insertCleanSample, rows } from "./helpers.js";
 import { BC, BC_OFFERED_YEARS_IN_CODE, fixture, HOUR, WABA } from "./ecdysis-upload-fixture.js";
 
@@ -71,7 +72,7 @@ async function archiveOf(f: F, ids: number[], c = BC, rules = rulesOf()) {
     const [header, ...body] = files[name]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
     return { header: header!, body, cell: (r: number, col: string) => body[r]![header!.indexOf(col)] };
   };
-  return { files, occurrence: table("occurrence.txt"), identification: table("identification.txt") };
+  return { files, occurrence: table("occurrence.tsv"), identification: table("identification.tsv") };
 }
 
 describe("which specimens go in a file", () => {
@@ -361,12 +362,12 @@ describe("the rules hold when the rows are written", () => {
     // Pages of three: 3 + 3 + 1 specimens, the first of them one short.
     const stream = uploadArchiveStream(f.db, BC, ids, rulesOf(), { pageSize: 3, written });
     const files = unzipSync(new Uint8Array(await new Response(stream).arrayBuffer()));
-    const body = strFromU8(files["occurrence.txt"]!).trim().split("\n").slice(1).map((l) => l.split("\t")[0]);
+    const body = strFromU8(files["occurrence.tsv"]!).trim().split("\n").slice(1).map((l) => l.split("\t")[0]);
     expect(body).toHaveLength(6);
     expect(new Set(body)).toEqual(new Set(ids.filter((id) => id !== made[2]!.id).map(String)));
     expect(written.map((w) => w.id).sort((a, b) => a - b)).toEqual(ids.filter((id) => id !== made[2]!.id));
     // Identifications of every page are in the one file.
-    expect(strFromU8(files["identification.txt"]!).split("\n")[0]).toContain("coreid");
+    expect(strFromU8(files["identification.tsv"]!).split("\n")[0]).toContain("coreid");
   });
 
   it("ends a file whose last full page is exactly the size of a page", async () => {
@@ -377,7 +378,7 @@ describe("the rules hold when the rows are written", () => {
     expect(a.occurrence.body).toHaveLength(4);
     const stream = uploadArchiveStream(f.db, BC, made, rulesOf(), { pageSize: 2 });
     const files = unzipSync(new Uint8Array(await new Response(stream).arrayBuffer()));
-    expect(strFromU8(files["occurrence.txt"]!).trim().split("\n")).toHaveLength(5);
+    expect(strFromU8(files["occurrence.tsv"]!).trim().split("\n")).toHaveLength(5);
   });
 });
 
@@ -398,7 +399,7 @@ describe("the upload archive", () => {
     expect(a.occurrence.header).not.toContain("occurrenceID");
     expect(a.occurrence.header).not.toContain("sampleNumber");
     expect(a.occurrence.header).not.toContain("geoprivacy");
-    expect(Object.keys(a.files).sort()).toEqual(["identification.txt", "meta.xml", "occurrence.txt"]);
+    expect(Object.keys(a.files).sort()).toEqual(["identification.tsv", "meta.xml", "occurrence.tsv"]);
   });
 
   it("declares the fixed values for each collection: Washington's records carry a label project, British Columbia's none yet", async () => {
@@ -549,17 +550,37 @@ describe("the associations file", () => {
     expect(csv.charCodeAt(0)).not.toBe(0xfeff);
   });
 
-  it("has no row at all for a trap sample, decided by the sample's kind and not the words of its protocol", async () => {
+  it("decides a trap sample by the sample's method naming a trap, as the archives and downloads do, and not by its kind (beeline-lmlh)", async () => {
     const f = await fixture();
     const trap = await f.specimen({ field: "2500007", sample: { kind: "'trap'", protocol: "'blue vane trap'", inat_observation_id: "666", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } });
-    const unnamed = await f.specimen({ field: "2500008", sample: { kind: "'trap'", protocol: "'blue vane'", inat_observation_id: "667", host_name_as_observed: "'Rosa'", host_rank: "'genus'" } });
+    const nettedButTrap = await f.specimen({ field: "2500008", sample: { kind: "'trap'", protocol: "'aerial net'", inat_observation_id: "667", host_name_as_observed: "'Rosa'", host_rank: "'genus'" } });
+    const trapWordedButNet = await f.specimen({ field: "2500011", sample: { kind: "'net'", protocol: "'pan traps'", inat_observation_id: "670", host_name_as_observed: "'Aster'", host_rank: "'genus'" } });
+    const trapNestButNet = await f.specimen({ field: "2500012", sample: { kind: "'net'", protocol: "'Trap nest'", inat_observation_id: "671", host_name_as_observed: "'Mentha'", host_rank: "'genus'" } });
     const netWithTheWord = await f.specimen({ field: "2500010", sample: { kind: "'net'", protocol: "'netting near the trap line'", inat_observation_id: "669", host_name_as_observed: "'Aster'", host_rank: "'genus'" } });
+    const vacuum = await f.specimen({ field: "2500015", sample: { kind: "'net'", protocol: "'vacuum'", inat_observation_id: "672", host_name_as_observed: "'Salvia'", host_rank: "'genus'" } });
     const net = await f.specimen({ field: "2500009", sample: { inat_observation_id: "668", host_name_as_observed: "'Salvia'", host_rank: "'genus'" } });
-    const csv = await associationsCsv(f.db, await written(f, [trap.id, unnamed.id, netWithTheWord.id, net.id]));
+    const ids = [trap, nettedButTrap, trapWordedButNet, trapNestButNet, netWithTheWord, vacuum, net].map((s) => s.id);
+    const csv = await associationsCsv(f.db, await written(f, ids));
+    // The netted sample recorded as a trap gets its row; the trap-worded ones recorded as nets get none.
     expect(csv.split("\n").filter((l) => l !== "").slice(1)).toEqual([
-      "BCBA_2500010,https://www.inaturalist.org/observations/669,Aster",
+      "BCBA_2500008,https://www.inaturalist.org/observations/667,Rosa",
+      "BCBA_2500015,https://www.inaturalist.org/observations/672,Salvia",
       "BCBA_2500009,https://www.inaturalist.org/observations/668,Salvia",
     ]);
+  });
+
+  it("has no row for a trap sample entered in Beeline, whichever method of the form it has", async () => {
+    const f = await fixture();
+    const made = [];
+    let n = 20;
+    for (const method of TRAP_METHODS) {
+      n += 1;
+      made.push(await f.specimen({ field: `25000${n}`, sample: { kind: "'trap'", protocol: `'${method}'`, inat_observation_id: String(800 + n), host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } }));
+    }
+    // A method written in, naming nothing ("pan", as OBAS-00218 has), stays out as it was when kind decided.
+    made.push(await f.specimen({ field: "2500030", sample: { kind: "'trap'", protocol: "'pan'", inat_observation_id: "830", host_name_as_observed: "'Ceanothus'", host_rank: "'genus'" } }));
+    const csv = await associationsCsv(f.db, await written(f, made.map((s) => s.id)));
+    expect(csv.split("\n").filter((l) => l !== "")).toEqual(["subject identifier: catalogNumber,resourceUrl,verbatimSciname"]);
   });
 
   it("leaves the host out of the specimens file altogether: no associatedTaxa column in the occurrence file or meta.xml, for a flower visit and a trap alike", async () => {
@@ -569,8 +590,8 @@ describe("the associations file", () => {
     const a = await archiveOf(f, [net.id, trap.id]);
     expect(a.occurrence.header).not.toContain("associatedTaxa");
     expect(a.files["meta.xml"]).not.toContain("associatedTaxa");
-    expect(a.files["occurrence.txt"]).not.toContain("Salvia");
-    expect(a.files["occurrence.txt"]).not.toContain("Ceanothus");
+    expect(a.files["occurrence.tsv"]).not.toContain("Salvia");
+    expect(a.files["occurrence.tsv"]).not.toContain("Ceanothus");
   });
 
   it("names the subject by the catalog number the specimen was written under, though the label number was corrected after", async () => {
@@ -663,7 +684,7 @@ describe("building the whole archive before answering", () => {
     const built = await buildArchive(f.db, BC, [a.id, b.id], rulesOf(), { stillCurrent: current });
     expect(built.written).toEqual([{ id: a.id, catalogNumber: "BCBA_2500001" }]);
     const files = unzipSync(built.bytes);
-    expect(strFromU8(files["occurrence.txt"]!).trim().split("\n")).toHaveLength(2);
+    expect(strFromU8(files["occurrence.tsv"]!).trim().split("\n")).toHaveLength(2);
   });
 
   it("stops, with nothing to record, when the read the plan rested on is replaced while it is written", async () => {

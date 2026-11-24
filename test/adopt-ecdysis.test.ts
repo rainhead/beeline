@@ -65,16 +65,20 @@ describe("adopting Ecdysis names", () => {
   test("two names sharing ancestors create each ancestor once; adopting again creates nothing", async () => {
     const adopted = await adoptEcdysisNames(conn, ["Chrysis", "Chrysididae", "Melecta pacifica"]);
     expect(adopted.map((a) => a.name)).toEqual(["Chrysididae", "Chrysis", "Melecta pacifica"]);
-    // Past the tribe Melectini and the subfamily Nomadinae, which the store does not admit.
+    // Through the tribe Melectini and the subfamily Nomadinae, which the tree admits since beeline-stoi.
     expect(await lineage("Melecta pacifica")).toEqual([
       ["species", "Melecta pacifica", 251489],
       ["genus", "Melecta", 189579],
+      ["tribe", "Melectini", 150519],
+      ["subfamily", "Nomadinae", 113341],
       ["family", "Apidae", 86587],
       ["order", "Hymenoptera", 82681],
       ["class", "Insecta", 6],
       ["phylum", "Arthropoda", 2],
       ["kingdom", "Animalia", 1],
     ]);
+    // Adoption files the tree too: nothing is left for the rule to move.
+    expect(await rows(conn, "SELECT count(*) FROM animal_filing_stale")).toEqual([[0n]]);
     const before = await rows(conn, "SELECT count(*) FROM animal");
     expect(await adoptEcdysisNames(conn, ["Chrysis", "Chrysididae", "Melecta pacifica"])).toEqual([]);
     expect(await rows(conn, "SELECT count(*) FROM animal")).toEqual(before);
@@ -83,7 +87,7 @@ describe("adopting Ecdysis names", () => {
   test("a species Ecdysis files under a subgenus is filed under its genus, as the tree's own species are", async () => {
     const adopted = await adoptEcdysisNames(conn, ["Lasioglossum tenax"]);
     expect(adopted).toEqual([
-      { name: "Lasioglossum tenax", rank: "species", tid: 248008, ancestors: ["Lasioglossum", "Halictidae", "Apoidea", "Apocrita"] },
+      { name: "Lasioglossum tenax", rank: "species", tid: 248008, ancestors: ["Lasioglossum", "Halictini", "Halictinae", "Halictidae", "Apoidea", "Apocrita"] },
     ]);
     expect(await rows(conn, "SELECT count(*) FROM animal WHERE rank = 'subgenus'")).toEqual([[0n]]);
   });
@@ -92,7 +96,7 @@ describe("adopting Ecdysis names", () => {
     // Xeromelecta larreae sits under Xeromelecta, which Ecdysis files under
     // Brachymelecta: adopting it must not mint a node for Xeromelecta.
     const adopted = await adoptEcdysisNames(conn, ["Xeromelecta larreae"]);
-    expect(adopted).toEqual([{ name: "Xeromelecta larreae", rank: "species", tid: 1646716, ancestors: ["Brachymelecta"] }]);
+    expect(adopted).toEqual([{ name: "Xeromelecta larreae", rank: "species", tid: 1646716, ancestors: ["Brachymelecta", "Melectini", "Nomadinae"] }]);
     expect(await rows(conn, "SELECT count(*) FROM animal WHERE scientific_name = 'Xeromelecta'")).toEqual([[0n]]);
   });
 
@@ -126,5 +130,17 @@ describe("adopting Ecdysis names", () => {
     // And a name below it hangs from that node rather than a second one.
     expect(await adoptEcdysisNames(conn, ["Chrysididae"])).toEqual([{ name: "Chrysididae", rank: "family", tid: 87753, ancestors: [] }]);
     expect(await rows(conn, "SELECT count(*) FROM animal WHERE scientific_name = 'Chrysidoidea'")).toEqual([[1n]]);
+  });
+
+  test("a name whose chain reaches a node with no anchor outside subfamilies, tribes and subtribes is not adopted, and nothing throws", async () => {
+    await loadEcdysisTaxonomy(conn, ECDYSIS_TAXONOMY);
+    await node("subfamily", "Qsub", null);
+    await conn.run(`INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, parent_tid, admitted_parent_tid, fetched_on)
+                    VALUES (910001, 'subfamily', 'Qsub', 'accepted', 910001, NULL, NULL, DATE '2026-11-30'),
+                           (910002, 'genus', 'Qgenus', 'accepted', 910002, 910001, 910001, DATE '2026-11-30')`);
+    expect(await adoptEcdysisNames(conn, ["Qgenus", "Melecta pacifica"])).toHaveLength(1);
+    expect(await rows(conn, "SELECT count(*) FROM animal WHERE scientific_name = 'Qgenus'")).toEqual([[0n]]);
+    // The other name in the same call was still adopted.
+    expect(await rows(conn, "SELECT count(*) FROM animal WHERE scientific_name = 'Melecta pacifica'")).toEqual([[1n]]);
   });
 });

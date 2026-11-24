@@ -1108,6 +1108,30 @@ describe("which sheet is read, and what else the workbook holds", () => {
     expect(p.notApplied.find((c) => c.column === "eventDate")).toMatchObject({ fileSays: `${CURRENT_SEASON}-07-15` });
   });
 
+  it("takes the sample's method, coordinates, elevation and the host's family as grey columns: a file with them, or an older one without, makes no change (beeline-okn9)", async () => {
+    const f = await sharedUploadFixture();
+    const { a1 } = f.ids;
+    const context = ["samplingProtocol", "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "minimumElevationInMeters", "maximumElevationInMeters", "hostFamily"];
+    const file = await f.file();
+    const head = matrixOf(file)[0]!;
+    for (const c of context) expect(head, c).toContain(c);
+    // Unedited, nothing differs, and none is listed as a column Beeline does not read.
+    const same = await planAsRead(f, file);
+    nothingDiffers(same);
+    expect(same.unrecognised).toEqual([]);
+    // An older file that lacks them loads the same way.
+    const older = await planAsRead(f, edited(file, [], { dropColumns: context }));
+    nothingDiffers(older);
+    expect(older.unrecognised).toEqual([]);
+    // Edited, they are no difference of any unit, and no heading is reported as unknown: only said to be ignored.
+    const p = await planAsRead(f, edited(file, [{ id: a1, set: { samplingProtocol: "blue vane trap", decimalLatitude: "44.6", decimalLongitude: "-123.1", coordinateUncertaintyInMeters: "5", minimumElevationInMeters: "900", maximumElevationInMeters: "950", hostFamily: "Other family" } }]));
+    expect(p.differences).toEqual([]);
+    expect(p.sampleDifferences).toEqual([]);
+    expect(p.held).toEqual([]);
+    expect(p.unrecognised).toEqual([]);
+    expect(p.notApplied.map((c) => c.column).sort()).toEqual(context.slice().sort());
+  });
+
   it("still loads an older download with all the CSV's columns, and lists what differs in the columns it does not read", async () => {
     const f = await sharedUploadFixture();
     const { a1 } = f.ids;

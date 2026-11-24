@@ -386,7 +386,7 @@ describe("the taxonomy pages", () => {
     const [columns, ...lines] = parseCsv((await res.text()).replace(/^﻿/, "")).filter((r) => !(r.length === 1 && r[0] === ""));
     expect(columns).toEqual([
       "taxonRank", "scientificName", "scientificNameAuthorship", "parentNameUsage",
-      "kingdom", "phylum", "class", "order", "family", "genus",
+      "kingdom", "phylum", "class", "order", "family", "subfamily", "tribe", "subtribe", "genus",
       "acceptedNameUsage", "ecdysisTaxonID", "ecdysisStanding", "specimens", "decision", "decidedBy",
     ]);
     const records = lines.map((line) => Object.fromEntries(line.map((value, i) => [columns![i], value])));
@@ -395,9 +395,12 @@ describe("the taxonomy pages", () => {
     expect(records.map((r) => r.scientificName)).toEqual([
       "Animalia", "Arthropoda", "Insecta", "Hymenoptera",
       "Andrenidae",
-      "Apidae", "Bombus", "Bombus vosnesenskii", "Brachymelecta", "Brachymelecta californica", "Xeromelecta", "Xeromelecta californica",
+      // Filed by Ecdysis's subfamilies and tribes when the thesaurus loaded (beeline-stoi): a
+      // synonym such as Xeromelecta is left where the tree had it.
+      "Apidae", "Apinae", "Bombini", "Bombus", "Bombus vosnesenskii",
+      "Nomadinae", "Melectini", "Brachymelecta", "Brachymelecta californica", "Xeromelecta", "Xeromelecta californica",
       "Eurytomidae", "Rileya",
-      "Halictidae", "Lasioglossum", "Lasioglossum (Dialictus)", "Lasioglossum aspilurum", "Lasioglossum tenax", "Lasioglossum zonulum",
+      "Halictidae", "Halictinae", "Halictini", "Lasioglossum", "Lasioglossum (Dialictus)", "Lasioglossum aspilurum", "Lasioglossum tenax", "Lasioglossum zonulum",
     ]);
     const byName = new Map(records.map((r) => [r.scientificName, r]));
     // The ancestors at the main ranks, spelled out on the row.
@@ -417,7 +420,11 @@ describe("the taxonomy pages", () => {
     expect(byName.get("Lasioglossum")!.specimens).toBe("2");
     expect(byName.get("Animalia")!.specimens).toBe("3");
     expect(byName.get("Animalia")!.parentNameUsage).toBe("");
-    expect(byName.get("Bombus vosnesenskii")).toMatchObject({ scientificNameAuthorship: "Radoszkowski, 1862", family: "Apidae" });
+    expect(byName.get("Bombus vosnesenskii")).toMatchObject({
+      scientificNameAuthorship: "Radoszkowski, 1862", family: "Apidae", subfamily: "Apinae", tribe: "Bombini", subtribe: "", genus: "Bombus",
+    });
+    expect(byName.get("Bombus")).toMatchObject({ parentNameUsage: "Bombini", tribe: "Bombini" });
+    expect(byName.get("Bombini")).toMatchObject({ taxonRank: "tribe", parentNameUsage: "Apinae", subfamily: "Apinae", genus: "" });
     // A synonym names what Ecdysis files it under.
     expect(byName.get("Xeromelecta californica")).toMatchObject({
       ecdysisStanding: "synonym",

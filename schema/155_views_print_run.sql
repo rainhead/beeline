@@ -188,12 +188,22 @@ COMMENT ON VIEW minted_field_number_collision IS 'Minted numbers that some other
 -- The collector line is not compared: a label keeps its text, not the list
 -- of collectors it was made from.
 --
--- The method is compared as the word the label prints, net, trap or nest
--- (beeline-5rqm): printed_label.method_text against what methodText
--- (src/label-text.ts) would say for the sample now, which is nest where the
--- protocol contains "nest" in any case, and the sample's kind otherwise. So a
--- change of kind or protocol that leaves the word alone does not list a
--- label, whose printed text would be identical.
+-- The method is compared as the word the label prints (beeline-5rqm):
+-- printed_label.method_text against what methodText (src/label-text.ts)
+-- would say for the sample now. That word comes from the protocol text
+-- (beeline-lmlh): nest if it contains "nest", else trap if it contains
+-- "trap", else net if it contains "net", ignoring case. Old Beeline's label
+-- code (since January 2025) took the word from the text too, testing net,
+-- then trap, then nest with the first match winning, so it printed "trap" for
+-- "trap nest" where this says "nest"; for every other text production holds
+-- the two agree. A text that names none of the three is the word itself
+-- ("vacuum") only for a sample of kind net, when it is plain ASCII (tested
+-- before lowercasing) of at most 6 characters (Peter's limit for legibility; up to 12 would fit the label's
+-- method box, METHOD_WORD_LIMIT, src/label-text.ts); otherwise, and where the
+-- text is empty, the word is the sample's kind. Tabs, line breaks and
+-- no-break spaces count as spaces and the outer spaces are removed, as
+-- methodText does. So a change of kind or protocol that leaves the word alone
+-- does not list a label, whose printed text would be identical.
 CREATE VIEW printed_label_out_of_date AS
 WITH open_label AS (
   SELECT pl.print_run_id, pl.specimen_id, sp.sample_id,
@@ -205,16 +215,28 @@ WITH open_label AS (
   JOIN specimen sp ON sp.entity_id = pl.specimen_id
   WHERE r.printed_at IS NULL AND r.canceled_at IS NULL
 ),
-pair AS (
+joined AS (
   SELECT l.*,
          s.locality AS now_locality, s.county AS now_county,
          s.state_province AS now_state_province, s.country AS now_country,
          loc.latitude AS now_latitude, loc.longitude AS now_longitude, loc.elevation_m AS now_elevation_m,
          s.date_start AS now_date_start, s.date_end AS now_date_end,
-         CASE WHEN lower(s.protocol) LIKE '%nest%' THEN 'nest' ELSE s.kind END AS now_method
+         s.kind AS now_kind,
+         trim(translate(coalesce(s.protocol, ''),
+                        concat(chr(9), chr(10), chr(11), chr(12), chr(13), chr(160)), '      '), ' ') AS now_raw
   FROM open_label l
   JOIN sample s ON s.entity_id = l.sample_id
   LEFT JOIN sample_location loc ON loc.sample_id = l.sample_id
+),
+pair AS (
+  SELECT j.*,
+         CASE WHEN now_raw = '' THEN now_kind
+              WHEN lower(now_raw) LIKE '%nest%' THEN 'nest'
+              WHEN lower(now_raw) LIKE '%trap%' THEN 'trap'
+              WHEN lower(now_raw) LIKE '%net%' THEN 'net'
+              WHEN now_kind = 'net' AND length(now_raw) <= 6 AND regexp_full_match(now_raw, '[ -~]+') THEN lower(now_raw)
+              ELSE now_kind END AS now_method
+  FROM joined j
 )
 SELECT print_run_id, specimen_id, sample_id, 'locality' AS field,
        locality AS on_label, now_locality AS now
@@ -245,7 +267,7 @@ FROM pair WHERE date_start IS DISTINCT FROM now_date_start OR date_end IS DISTIN
 UNION ALL
 SELECT print_run_id, specimen_id, sample_id, 'method', method_text, now_method
 FROM pair WHERE method_text IS DISTINCT FROM now_method;
-COMMENT ON VIEW printed_label_out_of_date IS 'Labels in a run not yet printed (and not canceled) whose sample has changed since the run was prepared: one row per label and changed field (locality, county, state_province, country, coordinates, elevation, dates, method), with the value on the label and the value now. The method is the word the label prints (net, trap or nest), so a change of kind or protocol that leaves the word alone is not a change. The run page lists these so the printer can cancel and prepare again, or print and reprint (beeline-fq3j). The collector line is not compared.';
+COMMENT ON VIEW printed_label_out_of_date IS 'Labels in a run not yet printed (and not canceled) whose sample has changed since the run was prepared: one row per label and changed field (locality, county, state_province, country, coordinates, elevation, dates, method), with the value on the label and the value now. The method is the word the label prints (from the protocol text: nest, trap or net, a short plain text as itself for a net sample, otherwise the kind), so a change of kind or protocol that leaves the word alone is not a change. The run page lists these so the printer can cancel and prepare again, or print and reprint (beeline-fq3j). The collector line is not compared.';
 
 -- How many of each sample's specimens have no label on paper yet
 -- (beeline-3v33), for the listings: "waiting on labels" as a filter, and the

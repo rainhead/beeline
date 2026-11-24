@@ -570,7 +570,10 @@ export async function atlasOptions(db: Kysely<Database>): Promise<AtlasOption[]>
 
 /**
  * The taxa a taxon filter names: everything whose name starts with the term,
- * plus everything below them. Resolved to ids in one small query rather than
+ * plus everything below them. A subfamily, tribe or subtribe matches only on
+ * its whole name, so 'Nomad' finds the genus Nomada and its species but not
+ * Nomadinae (Peter, 2026-11-23; beeline-xngl replaces the text with a picked
+ * taxon, which will make the question go away). Resolved to ids in one small query rather than
  * a correlated recursive subquery, because `animal` is thousands of rows and
  * the listing is tens of thousands — the expansion belongs on the small side.
  * A genus term also matches its species directly (names are binomials), but
@@ -579,9 +582,12 @@ export async function atlasOptions(db: Kysely<Database>): Promise<AtlasOption[]>
 export async function taxonIds(db: Kysely<Database>, term: string): Promise<number[]> {
   const result = await sql<{ entity_id: number }>`
     WITH RECURSIVE matched(entity_id) AS (
-      SELECT entity_id FROM animal WHERE ${likePrefix(sql`lower(scientific_name)`, term)}
+      SELECT entity_id FROM animal_tree
+      WHERE CASE WHEN rank IN ('subfamily', 'tribe', 'subtribe')
+                 THEN lower(scientific_name) = ${term.toLowerCase()}
+                 ELSE ${likePrefix(sql`lower(scientific_name)`, term)} END
       UNION
-      SELECT child.entity_id FROM animal child JOIN matched ON child.parent_id = matched.entity_id
+      SELECT child.entity_id FROM animal_tree child JOIN matched ON child.filed_under_id = matched.entity_id
     )
     SELECT entity_id FROM matched
   `.execute(db);
@@ -1220,23 +1226,19 @@ export const STAFF_READER: Reader = { staff: true, personIds: [] };
 
 /**
  * Whether this sample's location is not the reader's to see: iNaturalist
- * obscures or hides it from everyone but its observer — or it cites an
- * observation Beeline has never read, so nobody here knows whether it does —
- * and the reader is neither staff nor one of its collectors. The second case
- * is the legacy import's: 1,537 samples on the dev store cite an observation
- * no sync has fetched, their geoprivacy columns blank because nothing wrote
- * them, and at the corpus's rate a dozen or more of them are protected on
- * iNaturalist. A sample citing no observation has no setting to know.
+ * obscures or hides it from everyone but its observer, as the sample's stored
+ * `geoprivacy` or `taxon_geoprivacy` says, and the reader is neither staff nor
+ * one of its collectors. A sample whose observation Beeline has never read has
+ * no setting stored, so its location is shown: Peter decided on 2026-11-23 not
+ * to protect samples whose observation Beeline has never read (beeline-gab9).
  *
- * Reads `own`, the reader's own samples, and `seen`, the observation's
- * stored projection, which every query that uses it joins first
- * (`ownSamples`, and `observation_field` as `seen`).
+ * Reads `own`, the reader's own samples, which every query that uses it joins
+ * first (`ownSamples`).
  */
 export function withheld(reader: Reader) {
   return reader.staff
     ? sql<boolean>`FALSE`
-    : sql<boolean>`((s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL
-                     OR (s.inat_observation_id IS NOT NULL AND seen.inat_id IS NULL))
+    : sql<boolean>`((s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL)
                     AND own.sample_id IS NULL)`;
 }
 
@@ -1415,11 +1417,10 @@ export async function filteredSamples(
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
-    // Only `withheld` reads these, and for staff it reads nothing.
+    // Only `withheld` reads this, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
-        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
-        .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
     )
     // `sample_location` is not joined here: no filter or sort reads it. The page's rows join it in listSamples,
     // whole and blanked in the select (`located`): a condition in the ON that reads `own` cost a volunteer's
@@ -1651,8 +1652,7 @@ export async function listSamples(
       .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
       .$if(!reader.staff, (qb) =>
         qb
-          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
-          .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
       )
       .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
       // The flag roll-up, as `qc`: the page's own copy of it where the page was chosen by it, else computed here.
@@ -1834,11 +1834,10 @@ export async function filteredSpecimens(
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
-    // Only `withheld` reads these, and for staff it reads nothing.
+    // Only `withheld` reads this, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
-        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
-        .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
     )
     // `sample_location` is not joined here either: only the page's rows read it (listSpecimens).
     //
@@ -2023,8 +2022,7 @@ export async function listSpecimens(
       .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
       .$if(!reader.staff, (qb) =>
         qb
-          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
-          .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+          .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
       )
       .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
       .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
@@ -2141,9 +2139,13 @@ export const needsRollup = (query: ListingQuery) => query.qc !== "any" && query.
 // The two selections are different query builders over the same sample
 // columns, which the grouping reads as `s` and `a`; the builder's own type
 // cannot say that, so it is left open here and the callers are the check.
-// A grouped count is one query: the selection's group key as a subquery,
-// grouped outside it (grouping the selection's own joins by an expression made
-// DuckDB fail to bind a column), and the total is the sum of the groups.
+// A grouped count is one query: the selection's group key as a materialized
+// common table expression, grouped outside it, and the total is the sum of the
+// groups. Grouping the selection's own joins by an expression made DuckDB
+// (2.0.0) fail to bind a column, and so did grouping a plain subquery once the
+// selection held an IN (subquery), as the Ecdysis filter does: the planner
+// pulled the grouping into the selection and lost `date_start`
+// (beeline-zzeg). Materializing keeps the two apart.
 async function countSelection(
   db: Kysely<Database>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2155,7 +2157,8 @@ async function countSelection(
     return { total: Number(total?.n ?? 0), groups: [] };
   }
   const rows = await db
-    .selectFrom(base.select(groupExpression(group).as("group_key")).as("g"))
+    .with((cte) => cte("g").materialized(), () => base.select(groupExpression(group).as("group_key")))
+    .selectFrom("g")
     .select(["g.group_key as key", sql<number>`count(*)`.as("n")])
     .groupBy("g.group_key")
     .orderBy("g.group_key")

@@ -495,6 +495,39 @@ name, with no releases. Until it has run, `animal_ecdysis` answers
 `not loaded` for every node. A store migrated past 0058 keeps the old
 `animal.itis_tsn` column, unread, until its next reseed.
 
+### The first filing under subfamilies and tribes (beeline-stoi)
+
+After the deploy that brings in the subfamily, tribe and subtribe ranks
+(migration 0122), run the `ecdysis-taxonomy` job once to file the tree under
+Ecdysis's subfamilies, tribes and subtribes: `POST /api/v1/jobs/ecdysis-taxonomy`
+with an API key, which starts the job on the running app. It fetches and
+loads as the weekly run does, in one transaction, so a failed fetch or a
+refused load leaves the store as it was. Until it runs, the filing finds no
+subfamily or tribe in the loaded thesaurus and does nothing, so the nights
+between the deploy and the job are harmless.
+
+- **When.** Start it in the evening, not in working hours: the fetch holds
+  about 1.3 GB on a 3 GB machine, and the load holds a write transaction for
+  a few seconds.
+- **What a good report looks like.** On a copy of production's store of
+  2026-11-23 it moved 118 genera (the first ten named, then the count),
+  created 94 intermediates (31 subfamilies, 50 tribes, 13 subtribes), placed
+  every one, said no filing moves were pending, and counted 33 nodes the rule
+  does not reach (16 families and 17 species, none of them genera).
+- **The next night.** The 3am `ecdysis-fetch` job loads the kept archives
+  even when Ecdysis has not changed, and that load re-records the 83 Ecdysis
+  records that were filed under a family (65 Eumeninae, 18 Tenthredininae) under
+  their own names: its report says 83 re-recorded, and the legacy-format
+  export that follows carries those rows with `taxonRank` Subfamily. Later nights
+  re-record none.
+- **Rolling back the code** after the job has run is harmless: the old code
+  reads `animal.parent_id`, so genera show under their families again and the
+  94 new nodes show with nothing below them.
+
+A dev store reseeded from a copy made before those ranks were kept needs
+`pnpm ecdysis:taxonomy --cached`, which the filing step says when it finds no
+subfamily or tribe in the thesaurus.
+
 ## The gazetteer
 
 The nightly names each sample's locality from its coordinates, out of a

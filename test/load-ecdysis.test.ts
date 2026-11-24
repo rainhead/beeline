@@ -364,8 +364,7 @@ describe("a flat occurrence export", () => {
   test("a name the tree lacks and Ecdysis accepts is adopted, and its rows load", async () => {
     // Nomada, which the archive's current row for C names, as Ecdysis's
     // thesaurus files it in the fetch of 2026-10-24: a genus under a tribe
-    // and a subfamily the store does not admit, and so under Apidae
-    // (beeline-45v.1.1).
+    // and a subfamily, which come in with it (beeline-45v.1.1, beeline-stoi).
     const dir = await mkdtemp(join(tmpdir(), "ecdysis-taxonomy-"));
     await writeFile(
       join(dir, "ecdysis-taxa.csv"),
@@ -380,7 +379,7 @@ describe("a flat occurrence export", () => {
     await loadEcdysisTaxonomy(conn, dir);
 
     const result = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
-    expect(result.adopted).toEqual([{ name: "Nomada", rank: "genus", tid: 192089, ancestors: [] }]);
+    expect(result.adopted).toEqual([{ name: "Nomada", rank: "genus", tid: 192089, ancestors: ["Nomadini", "Nomadinae"] }]);
     expect(result.unresolvedNames).toEqual([]);
     expect(await record(c)).toEqual(["Nomada", null, "Ellen Expert", "2024-01-01", "year", "zonalis group", "ecdysis_import"]);
   });
@@ -461,7 +460,8 @@ describe("names the tree lacks", () => {
     ]);
 
     // A genus the tree does not hold falls to the occurrence's family, and so
-    // does a subfamily, a rank the tree does not admit.
+    // does a subfamily the tree does not hold yet (the refiling test below
+    // holds one).
     expect(await record(a)).toEqual(["Vespidae", null, "Ellen Expert", "2025-01-01", "year", null, "ecdysis_import"]);
     expect(await written(a)).toEqual(["Euodynerus foraminatus"]);
     expect((await record(b))![0]).toBe("Vespidae");
@@ -477,6 +477,94 @@ describe("names the tree lacks", () => {
     // Loading again records nothing and reports nothing filed.
     const again = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(again).toMatchObject({ loaded: 0, filedUnder: [] });
+  });
+
+  /** The tree the bycatch tests share, with the thesaurus holding Vespidae and, from `withSubfamily`, Eumeninae. */
+  const vespidaeTree = async (withSubfamily: boolean) => {
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('class', 'Insecta')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'order', 'Hymenoptera', entity_id FROM animal WHERE scientific_name = 'Insecta'`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'family', 'Vespidae', entity_id FROM animal WHERE scientific_name = 'Hymenoptera'`);
+    await conn.run(`INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, fetched_on)
+                    VALUES (96610, 'family', 'Vespidae', 'accepted', 96610, DATE '2026-10-24')`);
+    if (withSubfamily) await eumeninaeArrives();
+  };
+  const eumeninaeArrives = () =>
+    conn.run(`INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, parent_tid, admitted_parent_tid, fetched_on)
+              VALUES (97001, 'subfamily', 'Eumeninae', 'accepted', 97001, 96610, 96610, DATE '2026-11-21')`);
+
+  test("a record filed under its family while its subfamily was not in the tree is made again under it, once (beeline-stoi)", async () => {
+    await vespidaeTree(false);
+    const first = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(first.filedUnder).toContainEqual({ name: "Eumeninae", under: "Vespidae", rows: 1 });
+    expect((await record(b))![0]).toBe("Vespidae");
+    expect(await one(`SELECT count(*) FROM determination WHERE specimen_id = ${b}`)).toEqual([1n]);
+    const oldEvent = await one(`SELECT entity_id FROM determination WHERE specimen_id = ${b}`);
+
+    // The thesaurus now has the subfamily, and the next load adopts it.
+    await eumeninaeArrives();
+    const second = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(second.adopted.map((n) => n.name)).toEqual(["Eumeninae"]);
+    expect(second.refiled).toBe(1);
+    expect(second.loaded).toBe(0);
+    expect(await record(b)).toEqual(["Eumeninae", null, "Ellen Expert", "2025-01-01", "year", null, "ecdysis_import"]);
+    expect(await rows(conn, `SELECT p.scientific_name FROM animal_tree a JOIN animal p ON p.entity_id = a.filed_under_id WHERE a.scientific_name = 'Eumeninae'`)).toEqual([["Vespidae"]]);
+    // The old event stays, superseded; the recordID follows the new one, so the
+    // entry time Ecdysis gave is the new determination's.
+    expect(await rows(conn, `SELECT count(*) FROM determination WHERE specimen_id = ${b}`)).toEqual([[2n]]);
+    const newEvent = await one(`SELECT d.entity_id FROM determination_of_record d WHERE d.specimen_id = ${b}`);
+    expect(Number(newEvent![0])).toBeGreaterThan(Number(oldEvent![0]));
+    expect(await rows(conn, `SELECT determination_id FROM ecdysis_identification WHERE record_id = 'id-occ-b'`)).toEqual([[newEvent![0]]]);
+    // What the front page reads (schema/111): one expert identification for the specimen, now Eumeninae, dated by the entry in Ecdysis.
+    expect(
+      await rows(
+        conn,
+        `SELECT an.scientific_name, CAST(e.identified_at AS VARCHAR), e.identified_at_is_bound
+         FROM expert_identification e JOIN animal an ON an.entity_id = e.animal_id WHERE e.specimen_id = ${b} AND e.is_latest`,
+      ),
+    ).toEqual([["Eumeninae", "2025-09-23 21:13:48+00", false]]);
+
+    // Nothing more to do the third time.
+    const third = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(third).toMatchObject({ refiled: 0, loaded: 0, adopted: [] });
+    expect(await rows(conn, `SELECT count(*) FROM determination WHERE specimen_id = ${b}`)).toEqual([[2n]]);
+  });
+
+  test("a record made again keeps the sex its old event stated when the export row states none", async () => {
+    await vespidaeTree(false);
+    await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    // The old event came to state a sex (an earlier export, or the fill step); the archive row states none.
+    await conn.run(`UPDATE determination SET sex = 'female' WHERE specimen_id = ${b}`);
+    await eumeninaeArrives();
+    const result = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result.refiled).toBe(1);
+    expect(await rows(conn, `SELECT an.scientific_name, r.sex, r.caste FROM determination_of_record r JOIN animal an ON an.entity_id = r.animal_id WHERE r.specimen_id = ${b}`)).toEqual([["Eumeninae", "female", null]]);
+  });
+
+  test("a record that is no longer the specimen's determination of record is left where it was filed", async () => {
+    await vespidaeTree(false);
+    await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    // A later expert determination of the same specimen by hand.
+    await conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, verbatim_identification, determiner_name)
+       SELECT ${b}, entity_id, true, 'worksheet_import', 'Vespidae', 'Sheet Expert' FROM animal WHERE scientific_name = 'Vespidae'`,
+    );
+    await eumeninaeArrives();
+    const result = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result.refiled).toBe(0);
+    expect(await rows(conn, `SELECT count(*) FROM determination WHERE specimen_id = ${b}`)).toEqual([[2n]]);
+  });
+
+  test("a qualifier never lands on a node coarser than a species", async () => {
+    await vespidaeTree(true);
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-qualifier-"));
+    await writeFile(
+      join(dir, "export.csv"),
+      "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified,family,genus\n" +
+        "100,WSDA_2303966,occ-a,Eumeninae,Ellen Expert,2025,cf. Eumeninae,,2025-09-23 14:13:48,Vespidae,\n",
+    );
+    await loadEcdysis(conn, { path: join(dir, "export.csv"), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(await record(a)).toEqual(["Eumeninae", null, "Ellen Expert", "2025-01-01", "year", "cf. Eumeninae", "ecdysis_import"]);
+    expect(await rows(conn, `SELECT * FROM determination_misplaced_qualifier`)).toEqual([]);
   });
 
   test("an occurrence of a bee family keeps a bycatch-looking name from falling back", async () => {

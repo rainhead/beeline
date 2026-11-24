@@ -22,6 +22,7 @@ import {
   specimenCsvRow,
   textCell,
   listingHref,
+  taxonIds,
   MINE,
   parseListingQuery,
   toCsv,
@@ -543,6 +544,33 @@ describe("sample listing", () => {
     expect(await get(app, "/samples?scope=all&taxon=Megachile")).toContain("No samples match");
   });
 
+  it("matches a subfamily, tribe or subtribe only on its whole name (Peter, 2026-11-23)", async () => {
+    // 'Nomad' must find the genus Nomada and its species, not the subfamily
+    // Nomadinae and everything filed under it, which it would also start.
+    const { instance, conn } = await createMemoryDb();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Apidae')`);
+    const under = (parent: string) => `(SELECT entity_id FROM animal WHERE scientific_name = '${parent}')`;
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('subfamily', 'Nomadinae', ${under("Apidae")})`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('tribe', 'Nomadini', ${under("Nomadinae")})`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Nomada', ${under("Nomadini")}), ('genus', 'Epeolus', ${under("Nomadini")})`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('species', 'Nomada fervida', ${under("Nomada")})`);
+    const db = createKysely(instance);
+    const names = async (term: string) =>
+      (
+        await db
+          .selectFrom("animal")
+          .select("scientific_name")
+          .where("entity_id", "in", await taxonIds(db, term))
+          .orderBy("scientific_name")
+          .execute()
+      ).map((r) => r.scientific_name);
+    expect(await names("Nomad")).toEqual(["Nomada", "Nomada fervida"]);
+    expect(await names("nomadinae")).toEqual(["Epeolus", "Nomada", "Nomada fervida", "Nomadinae", "Nomadini"]);
+    expect(await names("Nomadini")).toEqual(["Epeolus", "Nomada", "Nomada fervida", "Nomadini"]);
+    // Other ranks still match by the start of the name, case apart.
+    expect(await names("apid")).toEqual(["Apidae", "Epeolus", "Nomada", "Nomada fervida", "Nomadinae", "Nomadini"]);
+  });
+
   it("reads in the collector's own numbering within a day, not upload order", async () => {
     // A day's samples reach iNaturalist in whatever order they were
     // photographed; the collector numbered them 1, 2, 3 (Peter, 2026-08-23).
@@ -687,6 +715,9 @@ describe("how far a specimen is named (beeline-o9rd)", () => {
       suborder: "coarse",
       superfamily: "coarse",
       family: "coarse",
+      subfamily: "coarse",
+      tribe: "coarse",
+      subtribe: "coarse",
       genus: "genus",
       subgenus: "genus",
       species: "species",
@@ -1210,7 +1241,7 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     const files = Object.fromEntries(
       Object.entries(unzipSync(new Uint8Array(await res.arrayBuffer()))).map(([n, d]) => [n, strFromU8(d)]),
     );
-    const [header, ...rows] = files["occurrence.txt"]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
+    const [header, ...rows] = files["occurrence.tsv"]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
     const cell = (name: string) => rows[0]![header!.indexOf(name)];
     expect(cell("associatedTaxa")).toContain("Alpha oldname");
     expect([cell("hostInatTaxonId"), cell("hostCurrentName"), cell("hostFamily")]).toEqual(["1", "Alpha lanata", "Familia alpha"]);
@@ -1690,12 +1721,12 @@ describe("Darwin Core archives, by program and year", () => {
     expect(res.headers.get("content-type")).toBe("application/zip");
     expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-2026-dwca.zip"`);
     const files = unpack(new Uint8Array(await res.arrayBuffer()));
-    expect(Object.keys(files)).toEqual(["meta.xml", "occurrence.txt", "identification.txt"]);
+    expect(Object.keys(files)).toEqual(["meta.xml", "occurrence.tsv", "identification.tsv"]);
 
     // meta.xml declares a Darwin Core term for each Darwin Core column, at
     // the index the file holds it, and the licence as a constant.
     const meta = files["meta.xml"]!;
-    const [header, ...occurrences] = table(files["occurrence.txt"]!);
+    const [header, ...occurrences] = table(files["occurrence.tsv"]!);
     expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Occurrence"`);
     expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Identification"`);
     for (const term of ["occurrenceID", "catalogNumber", "fieldNumber", "disposition", "occurrenceRemarks", "decimalLatitude", "scientificName", "dateIdentified"]) {
@@ -1723,7 +1754,7 @@ describe("Darwin Core archives, by program and year", () => {
 
     // Both determinations of OBA00001, oldest first, joined by the core's id;
     // OBA00002 has none and so no rows.
-    const [identHeader, ...identifications] = table(files["identification.txt"]!);
+    const [identHeader, ...identifications] = table(files["identification.tsv"]!);
     expect(identHeader!.slice(0, 2)).toEqual(["coreid", "scientificName"]);
     expect(identifications.every((r) => r.length === identHeader!.length)).toBe(true);
     expect(identifications.map((r) => r[0])).toEqual([oba1[0], oba1[0]]);
@@ -1759,7 +1790,7 @@ describe("Darwin Core archives, by program and year", () => {
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     const read = async (file: string) => {
       const files = unpack(new Uint8Array(await (await app.request(`/programs/${file.split("-")[0]}/data/dwca/${file}`)).arrayBuffer()));
-      const [header, ...rows] = table(files["occurrence.txt"]!);
+      const [header, ...rows] = table(files["occurrence.tsv"]!);
       return { header: header!, rows, meta: files["meta.xml"]! };
     };
 
@@ -1832,7 +1863,7 @@ describe("Darwin Core archives, by program and year", () => {
     const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     expect(manifest.entries.filter((e) => e.program === "OBA").map((e) => [e.year, e.specimens])).toEqual([[2026, 3]]);
     const files = unpack(new Uint8Array(await (await app.request("/programs/OBA/data/dwca/OBA-2026.zip")).arrayBuffer()));
-    const [header, ...occurrences] = table(files["occurrence.txt"]!);
+    const [header, ...occurrences] = table(files["occurrence.tsv"]!);
     expect(occurrences.map((r) => r[header!.indexOf("recordNumber")]).sort()).toEqual(["A-1.1", "A-1.2", "A-3.1"]);
   });
 
@@ -1902,11 +1933,11 @@ describe("Darwin Core archives, by program and year", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-checklist-dwca.zip"`);
     const files = unpack(new Uint8Array(await res.arrayBuffer()));
-    expect(Object.keys(files)).toEqual(["meta.xml", "taxon.txt"]);
+    expect(Object.keys(files)).toEqual(["meta.xml", "taxon.tsv"]);
     const meta = files["meta.xml"]!;
     expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Taxon"`);
     expect(meta).not.toContain("terms/Occurrence");
-    const [header, ...lines] = table(files["taxon.txt"]!);
+    const [header, ...lines] = table(files["taxon.tsv"]!);
     for (const term of ["taxonID", "parentNameUsageID", "scientificName", "taxonRank", "family", "genus"]) {
       expect(meta).toContain(`<field index="${header!.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
     }
@@ -1935,7 +1966,7 @@ describe("Darwin Core archives, by program and year", () => {
     });
     expect(byName.get("Andrena")).toMatchObject({ specimens: "1", specimensByExperts: "0" });
     // Washington's list is its own specimens' names, not Oregon's.
-    const waba = table(unpack(new Uint8Array(await (await app.request("/programs/WaBA/data/dwca/WaBA-checklist.zip")).arrayBuffer()))["taxon.txt"]!);
+    const waba = table(unpack(new Uint8Array(await (await app.request("/programs/WaBA/data/dwca/WaBA-checklist.zip")).arrayBuffer()))["taxon.tsv"]!);
     expect(waba.slice(1).map((r) => r[header!.indexOf("scientificName")])).toEqual(["Andrena"]);
 
     // On the page, with each program's years.
@@ -1972,11 +2003,11 @@ describe("Darwin Core archives, by program and year", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-all-years-dwca.zip"`);
     const files = unpack(new Uint8Array(await res.arrayBuffer()));
-    const [header, ...occurrences] = table(files["occurrence.txt"]!);
+    const [header, ...occurrences] = table(files["occurrence.tsv"]!);
     expect(occurrences.map((r) => r[header!.indexOf("recordNumber")]).sort()).toEqual(["A-1.1", "A-1.2", "A-9.1"]);
     expect(files["meta.xml"]).toContain("http://creativecommons.org/licenses/by-nc/4.0/legalcode");
     // Every identification of every year's specimens.
-    expect(table(files["identification.txt"]!).length).toBeGreaterThan(1);
+    expect(table(files["identification.tsv"]!).length).toBeGreaterThan(1);
 
     const page = await get(app, "/programs/OBA/data");
     expect(page).toContain(inPage(en.programData.allYears(3, 2024, 2026)));
@@ -2041,8 +2072,8 @@ describe("Darwin Core archives, by program and year", () => {
       return { rows, total: 0, collectors: new Map(), identifications: rows.map((r) => ident(r.specimen_id)), classifications: new Map() };
     });
     const files = unpack(new Uint8Array(await new Response(stream).arrayBuffer()));
-    expect(table(files["occurrence.txt"]!)).toHaveLength(1 + CSV_PAGE_SIZE + 1);
-    const identifications = table(files["identification.txt"]!);
+    expect(table(files["occurrence.tsv"]!)).toHaveLength(1 + CSV_PAGE_SIZE + 1);
+    const identifications = table(files["identification.tsv"]!);
     expect(identifications).toHaveLength(1 + CSV_PAGE_SIZE + 1);
     expect(identifications.at(-1)![0]).toBe(String(CSV_PAGE_SIZE + 1));
   });
@@ -2243,6 +2274,64 @@ describe("the specimens Excel download (beeline-kgyd)", () => {
         });
       });
     }
+  });
+
+  /** A specimen's row of the Excel file as its heading's text, the cells left out being nothing. */
+  const fileRow = async (app: Awaited<ReturnType<typeof listingApp>>["app"], fieldNumber: string) => {
+    const sheet = await sheetOf(await app.request(`${IDENTIFYING}?scope=all`));
+    const heads = [...sheet.rows[0]!.cells.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c.text);
+    const row = sheet.rows.slice(1).find((r) => r.cells.get(heads.indexOf("fieldNumber"))?.text === fieldNumber)!;
+    return (heading: string) => {
+      expect(heads, heading).toContain(heading);
+      return row.cells.get(heads.indexOf(heading))?.text ?? "";
+    };
+  };
+  const SAMPLE_CONTEXT = [
+    "samplingProtocol",
+    "decimalLatitude",
+    "decimalLongitude",
+    "coordinateUncertaintyInMeters",
+    "minimumElevationInMeters",
+    "maximumElevationInMeters",
+    "hostFamily",
+  ];
+  const withHost = async (as: "alice" | "bob" | "staffer") => {
+    const fx = await listingApp(as);
+    await fx.conn.run(
+      `INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active, preferred_common_name)
+       VALUES (100, 'Familia alpha', 'family', 30, NULL, true, NULL), (110, 'Alpha', 'genus', 20, 100, true, NULL), (1, 'Alpha lanata', 'species', 10, 110, true, NULL)`,
+    );
+    await fx.conn.run(`INSERT INTO inat_taxon_ancestor VALUES (100, 100, 0), (110, 110, 0), (110, 100, 1), (1, 1, 0), (1, 110, 1), (1, 100, 2)`);
+    await refreshPlantCommonNames(fx.conn);
+    await fx.conn.run(`UPDATE sample SET host_inat_taxon_id = 1, host_name_as_observed = 'Alpha lanata', host_rank = 'species' WHERE sample_number = 'A-1'`);
+    return fx;
+  };
+
+  it("carries the sample's method, coordinates, elevation and the host's family, as the specimens listing gives them (beeline-okn9)", async () => {
+    const fx = await withHost("staffer");
+    const [header, ...rows] = await specimenTable(fx, "scope=all");
+    const mine = rows.find((r) => r[header!.indexOf("fieldNumber")] === "OBA00001")!;
+    const cell = await fileRow(fx.app, "OBA00001");
+    for (const heading of SAMPLE_CONTEXT) expect(cell(heading), heading).toBe(mine[header!.indexOf(heading)]);
+    // Not blank by accident: the fixture's sample has all of them.
+    expect(cell("samplingProtocol")).toBe("net");
+    expect(cell("decimalLatitude")).toBe("44.5646");
+    expect(cell("decimalLongitude")).toBe("-123.262");
+    expect(cell("coordinateUncertaintyInMeters")).toBe("30");
+    expect(cell("minimumElevationInMeters")).toBe("72");
+    expect(cell("hostFamily")).toBe("Familia alpha");
+  });
+
+  it("leaves the coordinates, uncertainty and elevation blank for a reader who may not see the sample's location, with the host's family and method still there", async () => {
+    const fx = await withHost("bob");
+    // Alice's A-1, made obscured by Alice: Bob, who is not its collector, is not told where it is.
+    await fx.conn.run(`UPDATE sample SET geoprivacy = 'obscured' WHERE sample_number = 'A-1'`);
+    const cell = await fileRow(fx.app, "OBA00001");
+    for (const heading of ["locality", "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "minimumElevationInMeters", "maximumElevationInMeters"]) {
+      expect(cell(heading), heading).toBe("");
+    }
+    expect(cell("samplingProtocol")).toBe("net");
+    expect(cell("hostFamily")).toBe("Familia alpha");
   });
 
   it("is a text cell everywhere, header included, and a leading = is only text", async () => {
@@ -2490,8 +2579,9 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
         expect(validation![2]!.length).toBeLessThanOrEqual(255);
         expect(validation![2]).toContain(column);
       }
-      // A column of the CSV that this file does not carry has no warning.
-      expect(head).not.toContain("samplingProtocol");
+      // A column the file carries only for reference has no warning, though the CSV's has a vocabulary for it.
+      expect(head).toContain("samplingProtocol");
+      expect(xml).not.toContain(`sqref="${columnName(head.indexOf("samplingProtocol"))}2:`);
     });
 
     it("shades exactly the recognising and bookkeeping columns, and bolds the headings it reads", async () => {
@@ -2503,7 +2593,8 @@ describe("the specimens Excel file's tabs, shading and suggestions (beeline-kgyd
       const grey = head.filter((c, at) => ["3", "5"].includes(styleOf(`${columnName(at)}1`)!));
       const bold = head.filter((c, at) => styleOf(`${columnName(at)}1`) === "2");
       expect(head).toEqual([
-        "fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "locality", "county", "stateProvince", "associatedTaxa",
+        "fieldNumber", "sampleNumber", "specimenNumber", "recordedBy", "eventDate", "samplingProtocol", "locality", "county", "stateProvince",
+        "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "minimumElevationInMeters", "maximumElevationInMeters", "associatedTaxa", "hostFamily",
         "scientificName", "identificationQualifier", "sex", "caste", "identifiedBy", "dateIdentified", "disposition", "occurrenceRemarks",
         "specimenId", "specimenVersion",
       ]);

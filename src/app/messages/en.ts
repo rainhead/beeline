@@ -1329,7 +1329,7 @@ export const en = {
         protocolAsWritten: (text: string) => `${text} (as written)`,
         protocolChoose: "Choose a method",
         /** For a method that is blank or not on the list, naming the methods that are. */
-        unlistedMethod: (methods: readonly string[]) => `Choose one of the listed methods: ${methods.join(", ")}.`,
+        unlistedMethod: (names: string) => `Choose one of the listed methods: ${names}.`,
         dateEnd: "Collecting ended",
         dateEndHint: "Give the day the traps came in to make this a trap sample. Leave it blank for a net sample collected on one day.",
         note: "Reason (optional)",

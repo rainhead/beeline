@@ -133,8 +133,9 @@ async function oldRecords(f: UploadFixture, sampleId: number, record: string, pr
 }
 
 /** A Kysely whose first update loses a write conflict, as a store write racing another does. */
-function losingOnce(db: Kysely<Database>, what: "updateTable" | "transaction" = "updateTable", table?: string): Kysely<Database> {
+function losingOnce(db: Kysely<Database>, what: "updateTable" | "transaction" = "updateTable", table?: string, skip = 0): Kysely<Database> {
   let fired = false;
+  let seen = 0;
   const losing = <T extends object>(builder: T): T =>
     new Proxy(builder, {
       get(target, prop) {
@@ -150,7 +151,11 @@ function losingOnce(db: Kysely<Database>, what: "updateTable" | "transaction" = 
   return new Proxy(db, {
     get(target, prop) {
       if (prop === what && !fired) {
-        if (what === "transaction") return () => ((fired = true), { execute: async () => Promise.reject(new Error("TransactionContext Error: Conflict on update!")) });
+        // The transaction `skip` others have begun first is the one that loses.
+        if (what === "transaction") {
+          if (seen++ < skip) return (target.transaction as () => unknown).bind(target);
+          return () => ((fired = true), { execute: async () => Promise.reject(new Error("TransactionContext Error: Conflict on update!")) });
+        }
         return (...args: unknown[]) => {
           const built = (target.updateTable as (...a: unknown[]) => object)(...args);
           if (table !== undefined && args[0] !== table) return built;
@@ -463,7 +468,7 @@ describe("a change that is neither made nor refused", () => {
     const t = await trapSample(f);
     const { location, digest } = await offered(f, [{ id: t, set: { samplingProtocol: "pan trap" } }]);
     expect((await apply(f, location, { digest })).status).toBe(303);
-    await expect(applyPending(deps(f, { db: losingOnce(createKysely(f.instance)) }))).rejects.toThrow(/was not done: not_applied/);
+    await expect(applyPending(deps(f, { db: losingOnce(createKysely(f.instance), "transaction") }))).rejects.toThrow(/was not done: not_applied/);
     // Nothing was kept elsewhere for a sample entered in Beeline, and the note says so.
     expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["pending", c.notAppliedNothingKept] });
     expect(await rows(f.conn, `SELECT protocol FROM sample WHERE entity_id = ${t}`)).toEqual([["vane trap"]]);
@@ -536,7 +541,8 @@ describe("the effort text after a method change on an old sample", () => {
     const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "vane trap" } }]);
     expect((await apply(f, location, { digest })).status).toBe(303);
     // The count's correction cannot be reached: the rewrite fails as a lost write conflict would.
-    const result = await applyPending(deps(f, { db: losingOnce(createKysely(f.instance), "updateTable", "sample") }));
+    // The method change's own transaction is the first; the count's is the second, and it loses.
+    const result = await applyPending(deps(f, { db: losingOnce(createKysely(f.instance), "transaction", undefined, 1) }));
     expect(result).toMatchObject({ applied: 1, stopped: 0 });
     expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["applied", c.effortNotRewritten(c.effortBusy)] });
   });

@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { isWriteConflict } from "../write-conflict.js";
 import { apiError, type ApiEnv } from "./api.js";
-import { hostProblemFor, localityReasonFor, specimenCountProblemFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
+import { hostProblemFor, localityReasonFor, unlistedMethodFor, specimenCountProblemFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
 import type { Messages } from "./messages/index.js";
 import { EDITABLE_FIELDS, type EditableFieldName } from "./sample-edit.js";
 import { PLACE_FIELDS, type PlaceField } from "./sample-place.js";
@@ -517,7 +517,7 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
       bases: {},
       note: b.note as string | undefined,
       dryRun: b.dry_run === true,
-      unlistedMethodProblem: corrections!.messages.record.sample.methodEdit.unlistedMethod,
+      unlistedMethodProblem: unlistedMethodFor(corrections!.messages),
     }),
     { values: "strings", note: "string", dry_run: "boolean" },
     ["values"],

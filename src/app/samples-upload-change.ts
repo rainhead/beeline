@@ -213,7 +213,7 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
         // A method that differs from the sample's own words is a change of method, chosen from the list; a cell left as
         // the download wrote it is not a change (beeline-ni5m.15). A sample entered in Beeline takes only a trap.
         else if (change.protocolDiffers && !offered.includes(change.protocol.trim())) {
-          refusal = messages.record.sample.methodEdit.unlistedMethod(offered);
+          refusal = messages.record.sample.methodEdit.unlistedMethod(offered.join(", "));
         } else if (await inRun()) refusal = say("in_print_run", unit);
         else if (!facts.entered && kind === "net" && kindAfterMethod(kind, facts.entered, change) === "trap" && (await seriesTrapNumberTaken(conn, facts.number, facts.id))) {
           refusal = messages.record.sample.methodEdit.numberTaken(facts.number);

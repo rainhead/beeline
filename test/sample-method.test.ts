@@ -410,7 +410,7 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
       // And a blank method is refused, so the count is never lost.
       const blank = await post(app, `/samples/${entered}/method`, { protocol: "", date_start: start, date_end: "" });
       expect(blank.status).toBe(400);
-      expect(await blank.text()).toBe(t.unlistedMethod(["bottle trap", "malaise trap", "pan and vane traps", "pan trap", "trap nest", "vane trap"]));
+      expect(await blank.text()).toBe(t.unlistedMethod("bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap"));
       expect(await rows(conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${entered}`)).toEqual([["pan trap", "6 pan traps"]]);
     });
 

@@ -205,7 +205,7 @@ import {
   type Actor,
   type CorrectionDeps,
 } from "./sample-corrections.js";
-import { localityReasonFor, methodProblemFor, takeLocationDefaultReason, trapCountProblemFor } from "./correction-reasons.js";
+import { localityReasonFor, methodProblemFor, takeLocationDefaultReason, trapCountProblemFor, unlistedMethodFor } from "./correction-reasons.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
 import { isWriteConflict } from "../write-conflict.js";
@@ -1689,7 +1689,7 @@ export function createApp({
       const names = ["locality", "country", "state_province", "county", "protocol"] as const;
       const values = Object.fromEntries(names.map((name) => [name, field(name)]).filter(([, v]) => v !== undefined));
       const bases = Object.fromEntries(names.map((name) => [name, field(`base:${name}`)]).filter(([, v]) => v !== undefined));
-      return { values, bases, note: field("note"), unlistedMethodProblem: m.record.sample.methodEdit.unlistedMethod };
+      return { values, bases, note: field("note"), unlistedMethodProblem: unlistedMethodFor(m) };
     };
     const result = await editSample(corrective, actorOf(c), id, form);
     if (result.ok) return c.redirect("/");

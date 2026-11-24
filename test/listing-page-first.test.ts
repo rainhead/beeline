@@ -15,30 +15,27 @@ import {
   type Reader,
 } from "../src/app/listings.js";
 import { CURRENT_SEASON, SETTLED_SEASON, createMemoryDb, insertCleanSample } from "./helpers.js";
-import { referenceSampleRows, referenceSpecimenRows } from "./reference-listings.js";
 
 /**
  * Both listings choose their page of rows first and look up the rest of each row's columns for those rows alone
- * (beeline-amdt.5 and .6). That changes how the statement is planned and must change nothing a person sees. Three
- * kinds of check, most lasting first:
+ * (beeline-amdt.5 and .6). That changes how the statement is planned and must change nothing a person sees. This
+ * file holds two things that stand on their own:
  *
- * 1. What a reader may not see stays withheld.
- * 2. The order cannot tie: every page read in pages equals one full read, so the inner query's order and the outer
- *    query's agree. This needs no reference copy.
- * 3. The first page is held equal, in every column, to the rows the statement chose before (`test/reference-listings.ts`):
- *    every sort once for staff, and every filter once, for staff and for a volunteer reading others' obscured samples.
+ * 1. What a reader may not see stays withheld, and the names offered for a point are read only when asked.
+ * 2. The order cannot tie: every page read in small pages, put together, equals one full read with no row twice,
+ *    so the inner query's order and the outer query's agree. A fixture with many equal sort keys is the hard case:
+ *    the order is a total one only because it ends in the sample's or the specimen's own key.
  *
- * The full cross, every sort in both directions and each filter with each sort, on the second and last pages as well,
- * for staff and for volunteers, was compared against the old statements on production's backup of 2026-11-22 (796
- * pages, no differences) before this file was cut down to run in seconds. That is where the wider evidence is.
- * A fixture with many equal sort keys is the hard case: the order is a total one only because it ends in the sample's
- * or the specimen's own key.
+ * The first page of every sort and filter was also compared, column for column, with the statements as they were
+ * before the change, for staff and for volunteers. The full cross, every sort in both directions and each filter
+ * with each sort, on the second and last pages as well, was compared on production's backup of 2026-11-22 (796
+ * pages, no differences) before the copy of the old statements was removed; PR #450 has the result. A copy of the
+ * old statements shared the filters, sorts and withholding with the code it tested, so it guarded little and had to
+ * be edited for every new listing column.
  */
 
-const PAGE = 5;
 /** The order tests page by ten: enough pages that every boundary is crossed, few enough calls to stay quick. */
 const TIE_PAGE = 10;
-const total = { samples: 0, specimens: 0 };
 
 let db: Kysely<Database>;
 let people: Record<string, number>;
@@ -177,95 +174,10 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(() => {
-  console.log(`page-first comparisons: ${total.samples} samples pages, ${total.specimens} specimens pages`);
   close?.();
 });
 
-/** The rows' fields that the host lookup fills after the statement, which the reference leaves out. */
-const withoutHostNames = <T extends object>(rows: T[]) =>
-  rows.map((r) => ({ ...r, host_current_name: null, host_family: null, host_common_name: null }));
-
-/**
- * The flag list comes out of a string_agg with no order of its own, so the same statement can list the same
- * flags in either order; the page sorts them (`parseFlags`) before showing them. Compared as the set it is.
- */
-const flagsSorted = <T extends object>(rows: T[]) =>
-  rows.map((r) => {
-    const list = (r as { flag_list?: string | null }).flag_list;
-    return list === undefined || list === null ? r : { ...r, flag_list: list.split(",").sort().join(",") };
-  });
-
-/** The first page of the old and the new statement, equal in every column. Returns the total. */
-async function sameSamples(search: string, who: Who): Promise<number> {
-  const query = parse(search);
-  const now = await listSamples(db, query, who.personId, who.reader, { limit: PAGE, offset: 0, hostNames: new Map() as never, withLocalityChoices: true });
-  const before = await referenceSampleRows(db, query, who.personId, who.reader, { limit: PAGE, offset: 0 });
-  expect(flagsSorted(now.rows), `${who.name}, samples ${search}`).toEqual(flagsSorted(withoutHostNames(before)));
-  total.samples++;
-  return now.total;
-}
-
-async function sameSpecimens(search: string, who: Who): Promise<number> {
-  const query = parse(search);
-  const now = await listSpecimens(db, query, who.personId, who.reader, { limit: PAGE, offset: 0, hostNames: new Map() as never });
-  const before = await referenceSpecimenRows(db, query, who.personId, who.reader, { limit: PAGE, offset: 0 });
-  expect(now.rows, `${who.name}, specimens ${search}`).toEqual(withoutHostNames(before));
-  total.specimens++;
-  return now.total;
-}
-
-// Every filter the listings accept, each with the least it must find so that a comparison of nothing with nothing
-// cannot pass. The searches are query strings, as a person's URL carries them.
-const FILTERS: Array<[search: string, atLeastSamples: number, atLeastSpecimens: number]> = [
-  ["scope=all", 20, 20],
-  ["scope=mine", 0, 0],
-  ["scope=OBA", 5, 5],
-  ["scope=outside", 5, 5],
-  ["scope=NWR", 0, 0],
-  ["scope=all&qc=flagged", 3, 3],
-  ["scope=all&qc=blocking", 3, 3],
-  ["scope=all&qc=clean", 3, 3],
-  ["scope=all&qc=locality", 3, 3],
-  ["scope=all&flag=staff_hold", 2, 2],
-  ["scope=all&collector=alice", 3, 3],
-  ["scope=all&member=WaBA", 2, 2],
-  ["scope=all&place=Corvallis", 3, 3],
-  ["scope=all&taxon=Bombus", 3, 3],
-  ["scope=all&host=salvia", 3, 3],
-  [`scope=all&from=${CURRENT_SEASON}-06-01&to=${CURRENT_SEASON}-12-31`, 3, 3],
-  [`scope=all&year=${CURRENT_SEASON}`, 3, 3],
-  ["scope=all&kind=trap", 3, 3],
-  ["scope=all&q=a-1", 1, 0],
-  ["scope=all&q=F9", 0, 3],
-  ["scope=all&det=undetermined", 3, 3],
-  ["scope=all&det=species", 1, 1],
-  ["scope=all&labels=waiting", 3, 0],
-  ["scope=all&ecdysis=in", 0, 3],
-  ["scope=all&place=Corvallis&kind=net&qc=flagged&taxon=Bombus", 0, 0],
-];
-const FILTER_READERS = ["staff", "volunteer reading others' obscured samples"];
-
-
-describe("the samples listing chooses its page first and returns what it returned before", () => {
-  it("every sort, for staff, and the sorts that read the place and the collector, for a volunteer", async () => {
-    const [staff, alice] = readers() as [Who, Who];
-    for (const sort of SAMPLE_SORT_KEYS) {
-      const n = await sameSamples(`scope=all&sort=${sort}`, staff);
-      expect(n, sort).toBeGreaterThanOrEqual(PAGE * 3);
-    }
-    for (const sort of ["place", "collector", "flags"]) await sameSamples(`scope=all&sort=${sort}`, alice);
-  }, 300_000);
-
-  for (const who of FILTER_READERS) {
-    it(`every filter, for ${who}`, async () => {
-      const w = readers().find((r) => r.name === who)!;
-      for (const [search, atLeast] of FILTERS) {
-        const n = await sameSamples(search, w);
-        if (search !== "scope=mine") expect(n, search).toBeGreaterThanOrEqual(atLeast);
-      }
-    }, 300_000);
-  }
-
+describe("the samples listing chooses its page first", () => {
   it("withholds another volunteer's locality and coordinates exactly as before, and the choices of the names offered", async () => {
     const alice = readers()[1]!;
     const page = await listSamples(db, parse("scope=all"), alice.personId, alice.reader, { limit: 30, offset: 0, hostNames: new Map(), withLocalityChoices: true });
@@ -295,7 +207,7 @@ describe("the samples listing chooses its page first and returns what it returne
     expect(rows.every((r) => r.locality_choices === null)).toBe(true);
   });
 
-  // Pages read against one full read, with no reference copy, in one direction: `dir` only flips ASC to DESC in the
+  // Pages read against one full read, in one direction: `dir` only flips ASC to DESC in the
   // same ORDER BY text, which the inner and outer queries build from one function, so the other direction takes the same path. Every key ends in the sample's own id, so no
   // two samples compare equal and a page cannot differ between runs.
   for (const who of ["staff", "volunteer reading others' obscured samples"]) {
@@ -323,29 +235,15 @@ describe("the samples listing chooses its page first and returns what it returne
   }
 });
 
-describe("the specimens listing chooses its page first and returns what it returned before", () => {
-  it("every sort, for staff, and the sorts that read the place and the collector, for a volunteer", async () => {
-    const [staff, alice] = readers() as [Who, Who];
-    for (const sort of SPECIMEN_SORT_KEYS) {
-      const n = await sameSpecimens(`scope=all&sort=${sort}`, staff);
-      expect(n, sort).toBeGreaterThanOrEqual(PAGE * 3);
-    }
-    for (const sort of ["place", "collector", "determiner"]) await sameSpecimens(`scope=all&sort=${sort}`, alice);
-  }, 300_000);
-
-  for (const who of FILTER_READERS) {
-    it(`every filter, for ${who}`, async () => {
-      const w = readers().find((r) => r.name === who)!;
-      for (const [search, , atLeast] of FILTERS) {
-        const n = await sameSpecimens(search, w);
-        if (search !== "scope=mine") expect(n, search).toBeGreaterThanOrEqual(atLeast);
-      }
-    }, 300_000);
-  }
-
-  it("holds the reprint action's blocker to the old statement's", async () => {
+describe("the specimens listing chooses its page first", () => {
+  it("gives each row a reprint blocker only while the reprint action is chosen", async () => {
     const staff = readers()[0]!;
-    await sameSpecimens("scope=all&act=reprint", staff);
+    const plain = await listSpecimens(db, parse("scope=all"), staff.personId, staff.reader, { limit: 1000, offset: 0, hostNames: new Map() });
+    expect(plain.rows.length).toBeGreaterThan(TIE_PAGE);
+    expect(plain.rows.every((r) => r.reprint_blocker === null)).toBe(true);
+    const acting = await listSpecimens(db, parse("scope=all&act=reprint"), staff.personId, staff.reader, { limit: 1000, offset: 0, hostNames: new Map() });
+    expect(acting.total).toBe(plain.total);
+    expect(acting.rows.some((r) => r.reprint_blocker !== null)).toBe(true);
   });
 
   for (const who of ["staff", "volunteer reading others' obscured samples"]) {

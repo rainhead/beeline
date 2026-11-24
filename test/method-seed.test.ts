@@ -52,13 +52,18 @@ describe("the list of methods and the wordings that mean them (schema/031)", () 
     ]);
   });
 
-  it("refuses a label word that is empty, too long or not plain ASCII", async () => {
+  it("refuses a label word that is empty, too long, or has a space at either end", async () => {
     const { conn } = await createMemoryDb();
     expect(METHOD_WORD_LIMIT).toBe(6);
-    for (const word of ["", "x".repeat(METHOD_WORD_LIMIT + 1), "trapé"]) {
-      await expect(conn.run(`INSERT INTO method (code, label_word, is_trap) VALUES ('x', '${word}', false)`)).rejects.toThrow();
+    for (const word of ["", " ", "x".repeat(METHOD_WORD_LIMIT + 1), " x", "x ", "   "]) {
+      await expect(conn.run(`INSERT INTO method (code, label_word, is_trap) VALUES ('x', '${word}', false)`), JSON.stringify(word)).rejects.toThrow();
     }
-    await conn.run(`INSERT INTO method (code, label_word, is_trap) VALUES ('x', 'sixsix', false)`);
+    await conn.run(`INSERT INTO method (code, label_word, is_trap) VALUES ('x', 'sixsix', false), ('y', 'a b', false)`);
+  });
+
+  it("seeds only words of printable ASCII, which the table's own check cannot say", async () => {
+    const { conn } = await createMemoryDb();
+    for (const [word] of await rows(conn, `SELECT label_word FROM method`)) expect(word as string).toMatch(/^[!-~]([ -~]{0,4}[!-~])?$/);
   });
 
   it("maps every wording production held, and each method's own code to itself", async () => {

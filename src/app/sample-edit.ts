@@ -2,7 +2,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import { mirrorCorrections } from "./correction-store.js";
-import { readMethodCodes } from "./sample-method.js";
+import { changeSampleMethod, readMethodCodes } from "./sample-method.js";
 
 /**
  * In-app editing for samples with no iNaturalist observation to fix
@@ -178,8 +178,8 @@ export async function planSampleEdit(
   });
   if (changed.length === 0) return { outcome: "unchanged" };
 
-  // A method that is changed is chosen from the list: free words are no longer taken. A method the form was opened
-  // with, sent back as it was, is not a change and was never checked (beeline-ni5m.15).
+  // A method that is changed is chosen from the list. A method the form was opened with, sent back as it was, is not
+  // a change and is not checked.
   if (changed.some((f) => f.name === "protocol")) {
     const methods = await readMethodCodes(db);
     if (!methods.includes((input.values.protocol ?? "").trim())) return { outcome: "unlisted_method", methods };
@@ -236,11 +236,9 @@ async function writeSampleEdit(
       await sql`DELETE FROM sample_place_stamped WHERE sample_id = ${sample.entity_id}`.execute(trx);
     }
     await trx.updateTable("sample").set(plan.updates).where("entity_id", "=", sample.entity_id).execute();
-    // The method that was chosen, beside the method as written, in the same transaction (beeline-ni5m.15). The trap
-    // count stays: a new method does not say how many traps there were.
+    // The method that was chosen, with its trap count, in the same transaction.
     if (plan.changed.includes("protocol") && plan.updates.protocol !== null && plan.updates.protocol !== undefined) {
-      await sql`INSERT INTO sample_method (sample_id, method_code) VALUES (${sample.entity_id}, ${plan.updates.protocol})
-                ON CONFLICT (sample_id) DO UPDATE SET method_code = excluded.method_code`.execute(trx);
+      await changeSampleMethod(trx, sample.entity_id, plan.updates.protocol);
     }
     // A within-sample disagreement on an edited field is settled by the edit:
     // every member row now carries one value, so the stored finding would not

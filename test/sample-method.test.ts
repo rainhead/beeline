@@ -9,6 +9,7 @@ import type { Database } from "../src/model.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { parseCsv } from "../src/corrections.js";
+import { readSampleChanges as correctionsLog } from "../src/sample-change.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
 import { en } from "../src/app/messages/en.js";
@@ -528,5 +529,60 @@ describe("the method is chosen from the list (beeline-ni5m.15)", { timeout: 120_
     expect((await post(app, `/samples/${sampleId}/method`, { "base:protocol": "", protocol: "pan trap", date_end: "" })).status).toBe(302);
     expect(await stored(conn, sampleId)).toEqual(["pan trap", "pan trap", null]);
     expect((await rows(conn, `SELECT count(*) FROM sample_without_method`))[0]![0]).toBe(0n);
+  });
+
+  describe("the trap count goes with the method", () => {
+    const sixVane = async () => {
+      const w = await methodApp("staff");
+      await w.conn.run(`UPDATE sample SET protocol = '6 vane traps' WHERE entity_id = ${w.sampleId}`);
+      await w.conn.run(`UPDATE sample_method SET method_code = 'vane trap', trap_count = 6 WHERE sample_id = ${w.sampleId}`);
+      await recordSampleChanges(duckdbReader(w.conn), { log: w.sampleChangesPath, state: w.sampleStatePath }, { source: "reconcile" });
+      return w;
+    };
+    const effortOf = async (conn: DuckDBConnection, id: number) => (await rows(conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${id}`))[0]![0];
+
+    it("is kept where the new method is a trap, and written as the effort the forms write", async () => {
+      const w = await sixVane();
+      expect((await post(w.app, `/samples/${w.sampleId}/method`, { "base:protocol": "6 vane traps", protocol: "pan trap", date_end: "" })).status).toBe(302);
+      expect(await stored(w.conn, w.sampleId)).toEqual(["pan trap", "pan trap", 6]);
+      expect(await effortOf(w.conn, w.sampleId)).toBe("6 pan traps");
+      expect(await mismatches(w.conn)).toBe(0n);
+    });
+
+    it("goes where the new method is not a trap, with the effort that stated it, and the history shows it with its author", async () => {
+      const w = await sixVane();
+      expect((await post(w.app, `/samples/${w.sampleId}/method`, { "base:protocol": "6 vane traps", protocol: "aerial net", date_end: "" })).status).toBe(302);
+      expect(await stored(w.conn, w.sampleId)).toEqual(["aerial net", "aerial net", null]);
+      expect(await effortOf(w.conn, w.sampleId)).toBeNull();
+      expect(await mismatches(w.conn)).toBe(0n);
+      const history = (await correctionsLog(w.sampleChangesPath)).filter((e) => e.sample_id === String(w.sampleId));
+      expect(history.map((e) => [e.field, e.old_value, e.new_value, e.author])).toEqual(
+        expect.arrayContaining([
+          ["method", "vane trap", "aerial net", "samstaff"],
+          ["trap_count", "6", "", "samstaff"],
+          ["protocol", "6 vane traps", "aerial net", "samstaff"],
+        ]),
+      );
+    });
+
+    it("leaves an effort that states no count as it was, and holds no count beside it", async () => {
+      const w = await sixVane();
+      await w.conn.run(`UPDATE sample SET sampling_effort = '45 minutes' WHERE entity_id = ${w.sampleId}`);
+      await w.conn.run(`UPDATE sample_method SET trap_count = NULL WHERE sample_id = ${w.sampleId}`);
+      await w.conn.run(`UPDATE sample SET protocol = 'vane trap' WHERE entity_id = ${w.sampleId}`);
+      expect((await post(w.app, `/samples/${w.sampleId}/method`, { "base:protocol": "vane trap", protocol: "pan trap", date_end: "" })).status).toBe(302);
+      expect(await effortOf(w.conn, w.sampleId)).toBe("45 minutes");
+      expect(await stored(w.conn, w.sampleId)).toEqual(["pan trap", "pan trap", null]);
+      expect(await mismatches(w.conn)).toBe(0n);
+    });
+
+    it("gives a sample with no method row the count its effort states when it is first given one", async () => {
+      const w = await methodApp("staff");
+      await w.conn.run(`DELETE FROM sample_method WHERE sample_id = ${w.sampleId}`);
+      await w.conn.run(`UPDATE sample SET protocol = NULL, sampling_effort = '4 pan traps' WHERE entity_id = ${w.sampleId}`);
+      expect((await post(w.app, `/samples/${w.sampleId}/method`, { "base:protocol": "", protocol: "pan trap", date_end: "" })).status).toBe(302);
+      expect(await stored(w.conn, w.sampleId)).toEqual(["pan trap", "pan trap", 4]);
+      expect(await mismatches(w.conn)).toBe(0n);
+    });
   });
 });

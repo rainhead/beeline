@@ -1,31 +1,48 @@
 -- Migration for schema/031_methods.sql, schema/121_views_method.sql and the
--- comment on sample.protocol (schema/030) (beeline-ni5m.15): a controlled list
--- of methods, each sample's method beside it, and what the method as written
--- (sample.protocol) maps to. The tables and views are made here as the schema
--- makes them. sample_method is backfilled from sample.protocol through
--- method_text, so a sample whose text is empty or not listed gets no row and is
--- on sample_without_method; on production on 2026-11-23 that was one sample of
--- 70,859. Nothing is added to sample itself, which DuckDB refuses for a table
--- that other tables reference. The trap count is the one the text states, or
--- failing that the number the sample's effort starts with, where a sample
--- entered in Beeline keeps it. Nothing that reads a sample's method changes.
+-- comments on sample.protocol and sample.sampling_effort (schema/030)
+-- (beeline-ni5m.15): a controlled list of methods, each sample's method beside
+-- it, and what the method as written (sample.protocol) maps to. sample_method is
+-- backfilled from sample.protocol through method_text, so a sample whose text is
+-- empty or not listed gets no row and is on sample_without_method; on production
+-- on 2026-11-23 that was one sample of 70,859. A sample's trap count is the count
+-- its effort text states in the form the forms write (trap_count_stated), or
+-- else the count its method as written states. Nothing is added to sample
+-- itself, which DuckDB refuses for a table that other tables reference.
 --
--- What a deploy loses in the change log: this change adds the method and the
--- trap count to the fields the sample history records (src/sample-change.ts),
--- which changes the header of the stored snapshot, so the first pass after the
--- deploy takes the corpus as its new baseline and logs nothing as an arrival.
--- A change to a sample that is made after the previous pass and before that
--- one is not recorded. Run a pass immediately before deploying and nothing is
--- lost.
+-- A deploy and the change log: the method and the trap count are now fields of
+-- a sample's history (src/sample-change.ts), which changes the header of the
+-- stored snapshot, so the first pass after the deploy takes the corpus as its new
+-- baseline and files nothing as an arrival. A change made after the previous pass
+-- and before that one is not recorded. Run a pass immediately before deploying
+-- and nothing is lost.
+--
+-- Rolling the release back after this migration: the old code writes a method as
+-- written without its sample_method row, so after rolling forward again the
+-- nightly's check (sample_method_text_mismatch) fails until the rows are
+-- repaired. With the app stopped, this one statement repairs them from
+-- method_text:
+--
+--   MERGE INTO sample_method m
+--   USING (SELECT s.entity_id AS sample_id, t.method_code,
+--                 coalesce(trap_count_stated(s.sampling_effort), t.trap_count) AS trap_count
+--          FROM sample s JOIN method_text t ON t.text = s.protocol) x
+--   ON m.sample_id = x.sample_id
+--   WHEN MATCHED AND (m.method_code IS DISTINCT FROM x.method_code OR m.trap_count IS DISTINCT FROM x.trap_count)
+--     THEN UPDATE SET method_code = x.method_code, trap_count = x.trap_count
+--   WHEN NOT MATCHED THEN INSERT (sample_id, method_code, trap_count) VALUES (x.sample_id, x.method_code, x.trap_count)
+--   WHEN NOT MATCHED BY SOURCE THEN DELETE;
 
 CREATE TABLE method (
   code       TEXT PRIMARY KEY,
-  label_word TEXT NOT NULL CHECK (regexp_full_match(label_word, '[ -~]{1,6}')),
+  -- One to six characters with no space at either end, in plain portable SQL (no exception to ADR 0001 for a regular
+  -- expression). That the word is printable ASCII, which a label's method box needs, cannot be said without one, so
+  -- test/method-seed.test.ts holds every seeded word to it and a migration that adds a method must pass that test.
+  label_word TEXT NOT NULL CHECK (length(label_word) BETWEEN 1 AND 6 AND label_word = trim(label_word)),
   is_trap    BOOLEAN NOT NULL
 );
-COMMENT ON TABLE method IS 'The ways a sample''s bees are caught: a controlled list, seeded here like qc_rule because a view joins it and a change to it is a migration. A code is permanent, since sample_method and method_text refer to it. Nothing reads a sample''s method from here yet except the lists the forms offer: the label, the plant relationship and the exports still read sample.protocol.';
+COMMENT ON TABLE method IS 'The ways a sample''s bees are caught: a controlled list, seeded here like qc_rule because a view joins it and a change to it is a migration. A code is permanent, since sample_method and method_text refer to it.';
 COMMENT ON COLUMN method.code IS 'The method as a person reads it ("pan trap"), also the text written to sample.protocol for a sample made in Beeline.';
-COMMENT ON COLUMN method.label_word IS 'The word a label prints for this method, one to six plain ASCII characters so that it fits the label''s method box (METHOD_WORD_LIMIT in src/label-text.ts).';
+COMMENT ON COLUMN method.label_word IS 'The word a label prints for this method, one to six plain ASCII characters, with no space at either end, so that it fits the label''s method box (METHOD_WORD_LIMIT in src/label-text.ts). The table checks the length and the spaces; a test checks that the seeded words are ASCII.';
 COMMENT ON COLUMN method.is_trap IS 'True where the device is set out and collected later: the sample''s plant is then near the trap and not a floral host, the sample may span days, and effort is counted in trap-days.';
 
 INSERT INTO method (code, label_word, is_trap) VALUES
@@ -38,6 +55,14 @@ INSERT INTO method (code, label_word, is_trap) VALUES
   ('pan and vane traps', 'trap', true),
   ('trap nest', 'nest', true);
 
+-- The trap count a sample's effort text states, in the form the forms write it (trapEffort in src/trap-sample.ts):
+-- a whole number of one to six digits, a space, and the kind of trap, which ends in trap, traps, nest or nests
+-- ("6 vane traps", "3 trap nests"). Null for anything else, so "45 minutes" states no trap count. The one place the
+-- parse is written in SQL: the view sample_method_text_mismatch, the migration's backfill and the test fixture
+-- read it, and trapCountOf in TypeScript is held to it by a test.
+CREATE MACRO trap_count_stated(effort) AS
+  TRY_CAST(nullif(regexp_extract(lower(effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER);
+
 CREATE TABLE sample_method (
   sample_id   INTEGER PRIMARY KEY REFERENCES sample(entity_id),
   method_code TEXT NOT NULL REFERENCES method(code),
@@ -45,14 +70,14 @@ CREATE TABLE sample_method (
 );
 COMMENT ON TABLE sample_method IS 'How a sample''s bees were caught: one method per sample. Absent for a sample whose method as written is not one method_text knows (sample_without_method lists them). Written in the same transaction as sample.protocol by every writer, and sample_method_text_mismatch asserts that the two agree.';
 COMMENT ON COLUMN sample_method.method_code IS 'The sample''s method, from the list in method.';
-COMMENT ON COLUMN sample_method.trap_count IS 'How many traps, null where nobody has said. From the leading number of the method as written ("6 vane traps") or from what a person entered. Nothing reads it yet: sample.sampling_effort still carries the count as text.';
+COMMENT ON COLUMN sample_method.trap_count IS 'How many traps, null where nobody has said, and always null for a method that is not a trap. It is the count that sample.sampling_effort states in the form the forms write ("6 vane traps"), or else the count the method as written states; sample_method_text_mismatch asserts it.';
 
 CREATE TABLE method_text (
   text        TEXT PRIMARY KEY,
   method_code TEXT NOT NULL REFERENCES method(code),
   trap_count  INTEGER CHECK (trap_count >= 1)
 );
-COMMENT ON TABLE method_text IS 'Which method each wording in sample.protocol means, matched on the exact text as stored: the wordings production held on 2026-11-23, and each method''s own code. A sample whose text is here gets its method from this table (promotion, the carry-over of held-back records, the migration). Seeded here and by migrations like qc_rule, so that a view can join it and a change to it is a migration that corrects the rows.';
+COMMENT ON TABLE method_text IS 'Which method each wording in sample.protocol means, matched on the exact text as stored: the wordings production held on 2026-11-23, and each method''s own code. A sample whose text is here gets its method from this table (promotion, the carry-over of held-back records, the migration). Seeded here and by migrations like qc_rule, so that a view can join it.';
 COMMENT ON COLUMN method_text.trap_count IS 'The number of traps the text states ("6 vane traps" is 6), null where it states none.';
 
 INSERT INTO method_text (text, method_code, trap_count) VALUES
@@ -92,10 +117,7 @@ INSERT INTO method_text (text, method_code, trap_count) VALUES
   ('pan traps and vane traps', 'pan and vane traps', NULL);
 
 INSERT INTO sample_method (sample_id, method_code, trap_count)
-SELECT s.entity_id, t.method_code,
-       -- The count the text states, or else the one the sample's effort starts with ("6 vane traps"), which is where a
-       -- sample entered in Beeline has kept it.
-       coalesce(t.trap_count, nullif(TRY_CAST(regexp_extract(s.sampling_effort, '^([0-9]+) ', 1) AS INTEGER), 0))
+SELECT s.entity_id, t.method_code, coalesce(trap_count_stated(s.sampling_effort), t.trap_count)
 FROM sample s
 JOIN method_text t ON t.text = s.protocol;
 
@@ -103,17 +125,17 @@ CREATE VIEW sample_without_method AS
 SELECT s.entity_id AS sample_id, s.sample_number, s.protocol
 FROM sample s
 WHERE NOT EXISTS (SELECT 1 FROM sample_method m WHERE m.sample_id = s.entity_id);
-COMMENT ON VIEW sample_without_method IS 'Samples with no method: their method as written is empty or is not one method_text knows. A worklist, not a failure: one such sample exists on production. A sample is a row here until someone chooses its method.';
+COMMENT ON VIEW sample_without_method IS 'Samples with no method: their method as written is empty or is not one method_text knows. A worklist, not a failure: a sample stays on it until someone chooses its method.';
 
 CREATE VIEW sample_method_text_mismatch AS
 SELECT s.entity_id AS sample_id, s.protocol, m.method_code AS stored_method_code, t.method_code AS text_method_code,
-       m.trap_count AS stored_trap_count, t.trap_count AS text_trap_count
+       m.trap_count AS stored_trap_count, coalesce(trap_count_stated(s.sampling_effort), t.trap_count) AS expected_trap_count
 FROM sample s
-JOIN method_text t ON t.text = s.protocol
+LEFT JOIN method_text t ON t.text = s.protocol
 LEFT JOIN sample_method m ON m.sample_id = s.entity_id
 WHERE m.method_code IS DISTINCT FROM t.method_code
-   OR (t.trap_count IS NOT NULL AND m.trap_count IS NULL);
-COMMENT ON VIEW sample_method_text_mismatch IS 'Samples whose method as written is in method_text but whose stored method differs from what the text gives, or has lost the trap count the text states. Always empty: it proves that every writer of sample.protocol writes sample_method in the same transaction, and the nightly fails when it is not. A trap count a person set that differs from the one the text states is a correction and is not listed, and neither is a count the text does not state.';
+   OR (m.sample_id IS NOT NULL AND m.trap_count IS DISTINCT FROM coalesce(trap_count_stated(s.sampling_effort), t.trap_count));
+COMMENT ON VIEW sample_method_text_mismatch IS 'Samples whose stored method or trap count is not what the sample says. A sample''s method is the method method_text gives its method as written, and no row where that text is not listed (so a row on an unlisted text, and no row on a listed one, are both listed here). Its trap count is the count sample.sampling_effort states in the form the forms write (trap_count_stated), or else the count the method as written states. Always empty: every writer of sample.protocol, sample.sampling_effort or a sample''s method keeps all three together in one transaction, and the nightly fails when this view is not empty.';
 
 CREATE VIEW sample_kind_method_mismatch AS
 SELECT s.entity_id AS sample_id, s.kind, m.method_code, md.is_trap
@@ -121,6 +143,7 @@ FROM sample s
 JOIN sample_method m ON m.sample_id = s.entity_id
 JOIN method md ON md.code = m.method_code
 WHERE (s.kind = 'trap') <> md.is_trap;
-COMMENT ON VIEW sample_kind_method_mismatch IS 'Samples whose kind says trap where the method is not a trap, or net where it is. Informational: kind is set from the dates and the method as written, and a later change makes it follow the method (976 on production on 2026-11-23, all in settled seasons).';
+COMMENT ON VIEW sample_kind_method_mismatch IS 'Samples whose kind says trap where the method is not a trap, or net where it is. Informational and not asserted: kind is set from the dates and the method as written, so the two disagree where the end date and the words do (976 on production on 2026-11-23, all in settled seasons).';
 
 COMMENT ON COLUMN sample.protocol IS 'The method as written, and never parsed: for a sample from old records the text as they wrote it or as staff corrected it (''vane trap'', ''6 Vane Traps''); for a sample made in Beeline the code of its method. The method itself is sample_method (schema/031), which every writer sets in the same transaction, and sample_method_text_mismatch asserts the two agree.';
+COMMENT ON COLUMN sample.sampling_effort IS 'Free text. Where a person has set a trap count it is the count and the kind of trap in the form the forms write ("6 vane traps", trapEffort in src/trap-sample.ts); sample_method.trap_count is the same count, and trap_count_stated reads it. Any other effort ("45 minutes") states no trap count.';

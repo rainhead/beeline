@@ -534,18 +534,6 @@ describe("the effort text after a method change on an old sample", () => {
     await applyPending(deps(f));
     expect(await rows(f.conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${o}`)).toEqual([["vane trap", "45 minutes"]]);
   });
-
-  it("settles the method change as made before the rewrite, and a failed rewrite is a sentence in its note, not a stop", async () => {
-    const f = await uploadFixture();
-    const o = await oldTrap(f, "6 pan traps");
-    const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "vane trap" } }]);
-    expect((await apply(f, location, { digest })).status).toBe(303);
-    // The count's correction cannot be reached: the rewrite fails as a lost write conflict would.
-    // The method change's own transaction is the first; the count's is the second, and it loses.
-    const result = await applyPending(deps(f, { db: losingOnce(createKysely(f.instance), "transaction", undefined, 1) }));
-    expect(result).toMatchObject({ applied: 1, stopped: 0 });
-    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["applied", c.effortNotRewritten(c.effortBusy)] });
-  });
 });
 
 describe("a stop that left the corrections file holding the change", () => {

@@ -8,12 +8,15 @@
 
 CREATE TABLE method (
   code       TEXT PRIMARY KEY,
-  label_word TEXT NOT NULL CHECK (regexp_full_match(label_word, '[ -~]{1,6}')),
+  -- One to six characters with no space at either end, in plain portable SQL (no exception to ADR 0001 for a regular
+  -- expression). That the word is printable ASCII, which a label's method box needs, cannot be said without one, so
+  -- test/method-seed.test.ts holds every seeded word to it and a migration that adds a method must pass that test.
+  label_word TEXT NOT NULL CHECK (length(label_word) BETWEEN 1 AND 6 AND label_word = trim(label_word)),
   is_trap    BOOLEAN NOT NULL
 );
-COMMENT ON TABLE method IS 'The ways a sample''s bees are caught: a controlled list, seeded here like qc_rule because a view joins it and a change to it is a migration. A code is permanent, since sample_method and method_text refer to it. Nothing reads a sample''s method from here yet except the lists the forms offer: the label, the plant relationship and the exports still read sample.protocol.';
+COMMENT ON TABLE method IS 'The ways a sample''s bees are caught: a controlled list, seeded here like qc_rule because a view joins it and a change to it is a migration. A code is permanent, since sample_method and method_text refer to it.';
 COMMENT ON COLUMN method.code IS 'The method as a person reads it ("pan trap"), also the text written to sample.protocol for a sample made in Beeline.';
-COMMENT ON COLUMN method.label_word IS 'The word a label prints for this method, one to six plain ASCII characters so that it fits the label''s method box (METHOD_WORD_LIMIT in src/label-text.ts).';
+COMMENT ON COLUMN method.label_word IS 'The word a label prints for this method, one to six plain ASCII characters, with no space at either end, so that it fits the label''s method box (METHOD_WORD_LIMIT in src/label-text.ts). The table checks the length and the spaces; a test checks that the seeded words are ASCII.';
 COMMENT ON COLUMN method.is_trap IS 'True where the device is set out and collected later: the sample''s plant is then near the trap and not a floral host, the sample may span days, and effort is counted in trap-days.';
 
 INSERT INTO method (code, label_word, is_trap) VALUES
@@ -26,6 +29,14 @@ INSERT INTO method (code, label_word, is_trap) VALUES
   ('pan and vane traps', 'trap', true),
   ('trap nest', 'nest', true);
 
+-- The trap count a sample's effort text states, in the form the forms write it (trapEffort in src/trap-sample.ts):
+-- a whole number of one to six digits, a space, and the kind of trap, which ends in trap, traps, nest or nests
+-- ("6 vane traps", "3 trap nests"). Null for anything else, so "45 minutes" states no trap count. The one place the
+-- parse is written in SQL: the view sample_method_text_mismatch, the migration's backfill and the test fixture
+-- read it, and trapCountOf in TypeScript is held to it by a test.
+CREATE MACRO trap_count_stated(effort) AS
+  TRY_CAST(nullif(regexp_extract(lower(effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER);
+
 CREATE TABLE sample_method (
   sample_id   INTEGER PRIMARY KEY REFERENCES sample(entity_id),
   method_code TEXT NOT NULL REFERENCES method(code),
@@ -33,14 +44,14 @@ CREATE TABLE sample_method (
 );
 COMMENT ON TABLE sample_method IS 'How a sample''s bees were caught: one method per sample. Absent for a sample whose method as written is not one method_text knows (sample_without_method lists them). Written in the same transaction as sample.protocol by every writer, and sample_method_text_mismatch asserts that the two agree.';
 COMMENT ON COLUMN sample_method.method_code IS 'The sample''s method, from the list in method.';
-COMMENT ON COLUMN sample_method.trap_count IS 'How many traps, null where nobody has said. From the leading number of the method as written ("6 vane traps") or from what a person entered. Nothing reads it yet: sample.sampling_effort still carries the count as text.';
+COMMENT ON COLUMN sample_method.trap_count IS 'How many traps, null where nobody has said, and always null for a method that is not a trap. It is the count that sample.sampling_effort states in the form the forms write ("6 vane traps"), or else the count the method as written states; sample_method_text_mismatch asserts it.';
 
 CREATE TABLE method_text (
   text        TEXT PRIMARY KEY,
   method_code TEXT NOT NULL REFERENCES method(code),
   trap_count  INTEGER CHECK (trap_count >= 1)
 );
-COMMENT ON TABLE method_text IS 'Which method each wording in sample.protocol means, matched on the exact text as stored: the wordings production held on 2026-11-23, and each method''s own code. A sample whose text is here gets its method from this table (promotion, the carry-over of held-back records, the migration). Seeded here and by migrations like qc_rule, so that a view can join it and a change to it is a migration that corrects the rows.';
+COMMENT ON TABLE method_text IS 'Which method each wording in sample.protocol means, matched on the exact text as stored: the wordings production held on 2026-11-23, and each method''s own code. A sample whose text is here gets its method from this table (promotion, the carry-over of held-back records, the migration). Seeded here and by migrations like qc_rule, so that a view can join it.';
 COMMENT ON COLUMN method_text.trap_count IS 'The number of traps the text states ("6 vane traps" is 6), null where it states none.';
 
 INSERT INTO method_text (text, method_code, trap_count) VALUES

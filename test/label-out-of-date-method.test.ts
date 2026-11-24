@@ -2,7 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { prepareRun } from "../src/print-run.js";
 import { METHOD_WORD_LIMIT, methodText } from "../src/label-text.js";
-/** The trap methods the trap form once offered (it now reads them from the `method` table). */
+/** Four trap methods, as fixed words: what is asserted below is written for these, and must not move when the `method` table gains one. */
 const TRAP_METHODS = ["vane trap", "pan trap", "malaise trap", "trap nest"] as const;
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 

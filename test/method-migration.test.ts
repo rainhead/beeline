@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -33,6 +33,8 @@ async function storeBefore() {
     ["unlisted", "'ground pitfall'"],
     ["empty", "NULL"],
     ["entered", "'vane trap'"],
+    // A count a person set (the effort) wins over the one the text states.
+    ["corrected", "'6 vane traps'"],
   ];
   for (const [i, [name, protocol]] of wordings.entries()) {
     ids[name] = await insertCleanSample(conn, {
@@ -41,10 +43,12 @@ async function storeBefore() {
       kind: name === "count" || name === "pantrap" ? "'trap'" : "'net'",
       // A sample entered in Beeline keeps its count as the number its effort starts with.
       ...(name === "entered" ? { sampling_effort: "'8 vane traps'" } : {}),
+      ...(name === "corrected" ? { sampling_effort: "'9 vane traps'" } : {}),
     });
   }
   for (const view of VIEWS) await conn.run(`DROP VIEW ${view}`);
   for (const table of ["sample_method", "method_text", "method"]) await conn.run(`DROP TABLE ${table}`);
+  await conn.run("DROP MACRO trap_count_stated");
   await conn.run(`COMMENT ON COLUMN sample.protocol IS '${OLD_PROTOCOL_COMMENT.replaceAll("'", "''")}'`);
   return { ...made, ids };
 }
@@ -68,12 +72,13 @@ describe("migration 0123: a controlled list of methods", () => {
       [ids.pantrap, "pan trap", null],
       [ids.mixed, "pan and vane traps", null],
       [ids.entered, "vane trap", 8],
+      [ids.corrected, "vane trap", 9],
     ]);
     // The unlisted text and the empty one have no method, and are on the worklist.
     expect(await rows(conn, `SELECT sample_id FROM sample_without_method ORDER BY 1`)).toEqual([[ids.unlisted], [ids.empty]]);
     expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
-    // The kinds were set by the old rules, here as fixtures: the mixed sample and the entered one are nets here, and their methods are traps.
-    expect(await rows(conn, `SELECT sample_id FROM sample_kind_method_mismatch ORDER BY 1`)).toEqual([[ids.mixed], [ids.entered]]);
+    // The kinds were set by the old rules, here as fixtures: the mixed, entered and corrected samples are nets here, and their methods are traps.
+    expect(await rows(conn, `SELECT sample_id FROM sample_kind_method_mismatch ORDER BY 1`)).toEqual([[ids.mixed], [ids.entered], [ids.corrected]]);
 
     // The comment on the column is restated, and the store has what a fresh build has.
     expect(await schemaDrift(conn)).toEqual([]);
@@ -90,7 +95,25 @@ describe("migration 0123: a controlled list of methods", () => {
     const { conn } = await createMemoryDb();
     for (const view of VIEWS) await conn.run(`DROP VIEW ${view}`);
     for (const table of ["sample_method", "method_text", "method"]) await conn.run(`DROP TABLE ${table}`);
+    await conn.run("DROP MACRO trap_count_stated");
     expect(await migrateOnly(conn)).toEqual(["9999-under-test.sql"]);
     expect(await rows(conn, `SELECT count(*) FROM sample_method`)).toEqual([[0n]]);
+  });
+
+  it("is followed by one statement that repairs the rows an older release left, which the header gives", async () => {
+    const { conn, ids } = await storeBefore();
+    expect(await migrateOnly(conn)).toEqual(["9999-under-test.sql"]);
+    // The old code, rolled back to: a method as written changed, or made, with no sample_method row.
+    await conn.run(`UPDATE sample SET protocol = 'pan trap' WHERE entity_id = ${ids.net}`);
+    await conn.run(`UPDATE sample SET protocol = 'vacuum' WHERE entity_id = ${ids.unlisted}`);
+    await conn.run(`UPDATE sample SET protocol = 'ground pitfall' WHERE entity_id = ${ids.pantrap}`);
+    expect(Number((await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`))[0]![0])).toBe(3);
+    const text = await readFile(join(MIGRATIONS_DIR, FILE), "utf8");
+    const statement = text.split("\n").filter((l) => l.startsWith("--   ")).map((l) => l.slice(5)).join("\n");
+    expect(statement).toMatch(/^MERGE INTO sample_method/);
+    await conn.run(statement);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT method_code FROM sample_method WHERE sample_id IN (${ids.net}, ${ids.unlisted}) ORDER BY sample_id`)).toEqual([["pan trap"], ["vacuum"]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method WHERE sample_id = ${ids.pantrap}`)).toEqual([[0n]]);
   });
 });

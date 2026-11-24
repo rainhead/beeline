@@ -234,6 +234,17 @@ describe("in-app editing of non-iNat samples", () => {
     expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
   });
 
+  it("keeps the trap count where the new method is a trap, and takes it away where it is not", async () => {
+    const { app, conn, beaSample } = await editApp();
+    const held = async () => (await rows(conn, `SELECT s.sampling_effort, m.method_code, m.trap_count FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${beaSample}`))[0];
+    expect(await held()).toEqual([null, "vane trap", 6]);
+    await post(app, `/samples/${beaSample}/edit`, { "base:protocol": "6 Vane Traps", protocol: "pan trap" });
+    expect(await held()).toEqual(["6 pan traps", "pan trap", 6]);
+    await post(app, `/samples/${beaSample}/edit`, { "base:protocol": "pan trap", protocol: "vacuum" });
+    expect(await held()).toEqual([null, "vacuum", null]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+  });
+
   it("refuses words that are not on the list, naming the methods, and writes nothing", async () => {
     const { app, conn, beaSample, correctionsPath } = await editApp();
     for (const protocol of ["six vane traps", "pan traps", ""]) {

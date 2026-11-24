@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
 import { recordSampleChanges, type SampleChangeSource } from "../sample-change.js";
-import { loadTrapSample, mayEditTrapSample, seriesTrapNumberTaken, setTrapSampleLocality, trapEffort } from "../trap-sample.js";
+import { loadTrapSample, mayEditTrapSample, seriesTrapNumberTaken, setTrapSampleLocality, trapCountOf, trapEffort } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
 import {
@@ -708,10 +708,17 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
       if (sample.kind !== "trap") return invalid(form.problemFor("net"));
       const method = (sample.protocol ?? "").trim();
       if (method === "") return invalid(form.problemFor("method"));
+      // A count is the count of a method's traps: a sample with no method has none to count, and a method that is not a
+      // trap is counted in nothing (sample_method.trap_count is null for it).
+      const chosen = await sql<{ is_trap: boolean }>`
+        SELECT d.is_trap FROM sample_method m JOIN method d ON d.code = m.method_code WHERE m.sample_id = ${sampleId}`.execute(deps.db);
+      if (chosen.rows[0] === undefined) return invalid(form.problemFor("method"));
+      if (!chosen.rows[0].is_trap) return invalid(form.problemFor("net"));
       effort = trapEffort(Number(given), method);
     }
-    // The count beside the method (beeline-ni5m.15): the number given, and where it is taken away, the count the method
-    // as written states, if it states one, so that the sample's method keeps the count its text gives.
+    // The count beside the method: the number given; where it is taken away, the count the method as written states, if
+    // it states one. An effort that states no count ("45 minutes") is not the count's to take away.
+    if (given === "" && trapCountOf(sample.sampling_effort ?? null) === null) effort = sample.sampling_effort ?? null;
     const stated = await sql<{ trap_count: number | null }>`
       SELECT t.trap_count FROM sample s JOIN method_text t ON t.text = s.protocol WHERE s.entity_id = ${sampleId}`.execute(deps.db);
     const count = given !== "" ? Number(given) : (stated.rows[0]?.trap_count ?? null);

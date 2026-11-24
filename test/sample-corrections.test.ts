@@ -455,6 +455,20 @@ describe("setTrapCount", () => {
   const effortOf = async (s: Awaited<ReturnType<typeof setup>>, id: number) =>
     ((await rows(s.conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${id}`)) as (string | null)[][])[0]![0];
 
+  it("refuses a count on a sample with no method, and on a method that is not a trap, and says nothing is counted", async () => {
+    const s = await setup();
+    const none = await trapSample(s, { sample_number: "'T-8'", protocol: "'ground pitfall'", sampling_effort: "NULL" });
+    expect(await setTrapCount(s.deps, s.sam, none, { count: "3", note: "", problemFor })).toMatchObject({ ok: false, refusal: "invalid", problem: "problem: method" });
+    const net = await trapSample(s, { sample_number: "'T-9'", protocol: "'vacuum'", sampling_effort: "NULL" });
+    expect(await setTrapCount(s.deps, s.sam, net, { count: "3", note: "", problemFor })).toMatchObject({ ok: false, refusal: "invalid", problem: "problem: net" });
+    expect(await rows(s.conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    // Taking away a count that was never there is no change, and an effort that states none is not the count's.
+    expect(await setTrapCount(s.deps, s.sam, none, { count: "", note: "", problemFor })).toMatchObject({ ok: true, outcome: "unchanged" });
+    const timed = await trapSample(s, { sample_number: "'T-10'", sampling_effort: "'45 minutes'" });
+    expect(await setTrapCount(s.deps, s.sam, timed, { count: "", note: "", problemFor })).toMatchObject({ ok: true, outcome: "unchanged" });
+    expect(await effortOf(s, timed)).toBe("45 minutes");
+  });
+
   it("sets the count beside the method too, and a blank takes it away, or restores the count the text states (beeline-ni5m.15)", async () => {
     const s = await setup();
     const held = async (id: number) => (await rows(s.conn, `SELECT trap_count FROM sample_method WHERE sample_id = ${id}`))[0]![0];

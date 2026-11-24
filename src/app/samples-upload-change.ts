@@ -174,7 +174,8 @@ export async function effortBecomes(db: Kysely<Database>, facts: SampleFacts, ch
   if (facts.entered || !change.protocolDiffers || change.protocol.trim() === "") return null;
   const count = trapCountOf(facts.effort);
   if (count === null || facts.effort !== trapEffort(count, facts.protocol)) return null;
-  return (await fromOldRecords(db, facts.id)) ? trapEffort(count, change.protocol.trim()) : null;
+  const trap = (await sql<{ is_trap: boolean }>`SELECT is_trap FROM method WHERE code = ${change.protocol.trim()}`.execute(db)).rows[0]?.is_trap === true;
+  return trap && (await fromOldRecords(db, facts.id)) ? trapEffort(count, change.protocol.trim()) : null;
 }
 
 /**
@@ -319,22 +320,17 @@ const placeText = (p: { country: string | null; state_province: string | null; c
   m.uploads.changes.placeName((p.country ?? "").trim(), (p.state_province ?? "").trim(), (p.county ?? "").trim());
 
 /**
- * After a method change on an old sample, write its effort again with the new method, but only where it is exactly its
- * count and its old method (so "45 minutes" is left alone). Called after the method change is recorded as made, and
- * never stops the run: a failure is a sentence in the method change's note.
+ * After a method change on an old sample, say what became of its effort. The change itself writes the effort again with
+ * the new method (`changeSampleMethod`), where it is exactly its count and its old method (so "45 minutes" is left
+ * alone); this reads it back for the change's note, and never stops the run: a sentence, or null where nothing was said
+ * to rewrite.
  */
 async function rewriteEffort(env: ApplyEnv, ctx: UnitContext, change: Extract<UnitChange, { unit: "method_dates" }>): Promise<string | null> {
-  const deps = env.corrective;
-  const m = env.messages;
   try {
-    const effort = (await deps.db.selectFrom("sample").where("entity_id", "=", ctx.sampleId).select("sampling_effort").executeTakeFirst())?.sampling_effort ?? null;
-    const count = trapCountOf(effort);
-    if (count === null || effort !== trapEffort(count, change.wasProtocol) || change.effortBecomes === null) return null;
-    const again = await setTrapCount(deps, ctx.actor, ctx.sampleId, { count: String(count), note: ctx.note, problemFor: trapCountProblemFor(m) });
-    if (again.ok) return m.uploads.changes.effortRewritten(again.effort ?? change.effortBecomes);
-    return m.uploads.changes.effortNotRewritten(again.refusal === "busy" ? m.uploads.changes.effortBusy : again.refusal === "invalid" ? again.problem : refusalFor(m, again, "trap_count"));
+    const effort = (await env.corrective.db.selectFrom("sample").where("entity_id", "=", ctx.sampleId).select("sampling_effort").executeTakeFirst())?.sampling_effort ?? null;
+    return change.effortBecomes !== null && effort === change.effortBecomes ? env.messages.uploads.changes.effortRewritten(effort) : null;
   } catch {
-    return m.uploads.changes.effortNotRewritten(m.uploads.changes.unexpected);
+    return env.messages.uploads.changes.effortNotRewritten(env.messages.uploads.changes.unexpected);
   }
 }
 

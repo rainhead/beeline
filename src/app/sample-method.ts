@@ -2,7 +2,7 @@ import { sql, type Kysely } from "kysely";
 import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
 import { mirrorCorrections } from "./correction-store.js";
-import { trapCountOf, trapEffort } from "../trap-sample.js";
+import { methodCodesSql, trapCountOf, trapEffort } from "../trap-sample.js";
 import { isWriteConflict } from "../write-conflict.js";
 
 /**
@@ -109,17 +109,32 @@ interface Member {
 
 /** The codes of the methods that may be chosen: all, or with `trapOnly` those whose device is set out and collected later. */
 export async function readMethodCodes(db: Kysely<Database>, { trapOnly = false }: { trapOnly?: boolean } = {}): Promise<string[]> {
-  const found = await sql<{ code: string }>`SELECT code FROM method ${sql.raw(trapOnly ? "WHERE is_trap" : "")} ORDER BY code`.execute(db);
+  const found = await sql<{ code: string }>`${sql.raw(methodCodesSql(trapOnly))}`.execute(db);
   return found.rows.map((r) => r.code);
 }
 
 /**
- * The sample's method, set to the code that was written to its method as written, in the same transaction. The trap
- * count stays as it is: a new method does not say how many traps there were (beeline-ni5m.15).
+ * Change a sample's method to `code`, in the caller's transaction, with the trap count and the effort that state it.
+ * The count is the sample's own (the row's, or else the one its effort states): it stays where the new method is a
+ * trap and goes where it is not, and the effort is written to say it as the forms write it ("6 pan traps"), or
+ * emptied where it stated a count that has gone. An effort that states no count ("45 minutes") is left alone, and
+ * then holds no count with it. Creates the sample's method row where it has none, with the count its effort states.
+ * The caller writes `sample.protocol`. sample_method_text_mismatch asserts the result.
  */
-async function writeMethod(trx: Kysely<Database>, sampleId: number, code: string): Promise<void> {
-  await sql`INSERT INTO sample_method (sample_id, method_code) VALUES (${sampleId}, ${code})
-            ON CONFLICT (sample_id) DO UPDATE SET method_code = excluded.method_code`.execute(trx);
+export async function changeSampleMethod(trx: Kysely<Database>, sampleId: number, code: string): Promise<void> {
+  const sample = await trx.selectFrom("sample").where("entity_id", "=", sampleId).select("sampling_effort").executeTakeFirst();
+  const row = await trx.selectFrom("sample_method").where("sample_id", "=", sampleId).select("trap_count").executeTakeFirst();
+  const effort = sample?.sampling_effort ?? null;
+  const stated = trapCountOf(effort);
+  const trap = (await trx.selectFrom("method").where("code", "=", code).select("is_trap").executeTakeFirst())?.is_trap === true;
+  // Only an effort that is empty or states a count can carry one; any other is left as the person wrote it.
+  const carries = effort === null || effort.trim() === "" || stated !== null;
+  const count = trap && carries ? (row?.trap_count ?? stated) : null;
+  if (carries && (stated !== null || count !== null)) {
+    await trx.updateTable("sample").set({ sampling_effort: count === null ? null : trapEffort(count, code) }).where("entity_id", "=", sampleId).execute();
+  }
+  await sql`INSERT INTO sample_method (sample_id, method_code, trap_count) VALUES (${sampleId}, ${code}, ${count})
+            ON CONFLICT (sample_id) DO UPDATE SET method_code = excluded.method_code, trap_count = excluded.trap_count`.execute(trx);
 }
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -223,18 +238,10 @@ export async function setSampleMethod(
     ...(datesChanged ? { kind, date_start: start, date_end: end } : {}),
   };
   if (entered) {
-    // The trap form writes the effort as the count and the trap kind, so a
-    // new method rewrites it with the same count (CodeRabbit on this branch).
-    let effort = {};
-    if (protocolChanged) {
-      const current = await db.selectFrom("sample").where("entity_id", "=", sampleId).select("sampling_effort").executeTakeFirst();
-      const count = trapCountOf(current?.sampling_effort ?? null);
-      if (count !== null) effort = { sampling_effort: trapEffort(count, protocol) };
-    }
     try {
       await db.transaction().execute(async (trx) => {
-        await trx.updateTable("sample").set({ ...update, ...effort }).where("entity_id", "=", sampleId).execute();
-        if (protocolChanged) await writeMethod(trx, sampleId, protocol);
+        await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
+        if (protocolChanged) await changeSampleMethod(trx, sampleId, protocol);
       });
     } catch (err) {
       // Nothing was kept anywhere, so saving again is all that is needed.
@@ -286,7 +293,7 @@ export async function setSampleMethod(
     await db.transaction().execute(async (trx) => {
       await mirrorCorrections(trx, events);
       await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
-      if (protocolChanged) await writeMethod(trx, sampleId, protocol);
+      if (protocolChanged) await changeSampleMethod(trx, sampleId, protocol);
       // A disagreement among the records over the method is settled by the
       // edit, as on the collector's form.
       if (protocolChanged) {

@@ -180,12 +180,11 @@ export async function insertCleanSample(
   );
   const [[id]] = (await result.getRows()) as [[number]];
   // The method, as every writer gives it: whatever method_text says the method
-  // as written means, and a count the effort starts with where the text states none (as the migration that made
-  // sample_method does). A text it does not know gives no row, as for a real sample.
+  // as written means, with the count the effort states or else the text (as the migration that made sample_method does). A text it does not know gives no row, as for a real sample.
   await conn.run(
     `INSERT INTO sample_method (sample_id, method_code, trap_count)
      SELECT s.entity_id, t.method_code,
-            coalesce(t.trap_count, nullif(TRY_CAST(regexp_extract(s.sampling_effort, '^([0-9]+) ', 1) AS INTEGER), 0))
+            coalesce(trap_count_stated(s.sampling_effort), t.trap_count)
      FROM sample s JOIN method_text t ON t.text = s.protocol
      WHERE s.entity_id = ${id}`,
   );

@@ -191,7 +191,7 @@ export function SampleFacts({
    * its own form (beeline-0wbq).
    */
   methodEdit?: boolean;
-  /** The codes of the methods the Method form offers (`methodCodes`, src/trap-sample.ts), the traps alone for a sample entered in Beeline. */
+  /** The codes of the methods the Method form offers (`readMethodCodes`, src/app/sample-method.ts), the traps alone for a sample entered in Beeline. */
   methodChoices?: readonly string[];
   /** Whether the reader may correct a trap sample's trap count: staff, on any trap sample (beeline-kgyd.4.1). */
   trapCountEdit?: boolean;

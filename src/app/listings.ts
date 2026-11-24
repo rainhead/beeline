@@ -1655,6 +1655,7 @@ export async function listSamples(
           .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")),
       )
       .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
+      .leftJoin("sample_method as smt", "smt.sample_id", "s.entity_id")
       // The flag roll-up, as `qc`: the page's own copy of it where the page was chosen by it, else computed here.
       .$if(rolled, (qb) => qb.leftJoin("pg as qc", "qc.sample_id", "s.entity_id"))
       .$if(!rolled, (qb) =>
@@ -1681,7 +1682,7 @@ export async function listSamples(
         "s.state_province",
         "s.country",
         "s.protocol",
-        sql<number | null>`(SELECT m.trap_count FROM sample_method m WHERE m.sample_id = s.entity_id)`.as("trap_count"),
+        "smt.trap_count as trap_count",
         "s.specimen_count",
         "s.inat_observation_id",
         observationGone.as("observation_gone"),

@@ -15,6 +15,7 @@ import {
   setCollectors,
   setCoordinates,
   setHost,
+  setKindFromOldRecordsCorrection,
   setPlace,
   setSamplePlace,
   setSpecimenCount,
@@ -29,6 +30,8 @@ import {
   type CorrectionDeps,
   type EditSampleInput,
   type EditSampleResult,
+  type KindFromOldRecordsInput,
+  type KindFromOldRecordsResult,
   type QcDecisionCorrectionResult,
   type ReleaseLabelsInput,
   type ReleaseLabelsResult,
@@ -160,6 +163,17 @@ const REFUSALS = {
     error: "inat_unreachable",
     message: "Beeline could not reach iNaturalist to check that plant. Nothing was done. Try again in a minute.",
   },
+  entered_in_beeline: {
+    status: 409,
+    error: "entered_in_beeline",
+    message: "This sample was entered in Beeline, so there are no old records to work its kind out from, and a trap sample entered here stays one. Nothing was done.",
+  },
+  rule_says_trap: {
+    status: 409,
+    error: "rule_says_trap",
+    message:
+      "This sample's old records give trap, and this route only corrects a trap sample to a net sample. Nothing was changed.",
+  },
   unavailable: { status: 503, error: "unavailable", message: "This Beeline cannot make this correction." },
 } as const satisfies Record<string, { status: ContentfulStatusCode; error: string; message: string }>;
 
@@ -178,7 +192,8 @@ export type AnyFailure = Extract<
   | ReleaseLabelsResult
   | TakeObservationLocationCorrectionResult
   | QcDecisionCorrectionResult
-  | StaffHostCorrectionResult,
+  | StaffHostCorrectionResult
+  | KindFromOldRecordsResult,
   { ok: false }
 >;
 
@@ -213,10 +228,12 @@ function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
     case "count_follows_observation":
     case "labels_in_run":
     case "no_host_key":
+    case "entered_in_beeline":
+    case "rule_says_trap":
     case "inat_unreachable":
     case "unavailable": {
       const r = REFUSALS[failure.refusal];
-      return apiError(c, r.status, r.error, r.message);
+      return apiError(c, r.status, r.error, "says" in failure && typeof failure.says === "string" ? failure.says : r.message);
     }
     default:
       return unreachable(failure);
@@ -235,7 +252,7 @@ export function refusalSentence(failure: AnyFailure): string {
     case "unresolved":
       return failure.reason;
     default:
-      return REFUSALS[failure.refusal].message;
+      return "says" in failure && typeof failure.says === "string" ? failure.says : REFUSALS[failure.refusal].message;
   }
 }
 
@@ -306,7 +323,7 @@ function checkText(label: string, value: string, max: number, counted: string = 
 export function check(body: Body, fields: Record<string, Field>, required: string[] = []): Body {
   const takes = (name: string) => Object.hasOwn(fields, name);
   for (const name of Object.keys(body)) {
-    if (name === "dry_run" && !takes("dry_run")) throw new BadBody("Dry runs exist only for edit, collectors and host. Nothing was done.");
+    if (name === "dry_run" && !takes("dry_run")) throw new BadBody("Dry runs exist only for edit, collectors, host and kind-from-old-records. Nothing was done.");
     if (!takes(name)) throw new BadBody(`${JSON.stringify(name)} is not a field of this request.`);
   }
   for (const name of required) if (!Object.hasOwn(body, name)) throw new BadBody(`${JSON.stringify(name)} is required.`);
@@ -628,6 +645,22 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
       outcome: r.outcome,
       dry_run: input.dryRun === true,
       host: r.host === null ? null : { inat_taxon_id: r.host.id, name: r.host.name, rank: r.host.rank },
+    }),
+  );
+
+  // A sample's kind worked out again from its old records, by the rule promotion uses (beeline-lmlh). It takes no kind.
+  endpoint(
+    "kind-from-old-records",
+    (b): KindFromOldRecordsInput => ({ note: b.note as string, dryRun: b.dry_run === true }),
+    { note: "string", dry_run: "boolean" },
+    ["note"],
+    setKindFromOldRecordsCorrection,
+    (r, input) => ({
+      outcome: r.outcome,
+      dry_run: input.dryRun === true,
+      from: r.from,
+      to: r.to,
+      ...(r.history_recorded === undefined ? {} : { history_recorded: r.history_recorded }),
     }),
   );
 

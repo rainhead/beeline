@@ -291,6 +291,15 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     method: "POST",
+    route: "/samples/:id/kind-from-old-records",
+    summary:
+      "Have Beeline work out again, from a sample's old Beeline records, whether it is a net sample or a trap sample, and set the kind to what they say. The rule is the one promotion used: a trap sample when some old record gives an end date, unless every end date given is the day that record started and the method of every record is a net (`aerial net` or `net`). So a netted sample whose records end on their start day is a net sample, and one whose method names a trap, or has no method, stays a trap sample. You never name the kind: the answer says what it was (`from`) and what the records give (`to`). Only the sample's kind is written, with one entry in its history under the key's person, with the note as the reason; nothing is written against the old records, which are not corrected. `dry_run` says what would change and writes nothing. `unchanged` means the records give the kind it already has. Refused for a sample with no old records (409 no_staging), one entered in Beeline (409 entered_in_beeline), one whose labels are in a print run that has not printed, which froze them (409 in_print_run), one stored as a net sample whose records give trap, since only a trap is corrected to a net (409 rule_says_trap), and a write that lost a conflict with another (409 busy; nothing was written, try again). The same 409 busy is answered while the nightly run or the weekly sweep runs. A saved answer carries `history_recorded`, false if the history entry could not be written (the change stands); a run should stop on the first false. A sample whose old records cannot all be read is refused as having none (409 no_staging).",
+    needs: "staff key",
+    body: { note: "string, required: the reason shown in the sample's history", dry_run: "boolean: check everything and write nothing", reference: REFERENCE },
+    answers: "{ sample_id, outcome (saved, unchanged or would_save), dry_run, from, to, history_recorded (on saved) }",
+  },
+  {
+    method: "POST",
     route: "/samples/:id/trap-count",
     summary: "Set how many traps a trap sample had, or take the count away with an empty one.",
     needs: "staff key",

@@ -22,10 +22,13 @@ import { isWriteConflict } from "../write-conflict.js";
  * samples of 2021 as netted on one day (beeline-iuva).
  *
  * The kind is not a field of its own. Promotion makes a sample a trap sample
- * exactly when its records give an end date (CONTEXT.md, *Trap sample*), so
- * an end date given here makes it one, and none makes it a net sample
- * collected on its start day, which is what a rebuild would make of the
- * corrected records.
+ * when its records give an end date, unless every end given is that record's
+ * start and every record's method is a net (src/old-sample-kind.ts,
+ * CONTEXT.md, *Trap sample*), so an end date given here usually makes it one,
+ * and none makes it a net sample collected on its start day, which is what a
+ * rebuild would make of the corrected records. The save below sets the kind
+ * from the end date alone, whatever the method; src/app/sample-kind.ts works
+ * it out again by the whole rule, without correcting any old record.
  *
  * The start date is editable where iNaturalist does not hold it: on a sample
  * with no observation (Peter, 2026-11-15, beeline-0wbq). Promotion groups

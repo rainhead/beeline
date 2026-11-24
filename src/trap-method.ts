@@ -1,9 +1,9 @@
 /**
  * Whether a sample's method names a trap: pan, vane or malaise trap, a trap
  * nest, "pantrap", "6 Vane Traps". The method, not the sample's kind, which
- * promotion sets from whether the old records gave an end date, so a netting
- * trip over several days is a "trap" sample and a trap emptied on the day it
- * was set is a "net" one (237 and 9 such on the backup of 16 November 2026).
+ * promotion sets from the old records' end dates and methods together
+ * (src/old-sample-kind.ts), so a netting trip over several days is a "trap"
+ * sample and a trap emptied on the day it was set can be a "net" one.
  * The associations file of the upload to Ecdysis decides by this too
  * (beeline-lmlh; with the kind as well where the method says nothing of
  * netting), and the word on a label also comes from the method text

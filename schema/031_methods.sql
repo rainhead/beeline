@@ -29,22 +29,14 @@ INSERT INTO method (code, label_word, is_trap) VALUES
   ('pan and vane traps', 'trap', true),
   ('trap nest', 'nest', true);
 
--- The trap count a sample's effort text states, in the form the forms write it (trapEffort in src/trap-sample.ts):
--- a whole number of one to six digits, a space, and the kind of trap, which ends in trap, traps, nest or nests
--- ("6 vane traps", "3 trap nests"). Null for anything else, so "45 minutes" states no trap count. The one place the
--- parse is written in SQL: the view sample_method_text_mismatch, the migration's backfill and the test fixture
--- read it, and trapCountOf in TypeScript is held to it by a test.
-CREATE MACRO trap_count_stated(effort) AS
-  TRY_CAST(nullif(regexp_extract(lower(effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER);
-
 CREATE TABLE sample_method (
   sample_id   INTEGER PRIMARY KEY REFERENCES sample(entity_id),
   method_code TEXT NOT NULL REFERENCES method(code),
   trap_count  INTEGER CHECK (trap_count >= 1)
 );
-COMMENT ON TABLE sample_method IS 'How a sample''s bees were caught: one method per sample. Absent for a sample whose method as written is not one method_text knows (sample_without_method lists them). Written in the same transaction as sample.protocol by every writer, and sample_method_text_mismatch asserts that the two agree.';
+COMMENT ON TABLE sample_method IS 'How a sample''s bees were caught: one method per sample. Absent for a sample whose method as written is not one method_text knows (sample_without_method lists them). Written in the same transaction as sample.protocol by every writer, and sample_method_out_of_step asserts that the two agree.';
 COMMENT ON COLUMN sample_method.method_code IS 'The sample''s method, from the list in method.';
-COMMENT ON COLUMN sample_method.trap_count IS 'How many traps, null where nobody has said, and always null for a method that is not a trap. It is the count that sample.sampling_effort states in the form the forms write ("6 vane traps"), or else the count the method as written states; sample_method_text_mismatch asserts it.';
+COMMENT ON COLUMN sample_method.trap_count IS 'How many traps: the one place a sample''s trap count is kept, and nothing reads one from anywhere else. Null where nobody has said, and always null for a method that is not a trap (a CHECK cannot read method, so sample_method_out_of_step asserts it).';
 
 CREATE TABLE method_text (
   text        TEXT PRIMARY KEY,

@@ -15,7 +15,7 @@ import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
  */
 
 const FILE = "0123-a-controlled-list-of-methods.sql";
-const VIEWS = ["sample_without_method", "sample_method_text_mismatch", "sample_kind_method_mismatch"];
+const VIEWS = ["sample_without_method", "sample_method_out_of_step", "sample_kind_method_mismatch"];
 const OLD_PROTOCOL_COMMENT = "Free text today ('vane trap', '6 Vane Traps'); controlled vocabulary pending staff answers (docs/questions.md, Trap sampling q3).";
 
 /** A store as 0122 left it: none of the new objects, and the old comment on sample.protocol. */
@@ -35,6 +35,8 @@ async function storeBefore() {
     ["entered", "'vane trap'"],
     // A count a person set (the effort) wins over the one the text states.
     ["corrected", "'6 vane traps'"],
+    // A netted sample takes no count, whatever its effort says.
+    ["netted", "'aerial net'"],
   ];
   for (const [i, [name, protocol]] of wordings.entries()) {
     ids[name] = await insertCleanSample(conn, {
@@ -46,9 +48,12 @@ async function storeBefore() {
       ...(name === "corrected" ? { sampling_effort: "'9 vane traps'" } : {}),
     });
   }
+  // The efforts as the store before the migration held them, which the fixture's own writer has tidied.
+  for (const [name, effort] of [["entered", "'8 vane traps'"], ["corrected", "'9 vane traps'"], ["netted", "'6 aerial nets'"], ["count", "NULL"]] as const) {
+    await conn.run(`UPDATE sample SET sampling_effort = ${effort} WHERE entity_id = ${ids[name]}`);
+  }
   for (const view of VIEWS) await conn.run(`DROP VIEW ${view}`);
   for (const table of ["sample_method", "method_text", "method"]) await conn.run(`DROP TABLE ${table}`);
-  await conn.run("DROP MACRO trap_count_stated");
   await conn.run(`COMMENT ON COLUMN sample.protocol IS '${OLD_PROTOCOL_COMMENT.replaceAll("'", "''")}'`);
   return { ...made, ids };
 }
@@ -73,10 +78,16 @@ describe("migration 0123: a controlled list of methods", () => {
       [ids.mixed, "pan and vane traps", null],
       [ids.entered, "vane trap", 8],
       [ids.corrected, "vane trap", 9],
+      [ids.netted, "aerial net", null],
+    ]);
+    // The old effort column is written from the stored count, as its one writer writes it: filled for the count in the
+    // text, kept where it agreed, made from the count a person set, and emptied for a netted sample.
+    expect(await rows(conn, `SELECT entity_id, sampling_effort FROM sample WHERE entity_id IN (${ids.count}, ${ids.entered}, ${ids.corrected}, ${ids.netted}) ORDER BY 1`)).toEqual([
+      [ids.count, "6 vane traps"], [ids.entered, "8 vane traps"], [ids.corrected, "9 vane traps"], [ids.netted, null],
     ]);
     // The unlisted text and the empty one have no method, and are on the worklist.
     expect(await rows(conn, `SELECT sample_id FROM sample_without_method ORDER BY 1`)).toEqual([[ids.unlisted], [ids.empty]]);
-    expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
     // The kinds were set by the old rules, here as fixtures: the mixed, entered and corrected samples are nets here, and their methods are traps.
     expect(await rows(conn, `SELECT sample_id FROM sample_kind_method_mismatch ORDER BY 1`)).toEqual([[ids.mixed], [ids.entered], [ids.corrected]]);
 
@@ -95,8 +106,7 @@ describe("migration 0123: a controlled list of methods", () => {
     const { conn } = await createMemoryDb();
     for (const view of VIEWS) await conn.run(`DROP VIEW ${view}`);
     for (const table of ["sample_method", "method_text", "method"]) await conn.run(`DROP TABLE ${table}`);
-    await conn.run("DROP MACRO trap_count_stated");
-    expect(await migrateOnly(conn)).toEqual(["9999-under-test.sql"]);
+      expect(await migrateOnly(conn)).toEqual(["9999-under-test.sql"]);
     expect(await rows(conn, `SELECT count(*) FROM sample_method`)).toEqual([[0n]]);
   });
 
@@ -107,12 +117,12 @@ describe("migration 0123: a controlled list of methods", () => {
     await conn.run(`UPDATE sample SET protocol = 'pan trap' WHERE entity_id = ${ids.net}`);
     await conn.run(`UPDATE sample SET protocol = 'vacuum' WHERE entity_id = ${ids.unlisted}`);
     await conn.run(`UPDATE sample SET protocol = 'ground pitfall' WHERE entity_id = ${ids.pantrap}`);
-    expect(Number((await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`))[0]![0])).toBe(3);
+    expect(Number((await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`))[0]![0])).toBe(3);
     const text = await readFile(join(MIGRATIONS_DIR, FILE), "utf8");
     const statement = text.split("\n").filter((l) => l.startsWith("--   ")).map((l) => l.slice(5)).join("\n");
     expect(statement).toMatch(/^MERGE INTO sample_method/);
     await conn.run(statement);
-    expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
     expect(await rows(conn, `SELECT method_code FROM sample_method WHERE sample_id IN (${ids.net}, ${ids.unlisted}) ORDER BY sample_id`)).toEqual([["pan trap"], ["vacuum"]]);
     expect(await rows(conn, `SELECT count(*) FROM sample_method WHERE sample_id = ${ids.pantrap}`)).toEqual([[0n]]);
   });

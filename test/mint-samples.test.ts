@@ -176,7 +176,7 @@ describe("a minted sample's method (beeline-ni5m.15)", () => {
       ["aerial net", "aerial net", null],
       ["aerial net", "aerial net", null],
     ]);
-    expect(await count("SELECT count(*) FROM sample_method_text_mismatch")).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_method_out_of_step")).toBe(0);
     expect(await count("SELECT count(*) FROM sample_without_method")).toBe(0);
   });
 
@@ -193,7 +193,7 @@ describe("a minted sample's method (beeline-ni5m.15)", () => {
     expect(await promoteObservations(conn)).toMatchObject({ samplesMinted: 0, freeLinks: 1 });
     expect(await rows(conn, `SELECT method_code FROM sample_method WHERE sample_id = ${sampleId}`)).toEqual([["pan trap"]]);
     expect(await count("SELECT count(*) FROM sample_method")).toBe(1);
-    expect(await count("SELECT count(*) FROM sample_method_text_mismatch")).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_method_out_of_step")).toBe(0);
   });
 });
 

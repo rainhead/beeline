@@ -63,6 +63,9 @@ describe("the trap count pencil on the Method row", () => {
     expect(page).toContain(`/samples/${s.trap}/trap-count`);
     expect(page).toContain(t.open);
     expect(page).toMatch(/name="count"[^>]*value="6"|value="6"[^>]*name="count"/);
+    // The count is the stored one: with the old effort column emptied the form still shows it.
+    await s.conn.run(`UPDATE sample SET sampling_effort = NULL WHERE entity_id = ${s.trap}`);
+    expect(await (await s.staff.request(`/samples/${s.trap}`)).text()).toMatch(/name="count"[^>]*value="6"|value="6"[^>]*name="count"/);
     expect(await (await s.staff.request(`/samples/${s.net}`)).text()).not.toContain(`/trap-count`);
     expect(await (await s.collector.request(`/samples/${s.trap}`)).text()).not.toContain(`/trap-count`);
   });

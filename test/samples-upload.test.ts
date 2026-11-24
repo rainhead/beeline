@@ -81,9 +81,11 @@ describe("the samples download", () => {
     expect((await volunteer.app.request("/samples.xlsx?scope=all")).status).toBe(403);
   });
 
-  it("writes the trap count from the effort, and takes the listing's filters", async () => {
+  it("writes the trap count from the stored count, never from the effort, and takes the listing's filters", async () => {
     const f = await uploadFixture();
-    await insertCleanSample(f.conn, { kind: "'trap'", sample_number: "'OBAS-00001'", protocol: "'vane trap'", sampling_effort: "'6 vane traps'", collector_id: String(f.volunteer) });
+    const trapId = await insertCleanSample(f.conn, { kind: "'trap'", sample_number: "'OBAS-00001'", protocol: "'vane trap'", sampling_effort: "'6 vane traps'", collector_id: String(f.volunteer) });
+    // The old effort column says something else: the file still has the count the sample holds.
+    await f.conn.run(`UPDATE sample SET sampling_effort = '9 vane traps' WHERE entity_id = ${trapId}`);
     const matrix = matrixOf(await download(f));
     const head = matrix[0]!;
     const trap = matrix.find((r) => r[head.indexOf("fieldNumber")] === "OBAS-00001")!;
@@ -224,6 +226,24 @@ describe("comparing the samples file", () => {
       const added = p.rows.filter((r) => r.kind === "new");
       expect(added.map((r) => r.problems.map((x) => x.detail))).toEqual([[`Choose one of the listed methods: ${TRAPS}.`], []]);
     });
+  });
+
+  it("refuses a trap count on a net sample and on a method that is not a trap, with the net sentence, and ignores none", async () => {
+    const f = await uploadFixture();
+    await f.conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${f.ids.sampleA})`);
+    const refusal = async () => {
+      const p = await plan(f, edit(await download(f), [{ id: f.ids.sampleA, set: { trapCount: "3" } }]));
+      return rowOf(p, f.ids.sampleA).differences.find((d) => d.unit === "trap_count")?.refusal;
+    };
+    // A net sample (kind net, aerial net).
+    expect(await refusal()).toBe(en.record.sample.trapCount.problems.net);
+    // A trap sample whose method is not a trap: it takes none.
+    await f.conn.run(`UPDATE sample SET kind = 'trap', date_end = date_start + 2 WHERE entity_id = ${f.ids.sampleA}`);
+    expect(await refusal()).toBe(en.record.sample.trapCount.problems.net);
+    // And one whose method is a trap takes it.
+    await f.conn.run(`UPDATE sample SET protocol = 'pan trap' WHERE entity_id = ${f.ids.sampleA}`);
+    await f.conn.run(`UPDATE sample_method SET method_code = 'pan trap' WHERE sample_id = ${f.ids.sampleA}`);
+    expect(await refusal()).toBeNull();
   });
 
   it("takes a list of collectors as the names in it, so `A|B` is `A | B`, and a two-letter country without case", async () => {

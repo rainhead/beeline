@@ -227,12 +227,15 @@ the app no longer reads such a file.
 `fly deploy -c fly.production.toml`. The machine is replaced in place: migrations run, then the app
 starts. Downtime is one boot.
 
-**Rolling back past migration 0123, then forward again** (beeline-ni5m.15). The old code writes a sample's method as written without its `sample_method` row, so after the release goes forward again the nightly's last check ("check stored sample methods") fails until the rows are repaired. Repair them with the app stopped, from `method_text`, with the statement in the header of `migrations/0123-a-controlled-list-of-methods.sql`:
+**Rolling back past migration 0123, then forward again** (beeline-ni5m.15). The old code writes a sample's method as written without its `sample_method` row, so after the release goes forward again the nightly's last check ("check stored sample methods") fails until the rows are repaired. Repair them with the app stopped, from `method_text` and the count the old code wrote into the effort, with the statement in the header of `migrations/0123-a-controlled-list-of-methods.sql`:
 
 ```sql
 MERGE INTO sample_method m
-USING (SELECT s.entity_id AS sample_id, t.method_code, coalesce(trap_count_stated(s.sampling_effort), t.trap_count) AS trap_count
-       FROM sample s JOIN method_text t ON t.text = s.protocol) x
+USING (SELECT s.entity_id AS sample_id, t.method_code,
+              CASE WHEN d.is_trap THEN coalesce(
+                TRY_CAST(nullif(regexp_extract(lower(s.sampling_effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER),
+                t.trap_count) END AS trap_count
+       FROM sample s JOIN method_text t ON t.text = s.protocol JOIN method d ON d.code = t.method_code) x
 ON m.sample_id = x.sample_id
 WHEN MATCHED AND (m.method_code IS DISTINCT FROM x.method_code OR m.trap_count IS DISTINCT FROM x.trap_count)
   THEN UPDATE SET method_code = x.method_code, trap_count = x.trap_count

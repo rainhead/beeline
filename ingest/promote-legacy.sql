@@ -776,10 +776,11 @@ LEFT JOIN inat_taxon_not_a_host x ON x.name = s.host_name;
 -- sample is on sample_without_method. The text stays in sample.protocol as
 -- the old records wrote it.
 INSERT INTO sample_method (sample_id, method_code, trap_count)
-SELECT s.entity_id, t.method_code, t.trap_count
+SELECT s.entity_id, t.method_code, CASE WHEN d.is_trap THEN t.trap_count END
 FROM sample s
 JOIN legacy_sample_map m ON m.sample_id = s.entity_id
-JOIN method_text t ON t.text = s.protocol;
+JOIN method_text t ON t.text = s.protocol
+JOIN method d ON d.code = t.method_code;
 
 -- Geography assigns the atlas, through the lookup that also knows the
 -- regions no atlas covers (schema/010). No row here means one thing —

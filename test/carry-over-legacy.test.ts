@@ -182,7 +182,7 @@ describe("carrying over old records a correction made whole", { timeout: 120_000
     expect(made.entered).toEqual([[0n]]);
     // Its method, from the text as written, with the text left as written (beeline-ni5m.15).
     expect(made.method).toEqual([["vane trap", null]]);
-    expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
 
     // The corrections are the store's now, so the views promotion left read the dates as corrected.
     expect(await rows(conn, `SELECT count(*) FROM legacy_promotion_finding WHERE _id LIKE 'carry-%' AND rule = 'bad_date'`)).toEqual([[0n]]);

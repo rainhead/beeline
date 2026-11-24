@@ -507,32 +507,32 @@ describe("a file with new rows and changes", () => {
   });
 });
 
-describe("the effort text after a method change on an old sample", () => {
+describe("the trap count after a method change on an old sample (beeline-ni5m.15)", () => {
   const oldTrap = async (f: UploadFixture, effort: string) => {
     const o = await trapSample(f, { sample_number: "'O-5'", protocol: "'pan trap'", sampling_effort: `'${effort}'` }, false);
     await oldRecords(f, o, "rec-5", "pan trap");
     return o;
   };
+  const held = (f: UploadFixture, id: number) => rows(f.conn, `SELECT s.protocol, m.method_code, m.trap_count, s.sampling_effort FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${id}`);
 
-  it("is rewritten, with the new text shown in the preview, when it is exactly its count and its old method, even with the trap count unticked", async () => {
+  it("stays with the sample when the new method is a trap, with the old effort column written from it", async () => {
     const f = await uploadFixture();
     const o = await oldTrap(f, "6 pan traps");
     const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "vane trap" } }]);
-    expect(await noteOf(f, location, o)).toContain(n.effortBecomes("6 vane traps"));
     expect((await apply(f, location, { digest, kinds: ["method_dates"] })).status).toBe(303);
     expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, applied: 1 });
-    expect(await rows(f.conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${o}`)).toEqual([["vane trap", "6 vane traps"]]);
-    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["applied", c.effortRewritten("6 vane traps")] });
+    expect(await held(f, o)).toEqual([["vane trap", "vane trap", 6, "6 vane traps"]]);
+    expect(await rows(f.conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
   });
 
-  it("is left alone when it says something else, such as how long the traps were out", async () => {
+  it("goes when the new method is not a trap", async () => {
     const f = await uploadFixture();
-    const o = await oldTrap(f, "45 minutes");
-    const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "vane trap" } }]);
-    expect(await noteOf(f, location, o)).not.toContain("effort text");
-    expect((await apply(f, location, { digest })).status).toBe(303);
+    const o = await oldTrap(f, "6 pan traps");
+    const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "aerial net" } }]);
+    expect((await apply(f, location, { digest, kinds: ["method_dates"] })).status).toBe(303);
     await applyPending(deps(f));
-    expect(await rows(f.conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${o}`)).toEqual([["vane trap", "45 minutes"]]);
+    expect(await held(f, o)).toEqual([["aerial net", "aerial net", null, null]]);
+    expect(await rows(f.conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
   });
 });
 

@@ -452,7 +452,7 @@ describe("the method is chosen from the list (beeline-ni5m.15)", { timeout: 120_
   const TRAPS = "bottle trap, malaise trap, pan and vane traps, pan trap, trap nest, vane trap";
   const stored = async (conn: DuckDBConnection, id: number) =>
     (await rows(conn, `SELECT s.protocol, m.method_code, m.trap_count FROM sample s LEFT JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${id}`))[0];
-  const mismatches = async (conn: DuckDBConnection) => (await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`))[0]![0];
+  const mismatches = async (conn: DuckDBConnection) => (await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`))[0]![0];
 
   it("on a sample from old records writes the code as the corrected text of every record, and as the method, together", async () => {
     const { app, conn, sampleId, later, correctionsPath, sampleChangesPath } = await methodApp("staff");
@@ -565,23 +565,13 @@ describe("the method is chosen from the list (beeline-ni5m.15)", { timeout: 120_
       );
     });
 
-    it("leaves an effort that states no count as it was, and holds no count beside it", async () => {
-      const w = await sixVane();
-      await w.conn.run(`UPDATE sample SET sampling_effort = '45 minutes' WHERE entity_id = ${w.sampleId}`);
-      await w.conn.run(`UPDATE sample_method SET trap_count = NULL WHERE sample_id = ${w.sampleId}`);
-      await w.conn.run(`UPDATE sample SET protocol = 'vane trap' WHERE entity_id = ${w.sampleId}`);
-      expect((await post(w.app, `/samples/${w.sampleId}/method`, { "base:protocol": "vane trap", protocol: "pan trap", date_end: "" })).status).toBe(302);
-      expect(await effortOf(w.conn, w.sampleId)).toBe("45 minutes");
-      expect(await stored(w.conn, w.sampleId)).toEqual(["pan trap", "pan trap", null]);
-      expect(await mismatches(w.conn)).toBe(0n);
-    });
-
-    it("gives a sample with no method row the count its effort states when it is first given one", async () => {
+    it("gives a sample with no method row one with no count, and no effort", async () => {
       const w = await methodApp("staff");
       await w.conn.run(`DELETE FROM sample_method WHERE sample_id = ${w.sampleId}`);
-      await w.conn.run(`UPDATE sample SET protocol = NULL, sampling_effort = '4 pan traps' WHERE entity_id = ${w.sampleId}`);
+      await w.conn.run(`UPDATE sample SET protocol = NULL, sampling_effort = NULL WHERE entity_id = ${w.sampleId}`);
       expect((await post(w.app, `/samples/${w.sampleId}/method`, { "base:protocol": "", protocol: "pan trap", date_end: "" })).status).toBe(302);
-      expect(await stored(w.conn, w.sampleId)).toEqual(["pan trap", "pan trap", 4]);
+      expect(await stored(w.conn, w.sampleId)).toEqual(["pan trap", "pan trap", null]);
+      expect(await effortOf(w.conn, w.sampleId)).toBeNull();
       expect(await mismatches(w.conn)).toBe(0n);
     });
   });

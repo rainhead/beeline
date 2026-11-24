@@ -1861,7 +1861,7 @@ export function createApp({
   });
 
   // How many traps a trap sample had (beeline-kgyd.4.1): staff only, on any
-  // trap sample, kept as the leading number of its effort.
+  // trap sample, kept in sample_method.trap_count.
   app.post("/samples/:id/trap-count", async (c) => {
     const m = c.get("m");
     const id = Number(c.req.param("id"));

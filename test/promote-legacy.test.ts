@@ -544,7 +544,7 @@ describe("each sample's method (beeline-ni5m.15)", () => {
   });
 
   test("leaves the text as the old records wrote it, and the checks empty", async () => {
-    expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
     // The fixture's record with no method is held back, so no sample lacks one.
     expect(await rows(conn, `SELECT count(*) FROM sample_without_method`)).toEqual([[0n]]);
   });

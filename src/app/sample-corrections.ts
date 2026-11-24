@@ -3,7 +3,8 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
 import { recordSampleChanges, type SampleChangeSource } from "../sample-change.js";
-import { loadTrapSample, mayEditTrapSample, seriesTrapNumberTaken, setTrapSampleLocality, trapCountOf, trapEffort } from "../trap-sample.js";
+import { setSampleMethodRow } from "../sample-method-row.js";
+import { loadTrapSample, mayEditTrapSample, seriesTrapNumberTaken, setTrapSampleLocality } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
 import {
@@ -668,24 +669,23 @@ export interface TrapCountInput {
 }
 
 export type TrapCountResult =
-  | { ok: true; outcome: Outcome; /** The effort now held, as the sample's page shows it; null when none. */ effort: string | null }
+  | { ok: true; outcome: Outcome; /** The trap count now held; null when none. */ trap_count: number | null }
   | Common
   | StaffOnly
   | Refused<"busy">
   | Invalid;
 
 /**
- * Staff set how many traps a trap sample had, or take the count away. The count
- * is kept only as the first number of the sample's effort ("6 vane traps",
- * `trapEffort`), so this writes the effort with the sample's current method; a
- * blank count clears it. Any trap sample may be corrected, printed or not,
- * since nothing prints or exports the count. Staff only, and refused while
+ * Staff set how many traps a trap sample had, or take the count away: a blank
+ * count clears it. A sample with no method, or a method that is not a trap,
+ * has no count to set. Any trap sample may be corrected, printed or not, since
+ * nothing prints or exports the count. Staff only, and refused while
  * impersonating.
  *
- * It is written straight to the sample and recorded in its history, with no
- * overlay file: a count has no old record to be kept against, and production
- * is never promoted again (ADR 0006). A development store rebuilt from the
- * old records loses it.
+ * It is written straight to `sample_method.trap_count` and recorded in the
+ * sample's history, with no overlay file: a count has no old record to be kept
+ * against, and production is never promoted again (ADR 0006). A development
+ * store rebuilt from the old records loses it.
  */
 export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<TrapCountInput>): Promise<TrapCountResult> {
   const gates = async () => {
@@ -694,7 +694,7 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
     const sample = await deps.db
       .selectFrom("sample")
       .where("entity_id", "=", sampleId)
-      .select(["kind", "protocol", "sampling_effort"])
+      .select(["kind", "protocol"])
       .executeTakeFirst();
     if (sample === undefined) return refused("not_found");
     return { ready: sample };
@@ -702,41 +702,29 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
   return correct(sampleId, input, gates, async (sample, form): Promise<TrapCountResult> => {
     const invalid = (problem: string): Invalid => ({ ok: false, refusal: "invalid", problem });
     const given = String(form.count).trim();
-    let effort: string | null = null;
+    const held = await sql<{ method_code: string; is_trap: boolean; trap_count: number | null }>`
+      SELECT m.method_code, d.is_trap, m.trap_count FROM sample_method m JOIN method d ON d.code = m.method_code WHERE m.sample_id = ${sampleId}`.execute(deps.db);
+    const stored = held.rows[0];
     if (given !== "") {
       if (!/^[1-9]\d{0,5}$/.test(given)) return invalid(form.problemFor("count"));
       if (sample.kind !== "trap") return invalid(form.problemFor("net"));
-      const method = (sample.protocol ?? "").trim();
-      if (method === "") return invalid(form.problemFor("method"));
       // A count is the count of a method's traps: a sample with no method has none to count, and a method that is not a
-      // trap is counted in nothing (sample_method.trap_count is null for it).
-      const chosen = await sql<{ is_trap: boolean }>`
-        SELECT d.is_trap FROM sample_method m JOIN method d ON d.code = m.method_code WHERE m.sample_id = ${sampleId}`.execute(deps.db);
-      if (chosen.rows[0] === undefined) return invalid(form.problemFor("method"));
-      if (!chosen.rows[0].is_trap) return invalid(form.problemFor("net"));
-      effort = trapEffort(Number(given), method);
+      // trap takes none.
+      if (stored === undefined) return invalid(form.problemFor("method"));
+      if (!stored.is_trap) return invalid(form.problemFor("net"));
     }
-    // The count beside the method: the number given; where it is taken away, the count the method as written states, if
-    // it states one. An effort that states no count ("45 minutes") is not the count's to take away.
-    if (given === "" && trapCountOf(sample.sampling_effort ?? null) === null) effort = sample.sampling_effort ?? null;
-    const stated = await sql<{ trap_count: number | null }>`
-      SELECT t.trap_count FROM sample s JOIN method_text t ON t.text = s.protocol WHERE s.entity_id = ${sampleId}`.execute(deps.db);
-    const count = given !== "" ? Number(given) : (stated.rows[0]?.trap_count ?? null);
-    const held = await deps.db.selectFrom("sample_method").where("sample_id", "=", sampleId).select("trap_count").executeTakeFirst();
-    if (effort === (sample.sampling_effort ?? null) && (held === undefined || held.trap_count === count)) return { ok: true, outcome: "unchanged", effort };
+    const count = given === "" ? null : Number(given);
+    // Nothing to take away from a sample with no method row.
+    if (stored === undefined || stored.trap_count === count) return { ok: true, outcome: "unchanged", trap_count: stored?.trap_count ?? null };
     try {
-      // The effort and the count in one transaction, so that neither is changed without the other.
-      await deps.db.transaction().execute(async (trx) => {
-        await trx.updateTable("sample").set({ sampling_effort: effort }).where("entity_id", "=", sampleId).execute();
-        await trx.updateTable("sample_method").set({ trap_count: count }).where("sample_id", "=", sampleId).execute();
-      });
+      await deps.db.transaction().execute((trx) => setSampleMethodRow(trx, sampleId, stored.method_code, count));
     } catch (err) {
       // Nothing is recorded anywhere else, so a conflict means nothing was done: say so, and let the caller send it again.
       if (isWriteConflict(err)) return refused("busy");
       throw err;
     }
     await recordChange(deps, sampleId, actor, form.note.trim() || undefined, "trap count change");
-    return { ok: true, outcome: effort === null ? "removed" : "saved", effort };
+    return { ok: true, outcome: count === null ? "removed" : "saved", trap_count: count };
   });
 }
 

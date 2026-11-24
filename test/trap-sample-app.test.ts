@@ -282,14 +282,14 @@ describe("entering a trap sample", () => {
     const staff = as("staffer");
     const id = Number((await staff.post("/trap-samples/new", entry())).headers.get("location")!.split("/")[2]);
     await conn.run(`DELETE FROM sample_method WHERE sample_id = ${id}`);
-    await conn.run(`UPDATE sample SET protocol = 'ground pitfall' WHERE entity_id = ${id}`);
+    await conn.run(`UPDATE sample SET protocol = 'ground pitfall', sampling_effort = NULL WHERE entity_id = ${id}`);
     const form = await (await staff.app.request(`/samples/${id}/trap`)).text();
     expect(form).toContain("ground pitfall (as written)");
     expect(form).toMatch(/<option value="ground pitfall" selected(="")?>/);
     const saved = await staff.post(`/samples/${id}/trap`, entry({ method: "ground pitfall", locality: "Elsewhere" }));
     expect(saved.status).toBe(302);
     expect(await rows(conn, `SELECT protocol, locality FROM sample WHERE entity_id = ${id}`)).toEqual([["ground pitfall", "Elsewhere"]]);
-    expect(await rows(conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
   });
 
   it("links an entered sample's row to its own form, and changes its place directly", async () => {

@@ -1031,7 +1031,7 @@ export interface MethodTable {
   is_trap: boolean;
 }
 
-/** schema/031: a sample's method, one per sample. No row ⇒ no method yet (sample_without_method). */
+/** schema/031: a sample's method, one per sample, and the one place its trap count is kept. No row ⇒ no method yet (sample_without_method). */
 export interface SampleMethodTable {
   sample_id: number;
   method_code: string;
@@ -1052,14 +1052,20 @@ export interface SampleWithoutMethodView {
   protocol: string | null;
 }
 
-/** schema/121: a sample whose stored method differs from what its method as written gives. Always empty. */
-export interface SampleMethodTextMismatchView {
+/**
+ * schema/121: a sample whose method, trap count or old effort column is out of step. Always empty. `clause` is the first
+ * clause the row fails: method, count or effort. The joins to the method's row and to `method_text` are LEFT joins, so
+ * every column read through them can be null.
+ */
+export interface SampleMethodOutOfStepView {
   sample_id: number;
-  protocol: string;
+  protocol: string | null;
+  sampling_effort: string | null;
   stored_method_code: string | null;
-  text_method_code: string;
+  text_method_code: string | null;
   stored_trap_count: number | null;
-  text_trap_count: number | null;
+  expected_effort: string | null;
+  clause: "method" | "count" | "effort";
 }
 
 /** schema/121: a sample whose kind disagrees with its method's is_trap. */
@@ -2264,7 +2270,7 @@ export interface Database {
   sample_method: SampleMethodTable;
   method_text: MethodTextTable;
   sample_without_method: SampleWithoutMethodView;
-  sample_method_text_mismatch: SampleMethodTextMismatchView;
+  sample_method_out_of_step: SampleMethodOutOfStepView;
   sample_kind_method_mismatch: SampleKindMethodMismatchView;
   sample_locality_override: SampleLocalityOverrideTable;
   sample_locality_override_stale: SampleLocalityOverrideStaleView;

@@ -2,7 +2,8 @@ import { sql, type Kysely } from "kysely";
 import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
 import { mirrorCorrections } from "./correction-store.js";
-import { methodCodesSql, trapCountOf, trapEffort } from "../trap-sample.js";
+import { methodCodesSql } from "../trap-sample.js";
+import { setSampleMethodRow } from "../sample-method-row.js";
 import { isWriteConflict } from "../write-conflict.js";
 
 /**
@@ -114,27 +115,13 @@ export async function readMethodCodes(db: Kysely<Database>, { trapOnly = false }
 }
 
 /**
- * Change a sample's method to `code`, in the caller's transaction, with the trap count and the effort that state it.
- * The count is the sample's own (the row's, or else the one its effort states): it stays where the new method is a
- * trap and goes where it is not, and the effort is written to say it as the forms write it ("6 pan traps"), or
- * emptied where it stated a count that has gone. An effort that states no count ("45 minutes") is left alone, and
- * then holds no count with it. Creates the sample's method row where it has none, with the count its effort states.
- * The caller writes `sample.protocol`. sample_method_text_mismatch asserts the result.
+ * Change a sample's method to `code`, in the caller's transaction. The sample's trap count (`sample_method.trap_count`)
+ * stays where the new method is a trap and goes where it is not; a sample with no method row gets one with no count.
+ * The caller writes `sample.protocol`. `setSampleMethodRow` does the writing, and the old effort column with it.
  */
 export async function changeSampleMethod(trx: Kysely<Database>, sampleId: number, code: string): Promise<void> {
-  const sample = await trx.selectFrom("sample").where("entity_id", "=", sampleId).select("sampling_effort").executeTakeFirst();
   const row = await trx.selectFrom("sample_method").where("sample_id", "=", sampleId).select("trap_count").executeTakeFirst();
-  const effort = sample?.sampling_effort ?? null;
-  const stated = trapCountOf(effort);
-  const trap = (await trx.selectFrom("method").where("code", "=", code).select("is_trap").executeTakeFirst())?.is_trap === true;
-  // Only an effort that is empty or states a count can carry one; any other is left as the person wrote it.
-  const carries = effort === null || effort.trim() === "" || stated !== null;
-  const count = trap && carries ? (row?.trap_count ?? stated) : null;
-  if (carries && (stated !== null || count !== null)) {
-    await trx.updateTable("sample").set({ sampling_effort: count === null ? null : trapEffort(count, code) }).where("entity_id", "=", sampleId).execute();
-  }
-  await sql`INSERT INTO sample_method (sample_id, method_code, trap_count) VALUES (${sampleId}, ${code}, ${count})
-            ON CONFLICT (sample_id) DO UPDATE SET method_code = excluded.method_code, trap_count = excluded.trap_count`.execute(trx);
+  await setSampleMethodRow(trx, sampleId, code, row?.trap_count ?? null);
 }
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);

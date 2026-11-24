@@ -309,7 +309,7 @@ const ENDPOINTS: Endpoint[] = [
     summary: "Set how many traps a trap sample had, or take the count away with an empty one.",
     needs: "staff key",
     body: { count: "whole number as text or number; empty to clear", note: "string", reference: REFERENCE },
-    answers: "{ sample_id, outcome, effort }",
+    answers: "{ sample_id, outcome, trap_count }",
   },
   {
     method: "POST",
@@ -436,7 +436,7 @@ export function describeApi(origin: string, atlasCodes: readonly string[], progr
     methods: {
       list: [...methodCodes],
       meaning:
-        "The ways a sample's bees are caught, as the controlled list Beeline keeps. A sample's JSON carries its method as `method` (one of these, or null for the few samples whose method as written is none of them) and its trap count as `trap_count` (null where nobody has said), beside `kind`, `protocol` (the method as written, which is never parsed) and `sampling_effort`. A method supplied to a correction is one of these.",
+        "The ways a sample's bees are caught, as the controlled list Beeline keeps. A sample's JSON carries its method as `method` (one of these, or null for the few samples whose method as written is none of them) and its trap count as `trap_count` (null where nobody has said, and for a method that is not a trap), beside `kind`, `protocol` (the method as written, which is never parsed) and `sampling_effort` (an old column, kept filled from `trap_count` until it is retired). A method supplied to a correction is one of these.",
     },
     columns: {
       samples: SAMPLE_CSV_HEADER.map((name) => ({ name, meaning: COLUMN_MEANING[name] })),

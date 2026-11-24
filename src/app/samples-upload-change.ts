@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { seriesTrapNumberTaken, trapCountOf, trapEffort } from "../trap-sample.js";
+import { seriesTrapNumberTaken } from "../trap-sample.js";
 import { refusalSentence, type AnyFailure } from "./api-corrections.js";
 import { localityReasonFor, methodProblemFor, specimenCountProblemFor, trapCountProblemFor } from "./correction-reasons.js";
 import { NO_POINT_TO_TAKE_AWAY } from "./locality-override.js";
@@ -60,12 +60,6 @@ export type UnitChange =
       wasProtocol: string;
       /** What Beeline said when the file was downloaded, as the method page's form would show it: the bases a correction refuses a change against. */
       bases: { protocol: string; start: string; end: string };
-      /**
-       * For a sample built from old records whose effort text is exactly its trap count and its old method: the text
-       * it becomes, since `setSampleMethod` does not rewrite it there and the job does after the method is applied.
-       * Null where nothing is rewritten.
-       */
-      effortBecomes: string | null;
     }
   | { unit: "trap_count"; /** Blank takes the count away. */ count: string }
   | { unit: "specimen_count"; count: string }
@@ -105,8 +99,8 @@ export interface SampleFacts {
   hasObservation: boolean;
   /** It was entered in Beeline. */
   entered: boolean;
-  /** The effort as the old records wrote it, or null. */
-  effort: string | null;
+  /** The code of its method, null where it has none. */
+  methodCode: string | null;
 }
 
 // --- Words for refusals ------------------------------------------------------
@@ -169,15 +163,6 @@ export interface Prediction {
 const isPrinted = async (db: Kysely<Database>, id: number): Promise<boolean> =>
   Boolean((await sql<{ e: boolean }>`SELECT EXISTS (SELECT 1 FROM printed_sample WHERE sample_id = ${id}) AS e`.execute(db)).rows[0]?.e);
 
-/** The effort text a method change rewrites a sample's to, or null where it rewrites nothing: only an old sample's effort that is exactly its count and its old method. */
-export async function effortBecomes(db: Kysely<Database>, facts: SampleFacts, change: Extract<UnitChange, { unit: "method_dates" }>): Promise<string | null> {
-  if (facts.entered || !change.protocolDiffers || change.protocol.trim() === "") return null;
-  const count = trapCountOf(facts.effort);
-  if (count === null || facts.effort !== trapEffort(count, facts.protocol)) return null;
-  const trap = (await sql<{ is_trap: boolean }>`SELECT is_trap FROM method WHERE code = ${change.protocol.trim()}`.execute(db)).rows[0]?.is_trap === true;
-  return trap && (await fromOldRecords(db, facts.id)) ? trapEffort(count, change.protocol.trim()) : null;
-}
-
 /**
  * What the corrections would say to each change of a row, where that can be known without making it: the same
  * predicates they ask, in the order the job applies the row, over the kinds that were ticked only (an unticked kind is
@@ -191,6 +176,7 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
   const out = new Map<ChangeUnit, Prediction>();
   let kind = facts.kind;
   let protocol = facts.protocol;
+  let methodCode = facts.methodCode;
   const byUnit = new Map(changes.map((c) => [c.unit, c]));
   const inRun = () => heldByUnprintedRun(db, facts.id);
   const say = (refusal: string, unit: ChangeUnit) => refusalFor(messages, { refusal }, unit);
@@ -222,13 +208,17 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
         if (refusal === null) {
           kind = kindAfterMethod(kind, facts.entered, change);
           protocol = change.protocol.trim();
+          methodCode = protocol;
         }
         break;
       }
       case "trap_count": {
         if (change.count.trim() !== "") {
+          // A count is the count of a method that is a trap: a net sample, a method that is not a trap and a sample with no method take none.
+          const trap = methodCode === null ? null : (await sql<{ is_trap: boolean }>`SELECT is_trap FROM method WHERE code = ${methodCode}`.execute(db)).rows[0]?.is_trap === true;
           if (kind !== "trap") refusal = trapCountProblemFor(messages)("net");
-          else if (protocol === "") refusal = trapCountProblemFor(messages)("method");
+          else if (protocol === "" || methodCode === null) refusal = trapCountProblemFor(messages)("method");
+          else if (!trap) refusal = trapCountProblemFor(messages)("net");
         }
         break;
       }
@@ -320,21 +310,6 @@ const placeText = (p: { country: string | null; state_province: string | null; c
   m.uploads.changes.placeName((p.country ?? "").trim(), (p.state_province ?? "").trim(), (p.county ?? "").trim());
 
 /**
- * After a method change on an old sample, say what became of its effort. The change itself writes the effort again with
- * the new method (`changeSampleMethod`), where it is exactly its count and its old method (so "45 minutes" is left
- * alone); this reads it back for the change's note, and never stops the run: a sentence, or null where nothing was said
- * to rewrite.
- */
-async function rewriteEffort(env: ApplyEnv, ctx: UnitContext, change: Extract<UnitChange, { unit: "method_dates" }>): Promise<string | null> {
-  try {
-    const effort = (await env.corrective.db.selectFrom("sample").where("entity_id", "=", ctx.sampleId).select("sampling_effort").executeTakeFirst())?.sampling_effort ?? null;
-    return change.effortBecomes !== null && effort === change.effortBecomes ? env.messages.uploads.changes.effortRewritten(effort) : null;
-  } catch {
-    return env.messages.uploads.changes.effortNotRewritten(env.messages.uploads.changes.unexpected);
-  }
-}
-
-/**
  * Apply one queued change through its correction, from outside any turn of the sample's queue (the corrections take
  * their own, and the queue does not nest).
  */
@@ -355,8 +330,7 @@ export async function applyUnit(env: ApplyEnv, ctx: UnitContext, change: UnitCha
         bases: { protocol: change.bases.protocol, dateStart: change.bases.start, dateEnd: change.bases.end },
         problemFor: methodProblemFor(m),
       });
-      const done = fromCorrection(env, "method_dates", result);
-      return done.outcome === "applied" && change.effortBecomes !== null ? { outcome: "applied", followUp: () => rewriteEffort(env, ctx, change) } : done;
+      return fromCorrection(env, "method_dates", result);
     }
     case "trap_count":
       return fromCorrection(env, "trap_count", await setTrapCount(deps, ctx.actor, id, { count: change.count, note: ctx.note, problemFor: trapCountProblemFor(m) }));
@@ -415,8 +389,7 @@ export function readQueuedUnit(payload: string | null): QueuedUnit | { unreadabl
         typeof change.startDiffers === "boolean" &&
         typeof change.bases === "object" &&
         change.bases !== null &&
-        ["protocol", "start", "end"].every((k) => typeof (change.bases as Record<string, unknown>)[k] === "string") &&
-        (change.effortBecomes === null || typeof change.effortBecomes === "string")
+        ["protocol", "start", "end"].every((k) => typeof (change.bases as Record<string, unknown>)[k] === "string")
       : change.unit === "trap_count" || change.unit === "specimen_count"
         ? text("count")
         : change.unit === "collectors"

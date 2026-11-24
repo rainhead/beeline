@@ -303,11 +303,11 @@ describe("each correction writes what the page's form writes", () => {
       expect(refused.status).toBe(422);
       expect(JSON.stringify(await json(refused))).toContain(listed);
     }
-    expect(await rows(w.conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await rows(w.conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
     const saved = await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { protocol: "pan trap" } });
     expect(saved.status).toBe(200);
     expect(await rows(w.conn, `SELECT s.protocol, m.method_code FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${w.legacy}`)).toEqual([["pan trap", "pan trap"]]);
-    expect(await rows(w.conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await rows(w.conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
     expect(await w.entries("OBAS-00657")).toContainEqual(expect.objectContaining({ field: "method", to: "pan trap", author: w.beaLogin }));
   });
 
@@ -1206,22 +1206,23 @@ describe("taking the observation's location", () => {
       kind: "'trap'",
       protocol: "'vane trap'",
     });
-    const effort = async () => ((await rows(w.conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${trap}`)) as (string | null)[][])[0]![0];
+    const held = async () => (await rows(w.conn, `SELECT m.trap_count, s.sampling_effort FROM sample s JOIN sample_method m ON m.sample_id = s.entity_id WHERE s.entity_id = ${trap}`))[0];
     const path = `/samples/${trap}/trap-count`;
     const saved = await w.send(w.keys.sam, path, { count: 4, reference: "ticket 1" });
     expect(saved.status).toBe(200);
-    expect(await json(saved)).toEqual({ sample_id: trap, outcome: "saved", effort: "4 vane traps" });
-    expect(await effort()).toBe("4 vane traps");
+    expect(await json(saved)).toEqual({ sample_id: trap, outcome: "saved", trap_count: 4 });
+    // The count is sample_method's; the old effort column is written from it.
+    expect(await held()).toEqual([4, "4 vane traps"]);
     expect(await json(await w.send(w.keys.sam, path, { count: "4" }))).toMatchObject({ outcome: "unchanged" });
-    expect(await json(await w.send(w.keys.sam, path, { count: "" }))).toEqual({ sample_id: trap, outcome: "removed", effort: null });
-    expect(await effort()).toBeNull();
+    expect(await json(await w.send(w.keys.sam, path, { count: "" }))).toEqual({ sample_id: trap, outcome: "removed", trap_count: null });
+    expect(await held()).toEqual([null, null]);
     expect((await w.send(w.keys.sam, path, { count: "x" })).status).toBe(422);
     expect((await w.send(w.keys.sam, path, {})).status).toBe(400);
     expect((await w.send(w.keys.sam, `/samples/${w.linked}/trap-count`, { count: 2 })).status).toBe(422);
     expect((await w.send(w.keys.alice, path, { count: 2 })).status).toBe(403);
     expect((await w.send(w.keys.samEdit, path, { count: 2 })).status).toBe(403);
     expect((await w.send(w.keys.aliceRead, path, { count: 2 })).status).toBe(403);
-    expect(await effort()).toBeNull();
+    expect(await held()).toEqual([null, null]);
   });
 
   it("corrects a sample's country, state and county for a staff key, says what changed, and refuses the rest", async () => {

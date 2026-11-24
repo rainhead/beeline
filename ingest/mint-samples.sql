@@ -81,7 +81,7 @@ LEFT JOIN observation_place pl ON pl.inat_id = m.lead_inat_id
 LEFT JOIN observation_locality loc ON loc.inat_id = m.lead_inat_id;
 
 -- Their method: the constant the protocol above is, as the method it names
--- (beeline-ni5m.15). Written beside the sample, so that sample_method_text_mismatch
+-- (beeline-ni5m.15). Written beside the sample, so that sample_method_out_of_step
 -- stays empty and the nightly's check on it passes.
 INSERT INTO sample_method (sample_id, method_code)
 SELECT m.sample_id, 'aerial net' FROM minted_sample m;

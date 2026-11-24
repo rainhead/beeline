@@ -909,7 +909,7 @@ describe("the nightly and the stored methods (beeline-ni5m.15)", () => {
     await runJob(deps, job);
     const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
     expect(run.outcome).toBe("failed");
-    expect(run.detail).toContain("1 sample(s) have a stored method that disagrees with their method as written");
+    expect(run.detail).toContain("1 sample(s) have a method, trap count or effort out of step with what they say (method: 1)");
     expect(run.detail).not.toContain("SECRET-7");
   });
 });

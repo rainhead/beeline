@@ -7,15 +7,30 @@ FROM sample s
 WHERE NOT EXISTS (SELECT 1 FROM sample_method m WHERE m.sample_id = s.entity_id);
 COMMENT ON VIEW sample_without_method IS 'Samples with no method: their method as written is empty or is not one method_text knows. A worklist, not a failure: a sample stays on it until someone chooses its method.';
 
-CREATE VIEW sample_method_text_mismatch AS
-SELECT s.entity_id AS sample_id, s.protocol, m.method_code AS stored_method_code, t.method_code AS text_method_code,
-       m.trap_count AS stored_trap_count, coalesce(trap_count_stated(s.sampling_effort), t.trap_count) AS expected_trap_count
-FROM sample s
-LEFT JOIN method_text t ON t.text = s.protocol
-LEFT JOIN sample_method m ON m.sample_id = s.entity_id
-WHERE m.method_code IS DISTINCT FROM t.method_code
-   OR (m.sample_id IS NOT NULL AND m.trap_count IS DISTINCT FROM coalesce(trap_count_stated(s.sampling_effort), t.trap_count));
-COMMENT ON VIEW sample_method_text_mismatch IS 'Samples whose stored method or trap count is not what the sample says. A sample''s method is the method method_text gives its method as written, and no row where that text is not listed (so a row on an unlisted text, and no row on a listed one, are both listed here). Its trap count is the count sample.sampling_effort states in the form the forms write (trap_count_stated), or else the count the method as written states. Always empty: every writer of sample.protocol, sample.sampling_effort or a sample''s method keeps all three together in one transaction, and the nightly fails when this view is not empty.';
+CREATE VIEW sample_method_out_of_step AS
+WITH shown AS (
+  SELECT s.entity_id AS sample_id, s.protocol, s.sampling_effort,
+         m.method_code AS stored_method_code, m.trap_count AS stored_trap_count, d.is_trap,
+         t.method_code AS text_method_code,
+         -- What the one writer of the old effort column writes (setSampleMethodRow, src/sample-method-row.ts): the count and the method,
+         -- plural where there is more than one; none where there is no count.
+         CASE WHEN m.trap_count IS NULL THEN NULL
+              ELSE concat(m.trap_count, ' ', m.method_code, CASE WHEN m.trap_count = 1 OR lower(m.method_code) LIKE '%s' THEN '' ELSE 's' END)
+         END AS expected_effort
+  FROM sample s
+  LEFT JOIN method_text t ON t.text = s.protocol
+  LEFT JOIN sample_method m ON m.sample_id = s.entity_id
+  LEFT JOIN method d ON d.code = m.method_code
+)
+SELECT sample_id, protocol, sampling_effort, stored_method_code, text_method_code, stored_trap_count, expected_effort,
+       CASE WHEN stored_method_code IS DISTINCT FROM text_method_code THEN 'method'
+            WHEN stored_trap_count IS NOT NULL AND NOT is_trap THEN 'count'
+            ELSE 'effort' END AS clause
+FROM shown
+WHERE stored_method_code IS DISTINCT FROM text_method_code
+   OR (stored_trap_count IS NOT NULL AND NOT is_trap)
+   OR sampling_effort IS DISTINCT FROM expected_effort;
+COMMENT ON VIEW sample_method_out_of_step IS 'Samples whose method, trap count or old effort column is not what the sample says. Each row names the clause it fails: method (the stored method is not the one method_text gives the method as written, and no row where the text is not listed, so a row on an unlisted text and no row on a listed one both fail), count (a trap count on a method that is not a trap), effort (sample.sampling_effort is not the text the one writer would write for the stored count and method). The trap count is sample_method.trap_count and is never read from text. Always empty: every writer keeps all of it in one transaction, and the nightly fails when this view is not empty.';
 
 CREATE VIEW sample_kind_method_mismatch AS
 SELECT s.entity_id AS sample_id, s.kind, m.method_code, md.is_trap

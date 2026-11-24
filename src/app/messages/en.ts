@@ -1354,7 +1354,7 @@ export const en = {
       trapCount: {
         /** The pencil, for a screen reader: it has no visible words. */
         open: "Correct how many traps this sample had",
-        hint: "The count is kept with the kind of trap, as the sample's effort. Nothing prints it. Leave it blank to take it away.",
+        hint: "The count is kept with the kind of trap. Nothing prints it. Leave it blank to take it away.",
         count: "Number of traps",
         note: "Reason (optional)",
         save: "Save",
@@ -2694,15 +2694,12 @@ export const en = {
       notAppliedNothingKept: "The store did not take this change because another write got there first, and nothing was kept elsewhere. Try again sends it again.",
       notAppliedRefused:
         "The corrections file holds an event for this change that the store never got, and the sample has changed since. Tell staff, who can check the file.",
-      effortRewritten: (text: string) => `The effort text became ${text}.`,
-      effortNotRewritten: (why: string) => `The method changed, but the effort text was not rewritten: ${why}`,
       unexpected: "something went wrong, and was reported.",
       pointDeferred: "The point is saved, but the country, state and county that follow it are not worked out yet.",
       areaFollowsDeferred: "Not changed on its own: the country, state and county follow the point that was just set, and will follow it when it is worked out.",
       notAppliedUndone: "The corrections file still holds this change, which the store never got. Tell staff, who can check the file.",
       /** What a change refused as changed in Beeline says to somebody who is not staff, with no value of Beeline's in it. */
       changedSinceBare: "This changed in Beeline after the file was downloaded, so it was not made. Download a new file and make the change again.",
-      effortBusy: "another write got there first, so it was left as it was.",
       localityPrinted: "This sample was entered in Beeline and its labels are printed or about to be, so its locality can no longer be changed from here, by staff or anyone.",
       conflict: "This sample changed while the change was being worked out, so nothing was done. Download a new file and make the change again.",
       noLongerStaff: "The person who applied this file is no longer staff, so its changes were not made.",
@@ -2739,7 +2736,6 @@ export const en = {
       /** An existing sample's change, before and after applying. */
       moves: (distance: string) => `The point moves ${distance}.`,
       mayNot: (label: string, why: string) => `May not be applied (${label}): ${why}`,
-      effortBecomes: (text: string) => `The effort text becomes ${text}.`,
       collectorsWarning: (warnings: string) => `Collectors: ${warnings}`,
       /** The distance a point moves: metres below a kilometre, else kilometres to one decimal. */
       distance: (metres: number) => (metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`),

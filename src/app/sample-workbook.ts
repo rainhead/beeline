@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { monthsBefore, oregonToday } from "../oregon-today.js";
-import { trapCountOf } from "../trap-sample.js";
 import { SAMPLE_CSV_HEADER, sampleCsvRow, textCell, type Page, type SampleRow } from "./listings.js";
 import type { Messages } from "./messages/en.js";
 import { SAMPLES_LAYOUT, SAMPLES_READ } from "./upload-plan.js";
@@ -31,11 +30,8 @@ const VERSION_PREFIX = "f";
 export function samplesFileRow(r: SampleRow, page: Page<SampleRow>): Array<string | null> {
   const written = sampleCsvRow(r, page);
   const white = SAMPLES_READ.map((column): string | null => {
-    // The leading number of the effort, as the trap form writes it; none for a net sample or an effort in other words.
-    if (column === "trapCount") {
-      const count = trapCountOf(r.sampling_effort);
-      return count === null ? null : String(count);
-    }
+    // The sample's trap count (sample_method.trap_count): none for a sample with no method or a method that is not a trap.
+    if (column === "trapCount") return r.trap_count === null ? null : String(r.trap_count);
     return textCell(written[SAMPLE_CSV_HEADER.indexOf(column)]);
   });
   const version = `${VERSION_PREFIX}${createHash("sha256")

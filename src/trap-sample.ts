@@ -2,6 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { matchCollectors, type MatchedCollector } from "./collector-match.js";
 import { withPrintRunLock } from "./print-run.js";
 import { en } from "./app/messages/en.js";
+import { setSampleMethodRow } from "./sample-method-row.js";
 
 /**
  * Trap samples entered in Beeline (beeline-3vs.2).
@@ -64,9 +65,8 @@ export interface TrapSample {
   protocol: string;
   /** The method chosen from the list; null only where an edit leaves the sample's unlisted words as they were, so the sample has no method. */
   method_code: string | null;
-  /** How many traps, null when not said; kept beside the method as well as in `sampling_effort`. */
+  /** How many traps, null when not said; null too where the sample has no method (`method_code`). */
   trap_count: number | null;
-  sampling_effort: string | null;
   specimen_count: number;
   latitude: number;
   longitude: number;
@@ -89,24 +89,6 @@ async function rows<T>(conn: DuckDBConnection, sql: string, params: unknown[] = 
  * sample already (Peter, 2026-11-04). Derived rather than granted, so nobody
  * has to be set up first; a grant for someone new to trapping is beeline-3vs.1.
  */
-/**
- * A trap sample's effort as the old records wrote it: the count and the trap
- * kind, plural where there is more than one ('6 vane traps'). Staff correcting
- * the method on the sample page may already have written it plural.
- */
-export const trapEffort = (count: number, method: string): string =>
-  `${count} ${method}${count === 1 || /s$/i.test(method) ? "" : "s"}`;
-
-/**
- * The trap count an effort states, or null: a whole number of one to six digits, a space, and a kind of trap that ends
- * in trap, traps, nest or nests, which is the form `trapEffort` writes. "45 minutes" states none. The same parse as
- * the macro `trap_count_stated` (schema/031), and test/trap-count-stated.test.ts holds the two together.
- */
-export const trapCountOf = (effort: string | null): number | null => {
-  const found = /^([1-9]\d{0,5}) .*(trap|nest)s?$/i.exec(effort ?? "");
-  return found === null ? null : Number(found[1]);
-};
-
 export async function mayEnterTrapSamples(conn: DuckDBConnection, personId: number | null, admin: boolean): Promise<boolean> {
   if (admin) return true;
   if (personId === null) return false;
@@ -527,9 +509,7 @@ export async function checkTrapSample(
       date_end: end!,
       protocol: method,
       method_code: asWritten ? null : method,
-      trap_count: trapCount,
-      // Effort as the old records wrote it ('6 vane traps'), from its own field.
-      sampling_effort: trapCount === null ? null : trapEffort(trapCount, method),
+      trap_count: asWritten ? null : trapCount,
       specimen_count: specimens!,
       latitude: latitude!,
       longitude: longitude!,
@@ -552,15 +532,6 @@ async function inTransaction<T>(conn: DuckDBConnection, fn: () => Promise<T>): P
     await conn.run("ROLLBACK");
     throw err;
   }
-}
-
-/** The method and trap count a trap form chose, written beside the method as written in the same transaction. */
-async function writeEnteredMethod(conn: DuckDBConnection, id: number, s: TrapSample): Promise<void> {
-  await conn.run(
-    `INSERT INTO sample_method (sample_id, method_code, trap_count) VALUES ($1, $2, $3)
-     ON CONFLICT (sample_id) DO UPDATE SET method_code = excluded.method_code, trap_count = excluded.trap_count`,
-    [id, s.method_code, s.trap_count] as never,
-  );
 }
 
 async function writeParts(conn: DuckDBConnection, id: number, s: TrapSample, withAtlas = true): Promise<void> {
@@ -626,13 +597,13 @@ export function createTrapSample(
     return inTransaction(conn, async () => {
       const created = await rows<{ entity_id: number }>(
         conn,
-        `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol, sampling_effort)
-         VALUES ('trap', $1, $2::DATE, $3::DATE, $4, $5, $6, $7, $8, $9, $10) RETURNING entity_id`,
-        [number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort],
+        `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol)
+         VALUES ('trap', $1, $2::DATE, $3::DATE, $4, $5, $6, $7, $8, $9) RETURNING entity_id`,
+        [number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol],
       );
       const id = created[0]!.entity_id;
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);
-      await writeEnteredMethod(conn, id, s);
+      await setSampleMethodRow(conn, id, s.method_code!, s.trap_count);
       await writeParts(conn, id, s);
       await within?.(id, number);
       if (options.staff !== undefined) await releaseByStaff(conn, id, options.staff);
@@ -749,7 +720,7 @@ export async function loadTrapSample(conn: DuckDBConnection, id: number): Promis
   const found = await rows<Record<string, unknown>>(
     conn,
     `SELECT s.sample_number, strftime(s.date_start, '%Y-%m-%d') AS date_start, strftime(s.date_end, '%Y-%m-%d') AS date_end,
-            s.protocol, m.method_code, s.sampling_effort, s.specimen_count, s.country, s.state_province, s.county, s.locality,
+            s.protocol, m.method_code, m.trap_count, s.specimen_count, s.country, s.state_province, s.county, s.locality,
             l.latitude, l.longitude, l.coordinate_uncertainty_m,
             (SELECT list(p.display_name ORDER BY c.position) FROM sample_collector c JOIN person p ON p.entity_id = c.person_id
              WHERE c.sample_id = s.entity_id) AS collectors,
@@ -765,7 +736,6 @@ export async function loadTrapSample(conn: DuckDBConnection, id: number): Promis
   const r = found[0];
   if (r === undefined) return null;
   const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
-  const count = trapCountOf(str(r.sampling_effort) === "" ? null : str(r.sampling_effort));
   return {
     sample_number: str(r.sample_number),
     collectors: (r.collectors as string[] | null) ?? [],
@@ -773,7 +743,7 @@ export async function loadTrapSample(conn: DuckDBConnection, id: number): Promis
     date_end: str(r.date_end),
     // The method as the list has it, so that saving the form as it stands names a listed method; the text as written otherwise.
     method: str(r.method_code ?? r.protocol),
-    trap_count: count === null ? "" : String(count),
+    trap_count: str(r.trap_count),
     specimen_count: str(r.specimen_count),
     latitude: str(r.latitude),
     longitude: str(r.longitude),
@@ -813,11 +783,11 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
       await conn.run(`DELETE FROM sample_atlas WHERE sample_id = $1 AND assigned_by IS NULL`, [id] as never);
       await conn.run(
         `UPDATE sample SET sample_number = $2, date_start = $3::DATE, date_end = $4::DATE, specimen_count = $5, country = $6,
-                state_province = $7, county = $8, locality = $9, protocol = $10, sampling_effort = $11
+                state_province = $7, county = $8, locality = $9, protocol = $10
          WHERE entity_id = $1`,
-        [id, s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort] as never,
+        [id, s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol] as never,
       );
-      if (s.method_code !== null) await writeEnteredMethod(conn, id, s);
+      if (s.method_code !== null) await setSampleMethodRow(conn, id, s.method_code, s.trap_count);
       // An atlas a person assigned stands; otherwise it follows the state.
       const assigned = await rows<{ n: number }>(conn, `SELECT count(*)::INTEGER AS n FROM sample_atlas WHERE sample_id = $1`, [id]);
       await writeParts(conn, id, s, (assigned[0]?.n ?? 0) === 0);

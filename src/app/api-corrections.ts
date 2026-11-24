@@ -590,7 +590,7 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     { count: "text_or_number", note: "string" },
     ["count"],
     setTrapCount,
-    (r) => ({ outcome: r.outcome, effort: r.effort }),
+    (r) => ({ outcome: r.outcome, trap_count: r.trap_count }),
   );
 
   endpoint(

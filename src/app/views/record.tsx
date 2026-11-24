@@ -20,7 +20,6 @@ import { programHref } from "../programs.js";
 import { plantNameKey } from "../../plant-name-key.js";
 import type { ListedFlag } from "../listings.js";
 import { methodNamesTrap } from "../../trap-method.js";
-import { trapCountOf } from "../../trap-sample.js";
 import {
   Absent,
   AtlasMark,
@@ -735,8 +734,8 @@ function MethodEdit({ m, sample, methods }: { m: Messages; sample: SampleDetail;
 
 /**
  * Staff correcting how many traps a trap sample had, from its own pencil on
- * the Method row. The count is the leading number of the sample's effort, so
- * the form shows that number and a blank takes it away (src/trap-sample.ts).
+ * the Method row. The count is the sample's `sample_method.trap_count`, so the
+ * form shows it and a blank takes it away.
  */
 function TrapCountEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
   const t = m.record.sample.trapCount;
@@ -749,7 +748,7 @@ function TrapCountEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
       cancel={m.listings.samples.placeEdit.cancel}
     >
       <Meta block>{t.hint}</Meta>
-      <TextField id="trap-count" name="count" label={t.count} value={trapCountOf(sample.sampling_effort)?.toString() ?? null} />
+      <TextField id="trap-count" name="count" label={t.count} value={sample.trap_count?.toString() ?? null} />
       <TextField id="trap-count-note" name="note" label={t.note} />
     </InlineEdit>
   );

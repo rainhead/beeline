@@ -4,9 +4,13 @@
 -- it, and what the method as written (sample.protocol) maps to. sample_method is
 -- backfilled from sample.protocol through method_text, so a sample whose text is
 -- empty or not listed gets no row and is on sample_without_method; on production
--- on 2026-11-23 that was one sample of 70,859. A sample's trap count is the count
--- its effort text states in the form the forms write (trap_count_stated), or
--- else the count its method as written states. Nothing is added to sample
+-- on 2026-11-23 that was one sample of 70,859. A sample's trap count is
+-- sample_method.trap_count, the one place it is kept, and only for a method that
+-- is a trap: here it is the count the sample's effort text states in the form the
+-- forms write ("6 vane traps"), or else the count its method as written states.
+-- That is the last place a count is read from text. The old effort column is
+-- written from the stored count from here on, and this migration writes it from
+-- the count too where it differs. Nothing is added to sample
 -- itself, which DuckDB refuses for a table that other tables reference.
 --
 -- A deploy and the change log: the method and the trap count are now fields of
@@ -18,14 +22,16 @@
 --
 -- Rolling the release back after this migration: the old code writes a method as
 -- written without its sample_method row, so after rolling forward again the
--- nightly's check (sample_method_text_mismatch) fails until the rows are
+-- nightly's check (sample_method_out_of_step) fails until the rows are
 -- repaired. With the app stopped, this one statement repairs them from
--- method_text:
+-- method_text and the count the old code wrote into the effort:
 --
 --   MERGE INTO sample_method m
 --   USING (SELECT s.entity_id AS sample_id, t.method_code,
---                 coalesce(trap_count_stated(s.sampling_effort), t.trap_count) AS trap_count
---          FROM sample s JOIN method_text t ON t.text = s.protocol) x
+--                 CASE WHEN d.is_trap THEN coalesce(
+--                   TRY_CAST(nullif(regexp_extract(lower(s.sampling_effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER),
+--                   t.trap_count) END AS trap_count
+--          FROM sample s JOIN method_text t ON t.text = s.protocol JOIN method d ON d.code = t.method_code) x
 --   ON m.sample_id = x.sample_id
 --   WHEN MATCHED AND (m.method_code IS DISTINCT FROM x.method_code OR m.trap_count IS DISTINCT FROM x.trap_count)
 --     THEN UPDATE SET method_code = x.method_code, trap_count = x.trap_count
@@ -55,22 +61,14 @@ INSERT INTO method (code, label_word, is_trap) VALUES
   ('pan and vane traps', 'trap', true),
   ('trap nest', 'nest', true);
 
--- The trap count a sample's effort text states, in the form the forms write it (trapEffort in src/trap-sample.ts):
--- a whole number of one to six digits, a space, and the kind of trap, which ends in trap, traps, nest or nests
--- ("6 vane traps", "3 trap nests"). Null for anything else, so "45 minutes" states no trap count. The one place the
--- parse is written in SQL: the view sample_method_text_mismatch, the migration's backfill and the test fixture
--- read it, and trapCountOf in TypeScript is held to it by a test.
-CREATE MACRO trap_count_stated(effort) AS
-  TRY_CAST(nullif(regexp_extract(lower(effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER);
-
 CREATE TABLE sample_method (
   sample_id   INTEGER PRIMARY KEY REFERENCES sample(entity_id),
   method_code TEXT NOT NULL REFERENCES method(code),
   trap_count  INTEGER CHECK (trap_count >= 1)
 );
-COMMENT ON TABLE sample_method IS 'How a sample''s bees were caught: one method per sample. Absent for a sample whose method as written is not one method_text knows (sample_without_method lists them). Written in the same transaction as sample.protocol by every writer, and sample_method_text_mismatch asserts that the two agree.';
+COMMENT ON TABLE sample_method IS 'How a sample''s bees were caught: one method per sample. Absent for a sample whose method as written is not one method_text knows (sample_without_method lists them). Written in the same transaction as sample.protocol by every writer, and sample_method_out_of_step asserts that the two agree.';
 COMMENT ON COLUMN sample_method.method_code IS 'The sample''s method, from the list in method.';
-COMMENT ON COLUMN sample_method.trap_count IS 'How many traps, null where nobody has said, and always null for a method that is not a trap. It is the count that sample.sampling_effort states in the form the forms write ("6 vane traps"), or else the count the method as written states; sample_method_text_mismatch asserts it.';
+COMMENT ON COLUMN sample_method.trap_count IS 'How many traps: the one place a sample''s trap count is kept, and nothing reads one from anywhere else. Null where nobody has said, and always null for a method that is not a trap (a CHECK cannot read method, so sample_method_out_of_step asserts it).';
 
 CREATE TABLE method_text (
   text        TEXT PRIMARY KEY,
@@ -116,10 +114,25 @@ INSERT INTO method_text (text, method_code, trap_count) VALUES
   ('pan and vane traps', 'pan and vane traps', NULL),
   ('pan traps and vane traps', 'pan and vane traps', NULL);
 
+-- The count: for a trap method, the count the effort states in the form trapEffort writes (a whole number of one to
+-- six digits, a space, and a kind of trap ending in trap, traps, nest or nests; "45 minutes" states none), else the
+-- count the method as written states; for a method that is not a trap, none.
 INSERT INTO sample_method (sample_id, method_code, trap_count)
-SELECT s.entity_id, t.method_code, coalesce(trap_count_stated(s.sampling_effort), t.trap_count)
+SELECT s.entity_id, t.method_code,
+       CASE WHEN d.is_trap THEN coalesce(
+         TRY_CAST(nullif(regexp_extract(lower(s.sampling_effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER),
+         t.trap_count) END
 FROM sample s
-JOIN method_text t ON t.text = s.protocol;
+JOIN method_text t ON t.text = s.protocol
+JOIN method d ON d.code = t.method_code;
+
+-- The old effort column, from the stored count, as the one writer writes it: on production this changes nothing.
+UPDATE sample SET sampling_effort = x.expected
+FROM (SELECT m.sample_id,
+             CASE WHEN m.trap_count IS NULL THEN NULL
+                  ELSE concat(m.trap_count, ' ', m.method_code, CASE WHEN m.trap_count = 1 OR lower(m.method_code) LIKE '%s' THEN '' ELSE 's' END) END AS expected
+      FROM sample_method m) x
+WHERE sample.entity_id = x.sample_id AND sample.sampling_effort IS DISTINCT FROM x.expected;
 
 CREATE VIEW sample_without_method AS
 SELECT s.entity_id AS sample_id, s.sample_number, s.protocol
@@ -127,15 +140,30 @@ FROM sample s
 WHERE NOT EXISTS (SELECT 1 FROM sample_method m WHERE m.sample_id = s.entity_id);
 COMMENT ON VIEW sample_without_method IS 'Samples with no method: their method as written is empty or is not one method_text knows. A worklist, not a failure: a sample stays on it until someone chooses its method.';
 
-CREATE VIEW sample_method_text_mismatch AS
-SELECT s.entity_id AS sample_id, s.protocol, m.method_code AS stored_method_code, t.method_code AS text_method_code,
-       m.trap_count AS stored_trap_count, coalesce(trap_count_stated(s.sampling_effort), t.trap_count) AS expected_trap_count
-FROM sample s
-LEFT JOIN method_text t ON t.text = s.protocol
-LEFT JOIN sample_method m ON m.sample_id = s.entity_id
-WHERE m.method_code IS DISTINCT FROM t.method_code
-   OR (m.sample_id IS NOT NULL AND m.trap_count IS DISTINCT FROM coalesce(trap_count_stated(s.sampling_effort), t.trap_count));
-COMMENT ON VIEW sample_method_text_mismatch IS 'Samples whose stored method or trap count is not what the sample says. A sample''s method is the method method_text gives its method as written, and no row where that text is not listed (so a row on an unlisted text, and no row on a listed one, are both listed here). Its trap count is the count sample.sampling_effort states in the form the forms write (trap_count_stated), or else the count the method as written states. Always empty: every writer of sample.protocol, sample.sampling_effort or a sample''s method keeps all three together in one transaction, and the nightly fails when this view is not empty.';
+CREATE VIEW sample_method_out_of_step AS
+WITH shown AS (
+  SELECT s.entity_id AS sample_id, s.protocol, s.sampling_effort,
+         m.method_code AS stored_method_code, m.trap_count AS stored_trap_count, d.is_trap,
+         t.method_code AS text_method_code,
+         -- What the one writer of the old effort column writes (setSampleMethodRow, src/sample-method-row.ts): the count and the method,
+         -- plural where there is more than one; none where there is no count.
+         CASE WHEN m.trap_count IS NULL THEN NULL
+              ELSE concat(m.trap_count, ' ', m.method_code, CASE WHEN m.trap_count = 1 OR lower(m.method_code) LIKE '%s' THEN '' ELSE 's' END)
+         END AS expected_effort
+  FROM sample s
+  LEFT JOIN method_text t ON t.text = s.protocol
+  LEFT JOIN sample_method m ON m.sample_id = s.entity_id
+  LEFT JOIN method d ON d.code = m.method_code
+)
+SELECT sample_id, protocol, sampling_effort, stored_method_code, text_method_code, stored_trap_count, expected_effort,
+       CASE WHEN stored_method_code IS DISTINCT FROM text_method_code THEN 'method'
+            WHEN stored_trap_count IS NOT NULL AND NOT is_trap THEN 'count'
+            ELSE 'effort' END AS clause
+FROM shown
+WHERE stored_method_code IS DISTINCT FROM text_method_code
+   OR (stored_trap_count IS NOT NULL AND NOT is_trap)
+   OR sampling_effort IS DISTINCT FROM expected_effort;
+COMMENT ON VIEW sample_method_out_of_step IS 'Samples whose method, trap count or old effort column is not what the sample says. Each row names the clause it fails: method (the stored method is not the one method_text gives the method as written, and no row where the text is not listed, so a row on an unlisted text and no row on a listed one both fail), count (a trap count on a method that is not a trap), effort (sample.sampling_effort is not the text the one writer would write for the stored count and method). The trap count is sample_method.trap_count and is never read from text. Always empty: every writer keeps all of it in one transaction, and the nightly fails when this view is not empty.';
 
 CREATE VIEW sample_kind_method_mismatch AS
 SELECT s.entity_id AS sample_id, s.kind, m.method_code, md.is_trap
@@ -145,5 +173,5 @@ JOIN method md ON md.code = m.method_code
 WHERE (s.kind = 'trap') <> md.is_trap;
 COMMENT ON VIEW sample_kind_method_mismatch IS 'Samples whose kind says trap where the method is not a trap, or net where it is. Informational and not asserted: kind is set from the dates and the method as written, so the two disagree where the end date and the words do (976 on production on 2026-11-23, all in settled seasons).';
 
-COMMENT ON COLUMN sample.protocol IS 'The method as written, and never parsed: for a sample from old records the text as they wrote it or as staff corrected it (''vane trap'', ''6 Vane Traps''); for a sample made in Beeline the code of its method. The method itself is sample_method (schema/031), which every writer sets in the same transaction, and sample_method_text_mismatch asserts the two agree.';
-COMMENT ON COLUMN sample.sampling_effort IS 'Free text. Where a person has set a trap count it is the count and the kind of trap in the form the forms write ("6 vane traps", trapEffort in src/trap-sample.ts); sample_method.trap_count is the same count, and trap_count_stated reads it. Any other effort ("45 minutes") states no trap count.';
+COMMENT ON COLUMN sample.protocol IS 'The method as written, and never parsed: for a sample from old records the text as they wrote it or as staff corrected it (''vane trap'', ''6 Vane Traps''); for a sample made in Beeline the code of its method. The method itself is sample_method (schema/031), which every writer sets in the same transaction, and sample_method_out_of_step asserts the two agree.';
+COMMENT ON COLUMN sample.sampling_effort IS 'The old effort column, kept filled until it is retired and never read: it is the text setSampleMethodRow (src/sample-method-row.ts) writes from sample_method.trap_count and the method ("6 vane traps"), and null where there is no count. The trap count is sample_method.trap_count; sample_method_out_of_step asserts the two agree.';

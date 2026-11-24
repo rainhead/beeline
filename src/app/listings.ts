@@ -605,8 +605,10 @@ export interface SampleRow {
   state_province: string | null;
   country: string | null;
   protocol: string | null;
-  /** The effort as the old records wrote it ('6 vane traps'); null for most net samples. The samples file's trapCount is read from it. */
+  /** The old effort column ("6 vane traps"), filled from the trap count while that column lives; the API returns it as it was. */
   sampling_effort: string | null;
+  /** How many traps (`sample_method.trap_count`); the samples file's trapCount column. */
+  trap_count: number | null;
   specimen_count: number;
   inat_observation_id: bigint | null;
   /** iNaturalist no longer has the observation (`observationGone`): nothing to link to. */
@@ -1682,6 +1684,7 @@ export async function listSamples(
         "s.country",
         "s.protocol",
         "s.sampling_effort",
+        sql<number | null>`(SELECT m.trap_count FROM sample_method m WHERE m.sample_id = s.entity_id)`.as("trap_count"),
         "s.specimen_count",
         "s.inat_observation_id",
         observationGone.as("observation_gone"),

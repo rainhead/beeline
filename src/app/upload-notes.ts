@@ -300,7 +300,6 @@ export function samplesNotes(m: Messages, upload: ParsedUpload, plan: SamplesPla
       if (changed.length > 0) parts.push(n.differs(changed.join("; ")));
       for (const d of r.differences) {
         if (d.metres !== null && d.metres > 0) parts.push(n.moves(n.distance(d.metres)));
-        if (d.change.unit === "method_dates" && d.change.effortBecomes !== null) parts.push(n.effortBecomes(d.change.effortBecomes));
         if (d.collectors !== undefined && d.collectors.warnings.length > 0) parts.push(n.collectorsWarning(d.collectors.warnings.join(" ")));
         if (d.refusal !== null) parts.push(n.mayNot(label(d.unit), d.refusal));
       }

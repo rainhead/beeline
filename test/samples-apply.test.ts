@@ -187,7 +187,7 @@ describe("the job", () => {
       ["OBAS-00011", "vane trap", "6 vane traps", "vane trap", 6],
       ["OBAS-00012", "vane trap", "6 vane traps", "vane trap", 6],
     ]);
-    expect(await rows(f.conn, `SELECT count(*) FROM sample_method_text_mismatch`)).toEqual([[0n]]);
+    expect(await rows(f.conn, `SELECT count(*) FROM sample_method_out_of_step`)).toEqual([[0n]]);
     const log = parseSampleChanges(await readFile(f.paths.sampleChangesPath, "utf8")).changes.filter((c) => c.sample_number.startsWith("OBAS-"));
     expect(log.length).toBeGreaterThan(0);
     expect(new Set(log.map((c) => c.source))).toEqual(new Set(["upload"]));

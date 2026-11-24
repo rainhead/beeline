@@ -5,7 +5,7 @@ import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
 import { en } from "./messages/en.js";
 import type { Messages } from "./messages/index.js";
-import { distanceMetres, effortBecomes, predictRefusals, type AreaValues, type ChangeUnit, type CollectorsPreview, type SampleFacts, type UnitChange } from "./samples-upload-change.js";
+import { distanceMetres, predictRefusals, type AreaValues, type ChangeUnit, type CollectorsPreview, type SampleFacts, type UnitChange } from "./samples-upload-change.js";
 import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, lookalikesAmong, methodCodes, readLookalikeCandidates, readSeriesHolders, readTrapNumbers, seriesNumberHeldProblem, seriesNumberProblem, type Lookalike, type LookalikeCandidate, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
@@ -289,6 +289,9 @@ export async function readNow(db: Kysely<Database>, ids: number[], reader: Reade
   for (let i = 0; i < ids.length; i += CHUNK) {
     const chunk = ids.slice(i, i + CHUNK);
     const page = await listSamples(db, query, 0, reader, { ids: chunk, limit: chunk.length, offset: 0, withTotal: false, withFlagWords: false, hostNames: "common" });
+    const methodOf = new Map(
+      (await sql<{ sample_id: number; method_code: string }>`SELECT sample_id, method_code FROM sample_method WHERE sample_id IN (${sql.join(chunk.map((id) => sql`${id}`))})`.execute(db)).rows.map((m) => [Number(m.sample_id), m.method_code] as const),
+    );
     for (const r of page.rows) {
       const written = samplesFileRow(r, page);
       const cells = new Map<string, string>();
@@ -303,7 +306,7 @@ export async function readNow(db: Kysely<Database>, ids: number[], reader: Reade
           protocol: (r.protocol ?? "").trim(),
           hasObservation: r.inat_observation_id !== null,
           entered: r.entered,
-          effort: r.sampling_effort,
+          methodCode: methodOf.get(r.sample_id) ?? null,
         },
       });
     }
@@ -410,7 +413,6 @@ function changeFor(unit: SamplesUnit, full: Map<string, Evaluated>, cells: Map<s
         wasProtocol: was,
         // What the method page's form shows: the end day of a trap sample, blank for a net sample.
         bases: { protocol: was, start: nowStart ?? "", end: kind === "trap" ? (nowEnd ?? nowStart ?? "") : "" },
-        effortBecomes: null,
       };
     }
     case "trap_count":
@@ -698,7 +700,6 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
     }
     // What each correction would say to the row's changes, in the order they are applied, over the kinds ticked.
     if (queued.length > 0) {
-      for (const q of queued) if (q.change.unit === "method_dates") q.change.effortBecomes = await effortBecomes(db, known!.facts, q.change);
       const predicted = await predictRefusals({ db, conn, messages }, known!.facts, queued.map((q) => q.change), (u) => kinds.has(u));
       for (const q of queued) {
         const p = predicted.get(q.unit as ChangeUnit);

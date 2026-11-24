@@ -179,14 +179,22 @@ export async function insertCleanSample(
     `INSERT INTO sample (${keys.join(", ")}) VALUES (${keys.map((k) => cols[k]).join(", ")}) RETURNING entity_id`,
   );
   const [[id]] = (await result.getRows()) as [[number]];
-  // The method, as every writer gives it: whatever method_text says the method
-  // as written means, with the count the effort states or else the text (as the migration that made sample_method does). A text it does not know gives no row, as for a real sample.
+  // The method, as the migration that made sample_method gives it: whatever method_text says the method as written
+  // means, with a count only for a trap: the one the effort states ("6 vane traps"), else the text's. A text it does not
+  // know gives no row, as for a real sample. Then the old effort column as its one writer writes it from the stored count.
   await conn.run(
     `INSERT INTO sample_method (sample_id, method_code, trap_count)
      SELECT s.entity_id, t.method_code,
-            coalesce(trap_count_stated(s.sampling_effort), t.trap_count)
-     FROM sample s JOIN method_text t ON t.text = s.protocol
+            CASE WHEN d.is_trap THEN coalesce(
+              TRY_CAST(nullif(regexp_extract(lower(s.sampling_effort), '^([1-9][0-9]{0,5}) .*(trap|nest)s?$', 1), '') AS INTEGER),
+              t.trap_count) END
+     FROM sample s JOIN method_text t ON t.text = s.protocol JOIN method d ON d.code = t.method_code
      WHERE s.entity_id = ${id}`,
+  );
+  await conn.run(
+    `UPDATE sample SET sampling_effort = CASE WHEN m.trap_count IS NULL THEN NULL
+         ELSE concat(m.trap_count, ' ', m.method_code, CASE WHEN m.trap_count = 1 OR lower(m.method_code) LIKE '%s' THEN '' ELSE 's' END) END
+     FROM sample_method m WHERE m.sample_id = sample.entity_id AND sample.entity_id = ${id}`,
   );
   // Position 1 is the primary collector — the head every "my samples" query
   // and attribution read (beeline-77j, beeline-6e9).

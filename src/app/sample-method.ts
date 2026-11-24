@@ -251,6 +251,9 @@ export async function setSampleMethod(
     await sql<{ table_name: string }>`SELECT view_name AS table_name FROM duckdb_views() WHERE view_name = 'legacy_occurrence_corrected'`.execute(db)
   ).rows.length > 0;
   const storeValue = new Map<string, string>();
+  // Without the view (a store nothing was promoted into) the store's value of a record is not known, so the cleanup of
+  // fields this save does not set is skipped: reverting the file to uncorrected records would undo its corrections.
+  // Fields the save sets are still written, compared with the staged record.
   const stored = view
     ? (
         await sql<Member>`
@@ -291,15 +294,33 @@ export async function setSampleMethod(
     // each record's own end), and one that spans days is the end on every record.
     ...(writesEnd ? { day2: ed!, month2: emo!, year2: ey! } : {}),
   };
+  // What the sample itself holds of each field, which a file value that the store lacks may match: a correction the
+  // collector's form wrote to the file from cutover until #314 without copying it to the tables.
+  const [lsy, lsmo, lsd] = parts(liveStart);
+  const [ley, lemo, led] = liveEnd === "" ? ["", "", ""] : parts(liveEnd);
+  const held: Partial<Record<(typeof FIELDS)[number], string>> = {
+    samplingProtocol: liveProtocol, day: lsd!, month: lsmo!, year: lsy!, day2: led!, month2: lemo!, year2: ley!,
+  };
+  const SETTLED = "restored after a save that was not applied";
+  const COPIED = "copied from the corrections file";
   for (const member of members) {
     for (const f of FIELDS) {
       const key = `${member._id}|${f}`;
       const store = storeValue.get(key) ?? "";
-      const want = target[f] ?? store;
-      // Written where the store's value or the file's differs from it, so both end up holding it: a save whose file
-      // write succeeded and whose store write failed is finished (or undone) by the next save, whatever that one changes.
-      if (want !== store || want !== (inFile.get(key) ?? store)) {
-        events.push({ _id: member._id, field: f, base_value: (member[f] ?? "").toString(), new_value: want, author: input.author, reason });
+      const base = (member[f] ?? "").toString();
+      const fileValue = inFile.get(key);
+      if (target[f] !== undefined) {
+        // Written where the store's value or the file's differs from it, so both end up holding it: a save whose file
+        // write succeeded and whose store write failed is finished (or undone) by the next save.
+        if (target[f] !== store || target[f] !== (fileValue ?? store)) {
+          events.push({ _id: member._id, field: f, base_value: base, new_value: target[f]!, author: input.author, reason });
+        }
+      } else if (view && fileValue !== undefined && fileValue !== store) {
+        // A field this save leaves alone, where the file and the store disagree. A file value that is what the sample
+        // holds is a correction the tables lack, so it is kept and copied into them; otherwise it is the leftover of a
+        // save that was not applied, and the store's value is put back.
+        const keep = fileValue === held[f];
+        events.push({ _id: member._id, field: f, base_value: base, new_value: keep ? fileValue : store, author: input.author, reason: keep ? COPIED : SETTLED });
       }
     }
   }
@@ -332,5 +353,6 @@ export async function setSampleMethod(
     if (isWriteConflict(err)) return { outcome: "not_applied" };
     throw err;
   }
-  return { outcome: "saved" };
+  // A save that only settled the file and the tables left the sample as it was: no change to record.
+  return { outcome: protocolChanged || datesChanged ? "saved" : "unchanged" };
 }

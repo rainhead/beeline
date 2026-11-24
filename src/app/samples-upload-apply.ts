@@ -526,8 +526,9 @@ async function changeRow(deps: ApplyDeps, p: Pending): Promise<Counts> {
     }
     const result = await applyUnit({ corrective, messages: m, today: deps.today?.() ?? oregonToday() }, { sampleId, note: historyReason(p.upload_id), actor, settled, pointDeferred }, queued.change);
     if (result.outcome === "stop") {
-      // For a sample with old records, the corrections file holds the change and the store does not.
-      if (result.why === "not_applied") await noteOn(deps.db, key, (await fromOldRecords(deps.db, sampleId)) ? w.notAppliedPending : w.notAppliedNothingKept);
+      // For a sample with old records, the corrections file holds the change and the store does not, except for the
+      // Method form's change, which puts its file rows back (src/app/sample-method.ts): nothing was kept.
+      if (result.why === "not_applied") await noteOn(deps.db, key, u.unit !== "method_dates" && (await fromOldRecords(deps.db, sampleId)) ? w.notAppliedPending : w.notAppliedNothingKept);
       throw new UnitNotDone(`upload ${p.upload_id} row ${p.row_number} ${u.unit} was not done: ${result.why}`);
     }
     // Settled as made before anything that follows it, so a follow-up that fails cannot leave a change half done.

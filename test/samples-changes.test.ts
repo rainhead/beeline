@@ -536,21 +536,21 @@ describe("the trap count after a method change on an old sample (beeline-ni5m.15
   });
 });
 
-describe("a stop that left the corrections file holding the change", () => {
-  it("says so on the change and the page, and a retry that finds the sample changed says the file holds an event the store never got", async () => {
+describe("a stop on a method and dates change, whose file rows are put back", () => {
+  it("says nothing was kept on the change and the page, and a retry that finds the sample changed is refused plainly", async () => {
     const f = await uploadFixture();
     const o = await trapSample(f, { sample_number: "'O-6'" }, false);
     await oldRecords(f, o, "rec-6", "vane trap");
     const { location, digest } = await offered(f, [{ id: o, set: { samplingProtocol: "pan trap" } }]);
     expect((await apply(f, location, { digest })).status).toBe(303);
     await expect(applyPending(deps(f, { db: losingOnce(createKysely(f.instance), "transaction") }))).rejects.toThrow(/not_applied/);
-    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["pending", c.notAppliedPending] });
-    expect(await (await f.app.request(location)).text()).toContain(esc(c.notAppliedPending));
-    // The sample changed meanwhile, so the retry is refused, and its note says what is left over.
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["pending", c.notAppliedNothingKept] });
+    expect(await (await f.app.request(location)).text()).toContain(esc(c.notAppliedNothingKept));
+    // The sample changed meanwhile, so the retry is refused; nothing is left over in the file.
     await f.conn.run(`UPDATE sample SET protocol = 'malaise trap' WHERE entity_id = ${o}`);
     expect(await clearStopped(f.db, await uploadId(f))).toBe(true);
     await applyPending(deps(f));
-    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", `${c.changedSince("samplingProtocol", "malaise trap")} ${c.notAppliedRefused}`] });
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["refused", c.changedSince("samplingProtocol", "malaise trap")] });
   });
 });
 
@@ -705,7 +705,7 @@ describe("the counts after applying", () => {
 });
 
 describe("an undone upload", () => {
-  it("keeps that the corrections file holds a change the store never got, and clears the stop with the rows settled", async () => {
+  it("settles a method and dates change that was not applied as not made, with the stop cleared", async () => {
     const f = await uploadFixture();
     const o = await trapSample(f, { sample_number: "'O-7'" }, false);
     await oldRecords(f, o, "rec-7", "vane trap");
@@ -713,7 +713,7 @@ describe("an undone upload", () => {
     expect((await apply(f, location, { digest })).status).toBe(303);
     await expect(applyPending(deps(f, { db: losingOnce(createKysely(f.instance), "transaction") }))).rejects.toThrow(/not_applied/);
     await settleUndone(f.db, await uploadId(f));
-    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["skipped", `The upload was undone, so this change was not made. ${c.notAppliedUndone}`] });
+    expect(byUnit(await outcomesOf(f))).toEqual({ method_dates: ["skipped", "The upload was undone, so this change was not made."] });
     expect(await rows(f.conn, `SELECT stopped_at FROM upload_applied`)).toEqual([[null]]);
   });
 });

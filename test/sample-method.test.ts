@@ -1,7 +1,7 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
 import { createKysely } from "../src/db.js";
@@ -593,7 +593,9 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
     // Taking the end away is one day again, and the form then shows none.
     await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "" });
     expect(await sampleRow(conn, sampleId)).toEqual(["net", "aerial net", start, start]);
-    expect(await (await app.request(`/samples/${sampleId}`)).text()).toContain(`name="base:date_end" value=""`);
+    const cleared = await (await app.request(`/samples/${sampleId}`)).text();
+    expect(cleared).toContain(`name="base:date_end" value=""`);
+    expect(cleared).toMatch(/name="date_end"[^>]*value=""/);
   });
 
   it("changes the kind with the method and not with the dates", async () => {
@@ -663,8 +665,14 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
     await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(2), note: "first" });
     await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(3), note: "second" });
     const events = await correctionsIn(correctionsPath);
-    for (const f of ["month2", "year2"]) for (const e of events.filter((x) => x.field === f)) expect(e.reason).toBe("first");
-    for (const e of events.filter((x) => x.field === "day2")) expect(e.reason).toBe("second");
+    for (const f of ["month2", "year2"]) {
+      const of = events.filter((x) => x.field === f);
+      expect(of.length).toBeGreaterThan(0);
+      for (const e of of) expect(e.reason).toBe("first");
+    }
+    const day2 = events.filter((x) => x.field === "day2");
+    expect(day2.length).toBeGreaterThan(0);
+    for (const e of day2) expect(e.reason).toBe("second");
     // And a save that changes nothing writes nothing.
     const before = await correctionsIn(correctionsPath);
     expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(3), note: "third" })).status).toBe(302);
@@ -700,6 +708,7 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
     await writeLegacyExport(conn, path);
     const [head = [], ...body] = parseCsv(await readFile(path, "utf8"));
     const col = (name: string) => head.indexOf(name);
+    expect(head).toContain("day2");
     const numbers = new Set(((await rows(conn, `SELECT field_number FROM specimen WHERE sample_id = ${sampleId}`)) as [string][]).map(([n]) => n));
     const [, , d] = later(2).split("-").map((p) => String(Number(p)));
     const exported = body.filter((r) => numbers.has(r[col("fieldNumber")] ?? ""));
@@ -751,6 +760,11 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
         expect((await post(app, `/samples/${sampleId}/method`, body)).status).toBe(302);
         const after = await mine(conn, sampleId, correctionsPath);
         expect(after.filter((e) => e.field === "samplingProtocol").length).toBeGreaterThan(0);
+        // The end keys, each record's, with the end's day as its value, in the file and in both tables.
+        const ends = after.filter((e) => e.field === "day2");
+        const records = ((await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [bigint][])[0]![0];
+        expect(ends).toHaveLength(Number(records));
+        for (const e of ends) expect(e.new_value).toBe(String(Number(later(2).slice(8))));
         for (const e of after.filter((x) => ["samplingProtocol", "day2"].includes(x.field ?? ""))) {
           expect(e.new_value).toBe(e.field === "samplingProtocol" ? "pan trap" : String(Number(later(2).slice(8))));
           for (const table of ["legacy_app_correction", "legacy_correction"]) {
@@ -764,12 +778,33 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
     }
   });
 
+  it("answers with the store's own refusal even when putting the file rows back fails, and says so in the log", async () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { app, sampleId, later } = await methodApp("staff", {
+        losesOnce: "transaction",
+        // The file becomes a directory, so reading it back to restore the rows fails.
+        during: async ({ correctionsPath }) => {
+          await rm(correctionsPath, { force: true });
+          await mkdir(correctionsPath);
+        },
+      });
+      const res = await post(app, `/samples/${sampleId}/method`, { protocol: "pan trap", date_end: later(2) });
+      expect(res.status).toBe(409);
+      expect(await res.text()).toBe(en.sampleEdit.notApplied);
+      expect(quiet.mock.calls.map((c) => String(c[0])).join("\n")).toContain(`sample ${sampleId}`);
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+
   it("accepts a date range alone on a net sample whose series number another trap sample holds, and refuses a trap method for it", async () => {
     const { app, conn, sampleId, later } = await methodApp("staff");
     await conn.run(`UPDATE sample SET sample_number = 'OBAS-00099' WHERE entity_id = ${sampleId}`);
     await insertCleanSample(conn, { sample_number: "'OBAS-00099'", kind: "'trap'", date_start: `DATE '${later(40)}'`, date_end: `DATE '${later(41)}'` });
     expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(2) })).status).toBe(302);
-    expect((await sampleRow(conn, sampleId))?.[0]).toBe("net");
+    const [kindNow, protocolNow, , endNow] = (await sampleRow(conn, sampleId))!;
+    expect([kindNow, protocolNow, endNow]).toEqual(["net", "aerial net", later(2)]);
     const refused = await post(app, `/samples/${sampleId}/method`, { protocol: "vane trap", date_end: later(2) });
     expect(await refused.text()).toContain("OBAS-00099");
     expect((await sampleRow(conn, sampleId))?.[0]).toBe("net");

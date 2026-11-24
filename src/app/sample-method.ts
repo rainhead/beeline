@@ -84,11 +84,9 @@ export type MethodResult =
   /** No old record behind this sample: nothing durable to name. */
   | { outcome: "no_old_records" }
   /**
-   * The store write lost a write conflict. For a sample with old records the
-   * events are already in the corrections file, which nothing reads again on
-   * production (ADR 0006); a sample entered in Beeline is written directly,
-   * with no events, so nothing was kept. Either way the change is applied only by saving it
-   * again, which does not record it twice (beeline-kgyd.4.8).
+   * The store write lost a write conflict. The file rows this save wrote are put back, so nothing was kept anywhere
+   * (a sample entered in Beeline is written directly, with no events), and the change is applied only by saving it
+   * again. If putting them back fails too, the file still holds them and the failure is logged.
    */
   | { outcome: "not_applied" };
 
@@ -313,7 +311,15 @@ export async function setSampleMethod(
   } catch (err) {
     // Put back only the rows this save wrote (never the rest of the file, which another sample's save may have written
     // since), through the file's own queue; then say what happened as before.
-    await restoreCorrections(correctionsPath, was);
+    try {
+      await restoreCorrections(correctionsPath, was);
+    } catch (restoreErr) {
+      // The user still gets the store's own answer; the file is left ahead, which is said where staff can see it.
+      console.error(
+        `method save for sample ${sampleId}: the corrections file still holds this save's rows (${[...was.keys()].map((k) => k.replace(" ", ":")).join(", ")}) ` +
+          `because they could not be put back: ${(restoreErr as Error).message}`,
+      );
+    }
     if (isWriteConflict(err)) return { outcome: "not_applied" };
     throw err;
   }

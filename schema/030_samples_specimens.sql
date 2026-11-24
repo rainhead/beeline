@@ -35,6 +35,7 @@ CREATE TABLE sample (
   sampling_effort    TEXT,
   CHECK (date_end >= date_start)
 );
+COMMENT ON COLUMN sample.kind IS 'Trap where the sample''s method is a trap (method.is_trap), net otherwise: a true copy of the method, kept true by every writer and checked by sample_kind_method_mismatch. It is not the date range (read date_start and date_end) and not whether the sample is managed in Beeline (read sample_entry). A sample with no method keeps whatever kind it had; a rebuilt store gives it net. Kept as a column because DuckDB cannot drop or alter it while 17 tables reference sample.';
 COMMENT ON TABLE sample IS 'The collecting event that yields specimens: collectors in sample_collector (position 1 is the primary), atlas in sample_atlas, one place, one floral host (or none), one day (net) or date range (trap). Coordinates live in sample_location — and only believed-true ones; deliberately-shifted (geoprivacy-obscured) coordinates never enter the sample layer, remaining verbatim in the ingestion staging/observation history.';
 COMMENT ON COLUMN sample.sample_number IS 'Per collector per day for net (''3''); trap series numbers (''OBAS-00657'') for trap.';
 COMMENT ON COLUMN sample.specimen_count IS 'The working count: free to move up or down until printing freezes specimens.';

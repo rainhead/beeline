@@ -1,4 +1,5 @@
 import type { Child } from "hono/jsx";
+import { liveEndOf } from "../../live-end.js";
 import type { Messages } from "../messages/index.js";
 import { determineHref } from "./determine.js";
 import { ecdysisRecordUrl } from "../ecdysis-link.js";
@@ -716,14 +717,14 @@ function MethodEdit({ m, sample, methods }: { m: Messages; sample: SampleDetail;
           </Field>
         </>
       )}
-      <input type="hidden" name="base:date_end" value={sample.kind === "trap" ? iso(sample.date_end) : ""} />
+      <input type="hidden" name="base:date_end" value={liveEndOf(sample.date_start, sample.date_end)} />
       <Field id="method-date-end" label={t.dateEnd} hint={t.dateEndHint}>
         <input
           id="method-date-end"
           name="date_end"
           type="date"
           min={startEditable ? undefined : iso(sample.date_start)}
-          value={sample.kind === "trap" ? iso(sample.date_end) : ""}
+          value={liveEndOf(sample.date_start, sample.date_end)}
         />
       </Field>
       <TextField id="method-note" name="note" label={t.note} />
@@ -1270,7 +1271,7 @@ export function SamplePage({
 }
 
 /**
- * The lines of a sample's history the panel shows. One act writes several lines, because the log records every field
+ * The lines of a sample's history the panel shows (the old Kind lines are left out). One act writes several lines, because the log records every field
  * that changed: changing a method writes Method, Method as written and the old Sampling effort column, and changing a
  * count writes Number of traps and Sampling effort. The panel shows one line for the act: it leaves out Sampling effort
  * where the same act changed Number of traps or Method, and Method as written where the same act changed Method to the
@@ -1288,6 +1289,8 @@ export function historyForPanel(history: readonly SampleChange[]): SampleChange[
   }
   return history.filter((e) => {
     const own = fields.get(act(e))!;
+    // Kind is the method's and no longer logged; the lines written before stay in the log and the API.
+    if (e.field === "kind") return false;
     if (e.field === "sampling_effort") return !own.has("trap_count") && !own.has("method");
     if (e.field === "protocol") return !(own.has("method") && own.get("method") === e.new_value);
     return true;

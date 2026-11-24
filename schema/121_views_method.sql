@@ -1,5 +1,5 @@
 -- Three views over a sample's method (beeline-ni5m.15), each a list to look at.
--- Only the second is asserted empty, by the nightly (src/check-sample-methods.ts).
+-- The second and the third are asserted empty, by the nightly (src/check-sample-methods.ts).
 
 CREATE VIEW sample_without_method AS
 SELECT s.entity_id AS sample_id, s.sample_number, s.protocol
@@ -38,4 +38,4 @@ FROM sample s
 JOIN sample_method m ON m.sample_id = s.entity_id
 JOIN method md ON md.code = m.method_code
 WHERE (s.kind = 'trap') <> md.is_trap;
-COMMENT ON VIEW sample_kind_method_mismatch IS 'Samples whose kind says trap where the method is not a trap, or net where it is. Informational and not asserted: kind is set from the dates and the method as written, so the two disagree where the end date and the words do (976 on production on 2026-11-23, all in settled seasons).';
+COMMENT ON VIEW sample_kind_method_mismatch IS 'Samples whose kind says trap where the method is not a trap, or net where it is. Always empty: every writer sets kind from the method in the same transaction as the method (setSampleMethodRow, promotion), and the nightly fails when this view is not empty. A sample with no method is not in it, and its kind is whatever it was.';

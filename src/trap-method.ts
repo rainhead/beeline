@@ -5,10 +5,8 @@
  * a trap. Every reader of this question, apart from the legacy export below,
  * asks the method: the listings, the downloads and archives, the record page,
  * the determine and "your bees" pages, and the associations file of the upload
- * to Ecdysis. The sample's kind does not answer it: promotion set the kind
- * from the old records' end dates and methods together
- * (src/old-sample-kind.ts), so a netting trip over several days is a "trap"
- * sample and a trap emptied on the day it was set can be a "net" one.
+ * to Ecdysis. The sample's kind is a copy of the answer (stage three of
+ * beeline-ni5m.15) and is kept true by every writer.
  *
  * A trap catches bees without saying which flower any of them visited, so
  * the plant its observation names is a plant near the trap, never a floral

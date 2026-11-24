@@ -333,7 +333,7 @@ describe("a change a correction would refuse", () => {
     // An old sample with an observation: iNaturalist holds its start.
     const withObservation = await trapSample(f, { sample_number: "'X-1'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(20)}'`, inat_observation_id: "12345" }, false);
     await oldRecords(f, withObservation, "rec-x", "vane trap");
-    // An old net sample whose number a trap sample has, which a range of days would make a trap sample.
+    // An old net sample whose number a trap sample has, which a trap method would make a trap sample.
     const net = await insertCleanSample(f.conn, { sample_number: "'N-2'", date_start: `DATE '${day(22)}'`, date_end: `DATE '${day(22)}'`, collector_id: String(f.volunteer) });
     await oldRecords(f, net, "rec-n", "aerial net");
     await trapSample(f, { sample_number: "'N-2'" });
@@ -342,7 +342,7 @@ describe("a change a correction would refuse", () => {
     await f.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${f.ids.sampleC}, ${f.staffer})`);
     const { location } = await offered(f, [
       { id: withObservation, set: { eventDate: day(21) } },
-      { id: net, set: { eventDate: `${day(22)}/${day(25)}` } },
+      { id: net, set: { samplingProtocol: "vane trap" } },
       { id: f.ids.sampleC!, set: { samplingProtocol: "pan trap" } },
       { id: f.ids.sampleB, set: { samplingProtocol: "pan trap" } },
     ]);
@@ -381,7 +381,7 @@ describe("a change a correction refuses only when the job meets it", () => {
     const f = await uploadFixture();
     const net = await insertCleanSample(f.conn, { sample_number: "'N-3'", date_start: `DATE '${day(22)}'`, date_end: `DATE '${day(22)}'`, collector_id: String(f.volunteer) });
     await oldRecords(f, net, "rec-n3", "aerial net");
-    const { location, digest } = await offered(f, [{ id: net, set: { eventDate: `${day(22)}/${day(25)}` } }]);
+    const { location, digest } = await offered(f, [{ id: net, set: { samplingProtocol: "vane trap" } }]);
     expect((await apply(f, location, { digest })).status).toBe(303);
     await trapSample(f, { sample_number: "'N-3'" });
     expect(await applyPending(deps(f))).toEqual({ created: 0, refused: 0, skipped: 0, stopped: 0, notApplied: 1 });

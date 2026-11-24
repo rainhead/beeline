@@ -86,9 +86,11 @@ export function distanceMetres(a: { latitude: number; longitude: number }, b: { 
   return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
 }
 
-/** The kind of sample a method change leaves: a trap sample stays one, a net sample becomes one when the file gives it more than a day. */
-export const kindAfterMethod = (kind: "net" | "trap", entered: boolean, change: { single: boolean }): "net" | "trap" =>
-  entered || kind === "trap" || !change.single ? "trap" : "net";
+/** Whether the listed method with this code is a trap; null where it is not a listed code. */
+async function trapOfMethod(db: Kysely<Database>, code: string): Promise<boolean | null> {
+  const found = (await sql<{ is_trap: boolean }>`SELECT is_trap FROM method WHERE code = ${code}`.execute(db)).rows[0];
+  return found === undefined ? null : found.is_trap === true;
+}
 
 /** What the preview knows of a sample before anything changes it. */
 export interface SampleFacts {
@@ -202,11 +204,13 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
         else if (change.protocolDiffers && !offered.includes(change.protocol.trim())) {
           refusal = messages.record.sample.methodEdit.unlistedMethod(offered.join(", "));
         } else if (await inRun()) refusal = say("in_print_run", unit);
-        else if (!facts.entered && kind === "net" && kindAfterMethod(kind, facts.entered, change) === "trap" && (await seriesTrapNumberTaken(conn, facts.number, facts.id))) {
+        else if (!facts.entered && kind === "net" && ((await trapOfMethod(db, change.protocol.trim())) === true) && (await seriesTrapNumberTaken(conn, facts.number, facts.id))) {
           refusal = messages.record.sample.methodEdit.numberTaken(facts.number);
         }
         if (refusal === null) {
-          kind = kindAfterMethod(kind, facts.entered, change);
+          // The sample's kind is its method's; an unlisted wording changes nothing here.
+          const trapMethod = await trapOfMethod(db, change.protocol.trim());
+          if (trapMethod !== null) kind = trapMethod ? "trap" : "net";
           protocol = change.protocol.trim();
           methodCode = protocol;
         }
@@ -322,9 +326,8 @@ export async function applyUnit(env: ApplyEnv, ctx: UnitContext, change: UnitCha
       const result = await setMethod(deps, ctx.actor, id, {
         protocol: change.protocol,
         dateStart: change.start,
-        // One day is a blank end, which keeps a trap sample a trap sample and a net sample a net sample.
+        // One day is a blank end.
         dateEnd: change.single ? "" : change.end,
-        keepTrap: true,
         note: ctx.note,
         today: env.today,
         bases: { protocol: change.bases.protocol, dateStart: change.bases.start, dateEnd: change.bases.end },

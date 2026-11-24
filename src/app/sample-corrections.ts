@@ -26,7 +26,6 @@ import { applySampleEdit, loadEditableSample, planSampleEdit, type EditableField
 import { setStaffCollectors, type CollectorLine } from "./sample-collectors.js";
 import { heldByUnprintedRun, setStaffPlace, type PlaceChange, type PlaceField } from "./sample-place.js";
 import { setSampleMethod, type MethodInput, type MethodResult } from "./sample-method.js";
-import { kindFromOldRecords, setKindFromOldRecords } from "./sample-kind.js";
 import { onSample } from "./sample-queue.js";
 
 /**
@@ -707,7 +706,6 @@ export function setTrapCount(deps: CorrectionDeps, actor: Actor, sampleId: numbe
     const stored = held.rows[0];
     if (given !== "") {
       if (!/^[1-9]\d{0,5}$/.test(given)) return invalid(form.problemFor("count"));
-      if (sample.kind !== "trap") return invalid(form.problemFor("net"));
       // A count is the count of a method's traps: a sample with no method has none to count, and a method that is not a
       // trap takes none.
       if (stored === undefined) return invalid(form.problemFor("method"));
@@ -745,11 +743,6 @@ export interface SetMethodInput {
   today: string;
   /** What the caller saw, so that a touched field somebody changed since is refused (`setSampleMethod`). */
   bases?: MethodInput["bases"];
-  /**
-   * A blank end on a trap sample (or one entered in Beeline) means one day, so that the sample stays a trap sample:
-   * the end is the start. Without it a blank end makes an old sample a net sample, as the method page's form does.
-   */
-  keepTrap?: boolean;
   /** The sentence for each way the method or dates are refused as invalid; for an unlisted method, with the codes that may be chosen. */
   problemFor: (problem: MethodProblem, methods: readonly string[]) => string;
 }
@@ -784,19 +777,18 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
       if (now === undefined) return refused("not_found");
       if (await heldByUnprintedRun(db, sampleId)) return refused("in_print_run");
       const entered = (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
-      const liveStart = now.date_start.toISOString().slice(0, 10);
-      const blankEnd = form.dateEnd.trim() === "";
-      const stays = form.keepTrap === true && blankEnd && (entered || now.kind === "trap");
-      const dateEnd = stays ? (form.dateStart?.trim() || liveStart) : form.dateEnd;
-      // A net sample given an end day becomes a trap sample, and a series number (OBAS-00011) is one for each trap sample; a plain number is the collector's, and shared.
+      // A sample whose method becomes a trap becomes a trap sample, and a series number (OBAS-00011) is one for each trap sample; a plain number is the collector's, and shared. The dates decide nothing.
       const writer = deps.printWriter ?? deps.conn;
-      if (!entered && now.kind !== "trap" && dateEnd.trim() !== "" && writer !== undefined && (await seriesTrapNumberTaken(writer, now.sample_number, sampleId))) {
+      const toMethod = form.protocol.trim();
+      const becomesTrap =
+        toMethod !== "" && (await sql<{ is_trap: boolean }>`SELECT is_trap FROM method WHERE code = ${toMethod}`.execute(db)).rows[0]?.is_trap === true;
+      if (!entered && now.kind !== "trap" && becomesTrap && writer !== undefined && (await seriesTrapNumberTaken(writer, now.sample_number, sampleId))) {
         return { ok: false, refusal: "number_taken", number: now.sample_number };
       }
       const saved = await setSampleMethod(db, deps.correctionsPath, sampleId, {
         protocol: form.protocol,
         dateStart: form.dateStart,
-        dateEnd,
+        dateEnd: form.dateEnd,
         note: form.note,
         author: actor.login,
         today: form.today,
@@ -814,94 +806,6 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
         case "conflict":
         case "not_applied":
           return refused(saved.outcome);
-      }
-    }),
-  );
-}
-
-export interface KindFromOldRecordsInput {
-  /** Why, required: it is shown in the sample's history. */
-  note: string;
-  /** Work it out and write nothing: no change to the sample, no history entry. */
-  dryRun?: boolean;
-}
-
-export type KindFromOldRecordsResult =
-  | {
-      ok: true;
-      /** `would_save` is the answer to a dry run that found a change. */
-      outcome: "saved" | "unchanged" | "would_save";
-      from: "net" | "trap";
-      to: "net" | "trap";
-      /** On `saved`: whether the history entry was written. The change stands either way; a run stops on the first false. */
-      history_recorded?: boolean;
-    }
-  | Common
-  | StaffOnly
-  | Refused<"no_staging" | "entered_in_beeline" | "rule_says_trap">
-  | (Refused<"in_print_run" | "busy"> & { says?: string })
-  | Invalid;
-
-/**
- * Staff have a sample's kind worked out again from its old records, under the rule promotion uses
- * (src/old-sample-kind.ts, beeline-lmlh). The caller names no kind. Only `sample.kind` is written, with one history
- * entry under the staff member and the note; nothing is written against the old records, which are not corrected
- * (src/app/sample-kind.ts). Refused for a sample with no old records, one entered in Beeline, one whose labels are in
- * a print run that has not printed, and one stored as a net sample whose records give trap (only a trap is corrected to a net).
- * Staff only, refused while impersonating.
- */
-export function setKindFromOldRecordsCorrection(
-  deps: CorrectionDeps,
-  actor: Actor,
-  sampleId: number,
-  input: Input<KindFromOldRecordsInput>,
-): Promise<KindFromOldRecordsResult> {
-  const gates = async () => {
-    if (actor.impersonating) return refused("impersonating");
-    if (!actor.staff) return refused("not_admin");
-    const found = await deps.db.selectFrom("sample").where("entity_id", "=", sampleId).select("entity_id").executeTakeFirst();
-    if (found === undefined) return refused("not_found");
-    if (deps.syncJobRunning()) return refused("busy");
-    return { ready: null };
-  };
-  return correct(sampleId, input, gates, (_, form): Promise<KindFromOldRecordsResult> =>
-    withPrintRunLock(async (): Promise<KindFromOldRecordsResult> => {
-      const { db } = deps;
-      const note = form.note.trim();
-      if (note === "") return { ok: false, refusal: "invalid", problem: "A note is required: it is shown in the sample's history." };
-      const dryRun = form.dryRun === true;
-      const now = await db.selectFrom("sample").where("entity_id", "=", sampleId).select(["kind", "sample_number"]).executeTakeFirst();
-      if (now === undefined) return refused("not_found");
-      const entered = (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
-      if (entered) return refused("entered_in_beeline");
-      if (await heldByUnprintedRun(db, sampleId)) {
-        return { ...refused("in_print_run"), says: "This sample's labels are in a print run that has not printed yet, which froze them. Wait for the run to print or cancel it, then make the correction. Nothing was done." };
-      }
-      const saved = await setKindFromOldRecords(db, sampleId, { dryRun });
-      switch (saved.outcome) {
-        case "saved":
-          return {
-            ok: true,
-            outcome: "saved",
-            from: saved.from,
-            to: saved.to,
-            history_recorded: await recordChange(deps, sampleId, actor, note, "kind change"),
-          };
-        case "unchanged":
-        case "would_save":
-          return { ok: true, outcome: saved.outcome, from: saved.from, to: saved.to };
-        case "not_found":
-          return refused("not_found");
-        case "entered":
-          return refused("entered_in_beeline");
-        case "no_old_records":
-          return refused("no_staging");
-        case "rule_says_trap":
-          return refused("rule_says_trap");
-        case "not_applied":
-          return { ...refused("busy"), says: "Another write to the store got there first. Nothing was written. Try again." };
-        default:
-          return unreachable(saved);
       }
     }),
   );

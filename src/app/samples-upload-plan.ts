@@ -411,8 +411,8 @@ function changeFor(unit: SamplesUnit, full: Map<string, Evaluated>, cells: Map<s
         protocolDiffers: cells.get("samplingProtocol")?.differs === true,
         startDiffers: days.start !== (nowStart ?? ""),
         wasProtocol: was,
-        // What the method page's form shows: the end day of a trap sample, blank for a net sample.
-        bases: { protocol: was, start: nowStart ?? "", end: kind === "trap" ? (nowEnd ?? nowStart ?? "") : "" },
+        // What the method page's form shows: the end day, blank for a one-day sample (src/live-end.ts).
+        bases: { protocol: was, start: nowStart ?? "", end: nowEnd === undefined || nowEnd === nowStart ? "" : nowEnd },
       };
     }
     case "trap_count":

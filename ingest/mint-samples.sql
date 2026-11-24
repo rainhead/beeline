@@ -61,7 +61,8 @@ FROM sample_mint_pending p;
 --
 -- date_start = date_end = observed_on follows from that: a net sample is one
 -- day. Note this makes kind='trap' impossible here, which is deliberate — a
--- trap range is a fact iNaturalist does not carry.
+-- trap range is a fact iNaturalist does not carry. 'aerial net' is not a trap, so
+-- kind 'net' is the method's own (sample_kind_method_mismatch stays empty).
 INSERT INTO sample (entity_id, kind, sample_number,
                     date_start, date_end, specimen_count, inat_observation_id,
                     host_inat_taxon_id, host_name_as_observed, host_rank,

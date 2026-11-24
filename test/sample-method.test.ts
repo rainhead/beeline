@@ -576,3 +576,70 @@ describe("the method is chosen from the list (beeline-ni5m.15)", { timeout: 120_
     });
   });
 });
+
+describe("the Method form reads the dates, and kind follows the method (beeline-ni5m.15, stage three)", { timeout: 120_000 }, () => {
+  const eventFields = async (path: string) => (await correctionsIn(path)).map((e) => e.field ?? "").sort();
+
+  it("keeps a net sample that spans days a net sample and shows its end; a one-day sample shows none", async () => {
+    const { app, conn, sampleId, start, later } = await methodApp("staff");
+    const end = later(2);
+    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: end })).status).toBe(302);
+    expect(await sampleRow(conn, sampleId)).toEqual(["net", "aerial net", start, end]);
+    const page = await (await app.request(`/samples/${sampleId}`)).text();
+    expect(page).toMatch(new RegExp(`name="date_end"[^>]*value="${end}"`));
+    expect(page).toContain(`name="base:date_end" value="${end}"`);
+    // Taking the end away is one day again, and the form then shows none.
+    await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "" });
+    expect(await sampleRow(conn, sampleId)).toEqual(["net", "aerial net", start, start]);
+    expect(await (await app.request(`/samples/${sampleId}`)).text()).toContain(`name="base:date_end" value=""`);
+  });
+
+  it("changes the kind with the method and not with the dates", async () => {
+    const { app, conn, sampleId, start } = await methodApp("staff");
+    await post(app, `/samples/${sampleId}/method`, { protocol: "vane trap", date_end: "" });
+    expect(await sampleRow(conn, sampleId)).toEqual(["trap", "vane trap", start, start]);
+    await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "" });
+    expect(await sampleRow(conn, sampleId)).toEqual(["net", "aerial net", start, start]);
+    expect(await rows(conn, `SELECT * FROM sample_kind_method_mismatch`)).toEqual([]);
+  });
+
+  it("writes nothing for an end equal to the start of a one-day sample", async () => {
+    const { app, sampleId, start, correctionsPath } = await methodApp("staff");
+    const res = await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: start });
+    expect(res.status).toBe(302);
+    expect(await correctionsIn(correctionsPath)).toEqual([]);
+  });
+
+  it("moving the start of a one-day sample writes no end events where its records state no end", async () => {
+    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", { observation: false });
+    await conn.run(
+      `UPDATE legacy_occurrence SET day2 = NULL, month2 = NULL, year2 = NULL WHERE _id IN (SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId})`,
+    );
+    const moved = later(-1);
+    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_start: moved, date_end: "" })).status).toBe(302);
+    const fields = await eventFields(correctionsPath);
+    expect(fields.length).toBeGreaterThan(0);
+    expect(fields.filter((f) => f.endsWith("2"))).toEqual([]);
+    expect(await rows(conn, `SELECT CAST(date_end AS VARCHAR) FROM sample WHERE entity_id = ${sampleId}`)).toEqual([[moved]]);
+  });
+
+  it("moving the start of a one-day sample moves the end of records that state one", async () => {
+    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", { observation: false });
+    await conn.run(
+      `UPDATE legacy_occurrence SET day2 = day, month2 = month, year2 = year WHERE _id IN (SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId})`,
+    );
+    const [[records]] = (await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[bigint]];
+    const moved = later(-1);
+    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_start: moved, date_end: "" })).status).toBe(302);
+    const [y, mo, d] = moved.split("-").map((p) => String(Number(p)));
+    const events = await correctionsIn(correctionsPath);
+    expect(events.filter((e) => e.field === "day2")).toHaveLength(Number(records));
+    for (const [field, value] of [["day2", d], ["month2", mo], ["year2", y]] as const) {
+      const of = events.filter((e) => e.field === field);
+      // A record whose end already says the new value is not written (the month and year of a start a day earlier);
+      // the rest follow the start.
+      expect(of.length).toBeLessThanOrEqual(Number(records));
+      for (const e of of) expect(e.new_value).toBe(value);
+    }
+  });
+});

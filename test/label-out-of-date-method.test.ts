@@ -106,6 +106,25 @@ describe("labels out of date for their method", () => {
     expect(await flagged()).toEqual([]);
   });
 
+  it("lists nothing when the method changes to another with the same label word", async () => {
+    await prepared({ protocol: "'pan trap'" });
+    await setMethod("vane trap");
+    expect(await flagged()).toEqual([]);
+    await setMethod("pan and vane traps");
+    expect(await flagged()).toEqual([]);
+  });
+
+  it("prints each label word through the print run's join (a sample with no method cannot be prepared: the missing method blocks printing)", async () => {
+    for (const [code, word] of [["aerial net", "net"], ["pan trap", "trap"], ["trap nest", "nest"], ["vacuum", "vacuum"]] as const) {
+      ({ conn } = await createMemoryDb());
+      // The kind is the opposite of what the word suggests, so only the method can give the word.
+      await prepared({ kind: word === "net" || word === "vacuum" ? "'trap'" : "'net'", protocol: `'${code}'` });
+      const [[label]] = (await rows(conn, `SELECT method_text FROM printed_label WHERE specimen_id = (SELECT min(entity_id) FROM specimen WHERE sample_id = ${sample})`)) as [[string]];
+      expect(label, code).toBe(word);
+      expect(await flagged(), code).toEqual([]);
+    }
+  });
+
   it("agrees with methodText for every method and kind, and for none", async () => {
     await prepared();
     const methods = await rows(conn, "SELECT code, label_word FROM method");

@@ -563,10 +563,9 @@ describe("the associations file", () => {
     const ids = [trap, nettedButTrap, trapWordedButNet, trapNestButNet, netWithTheWord, vacuum, net].map((s) => s.id);
     const csv = await associationsCsv(f.db, await written(f, ids));
     // The netted sample recorded as a trap gets its row; the trap-worded ones recorded as nets get none. A sample whose
-    // words are not one of the listed methods has no method, so it is not near a trap, whatever its words say.
+    // words are not one of the listed methods has no method, so it gets no row either, whatever its words say.
     expect(csv.split("\n").filter((l) => l !== "").slice(1)).toEqual([
       "BCBA_2500008,https://www.inaturalist.org/observations/667,Rosa",
-      "BCBA_2500010,https://www.inaturalist.org/observations/669,Aster",
       "BCBA_2500015,https://www.inaturalist.org/observations/672,Salvia",
       "BCBA_2500009,https://www.inaturalist.org/observations/668,Salvia",
     ]);

@@ -217,8 +217,8 @@ export function collectorText(collectors: PersonNameParts[]): string {
 }
 
 /**
- * The longest method text that is printed as itself: 6 characters, so
- * "vacuum" is the longest word printed as itself (Peter's choice, 2026-11-23,
+ * The longest label word a method may have (`method.label_word`): 6 characters, so
+ * "vacuum" is the longest word printed (Peter's choice, 2026-11-23,
  * for legibility: six characters print at 2.09 pt). The limit that fits the
  * box is larger, 12, and it is the reason a limit must exist at all. The
  * method box is 7.56 pt wide and a label's text is shrunk to fit it, but never

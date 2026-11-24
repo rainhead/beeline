@@ -48,7 +48,7 @@ export interface EntrySample {
   /** iNaturalist observation id, as text: it is a BIGINT. */
   observation: string | null;
   host: string | null;
-  /** Whether the sample's method names a trap, so its plant was near the trap rather than visited (beeline-vjqy). */
+  /** Whether the sample's method is a trap, so its plant was near the trap rather than visited (beeline-vjqy). */
   hostNearTrap: boolean;
 }
 

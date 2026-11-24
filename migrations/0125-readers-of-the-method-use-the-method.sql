@@ -1,11 +1,10 @@
--- Migration for schema/035, 120 and 155 (beeline-ni5m.15, stage two): three readers of a sample's method text move to its method.
+-- Migration for schema/035, 120 and 155 (beeline-ni5m.15, stage two): two views and a column comment follow the sample's method.
 -- printed_label_out_of_date compares a label with the word the sample would print now, which is the label_word of its method (the
--- sample's kind where it has no method), as methodText does (src/label-text.ts) and not the word worked out from the text. On the
--- production copy of 2026-11-24 the two words agree for every sample with a method, so no label becomes out of date. The view
+-- sample's kind where it has no method), as methodText does (src/label-text.ts), not the word worked out from the text. On the
+-- production copy of 2026-11-24 the two words agree for every sample with a method, so no label becomes out of date.
 -- qc_rule_missing_required_field reports a missing method as a sample with no sample_method row, still named "protocol" in its
--- details; today it flags the same samples. Neither view is read by another view in a way that needs restating. Each view is
--- restated whole, and the comment of printed_label_out_of_date with it, since replacing a view drops its comment; the comment on
--- printed_label.method_text changes too.
+-- details; today it flags the same samples. Each view is restated whole, and the comment of printed_label_out_of_date with it,
+-- since replacing a view drops its comment (the QC view has none). The comment on printed_label.method_text changes too.
 
 CREATE OR REPLACE VIEW printed_label_out_of_date AS
 WITH open_label AS (

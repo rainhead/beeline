@@ -1055,7 +1055,7 @@ const ASSOCIATION_PAGE = 5_000;
  * specimen record, so the two would disagree after a plant is renamed (Peter
  * decided, 2026-11-22). A trap sample has no row at all, and a trap sample is
  * one whose method is a trap (`method.is_trap`, as the archives and
- * downloads decide; a sample with no method is not): old records disagree
+ * downloads decide). A sample with no method has no row either, because nothing says whether its plant is a host or near a trap. Old records disagree
  * between kind and method for 976 samples, and the method decides, so a netted
  * sample recorded as a trap keeps its host (beeline-ni5m.15). Symbiota applies one relationship, `hasHost`, to
  * the whole file, and the plant near a trap is not a host. UTF-8 with no byte order mark and no formula guard. The
@@ -1076,9 +1076,10 @@ export async function associationsCsv(db: Kysely<Database>, recorded: readonly W
         .where("sp.entity_id", "in", recorded.slice(from, from + ASSOCIATION_PAGE).map((w) => w.id))
         .where("s.inat_observation_id", "is not", null)
         .where(sql<boolean>`NOT ${observationGone}`)
-        .leftJoin("sample_method as smt", "smt.sample_id", "s.entity_id")
-        .leftJoin("method as mth", "mth.code", "smt.method_code")
-        .select(["sp.entity_id as specimen_id", "s.inat_observation_id", "s.host_name_as_observed", sql<boolean>`coalesce(mth.is_trap, false)`.as("near_trap")])
+        // An inner join: a sample with no method is left out, since a wrong association cannot easily be taken back.
+        .innerJoin("sample_method as smt", "smt.sample_id", "s.entity_id")
+        .innerJoin("method as mth", "mth.code", "smt.method_code")
+        .select(["sp.entity_id as specimen_id", "s.inat_observation_id", "s.host_name_as_observed", "mth.is_trap as near_trap"])
         .orderBy("sp.entity_id")
         .execute();
       for (const r of found) {

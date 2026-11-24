@@ -84,6 +84,8 @@ describe("the sample change log does not log a change of kind", () => {
     const { conn } = await createMemoryDb();
     await conn.run(`INSERT INTO person (display_name) VALUES ('Ada Collector')`);
     const id = await insertCleanSample(conn, { protocol: "'trap nest'", kind: "'net'", locality: "'Corvallis'" });
+    // As the old rule left it, before the migration: the fixture's writer made it agree with the method.
+    await conn.run(`UPDATE sample SET kind = 'net' WHERE entity_id = ${id}`);
     await conn.run("INSERT INTO schema_migration (name) VALUES ('0001-a-store-that-was-built.sql')");
     const dir = await mkdtemp(join(tmpdir(), "kind-log-"));
     const paths = { log: join(dir, "sample-change.csv"), state: join(dir, "sample-state.csv") };

@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { sql, type Kysely } from "kysely";
-import { parseCsv, upsertCorrections, type CorrectionEvent } from "../corrections.js";
+import { correctionKey, readCorrectionRows, restoreCorrections, upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
 import { mirrorCorrections } from "./correction-store.js";
 import { methodCodesSql } from "../trap-sample.js";
@@ -217,12 +216,12 @@ export async function setSampleMethod(
   const endChanged = end !== isoDate(sample.date_end);
   // A one-day sample's end is its start, so a new start moves it too.
   const datesChanged = startChanged || endChanged;
+  if (!protocolChanged && !datesChanged) return { outcome: "unchanged" };
   const update = {
     ...(protocolChanged ? { protocol: protocol === "" ? null : protocol } : {}),
     ...(datesChanged ? { date_start: start, date_end: end } : {}),
   };
   if (entered) {
-    if (!protocolChanged && !datesChanged) return { outcome: "unchanged" };
     try {
       await db.transaction().execute(async (trx) => {
         await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
@@ -250,10 +249,6 @@ export async function setSampleMethod(
   const view = (
     await sql<{ table_name: string }>`SELECT view_name AS table_name FROM duckdb_views() WHERE view_name = 'legacy_occurrence_corrected'`.execute(db)
   ).rows.length > 0;
-  const storeValue = new Map<string, string>();
-  // Without the view (a store nothing was promoted into) the store's value of a record is not known, so the cleanup of
-  // fields this save does not set is skipped: reverting the file to uncorrected records would undo its corrections.
-  // Fields the save sets are still written, compared with the staged record.
   const stored = view
     ? (
         await sql<Member>`
@@ -262,22 +257,8 @@ export async function setSampleMethod(
           WHERE n.sample_id = ${sampleId}`.execute(db)
       ).rows
     : members;
+  const storeValue = new Map<string, string>();
   for (const r of stored) for (const f of FIELDS) storeValue.set(`${r._id}|${f}`, (r[f] ?? "").toString());
-  // And what the durable file says, which is newer than the store where a save wrote the file and then lost its store
-  // transaction (not_applied). It is read before the sample is judged unchanged: a later save that changes nothing in
-  // the sample still finishes or reverts what that save left in the file.
-  const inFile = new Map<string, string>();
-  try {
-    const [head = [], ...body] = parseCsv(await readFile(correctionsPath, "utf8"));
-    const col = (name: string) => head.indexOf(name);
-    const ids = new Set(members.map((m) => m._id));
-    for (const r of body) {
-      const field = r[col("field")] ?? "";
-      if ((FIELDS as readonly string[]).includes(field) && ids.has(r[col("_id")] ?? "")) inFile.set(`${r[col("_id")]}|${field}`, r[col("new_value")] ?? "");
-    }
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  }
 
   // The old records write a date as three columns, without leading zeros.
   const parts = (d: string) => d.split("-").map((p) => String(Number(p)));
@@ -286,7 +267,7 @@ export async function setSampleMethod(
   const reason = input.note.trim() !== "" ? input.note.trim() : "edited in Beeline";
   const events: CorrectionEvent[] = [];
   const writesEnd = endChanged || (startChanged && oneDay);
-  // What each field is to hold on every record, where this save sets it; elsewhere each record keeps what the store says.
+  // What each field is to hold on every record, where this save sets it.
   const target: Partial<Record<(typeof FIELDS)[number], string>> = {
     ...(protocolChanged ? { samplingProtocol: protocol } : {}),
     ...(startChanged ? { day: sd!, month: smo!, year: sy! } : {}),
@@ -294,40 +275,21 @@ export async function setSampleMethod(
     // each record's own end), and one that spans days is the end on every record.
     ...(writesEnd ? { day2: ed!, month2: emo!, year2: ey! } : {}),
   };
-  // What the sample itself holds of each field, which a file value that the store lacks may match: a correction the
-  // collector's form wrote to the file from cutover until #314 without copying it to the tables.
-  const [lsy, lsmo, lsd] = parts(liveStart);
-  const [ley, lemo, led] = liveEnd === "" ? ["", "", ""] : parts(liveEnd);
-  const held: Partial<Record<(typeof FIELDS)[number], string>> = {
-    samplingProtocol: liveProtocol, day: lsd!, month: lsmo!, year: lsy!, day2: led!, month2: lemo!, year2: ley!,
-  };
-  const SETTLED = "restored after a save that was not applied";
-  const COPIED = "copied from the corrections file";
+  // Written only where the record's own value differs, so a record that never stated an end gains none.
   for (const member of members) {
     for (const f of FIELDS) {
-      const key = `${member._id}|${f}`;
-      const store = storeValue.get(key) ?? "";
-      const base = (member[f] ?? "").toString();
-      const fileValue = inFile.get(key);
-      if (target[f] !== undefined) {
-        // Written where the store's value or the file's differs from it, so both end up holding it: a save whose file
-        // write succeeded and whose store write failed is finished (or undone) by the next save.
-        if (target[f] !== store || target[f] !== (fileValue ?? store)) {
-          events.push({ _id: member._id, field: f, base_value: base, new_value: target[f]!, author: input.author, reason });
-        }
-      } else if (view && fileValue !== undefined && fileValue !== store) {
-        // A field this save leaves alone, where the file and the store disagree. A file value that is what the sample
-        // holds is a correction the tables lack, so it is kept and copied into them; otherwise it is the leftover of a
-        // save that was not applied, and the store's value is put back.
-        const keep = fileValue === held[f];
-        events.push({ _id: member._id, field: f, base_value: base, new_value: keep ? fileValue : store, author: input.author, reason: keep ? COPIED : SETTLED });
+      if (target[f] !== undefined && target[f] !== (storeValue.get(`${member._id}|${f}`) ?? "")) {
+        events.push({ _id: member._id, field: f, base_value: (member[f] ?? "").toString(), new_value: target[f]!, author: input.author, reason });
       }
     }
   }
-  if (!protocolChanged && !datesChanged && events.length === 0) return { outcome: "unchanged" };
-  // Durability before immediacy: if the event write fails, nothing applied.
-  // Should a write to the store fail after it, the file is ahead of the
-  // sample until the next save, which is what a rebuild would apply.
+  // Durability before immediacy: if the event write fails, nothing applied. Should the store then refuse or fail, the
+  // rows this save wrote are put back below. A crash between the file write and the store's commit still leaves the
+  // file ahead of the sample, as it always did, which is what a rebuild would apply.
+  // The rows the file holds for these keys now, to put back if the store does not take the save.
+  const ids = new Set(members.map((m) => m._id));
+  const was = new Map<string, CorrectionEvent | null>(events.map((e) => [correctionKey(e), null]));
+  for (const row of await readCorrectionRows(correctionsPath, ids)) if (was.has(correctionKey(row))) was.set(correctionKey(row), row);
   await upsertCorrections(correctionsPath, events);
   // Everything in the store at once: the correction tables, the sample, and
   // the settled finding, so neither a failure part-way nor an export reading
@@ -349,10 +311,11 @@ export async function setSampleMethod(
       }
     });
   } catch (err) {
-    // The file may hold the change, and the store does not; saving again applies it once.
+    // Put back only the rows this save wrote (never the rest of the file, which another sample's save may have written
+    // since), through the file's own queue; then say what happened as before.
+    await restoreCorrections(correctionsPath, was);
     if (isWriteConflict(err)) return { outcome: "not_applied" };
     throw err;
   }
-  // A save that only settled the file and the tables left the sample as it was: no change to record.
-  return { outcome: protocolChanged || datesChanged ? "saved" : "unchanged" };
+  return { outcome: "saved" };
 }

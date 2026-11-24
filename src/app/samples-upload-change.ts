@@ -204,7 +204,7 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
         else if (change.protocolDiffers && !offered.includes(change.protocol.trim())) {
           refusal = messages.record.sample.methodEdit.unlistedMethod(offered.join(", "));
         } else if (await inRun()) refusal = say("in_print_run", unit);
-        else if (!facts.entered && kind === "net" && ((await trapOfMethod(db, change.protocol.trim())) === true) && (await seriesTrapNumberTaken(conn, facts.number, facts.id))) {
+        else if (!facts.entered && kind === "net" && change.protocolDiffers && ((await trapOfMethod(db, change.protocol.trim())) === true) && (await seriesTrapNumberTaken(conn, facts.number, facts.id))) {
           refusal = messages.record.sample.methodEdit.numberTaken(facts.number);
         }
         if (refusal === null) {

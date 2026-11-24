@@ -60,13 +60,13 @@ function losingBuilder<T extends object>(builder: T): T {
  * racing another does: a transaction for a sample with old records, an
  * `updateTable` for one entered in Beeline.
  */
-function losingOnce(db: Kysely<Database>, what: "transaction" | "updateTable"): Kysely<Database> {
+function losingOnce(db: Kysely<Database>, what: "transaction" | "updateTable", during?: () => Promise<void>, error: Error = conflict()): Kysely<Database> {
   let fired = false;
   return new Proxy(db, {
     get(target, prop) {
       if (prop === what && !fired) {
         fired = true;
-        if (what === "transaction") return () => ({ execute: async () => Promise.reject(conflict()) });
+        if (what === "transaction") return () => ({ execute: async () => { await during?.(); return Promise.reject(error); } });
         return (...args: unknown[]) => losingBuilder((target.updateTable as (...a: unknown[]) => object)(...args));
       }
       const value = Reflect.get(target, prop, target);
@@ -75,7 +75,7 @@ function losingOnce(db: Kysely<Database>, what: "transaction" | "updateTable"): 
   }) as Kysely<Database>;
 }
 
-async function methodApp(signedInAs: "staff" | "collector", opts: { observation?: boolean; losesOnce?: "transaction" | "updateTable" } = {}) {
+async function methodApp(signedInAs: "staff" | "collector", opts: { observation?: boolean; losesOnce?: "transaction" | "updateTable"; during?: (paths: { correctionsPath: string }) => Promise<void>; error?: Error } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "beeline-method-"));
   const paths = {
     correctionsPath: join(dir, "corrections.csv"),
@@ -102,7 +102,7 @@ async function methodApp(signedInAs: "staff" | "collector", opts: { observation?
   // The store as it stood, so the edit is recorded as a change rather than
   // taken for the first snapshot.
   await recordSampleChanges(duckdbReader(conn), { log: paths.sampleChangesPath, state: paths.sampleStatePath }, { source: "observation_promotion" });
-  const db = opts.losesOnce ? losingOnce(createKysely(instance), opts.losesOnce) : createKysely(instance);
+  const db = opts.losesOnce ? losingOnce(createKysely(instance), opts.losesOnce, opts.during ? () => opts.during!(paths) : undefined, opts.error) : createKysely(instance);
   const app = createApp({
     ...(await scratchPaths()),
     db,
@@ -245,8 +245,8 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     const lost = await post(app, `/samples/${sampleId}/method`, body);
     expect(lost.status).toBe(409);
     expect(await lost.text()).toBe(en.sampleEdit.notApplied);
-    // The file holds the change; the sample does not, and nothing will put it there on its own.
-    expect((await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol")).toHaveLength(Number(records));
+    // Neither the sample nor the file holds it: the rows the save wrote were put back.
+    expect((await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol")).toHaveLength(0);
     expect(await sampleRow(conn, sampleId)).toEqual(before);
     const again = await post(app, `/samples/${sampleId}/method`, body);
     expect(again.status).toBe(302);
@@ -656,38 +656,7 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
     expect(events.map((e) => e.new_value)).toEqual(["", "", ""]);
   });
 
-  it("compares against a correction the file holds that the store does not, from a save that was not applied", async () => {
-    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff");
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(2) })).status).toBe(302);
-    const [[id]] = (await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
-    // A later save reached the file and lost its store transaction: the file says month 13 (which no date has), the store still says the start's month.
-    await upsertCorrections(correctionsPath, [{ _id: id, field: "month2", base_value: "", new_value: "13", author: "x", reason: "lost" }]);
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(3) })).status).toBe(302);
-    const mine = (await correctionsIn(correctionsPath)).filter((e) => e._id === id && e.field === "month2");
-    expect(mine).toHaveLength(1);
-    expect(mine[0]!.new_value).toBe(String(Number(later(3).slice(5, 7))));
-    // The tables hold it too, not only the file.
-    for (const table of ["legacy_app_correction", "legacy_correction"]) {
-      expect(await rows(conn, `SELECT new_value FROM ${table} WHERE _id = '${id}' AND field = 'month2'`)).toEqual([[mine[0]!.new_value]]);
-    }
-  });
 
-  it("finishes a save whose file write succeeded and whose store write failed: file, correction tables and sample all hold the new end", async () => {
-    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff");
-    const ids = ((await rows(conn, `SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as string[][]).map((r) => r[0]!);
-    const end = later(2);
-    const [ey, emo, ed] = end.split("-").map((p) => String(Number(p)));
-    // The file holds the end already; the store (tables and sample) does not.
-    await upsertCorrections(correctionsPath, ids.flatMap((_id) => [["day2", ed!], ["month2", emo!], ["year2", ey!]].map(([field, new_value]) => ({ _id, field: field!, base_value: "", new_value: new_value!, author: "x", reason: "half" }))));
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: end })).status).toBe(302);
-    expect((await rows(conn, `SELECT CAST(date_end AS VARCHAR) FROM sample WHERE entity_id = ${sampleId}`))[0]![0]).toBe(end);
-    for (const table of ["legacy_app_correction", "legacy_correction"]) {
-      const held = (await rows(conn, `SELECT field, new_value FROM ${table} WHERE field IN ('day2','month2','year2') AND _id IN (${ids.map((i) => `'${i}'`).join(", ")})`)) as string[][];
-      expect(held).toHaveLength(ids.length * 3);
-      for (const [f, v] of held) expect(v).toBe({ day2: ed, month2: emo, year2: ey }[f as "day2"]);
-    }
-    expect((await correctionsIn(correctionsPath)).filter((e) => e.field === "day2").map((e) => e.new_value)).toEqual(ids.map(() => ed));
-  });
 
   it("writes only the components that differ: a later save keeps the first save's reason on the month and year it did not change", async () => {
     const { app, sampleId, later, correctionsPath } = await methodApp("staff");
@@ -703,38 +672,7 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
   });
 
 
-  it("undoes an end left in the file by a save that was not applied, when the next save leaves the sample as it is", async () => {
-    const { app, conn, sampleId, later, correctionsPath, sampleChangesPath } = await methodApp("staff", { losesOnce: "transaction" });
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: later(2) })).status).toBe(409);
-    expect((await correctionsIn(correctionsPath)).filter((e) => e.field === "day2").length).toBeGreaterThan(0);
-    // The sample is still one day; saving it with a blank end changes nothing in the sample, and must put the file right.
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "", note: "SECOND-NOTE" })).status).toBe(302);
-    // The sample did not change, so no history pass is recorded under that note, and the cleanup says what it is.
-    expect(await readFile(sampleChangesPath, "utf8").catch(() => "")).not.toContain("SECOND-NOTE");
-    for (const e of (await correctionsIn(correctionsPath)).filter((x) => (x.field ?? "").endsWith("2") && x.reason !== "edited in Beeline")) expect(e.reason).toBe("restored after a save that was not applied");
-    for (const f of ["day2", "month2", "year2"]) {
-      const of = (await correctionsIn(correctionsPath)).filter((x) => x.field === f);
-      expect(of.length).toBeGreaterThan(0);
-      for (const e of of) expect(e.new_value).toBe("");
-    }
-    for (const table of ["legacy_app_correction", "legacy_correction"]) {
-      expect(await rows(conn, `SELECT count(*) FROM ${table} WHERE field IN ('day2','month2','year2') AND new_value <> '' AND _id IN (SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId})`)).toEqual([[0n]]);
-    }
-  });
 
-  it("undoes a start left in the file by a save that was not applied", async () => {
-    const { app, conn, sampleId, start, later, correctionsPath } = await methodApp("staff", { observation: false, losesOnce: "transaction" });
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_start: later(-1), date_end: "" })).status).toBe(409);
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_start: start, date_end: "" })).status).toBe(302);
-    // Each record holds what it held before: its own staged value.
-    // (The month and year the lost save wrote are what the sample holds, so they stay; the day it moved is put back.)
-    const events = (await correctionsIn(correctionsPath)).filter((x) => x.field === "day");
-    expect(events.length).toBeGreaterThan(0);
-    for (const e of events) {
-      const [[raw]] = (await rows(conn, `SELECT ${e.field} FROM legacy_occurrence WHERE _id = '${e._id}'`)) as [[string]];
-      expect(e.new_value).toBe(raw);
-    }
-  });
 
   it("writes a typed end equal to the start as blank ends, as the samples upload does", async () => {
     const { app, conn, sampleId, start, later, correctionsPath } = await methodApp("staff");
@@ -764,7 +702,10 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
     const col = (name: string) => head.indexOf(name);
     const numbers = new Set(((await rows(conn, `SELECT field_number FROM specimen WHERE sample_id = ${sampleId}`)) as [string][]).map(([n]) => n));
     const [, , d] = later(2).split("-").map((p) => String(Number(p)));
-    for (const r of body.filter((r) => numbers.has(r[col("fieldNumber")] ?? ""))) {
+    const exported = body.filter((r) => numbers.has(r[col("fieldNumber")] ?? ""));
+    expect(numbers.size).toBeGreaterThan(0);
+    expect(exported).toHaveLength(numbers.size);
+    for (const r of exported) {
       expect(r[col("day")]).toBe(d);
       expect(r[col("day2")] ?? "").toBe("");
     }
@@ -779,26 +720,48 @@ describe("the Method form reads the dates, and kind follows the method (beeline-
     expect((await correctionsIn(correctionsPath)).filter((e) => (e.field ?? "").endsWith("2"))).toEqual(before);
   });
 
-  it("keeps a method the file holds that the tables lack when it is what the sample holds, and copies it into them", async () => {
-    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff");
-    const ids = ((await rows(conn, `SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId} ORDER BY _id`)) as string[][]).map((r) => r[0]!);
-    // A correction the collector's edit wrote to the file only, before #314: the sample holds it, the tables do not.
-    await upsertCorrections(correctionsPath, [{ _id: ids[0]!, field: "samplingProtocol", base_value: "aerial net", new_value: "pan trap", author: "x", reason: "collector edit" }]);
-    await conn.run(`UPDATE sample SET protocol = 'pan trap' WHERE entity_id = ${sampleId}`);
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "pan trap", date_end: later(2) })).status).toBe(302);
-    expect((await correctionsIn(correctionsPath)).filter((e) => e._id === ids[0] && e.field === "samplingProtocol").map((e) => e.new_value)).toEqual(["pan trap"]);
-    for (const table of ["legacy_app_correction", "legacy_correction"]) {
-      expect(await rows(conn, `SELECT new_value FROM ${table} WHERE _id = '${ids[0]}' AND field = 'samplingProtocol'`)).toEqual([["pan trap"]]);
-    }
-  });
 
-  it("leaves the file alone for the fields it does not set when the store cannot say what the records hold", async () => {
-    const { app, conn, sampleId, correctionsPath } = await methodApp("staff");
-    const [[id]] = (await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
-    await upsertCorrections(correctionsPath, [{ _id: id, field: "day2", base_value: "", new_value: "29", author: "x", reason: "kept" }]);
-    await conn.run(`DROP VIEW legacy_occurrence_corrected`);
-    expect((await post(app, `/samples/${sampleId}/method`, { protocol: "vacuum", date_end: "" })).status).toBe(302);
-    expect((await correctionsIn(correctionsPath)).filter((e) => e._id === id && e.field === "day2").map((e) => e.new_value)).toEqual(["29"]);
+
+  describe("a save the store does not take leaves the file as it was (beeline-ni5m.15)", () => {
+    // A row for some other sample, written between this save's file write and its store transaction.
+    const OTHER = { _id: "someone-elses-record", field: "day2", base_value: "", new_value: "9", author: "x", reason: "another sample's save" };
+    const mine = async (conn: DuckDBConnection, sampleId: number, path: string) => {
+      const ids = new Set(((await rows(conn, `SELECT _id FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as string[][]).map((r) => r[0]));
+      return (await correctionsIn(path)).filter((e) => ids.has(e._id ?? ""));
+    };
+
+    for (const [label, error, status] of [["refuses (a lost write conflict)", undefined, 409], ["throws", new Error("the store fell over"), 500]] as const) {
+      it(`when the store ${label}: this sample's rows are as before, another sample's row written between is kept, and a retry writes it all`, async () => {
+        const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", {
+          losesOnce: "transaction",
+          error,
+          during: async ({ correctionsPath: path }) => upsertCorrections(path, [OTHER]),
+        });
+        // A row this save will replace, and one it will add.
+        const [[id]] = (await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
+        await upsertCorrections(correctionsPath, [{ _id: id, field: "samplingProtocol", base_value: "aerial net", new_value: "aerial net", author: "x", reason: "an earlier save" }]);
+        const before = await mine(conn, sampleId, correctionsPath);
+        const sampleBefore = await sampleRow(conn, sampleId);
+        const body = { protocol: "pan trap", date_end: later(2) };
+        expect((await post(app, `/samples/${sampleId}/method`, body)).status).toBe(status);
+        expect(await mine(conn, sampleId, correctionsPath)).toEqual(before);
+        expect((await correctionsIn(correctionsPath)).filter((e) => e._id === OTHER._id)).toEqual([OTHER]);
+        expect(await sampleRow(conn, sampleId)).toEqual(sampleBefore);
+        // The same save again: file, tables and sample agree.
+        expect((await post(app, `/samples/${sampleId}/method`, body)).status).toBe(302);
+        const after = await mine(conn, sampleId, correctionsPath);
+        expect(after.filter((e) => e.field === "samplingProtocol").length).toBeGreaterThan(0);
+        for (const e of after.filter((x) => ["samplingProtocol", "day2"].includes(x.field ?? ""))) {
+          expect(e.new_value).toBe(e.field === "samplingProtocol" ? "pan trap" : String(Number(later(2).slice(8))));
+          for (const table of ["legacy_app_correction", "legacy_correction"]) {
+            expect(await rows(conn, `SELECT new_value FROM ${table} WHERE _id = '${e._id}' AND field = '${e.field}'`)).toEqual([[e.new_value]]);
+          }
+        }
+        expect((await sampleRow(conn, sampleId))![1]).toBe("pan trap");
+        expect((await sampleRow(conn, sampleId))![3]).toBe(later(2));
+        expect((await correctionsIn(correctionsPath)).filter((e) => e._id === OTHER._id)).toEqual([OTHER]);
+      });
+    }
   });
 
   it("accepts a date range alone on a net sample whose series number another trap sample holds, and refuses a trap method for it", async () => {

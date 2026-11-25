@@ -438,16 +438,51 @@ details.flag-menu[open] > summary.blocking { background: var(--md-sys-color-erro
 details.flag-menu > summary.warning:hover,
 details.flag-menu[open] > summary.warning { background: var(--md-sys-color-warning-container); }
 /* Fixed, as a column menu's panel is, so the table's scroll container does
-   not clip it: left at its own place, under the chip. */
+   not clip it. Left in its own place, a fixed box opened where its chip would
+   be if the page were not scrolled, so on a scrolled listing it fell below
+   the window, where scrolling cannot reach a fixed box (beeline-zlqm,
+   reported by the BC Bee Atlas lead). The islands script (islands/menus.ts)
+   places it when it opens: beside its chip, on the side with room, never
+   taller than that room, scrolling inside instead; it marks the box `placed`,
+   which turns off the anchor fallbacks below. Those are for a page without
+   the script: tied to its chip as a column menu is to its heading, below it
+   or above it where below would run off the bottom. */
 details.flag-menu > .flag-panel {
   position: fixed;
   top: auto;
   left: auto;
-  margin-top: var(--space-1);
+  margin: var(--space-1) 0;
   width: min(22rem, calc(100vw - 2 * var(--space-4)));
+  max-height: calc(100vh - 2 * var(--space-4));
+  overflow-y: auto;
   padding: var(--space-3) var(--space-4);
   gap: var(--space-2);
   white-space: normal;
+}
+@supports (anchor-name: --flag-chip) and (anchor-scope: --flag-chip) {
+  details.flag-menu { anchor-scope: --flag-chip; }
+  details.flag-menu > summary { anchor-name: --flag-chip; }
+  details.flag-menu > .flag-panel {
+    position-anchor: --flag-chip;
+    top: anchor(bottom);
+    left: anchor(left);
+    position-try-fallbacks: --flag-chip-right, --flag-chip-above, --flag-chip-above-right;
+  }
+  details.flag-menu > .flag-panel.placed { position-try-fallbacks: none; }
+  @position-try --flag-chip-right {
+    left: auto;
+    right: anchor(right);
+  }
+  @position-try --flag-chip-above {
+    top: auto;
+    bottom: anchor(top);
+  }
+  @position-try --flag-chip-above-right {
+    top: auto;
+    bottom: anchor(top);
+    left: auto;
+    right: anchor(right);
+  }
 }
 .flag-panel p { margin: 0; }
 .flag-panel .flag-severity { font: var(--md-sys-typescale-label); }

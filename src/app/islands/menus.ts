@@ -44,3 +44,54 @@ document.addEventListener("click", (e) => {
   details.querySelector("form")?.reset();
   details.open = false;
 });
+
+// A flag chip's box is fixed, so it does not scroll with the page. The
+// stylesheet ties it to its chip with anchor positioning (components.css,
+// beeline-zlqm); where the browser has none, the box would open where the
+// chip would be if the page were not scrolled, often below the window. Here it is
+// placed by hand instead: under the chip, or above it when there is more room
+// there, never taller than the room it has, and kept inside the window
+// sideways. It is placed again on scroll and resize while open.
+const anchored = typeof CSS !== "undefined" && CSS.supports("anchor-scope: --flag-chip");
+/** The gap kept between the box and the window's edge, in pixels. */
+const EDGE = 16;
+
+function placeFlagPanel(menu: HTMLDetailsElement): void {
+  const summary = menu.querySelector<HTMLElement>(":scope > summary");
+  const panel = menu.querySelector<HTMLElement>(":scope > .flag-panel");
+  if (summary === null || panel === null) return;
+  const style = panel.style;
+  style.top = style.bottom = style.left = style.maxHeight = "";
+  const chip = summary.getBoundingClientRect();
+  const { clientWidth: width, clientHeight: height } = document.documentElement;
+  const margin = parseFloat(getComputedStyle(panel).marginTop) || 0;
+  const below = height - chip.bottom - margin - EDGE;
+  const above = chip.top - margin - EDGE;
+  const box = panel.getBoundingClientRect();
+  if (box.height <= below || below >= above) {
+    style.top = `${chip.bottom}px`;
+    style.maxHeight = `${Math.max(below, 0)}px`;
+  } else {
+    style.top = "auto";
+    style.bottom = `${height - chip.top}px`;
+    style.maxHeight = `${Math.max(above, 0)}px`;
+  }
+  style.left = `${Math.max(EDGE, Math.min(chip.left, width - box.width - EDGE))}px`;
+}
+
+if (!anchored) {
+  const placeOpen = () => {
+    for (const menu of document.querySelectorAll<HTMLDetailsElement>("details.flag-menu[open]")) placeFlagPanel(menu);
+  };
+  document.addEventListener(
+    "toggle",
+    (e) => {
+      const menu = e.target;
+      if (menu instanceof HTMLDetailsElement && menu.open && menu.classList.contains("flag-menu")) placeFlagPanel(menu);
+    },
+    true,
+  );
+  // Capture, so a scroll inside the table's sideways-scrolling wrapper counts too.
+  document.addEventListener("scroll", placeOpen, { capture: true, passive: true });
+  window.addEventListener("resize", placeOpen);
+}

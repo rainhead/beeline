@@ -23,10 +23,11 @@ import { refreshPlantCommonNames } from "../src/plant-common-names.js";
  */
 
 let conn: DuckDBConnection;
+let instance: Awaited<ReturnType<typeof createMemoryDb>>["instance"];
 let ada: number;
 
 beforeEach(async () => {
-  ({ conn } = await createMemoryDb());
+  ({ conn, instance } = await createMemoryDb());
   await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
   [[ada]] = (await rows(conn, "SELECT min(entity_id) FROM person")) as [[number]];
   await conn.run(
@@ -744,6 +745,78 @@ describe("descriptive fields are a fill-only refresh", () => {
     expect(await rows(conn, `SELECT sample_id, details FROM qc_finding WHERE rule_name = 'count_mismatch'`)).toEqual([
       [small, "observation says 10 but sample count is 7"],
     ]);
+  });
+
+  test("a printed sample that several observations claim does not follow the one it cites", async () => {
+    // sample_multi_observation: observation 8 also claims sample 7 (same collector,
+    // number and day), so observation 7's count is not the sample's.
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "13" });
+    for (const n of [1, 2, 3]) await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, ${n})`);
+    await stage(obs(7, { ofvs: ofvs("7", "19") }));
+    await stage(obs(8, { ofvs: ofvs("7", "6") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT 1 FROM sample_multi_observation WHERE sample_id = ${sampleId}`)).toHaveLength(1);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([13]);
+  });
+
+  test("a printed sample whose observation was renumbered or redated does not follow; an unprinted one does", async () => {
+    const renumbered = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
+    const redated = await insertCleanSample(conn, { inat_observation_id: "8", sample_number: "'8'", specimen_count: "3" });
+    const unprinted = await insertCleanSample(conn, { inat_observation_id: "9", sample_number: "'9'", specimen_count: "3" });
+    for (const id of [renumbered, redated]) await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1)`);
+    await stage(obs(7, { ofvs: ofvs("70", "5") }));
+    await stage(obs(8, { observed_on: currentSeasonDate(8, 20), ofvs: ofvs("8", "5") }));
+    await stage(obs(9, { ofvs: ofvs("9", "5") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT entity_id, specimen_count FROM sample WHERE entity_id IN (${renumbered}, ${redated}, ${unprinted}) ORDER BY entity_id`)).toEqual([
+      [renumbered, 3], [redated, 3], [unprinted, 5],
+    ]);
+  });
+
+  test("a released printed sample keeps the count it was released at", async () => {
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, 1)`);
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${sampleId}, 'release')`);
+    await stage(obs(7, { ofvs: ofvs("7", "5") }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([3]);
+  });
+
+  test("a count staff set on a printed trap sample with its own observation stays through promotion", async () => {
+    const { setSpecimenCount } = await import("../src/app/sample-corrections.js");
+    const { createKysely } = await import("../src/db.js");
+    const { scratchPaths } = await import("./helpers.js");
+    const sam = Number(((await rows(conn, `INSERT INTO person (display_name) VALUES ('Sam Staff') RETURNING entity_id`))[0] as number[])[0]);
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${sam}, 3, 'samstaff')`);
+    const sampleId = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'", kind: "'trap'", protocol: "'vane trap'", specimen_count: "3",
+    });
+    for (const n of [1, 2, 3]) await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, ${n})`);
+    const paths = await scratchPaths();
+    const deps = {
+      db: createKysely(instance), conn,
+      correctionsPath: paths.correctionsPath, sampleOverlayPath: paths.sampleOverlayPath,
+      samplePaths: { log: paths.sampleChangesPath, state: paths.sampleStatePath },
+      syncJobRunning: () => false,
+    };
+    const staff = { personId: sam, signedInPersonId: sam, login: "samstaff", staff: true, impersonating: false };
+    const saved = await setSpecimenCount(deps, staff, sampleId, { count: "6", note: "", problemFor: (p: string) => p } as never);
+    expect(saved).toMatchObject({ ok: true, outcome: "saved", specimen_count: 6 });
+    await stage(obs(7, { ofvs: ofvs("7", "3") }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([6]);
+  });
+
+  test("once one of a pair stops sharing the observation, the other follows it on the next promotion", async () => {
+    // Accepted: sharing is judged afresh each promotion, and relinking is a deliberate staff repair.
+    const a = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "4" });
+    const b = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7b'", specimen_count: "7" });
+    await stage(obs(7, { ofvs: ofvs("7", "10") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT entity_id, specimen_count FROM sample WHERE entity_id IN (${a}, ${b}) ORDER BY 1`)).toEqual([[a, 4], [b, 7]]);
+    await conn.run(`UPDATE sample SET inat_observation_id = NULL WHERE entity_id = ${b}`);
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${a}`)).toEqual([10]);
   });
 
   test("the floral host follows the observation, printed or not: id, name and rank together", async () => {

@@ -497,8 +497,10 @@ COMMENT ON VIEW sample_atlas_unfilled IS 'A sample in a member atlas''s region w
 -- sum would have taken count_mismatch from 1,121 findings to 1,959 across
 -- the corpus as it stood before beeline-0199, which is a change to a live
 -- rule and not this step's to make. An unprinted sample cannot be born this
--- way any more: minting makes one sample per observation, and its count
--- follows the one it cites (ingest/mint-samples.sql, beeline-ni5m.1).
+-- way any more: minting makes one sample per observation. A sample in this
+-- view keeps its own count: promotion does not make it follow the one
+-- observation it cites, because that observation's count is not the sample's
+-- (ingest/mint-samples.sql, beeline-ni5m.18), so count_mismatch stays on it.
 CREATE VIEW sample_multi_observation AS
 SELECT s.entity_id AS sample_id, s.inat_observation_id AS cited_inat_id,
        CAST(count(*) AS INTEGER) AS other_observations,

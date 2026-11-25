@@ -1008,12 +1008,14 @@ export type SpecimenCountResult =
  * specimen holds, schema/150); lowering it below the highest place already
  * numbered is refused. On a printed sample with an iNaturalist observation the
  * `count_mismatch` flag stands afterwards, which is expected. A sample whose
- * count follows its observation is refused, because the next promotion
- * would put the observation's count back (ingest/mint-samples.sql,
- * beeline-ni5m.18): any sample with an observation that no other sample
- * cites, printed or not. A sample sharing its observation with another keeps
- * its own count, so staff may set it. Staff only, and refused while
- * impersonating.
+ * count still follows its observation is refused, because the next promotion
+ * would put the observation's count back (ingest/mint-samples.sql): any
+ * sample with an observation, until its labels are on paper. A printed
+ * sample is allowed, although promotion now follows a printed sample's
+ * count too (beeline-ni5m.18): setting a count writes a release
+ * (sample_print_release), and promotion never touches the count of a released
+ * sample, so a count staff set on a printed sample sticks. Staff only, and
+ * refused while impersonating.
  *
  * A count that changes also releases the sample for printing
  * (sample_print_release_event, schema/050; beeline-3vs.7), in any season:
@@ -1054,8 +1056,7 @@ export function setSpecimenCount(deps: CorrectionDeps, actor: Actor, sampleId: n
       const found = await sql<{ specimen_count: number | null; follows: boolean; highest: number | null }>`
         SELECT s.specimen_count,
                (s.inat_observation_id IS NOT NULL
-                AND NOT EXISTS (SELECT 1 FROM sample o
-                                WHERE o.inat_observation_id = s.inat_observation_id AND o.entity_id <> s.entity_id)) AS follows,
+                AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)) AS follows,
                (SELECT max(i.specimen_number) FROM individuated_specimen i WHERE i.sample_id = s.entity_id) AS highest
         FROM sample s WHERE s.entity_id = ${sampleId}`.execute(deps.db);
       const now = found.rows[0];
@@ -1140,9 +1141,8 @@ export type ReleaseLabelsResult =
  * A release is allowed in any season: in January and February last season is
  * still active, and staff may release a sample ahead of 1 March, when it
  * would otherwise stop printing. Releasing one whose count still follows its
- * iNaturalist observation (an observation, and no label on paper; this is
- * the older, narrower test, not the one `setSpecimenCount` now refuses as
- * `follows`, which ignores printing: beeline-ni5m.18) is refused: a settled
+ * iNaturalist observation (an observation, and no label on paper, the
+ * condition `setSpecimenCount` refuses as `follows`) is refused: a settled
  * season's count copied from iNaturalist does not print (Peter, 2026-11-19),
  * and staff cannot correct that count, so there is nothing for them to vouch
  * for. Releasing a sample already released, and withdrawing one that is not,

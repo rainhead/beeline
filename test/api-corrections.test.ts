@@ -1360,13 +1360,6 @@ describe("a trap sample's specimen count", () => {
     expect((await w.send(w.keys.sam, path, { count: "x" })).status).toBe(422);
     expect((await w.send(w.keys.sam, path, {})).status).toBe(400);
     expect((await w.send(w.keys.sam, `/samples/${w.linked}/specimen-count`, { count: 2 })).status).toBe(422);
-    // beeline-ni5m.18: a count follows its observation printed or not, so a printed sample with
-    // an observation of its own is refused too, and one that shares its observation is not.
-    const printedFollowing = await insertCleanSample(w.conn, { sample_number: "'T-20'", kind: "'trap'", protocol: "'vane trap'", inat_observation_id: "554433", specimen_count: "2" });
-    await w.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${printedFollowing}, 1)`);
-    expect((await w.send(w.keys.sam, `/samples/${printedFollowing}/specimen-count`, { count: 4 })).status).toBe(422);
-    const sharing = await insertCleanSample(w.conn, { sample_number: "'T-21'", kind: "'trap'", protocol: "'vane trap'", inat_observation_id: "554433", specimen_count: "2" });
-    expect((await w.send(w.keys.sam, `/samples/${sharing}/specimen-count`, { count: 4 })).status).toBe(200);
     expect((await w.send(w.keys.alice, path, { count: 2 })).status).toBe(403);
     expect((await w.send(w.keys.samEdit, path, { count: 2 })).status).toBe(403);
     expect((await w.send(w.keys.aliceRead, path, { count: 2 })).status).toBe(403);

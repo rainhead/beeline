@@ -683,7 +683,7 @@ describe("setSpecimenCount", () => {
     expect(await events(s)).toEqual([]);
   });
 
-  it("refuses a count that follows its observation, printed or not, and allows it once another sample cites the same observation (beeline-ni5m.18)", async () => {
+  it("refuses a count that still follows its observation, and allows it once the sample is printed", async () => {
     const s = await setup();
     await s.conn.run(
       `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw)
@@ -693,9 +693,6 @@ describe("setSpecimenCount", () => {
     expect(await set(s, id, "4")).toEqual({ ok: false, refusal: "invalid", problem: "problem: follows" });
     expect(await countOf(s, id)).toBe(3);
     await s.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1)`);
-    expect(await set(s, id, "4")).toEqual({ ok: false, refusal: "invalid", problem: "problem: follows" });
-    expect(await countOf(s, id)).toBe(3);
-    await trapSample(s, { sample_number: "'T-9b'", inat_observation_id: "445566" });
     expect(await set(s, id, "4")).toMatchObject({ ok: true, outcome: "saved", specimen_count: 4 });
     expect(await countOf(s, id)).toBe(4);
   });

@@ -27,9 +27,9 @@
 -- (beeline-0199). A sample's specimen count follows its observation printed
 -- or not, because the count is what the volunteer declares and what is on
 -- paper is a separate fact (beeline-ni5m.18, GitHub #464) — except where
--- another sample cites the same observation, since the old system printed
--- some pairs of samples against one observation and one count cannot be
--- right for both. Nobody can edit an iNat-linked sample in the app, so no
+-- another sample cites the same observation or several observations claim
+-- the sample, since one count cannot then be right, and for a printed sample
+-- whose observation no longer carries its number and dates. Nobody can edit an iNat-linked sample in the app, so no
 -- staff edit is at risk there.
 
 -- ── Free links ───────────────────────────────────────────────────────────
@@ -202,6 +202,26 @@ WHERE sample.entity_id = followed.sample_id
 -- copying the observation's count onto both would be wrong for one of them.
 -- Such a sample keeps its count, and count_mismatch names the difference
 -- (sample_shared_observation, schema/108, lists the pairs).
+--
+-- Nor where the sample is in sample_multi_observation: several observations
+-- claim it and it cites one, so one observation's count is not the sample's
+-- declared count (a printed sample's count can be the total over all of
+-- them). It is the same kind of ambiguity as a shared observation.
+--
+-- A PRINTED sample follows only while its observation still carries the
+-- sample's number and a date within the sample's dates. An observation
+-- renumbered or redated after printing may now describe a different
+-- collecting event, and its count is then not the count of the bees on these
+-- pins. An unprinted sample needs no such test: its number follows its
+-- observation earlier in this file, and its dates are its observation's.
+--
+-- Whether a sample shares its observation, or is claimed along with others,
+-- is judged afresh on every promotion. If staff relink one sample of a pair,
+-- the other starts following on the next nightly; that is accepted, since
+-- relinking is a deliberate staff repair. A released sample's count stays
+-- what it was released at (staff set or vouched for it), and promotion never
+-- touches it. Trap samples follow like net samples: the declared count is the
+-- observation's, or what staff set in Beeline.
 UPDATE sample SET specimen_count = followed.specimen_count
 FROM (
   SELECT s.entity_id AS sample_id, c.specimen_count
@@ -213,6 +233,9 @@ FROM (
     -- Staff released it for printing: a count they set or vouched for is theirs
     -- (sample_print_release, schema/102; beeline-3vs.7).
     AND NOT EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = s.entity_id)
+    AND NOT EXISTS (SELECT 1 FROM sample_multi_observation m WHERE m.sample_id = s.entity_id)
+    AND (NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+         OR (c.sample_number = s.sample_number AND c.observed_on BETWEEN s.date_start AND s.date_end))
 ) followed
 WHERE sample.entity_id = followed.sample_id
   AND sample.specimen_count IS DISTINCT FROM followed.specimen_count;

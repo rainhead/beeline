@@ -43,7 +43,9 @@ describe("flag chip panel", () => {
     expect(base![0]).toContain("position: fixed");
     expect(base![0]).toContain("max-height:");
     expect(base![0]).toContain("overflow-y: auto");
+    // The script places the box in every browser, and its insets would be overridden by the fallbacks.
+    expect(css).toMatch(/details\.flag-menu > \.flag-panel\.placed \{ position-try-fallbacks: none; \}/);
     const script = await readFile("src/app/islands/menus.ts", "utf8");
-    expect(script).toContain('CSS.supports("anchor-scope: --flag-chip")');
+    expect(script).toContain('panel.classList.add("placed")');
   });
 });

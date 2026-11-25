@@ -441,11 +441,12 @@ details.flag-menu[open] > summary.warning { background: var(--md-sys-color-warni
    not clip it. Left in its own place, a fixed box opened where its chip would
    be if the page were not scrolled, so on a scrolled listing it fell below
    the window, where scrolling cannot reach a fixed box (beeline-zlqm,
-   reported by the BC Bee Atlas lead). It is tied to its chip
-   as a column menu is to its heading: below it, or above it where below
-   would run off the bottom, and never taller than the window, scrolling
-   inside instead. Where the browser has no anchor positioning, the islands
-   script (islands/menus.ts) does the same when the box opens. */
+   reported by the BC Bee Atlas lead). The islands script (islands/menus.ts)
+   places it when it opens: beside its chip, on the side with room, never
+   taller than that room, scrolling inside instead; it marks the box `placed`,
+   which turns off the anchor fallbacks below. Those are for a page without
+   the script: tied to its chip as a column menu is to its heading, below it
+   or above it where below would run off the bottom. */
 details.flag-menu > .flag-panel {
   position: fixed;
   top: auto;
@@ -467,6 +468,7 @@ details.flag-menu > .flag-panel {
     left: anchor(left);
     position-try-fallbacks: --flag-chip-right, --flag-chip-above, --flag-chip-above-right;
   }
+  details.flag-menu > .flag-panel.placed { position-try-fallbacks: none; }
   @position-try --flag-chip-right {
     left: auto;
     right: anchor(right);

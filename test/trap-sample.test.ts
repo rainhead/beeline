@@ -68,13 +68,15 @@ describe("checking a trap sample", () => {
     expect(checked.problems.collectors).toContain("Nobody Known");
   });
 
-  it("refuses a number another trap sample has, but not one a net sample has", async () => {
-    await insertCleanSample(conn, { sample_number: "'3'", kind: "'net'" });
-    expect("sample" in (await checkTrapSample(conn, form({ sample_number: "3" })))).toBe(true);
+  it("refuses a plain number its first collector has that day, of a net sample as of a trap sample (the rule is in test/sample-number-scope.test.ts)", async () => {
+    await insertCleanSample(conn, { sample_number: "'3'", kind: "'net'", date_start: `DATE '${CURRENT_SEASON}-06-16'`, date_end: `DATE '${CURRENT_SEASON}-06-16'` });
+    const clash = await checkTrapSample(conn, form({ sample_number: "3" }));
+    expect("problems" in clash && clash.problems.sample_number).toBe(`Dan O'Loughlin already has a sample numbered 3 on ${CURRENT_SEASON}-06-16.`);
   });
 
-  it("refuses a number already in Beeline, but not the sample's own", async () => {
-    const id = await insertCleanSample(conn, { sample_number: "'OBAS-20300'", kind: "'trap'" });
+  it("refuses a series number the program already has, but not the sample's own", async () => {
+    const oba = "(SELECT entity_id FROM program WHERE code = 'OBA')";
+    const id = await insertCleanSample(conn, { sample_number: "'OBAS-20300'", kind: "'trap'", atlas_id: oba });
     const clash = await checkTrapSample(conn, form());
     expect("problems" in clash && clash.problems.sample_number).toContain("already");
     expect("sample" in (await checkTrapSample(conn, form(), id))).toBe(true);

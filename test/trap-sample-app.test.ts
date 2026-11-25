@@ -35,7 +35,7 @@ async function trapApp() {
     staffer: await person("Sam Staff"),
   };
   await conn.run(`INSERT INTO person_admin (person_id) VALUES (${people.staffer})`);
-  await insertCleanSample(conn, { kind: "'trap'", protocol: "'vane trap'", sample_number: "'OBAS-00657'", collector_id: String(people.trapper) });
+  await insertCleanSample(conn, { kind: "'trap'", protocol: "'vane trap'", sample_number: "'OBAS-00657'", collector_id: String(people.trapper), atlas_id: "(SELECT entity_id FROM program WHERE code = 'OBA')" });
   await insertCleanSample(conn, { kind: "'net'", collector_id: String(people.netter) });
   await insertCleanSample(conn, { kind: "'trap'", protocol: "'pan trap'", sample_number: "'OBAS-00600'", collector_id: String(people.otherTrapper) });
   const db = createKysely(instance);
@@ -192,7 +192,7 @@ describe("entering a trap sample", () => {
     const res = await as("staffer").post("/trap-samples/new", entry({ sample_number: "OBAS-00657", latitude: "" }));
     expect(res.status).toBe(400);
     const body = await res.text();
-    expect(body).toContain("Trap sample OBAS-00657 is already in Beeline.");
+    expect(body).toContain("Sample number OBAS-00657 is already used by another sample in Oregon Bee Atlas.");
     expect(body).toContain("A latitude in decimal degrees is needed.");
     expect(body).toContain(`value="Fields-Denio N"`);
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_entry`)).toEqual([[0]]);

@@ -6,7 +6,7 @@ import { oregonToday } from "../oregon-today.js";
 import { en } from "./messages/en.js";
 import type { Messages } from "./messages/index.js";
 import { distanceMetres, predictRefusals, type AreaValues, type ChangeUnit, type CollectorsPreview, type SampleFacts, type UnitChange } from "./samples-upload-change.js";
-import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, lookalikesAmong, methodCodes, readLookalikeCandidates, readSeriesHolders, readTrapNumbers, seriesNumberHeldProblem, seriesNumberProblem, type Lookalike, type LookalikeCandidate, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
+import { AUTO_NUMBER_PLACEHOLDER, checkTrapSample, foldNumber, highestSeriesNumber, isProgramSeries, lookAlike, lookalikesAmong, methodCodes, readLookalikeCandidates, readNumberHolders, programOfSample, isSeriesNumber, readProgramSeriesTaken, readStatePrograms, seriesNumberProblem, type Lookalike, type LookalikeCandidate, type LookalikeFacts, type TrapSampleForm } from "../trap-sample.js";
 import { ALL, EMPTY_QUERY, STAFF_READER, alpha3Of, listSamples, type Reader } from "./listings.js";
 import { samplesFileRow } from "./sample-workbook.js";
 import { otherPrograms, programsOfNewState, type ChangedRecord, type OtherProgram } from "./upload-atlases.js";
@@ -518,8 +518,8 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   // What the store says of the file's new rows, asked once for the file and not once per row: who holds each series
   // number, which trap numbers are taken, and (as each first collector is met) their samples a new one could look like.
   const fileNumbers = rows.flatMap(({ cells }, i) => (idOf[i]!.given === "" ? [text(cells, "fieldNumber")] : [])).filter((n) => n !== "");
-  const holderOf = await readSeriesHolders(conn, fileNumbers);
-  const trapNumbers = await readTrapNumbers(conn, fileNumbers);
+  const holders = await readNumberHolders(conn, fileNumbers);
+  const statePrograms = await readStatePrograms(conn);
   // The methods a new row may name, read once for the file (src/trap-sample.ts).
   const trapMethodCodes = await methodCodes(conn, { trapOnly: true });
   const candidates = new Map<number, LookalikeCandidate[]>();
@@ -568,11 +568,9 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         flagged.add("fieldNumber");
         result.problems.push({ reason: numberCell.problem, unit: null, column: "fieldNumber", detail: numberCell.fileText, cells: heldCells(new Map([["fieldNumber", numberCell]]), ["fieldNumber"]) });
       }
-      // The program's own numbers have a shape (written exactly, in any spelling that folds to it), and a series number that any other sample has, of any kind, cannot be used again.
+      // The program's own numbers have a shape (written exactly, in any spelling that folds to it). Whether another sample holds the number is judged with the rest of the form, below, once its collectors and program are known.
       if (numberCell.problem === null && fileNumber !== "") {
-        const shape = seriesNumberProblem(fileNumber);
-        const holder = shape === null ? holderOf(fileNumber) : null;
-        const wrong = shape ?? (holder === null ? null : seriesNumberHeldProblem(fileNumber, holder));
+        const wrong = seriesNumberProblem(fileNumber);
         if (wrong !== null) {
           flagged.add("fieldNumber");
           result.problems.push({ reason: "new_row_problem", unit: null, column: "fieldNumber", detail: wrong, cells: [] });
@@ -601,7 +599,7 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
         county: full.get("county")!.fileText,
         locality: full.get("locality")!.fileText,
       };
-      const checked = await checkTrapSample(conn, form, null, { staff: true, people, taken: (n) => trapNumbers.has(n), methods: trapMethodCodes });
+      const checked = await checkTrapSample(conn, form, null, { staff: true, people, holders, statePrograms, upload: true, methods: trapMethodCodes });
       if ("problems" in checked) {
         for (const [field, sentence] of Object.entries(checked.problems) as Array<[keyof TrapSampleForm, string]>) {
           if (FORM_COLUMNS[field].some((c) => flagged.has(c))) continue;
@@ -627,9 +625,16 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
           obasChecked: options.obasChecked ?? false,
         };
       }
-      // Spellings of the program's own number are one number.
-      const key = isProgramSeries(fileNumber) ? foldNumber(fileNumber) : fileNumber;
-      if (fileNumber !== "") (newNumbers.get(key) ?? newNumbers.set(key, []).get(key)!).push(index);
+      // Two new rows are one number to what it is held to, as a sample and the store's are (src/trap-sample.ts): a series number in a program, a plain number for a collector on a day. Spellings of the program's own number are one number.
+      if (fileNumber !== "" && !("problems" in checked)) {
+        const s = checked.sample;
+        const program = await programOfSample(conn, null, s.state_province, statePrograms);
+        const key =
+          isProgramSeries(fileNumber) || isSeriesNumber(fileNumber)
+            ? `series|${isProgramSeries(fileNumber) ? foldNumber(fileNumber) : fileNumber}|${program}`
+            : `plain|${fileNumber}|${s.collector_ids[0]}|${s.date_start}`;
+        (newNumbers.get(key) ?? newNumbers.set(key, []).get(key)!).push(index);
+      }
       continue;
     }
 
@@ -709,10 +714,10 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   }
 
   // Two new rows with one number would make two trap samples that cannot both exist.
-  for (const [number, at] of newNumbers) {
+  for (const at of newNumbers.values()) {
     if (at.length < 2) continue;
     for (const i of at) {
-      results[i]!.problems.push({ reason: "new_number_repeated", unit: null, column: "fieldNumber", detail: number, cells: [] });
+      results[i]!.problems.push({ reason: "new_number_repeated", unit: null, column: "fieldNumber", detail: results[i]!.sampleNumber ?? "", cells: [] });
       results[i]!.create = null;
     }
   }
@@ -724,13 +729,13 @@ export async function planSamples(db: Kysely<Database>, conn: DuckDBConnection, 
   if (blanks.length > 0) {
     const explicit = new Set(results.filter((r) => r.kind === "new" && r.sampleNumber !== null && r.sampleNumber !== "" && isProgramSeries(r.sampleNumber)).map((r) => foldNumber(r.sampleNumber!)));
     let next = (await highestSeriesNumber(conn)) + 1;
-    const programHolderOf = await readSeriesHolders(conn, [], { allProgramSeries: true });
+    const taken = await readProgramSeriesTaken(conn);
     for (const r of blanks) {
       let given: string | null = null;
       while (next <= 99_999) {
         const candidate = `OBAS-${String(next).padStart(5, "0")}`;
         next++;
-        if (!explicit.has(foldNumber(candidate)) && programHolderOf(candidate) === null) {
+        if (!explicit.has(foldNumber(candidate)) && !taken.has(foldNumber(candidate))) {
           given = candidate;
           break;
         }

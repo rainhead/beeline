@@ -223,7 +223,7 @@ import {
   mayEditTrapSample,
   mayEnterTrapSamples,
   nextSampleNumber,
-  numberTakenProblem,
+  numberClashSentence,
   setTrapSampleLocality,
   updateTrapSample,
   type FieldProblems,
@@ -1565,7 +1565,7 @@ export function createApp({
     const id = await createTrapSample(printWriter!, checked.sample, c.get("session").personId, undefined, { staff: staffRelease(c) });
     // Somebody else saved this number since the form was checked.
     if (id === "taken") {
-      const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
+      const problems = { sample_number: await numberClashSentence(printWriter!, checked.sample, null) };
       return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, problems, "/trap-samples/new"), 409);
     }
     // Entered in its history as arriving, under whoever entered it.
@@ -1615,7 +1615,7 @@ export function createApp({
       return errorResponse(c, "notFound", { heading: m.trapSample.notEditableHeading, message: m.trapSample.notEditable });
     }
     if (updated === "taken") {
-      const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
+      const problems = { sample_number: await numberClashSentence(printWriter!, checked.sample, id) };
       return c.html(await trapPage(c, m.trapSample.editTitle, form, problems, `/samples/${id}/trap`, id), 409);
     }
     return c.redirect(`/samples/${id}`);

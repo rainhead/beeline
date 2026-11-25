@@ -3,7 +3,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { oregonToday } from "../oregon-today.js";
-import { checkTrapSample, createTrapSample, findLookalikes, numberTakenProblem, seriesNumberHeldProblem, seriesNumberHolder, seriesNumberProblem, type TrapSampleForm } from "../trap-sample.js";
+import { checkTrapSample, createTrapSample, findLookalikes, numberHolderFor, numberScopeOf, numberTakenProblem, seriesNumberProblem, type TrapSampleForm } from "../trap-sample.js";
 import { JobInterrupted } from "./jobs/framework.js";
 import { STAFF_READER } from "./listings.js";
 import { en } from "./messages/en.js";
@@ -362,7 +362,7 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
   }
   // The trap form's own check, again, with the ids the collectors came to. The number is the one the preview showed:
   // a blank row was given its number when the file was applied, and is not renumbered here.
-  const checked = await checkTrapSample(deps.conn, queued.form, null);
+  const checked = await checkTrapSample(deps.conn, queued.form, null, { upload: true });
   if ("problems" in checked) {
     await settle(deps.db, p, "refused", Object.values(checked.problems).join(" "));
     return { outcome: "refused" };
@@ -402,7 +402,6 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
       );
       if (updated.rowsChanged !== 1) throw new Error(`upload ${p.upload_id} row ${p.row_number} was not pending when its sample was made`);
     },
-    { anyKind: true },
   ).catch(async (err: unknown) => {
     if (err instanceof LookalikeFound) {
       await settle(deps.db, p, "skipped", lookalikeSentence(err.sampleNumber));
@@ -412,8 +411,10 @@ async function createRow(deps: ApplyDeps, p: Pending): Promise<{ outcome: "creat
   });
   if (made === "skipped") return { outcome: "skipped" };
   if (made === "taken") {
-    const holder = await seriesNumberHolder(deps.conn, sample.sample_number);
-    await settle(deps.db, p, "refused", holder === null ? numberTakenProblem(sample.sample_number) : seriesNumberHeldProblem(sample.sample_number, holder));
+    const scope = await numberScopeOf(deps.conn, sample, null);
+    const holder = await numberHolderFor(deps.conn, scope, null);
+    // The holder may be gone again since the job asked; the sentence then has nobody to point at.
+    await settle(deps.db, p, "refused", holder === null ? `Sample number ${sample.sample_number} was taken while the file was applied. Download a new file.` : await numberTakenProblem(deps.conn, scope, holder, { upload: true }));
     return { outcome: "refused" };
   }
   // Entered in the sample's history as arriving, under whoever applied the file, in its own turn of the queue, as the trap form does.

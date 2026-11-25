@@ -3997,7 +3997,7 @@ export const en = {
     count_mismatch:
       "The specimen count on iNaturalist does not match this sample. Verify that the observation has a sample number, date, and a count of one or more. If more than one sample cites the observation, each keeps its own count.",
     count_below_printed:
-      "The specimen count is now lower than the number of labels already printed for this sample. No action is needed; extra labels can be discarded.",
+      "The specimen count on iNaturalist is now lower than the number of labels already printed for this sample. No action is needed. Labels not yet on a specimen can be discarded.",
     within_sample_disagreement:
       "Historical records merged into this sample had conflicting values for a field. The earliest record's value was retained. Review the listed alternatives and edit the sample if the retained value is incorrect.",
     observation_missing_upstream:

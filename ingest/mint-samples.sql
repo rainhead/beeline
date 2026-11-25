@@ -16,18 +16,21 @@
 -- unclaimed screen and the alarms read the same definitions this does.
 --
 -- WHAT IT NEVER DOES: rewrite an existing sample's date, or a printed
--- sample's number or count. sample.inat_observation_id stays scalar and
+-- sample's number. sample.inat_observation_id stays scalar and
 -- there is no sample_observation list, which is what makes that guarantee
 -- cheap — and what protects a staff edit to any field minting writes.
 -- sample_observation_number_mismatch and sample_multi_observation (schema/108)
 -- are the cost of it, named rather than argued away. An UNPRINTED sample's
--- number and specimen count do follow its observation, as its locality does
--- (below): until the labels print the observation is the record, one
--- observation is one sample, and renumbering on iNaturalist is how a
--- volunteer clears a duplicate number (beeline-0199), as correcting the
--- count there is how they get the right number of labels (beeline-ni5m.1).
--- Nobody can edit an iNat-linked sample in the app, so no staff edit is at
--- risk there.
+-- number follows its observation, as its locality does (below): until the
+-- labels print the observation is the record, one observation is one sample,
+-- and renumbering on iNaturalist is how a volunteer clears a duplicate number
+-- (beeline-0199). A sample's specimen count follows its observation printed
+-- or not, because the count is what the volunteer declares and what is on
+-- paper is a separate fact (beeline-ni5m.18, GitHub #464) — except where
+-- another sample cites the same observation, since the old system printed
+-- some pairs of samples against one observation and one count cannot be
+-- right for both. Nobody can edit an iNat-linked sample in the app, so no
+-- staff edit is at risk there.
 
 -- ── Free links ───────────────────────────────────────────────────────────
 -- An existing sample that cites no observation, and an unlinked observation
@@ -176,27 +179,37 @@ FROM (
 WHERE sample.entity_id = followed.sample_id
   AND sample.sample_number IS DISTINCT FROM followed.sample_number;
 
--- ── And its specimen count (beeline-ni5m.1) ──────────────────────────────
--- On the number's terms exactly. The count decides how many labels a run
--- prints (pending_print_sample, schema/150), and nobody can edit an
--- iNat-linked sample in the app, so until this followed a volunteer who
--- corrected the count on iNaturalist before the run got labels for the old
--- count and a count_mismatch warning that nothing could clear. Only a count
--- the observation still carries as a collection record — a positive whole
--- number, which is what makes it a candidate — so an observation whose count
--- goes to zero or to junk is count_mismatch's to name, not this file's to
--- follow. Once a label is on paper the count stays what the labels were
--- printed for: a later change upstream is count_mismatch's to name, and a
--- decrease below what was frozen is count_below_printed's. A sample frozen
--- into a run that has not printed still follows, as its locality does, and
--- a count falling below the frozen specimens then raises
--- count_below_printed, which is the proofer's signal (schema/120).
+-- ── And its specimen count (beeline-ni5m.1, beeline-ni5m.18) ─────────────
+-- The sample's count is the DECLARED count: what the volunteer says on
+-- iNaturalist. What is on paper is a separate fact (specimen_on_paper,
+-- schema/101) that this file never touches, so the count follows the
+-- observation up and down whether or not the labels have printed (Peter,
+-- 2026-11-25, GitHub #464: a volunteer raised the count after printing and
+-- the extra labels never queued). The count decides how many labels a run
+-- prints (pending_print_sample, schema/150) and nobody can edit an
+-- iNat-linked sample in the app. A printed sample whose count rises has only
+-- the new places pending, since the places already on paper are not
+-- pending, and a settled one still waits for a release. A count falling
+-- below what is on paper is count_below_printed's to name (schema/120).
+-- Only a count the observation still carries as a collection record — a
+-- positive whole number, which is what makes it a candidate — so an
+-- observation whose count goes to zero or to junk is count_mismatch's to
+-- name, not this file's to follow.
+--
+-- Only while exactly one sample cites the observation. The old system
+-- printed some pairs of samples against one observation (observation
+-- 366102324 is cited by a sample of 10 specimens and another of 7), and
+-- copying the observation's count onto both would be wrong for one of them.
+-- Such a sample keeps its count, and count_mismatch names the difference
+-- (sample_shared_observation, schema/108, lists the pairs).
 UPDATE sample SET specimen_count = followed.specimen_count
 FROM (
   SELECT s.entity_id AS sample_id, c.specimen_count
   FROM sample s
   JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
-  WHERE NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+  WHERE NOT EXISTS (
+          SELECT 1 FROM sample o
+          WHERE o.inat_observation_id = s.inat_observation_id AND o.entity_id <> s.entity_id)
     -- Staff released it for printing: a count they set or vouched for is theirs
     -- (sample_print_release, schema/102; beeline-3vs.7).
     AND NOT EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = s.entity_id)

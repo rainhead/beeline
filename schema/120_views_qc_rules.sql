@@ -372,14 +372,15 @@ JOIN sample_host h ON h.sample_id = s.entity_id
 WHERE h.is_vascular IS FALSE;
 
 -- The sample's evidencing observation asserts a different specimen count
--- than the sample carries, or one that is not a count at all. Warning. An
--- unprinted sample's count follows its observation while the observation
--- still carries a positive whole number (ingest/mint-samples.sql,
--- beeline-ni5m.1), so on one of those this can only say the observation's
--- count is zero, negative or not a number ('lots'), which the sample has not
--- taken; on a printed sample the record keeps the count its labels were
--- printed for, and this names what the observation says since. A count the
--- observation does not carry at all is not a disagreement.
+-- than the sample carries, or one that is not a count at all. Warning. A
+-- sample's count follows its observation, printed or not, while the
+-- observation still carries a positive whole number and no other sample
+-- cites it (ingest/mint-samples.sql, beeline-ni5m.1 and beeline-ni5m.18), so
+-- this can only say: the observation's count is zero, negative or not a
+-- number ('lots'); or the observation is shared with another sample, which
+-- keeps its own count; or the sample was released for printing, whose count
+-- is then staff's. A count the observation does not carry at all is not a
+-- disagreement.
 CREATE VIEW qc_rule_count_mismatch AS
 SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,

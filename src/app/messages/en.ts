@@ -1410,7 +1410,7 @@ export const en = {
         problems: {
           count: "The specimen count must be a whole number, 0 or more, of at most six digits.",
           net: "This is a net sample. Only a trap sample's specimen count can be corrected here.",
-          follows: "This sample's specimen count follows its iNaturalist observation until labels are printed, so a count set here would be replaced at the next update. Change the count on the observation instead.",
+          follows: "This sample's specimen count follows its iNaturalist observation, so a count set here would be replaced at the next update. Change the count on the observation instead.",
           numbered: (highest: number) => `This sample's specimens up to number ${highest} already have field numbers, so the count cannot be less than ${highest}.`,
         },
       },
@@ -3995,7 +3995,7 @@ export const en = {
     duplicate_sample_number:
       "Each sample must have its own number, and this one appears on more than one of your samples for that date. Renumber all but one of the observations on iNaturalist. Your samples in Beeline will update automatically until their labels are printed.",
     count_mismatch:
-      "The specimen count on iNaturalist does not match this sample. Verify that the observation has a sample number, date, and a count of one or more. Once labels have printed, the record keeps the count its labels were printed for.",
+      "The specimen count on iNaturalist does not match this sample. Verify that the observation has a sample number, date, and a count of one or more. If more than one sample cites the observation, each keeps its own count.",
     count_below_printed:
       "The specimen count is now lower than the number of labels already printed for this sample. No action is needed; extra labels can be discarded.",
     within_sample_disagreement:

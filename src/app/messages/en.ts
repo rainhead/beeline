@@ -1321,10 +1321,10 @@ export const en = {
         hint: "Old Beeline holds records of this sample. A correction here is recorded against those records, with your name.",
         /** For a trap sample entered in Beeline, once its own form no longer opens. */
         hintEntered: "This sample's labels are printed or about to be, so its own form no longer opens. A correction here changes the sample; ask for a reprint if the labels should change too.",
-        /** For a sample Beeline made from an iNaturalist observation, once its labels have printed. */
-        hintObserved: "This sample's labels are printed, so its dates no longer follow its iNaturalist observation. A correction here changes the sample; ask for a reprint if the labels should change too.",
-        /** For a sample with an observation whose dates do not follow it, though its labels are not printed (a range, a shared or multiply claimed observation). */
-        hintObservedFree: "This sample's dates do not follow its iNaturalist observation (it spans days, or the observation is shared with another sample or claimed along with others), so a correction here changes the sample.",
+        /** For a sample with an iNaturalist observation whose dates staff have not set. */
+        hintObserved: "Until its labels print, this sample's dates follow its iNaturalist observation. A date set here stays, and is no longer taken from iNaturalist. If its labels are printed, ask for a reprint to change them.",
+        /** For a sample whose dates staff set. */
+        hintDateSet: "Staff set this sample's dates, so they no longer follow its iNaturalist observation. If its labels are printed, ask for a reprint to change them.",
         dateStart: "Collecting started",
         dateStartHint: "The day collecting began, or the day of a net sample.",
         protocol: "Method",
@@ -1344,7 +1344,6 @@ export const en = {
           before_start: "Collecting cannot end before the day it started.",
           future: "Collecting cannot end on a day that has not come yet.",
           start_future: "Collecting cannot start on a day that has not come yet.",
-          start_observation: "Until its labels print, a sample collected on one day takes its date from its iNaturalist observation, so change the date there. After that, or if the sample spans several days or its observation is shared, staff can correct it here, but not into a single day other than the observation's.",
           method_required: "A trap sample entered in Beeline needs its method, as its own form does.",
         },
         noOldRecords: "Old Beeline holds no records of this sample and it was not entered in Beeline, so it cannot be corrected here.",

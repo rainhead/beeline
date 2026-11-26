@@ -1083,6 +1083,14 @@ export interface SampleEntryTable {
   entered_at: Generated<Date>;
 }
 
+/** A sample whose dates staff set, which promotion never moves (beeline-qu2c). */
+export interface SampleDateOverrideTable {
+  sample_id: number;
+  set_by: number | null;
+  set_at: Generated<Date>;
+  reason: string | null;
+}
+
 /** A locality staff set, which promotion never overwrites (beeline-649). */
 export interface SampleLocalityOverrideTable {
   sample_id: number;
@@ -2272,6 +2280,7 @@ export interface Database {
   sample_without_method: SampleWithoutMethodView;
   sample_method_out_of_step: SampleMethodOutOfStepView;
   sample_kind_method_mismatch: SampleKindMethodMismatchView;
+  sample_date_override: SampleDateOverrideTable;
   sample_locality_override: SampleLocalityOverrideTable;
   sample_locality_override_stale: SampleLocalityOverrideStaleView;
   sample_locality_override_diverged: SampleLocalityOverrideDivergedView;

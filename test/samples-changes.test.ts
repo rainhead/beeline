@@ -328,7 +328,7 @@ describe("a change a correction would refuse", () => {
     expect(html).not.toContain(esc(en.uploads.page.mayNotLine(1, in1)));
   });
 
-  it("is predicted for a start date on a sample with an observation, a method on a sample nothing backs, a print run and a number taken", async () => {
+  it("is predicted for a method on a sample nothing backs, a print run and a number taken, and not for a start date on a sample with an observation", async () => {
     const f = await uploadFixture("staffer", { unprinted: true });
     // An old sample with an observation: iNaturalist holds its start.
     const withObservation = await trapSample(f, { sample_number: "'X-1'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(20)}'`, inat_observation_id: "12345" }, false);
@@ -346,7 +346,8 @@ describe("a change a correction would refuse", () => {
       { id: f.ids.sampleC!, set: { samplingProtocol: "pan trap" } },
       { id: f.ids.sampleB, set: { samplingProtocol: "pan trap" } },
     ]);
-    expect(await noteOf(f, location, withObservation)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.problems.start_observation));
+    // An unprinted sample with an observation takes a start date as well: the save writes it, with a row saying staff set it.
+    expect(await noteOf(f, location, withObservation)).not.toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
     expect(await noteOf(f, location, net)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.numberTaken("2")));
     expect(await noteOf(f, location, f.ids.sampleC!)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.inPrintRun));
     expect(await noteOf(f, location, f.ids.sampleB)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
@@ -359,22 +360,21 @@ describe("a change a correction would refuse", () => {
     // A specimen no run minted is on paper.
     await f.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1)`);
     const { location, digest } = await offered(f, [{ id: printed, set: { eventDate: day(21) } }]);
-    expect(await noteOf(f, location, printed)).not.toContain(en.record.sample.methodEdit.problems.start_observation);
+    expect(await noteOf(f, location, printed)).not.toContain("May not be applied");
     expect((await apply(f, location, { digest })).status).toBe(303);
     await applyPending(deps(f));
     expect(await rows(f.conn, `SELECT CAST(date_start AS VARCHAR) FROM sample WHERE entity_id = ${printed}`)).toEqual([[day(21)]]);
   });
 
-  it("makes a method-only change on an unprinted range with an observation and no old records eligible, and keeps a one-day one ineligible", async () => {
+  it("agrees with the save for an unprinted sample with an observation and no old records: both accept a date and a method, and the override row is written", async () => {
     const f = await uploadFixture("staffer", { unprinted: true });
-    const range = await trapSample(f, { sample_number: "'X-3'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(22)}'`, inat_observation_id: "12347" }, false);
-    const oneDay = await trapSample(f, { sample_number: "'X-4'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(20)}'`, inat_observation_id: "12348" }, false);
-    const { location } = await offered(f, [
-      { id: range, set: { samplingProtocol: "pan trap" } },
-      { id: oneDay, set: { samplingProtocol: "pan trap" } },
-    ]);
-    expect(await noteOf(f, location, range)).not.toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
-    expect(await noteOf(f, location, oneDay)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
+    const minted = await trapSample(f, { sample_number: "'X-3'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(20)}'`, inat_observation_id: "12347" }, false);
+    const { location, digest, html } = await offered(f, [{ id: minted, set: { eventDate: day(21), samplingProtocol: "pan trap" } }]);
+    expect(html).not.toContain("May not be applied");
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    expect(await applyPending(deps(f))).toMatchObject({ applied: 1, refused: 0, stopped: 0 });
+    expect(await rows(f.conn, `SELECT CAST(date_start AS VARCHAR), protocol FROM sample WHERE entity_id = ${minted}`)).toEqual([[day(21), "pan trap"]]);
+    expect(await rows(f.conn, `SELECT 1 FROM sample_date_override WHERE sample_id = ${minted}`)).toHaveLength(1);
   });
 
   it("is predicted for a specimen count below the highest specimen number already given", async () => {

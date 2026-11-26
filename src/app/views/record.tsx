@@ -685,7 +685,7 @@ function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDet
 function methodEditKind(sample: SampleDetail, enteredPastItsForm: boolean): MethodEditKind {
   if (sample.from_old_records) return "old";
   if (enteredPastItsForm) return "entered";
-  if (sample.inat_observation_id !== null && (sample.printed || !sample.date_follows_observation)) return "observed";
+  if (sample.inat_observation_id !== null) return "observed";
   return false;
 }
 
@@ -694,8 +694,8 @@ type MethodEditKind = false | "old" | "entered" | "observed";
 function MethodEdit({ m, sample, methods, kind }: { m: Messages; sample: SampleDetail; methods: readonly string[]; kind: Exclude<MethodEditKind, false> }) {
   const t = m.record.sample.methodEdit;
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  // iNaturalist holds the start only while the nightly would put it back (`dateFollowsObservation`, beeline-qu2c).
-  const startEditable = sample.inat_observation_id === null || !sample.date_follows_observation;
+  // Staff may correct the start of any sample; a date they set is kept (sample_date_override, beeline-qu2c).
+  const startEditable = true;
   return (
     <InlineEdit
       label={t.open}
@@ -704,7 +704,7 @@ function MethodEdit({ m, sample, methods, kind }: { m: Messages; sample: SampleD
       save={t.save}
       cancel={m.listings.samples.placeEdit.cancel}
     >
-      <Meta block>{kind === "old" ? t.hint : kind === "entered" ? t.hintEntered : sample.printed ? t.hintObserved : t.hintObservedFree}</Meta>
+      <Meta block>{kind === "old" ? t.hint : kind === "entered" ? t.hintEntered : sample.date_set_by_staff ? t.hintDateSet : t.hintObserved}</Meta>
       {/* What the form shows rides along as base:*, so a save can tell a
           field nobody touched from a stale one (beeline-0br). */}
       <input type="hidden" name="base:protocol" value={sample.protocol ?? ""} />

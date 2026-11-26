@@ -15,8 +15,8 @@
 -- reconcile it writes from is stated as views in schema/108, so beeline-e85's
 -- unclaimed screen and the alarms read the same definitions this does.
 --
--- WHAT IT NEVER DOES: rewrite a printed sample's date or number, or the dates
--- of a sample that is not a single day. sample.inat_observation_id stays scalar and
+-- WHAT IT NEVER DOES: rewrite a printed sample's date or number, the dates of
+-- a sample that is not a single day, or a date staff set. sample.inat_observation_id stays scalar and
 -- there is no sample_observation list, which is what makes that guarantee
 -- cheap — and what protects a staff edit to any field minting writes.
 -- sample_observation_number_mismatch and sample_multi_observation (schema/108)
@@ -26,14 +26,14 @@
 -- and renumbering on iNaturalist is how a volunteer clears a duplicate number
 -- (beeline-0199). So does an unprinted single-day sample's date (beeline-qu2c),
 -- on the same terms, which is how a volunteer corrects a wrong date before it
--- is on a label. A sample's specimen count follows its observation printed
+-- is on a label, unless staff set the date (sample_date_override). A sample's specimen count follows its observation printed
 -- or not, because the count is what the volunteer declares and what is on
 -- paper is a separate fact (beeline-ni5m.18, GitHub #464) — except where
 -- another sample cites the same observation or several observations claim
 -- the sample, since one count cannot then be right, and for a printed sample
--- whose observation no longer carries its number and dates. Staff can correct a
--- printed linked sample's start date in the app, and a printed sample's date
--- never follows (above), so no staff edit is at risk there.
+-- whose observation no longer carries its number and dates. Staff can set the
+-- dates of any sample in the app, and a date they set is never moved (above),
+-- so no staff edit is at risk there.
 
 -- ── Free links ───────────────────────────────────────────────────────────
 -- An existing sample that cites no observation, and an unlinked observation
@@ -185,14 +185,12 @@ WHERE sample.entity_id = followed.sample_id
 -- ── And its date, while it is one day (beeline-qu2c) ─────────────────────
 -- A volunteer who fixes the date on iNaturalist before the labels print has
 -- fixed it, and before this nothing carried it across: promotion never
--- rewrote a date, and staff could not either (the observation "holds" it), so
--- a wrong date went onto a permanent label. Until the labels print the
--- observation is the record (the number and locality above follow it for the
--- same reason), so an unprinted sample's start and end both become the
--- observation's observed_on. Printed samples are the label's (printed_sample,
--- schema/101), and staff correct their start date in the app instead; an
--- observation edited after printing may describe another sample, as the
--- count's test above says.
+-- rewrote a date, so a wrong date went onto a permanent label. Until the
+-- labels print the observation is the record (the number and locality above
+-- follow it for the same reason), so an unprinted sample's start and end both
+-- become the observation's observed_on. Printed samples are the label's
+-- (printed_sample, schema/101), and an observation edited after printing may
+-- describe another sample, as the count's test below says.
 --
 -- Only a sample of a single day (date_end = date_start, which is how every
 -- sample writes one day since beeline-ni5m.15): an observation carries one
@@ -201,6 +199,15 @@ WHERE sample.entity_id = followed.sample_id
 -- prepared run that has not printed follows too, as the number and locality
 -- do: its snapshot on printed_label keeps the old date, and
 -- printed_label_out_of_date (schema/155) lists the label as out of date.
+-- A sample whose observation is not a collection record
+-- (observation_sample_candidate) keeps its date.
+--
+-- Never a sample staff set the dates of (sample_date_override, schema/030):
+-- a date a person set is the sample's date, and staff set it when the
+-- observation is wrong or no longer says what the sample did. Staff may do so
+-- on any sample, printed or not, and every save of a date writes the row.
+-- Taking a staff date away so the sample follows iNaturalist again is not
+-- built.
 --
 -- Not where the observation is cited by another sample, nor where several
 -- observations claim the sample (sample_several_observations, schema/108,
@@ -215,60 +222,49 @@ WHERE sample.entity_id = followed.sample_id
 -- only by checks, schema/120's sample_number_conflict, and the forms), so the
 -- UPDATE would not fail: it would make a duplicate_sample_number flag for the
 -- volunteer to chase. The test is that rule's, collector and day and exact
--- number, over every other sample as it stands after the minting above; for
--- a series number it is stricter than startMoveHolder (src/trap-sample.ts),
--- which holds a series number to its program and so never judges a move of
--- day, because here the day is part of what the flag compares. The test is
--- made against the days after the move: another sample that moves in this
--- pass counts at its new day, one that does not at its current day. So two
--- samples whose days are swapped both move, a chain moves together, and two
--- samples of one collector and number redated onto the same day collide with
--- each other, so neither moves; duplicate_sample_number then asks the
--- volunteer to renumber. A sample that is itself held back by a third one is
--- still counted as moving, so a chain behind a held sample can wait a night.
+-- number, against the other samples' dates as they stand now, after the
+-- minting above so a sample minted in this pass is among them. It judges
+-- current dates only and never guesses where another sample is going: an
+-- earlier version substituted the target dates of samples moving in the same
+-- pass, and a sample held back by a third one made its neighbour move onto
+-- it, a permanent duplicate. So a chain waits a night per link, a swap of two
+-- samples' days stays where it is and shows duplicate_sample_number (staff
+-- can now set a date by hand), and two samples that would both move onto one
+-- day, the same collector and number, neither moves (the window count).
 --
--- After the number follows, so the test reads the number a sample has now,
--- and after the free links and the minting, so a sample minted in this pass
--- is among those a date may collide with. Moving a date changes nothing
--- sample_mint_pending (schema/108) reads about a sample that cites an
--- observation (its match is only against samples citing none or printed
--- ones), and a free link needs the observation inside the range, which for a
--- single day is that day, so there is nothing for the order to disturb in
--- either direction. A date that moves across the 1 March line moves the
--- sample between the open season and a settled one (season.active_since,
--- settled_sample, schema/102): both are read from the date as it stands, so
--- the sample is in whichever season its observation puts it, and a sample
--- that arrives in a settled season waits for staff to release it, as one
--- minted there would.
-CREATE OR REPLACE TEMP TABLE date_follow_candidate AS
-SELECT DISTINCT s.entity_id AS sample_id, pc.person_id, s.sample_number, c.observed_on
-FROM sample s
-JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
-JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
-WHERE s.date_end = s.date_start
-  AND s.date_start <> c.observed_on
-  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
-  AND NOT EXISTS (
-        SELECT 1 FROM sample o
-        WHERE o.inat_observation_id = s.inat_observation_id AND o.entity_id <> s.entity_id)
-  AND NOT EXISTS (SELECT 1 FROM sample_several_observations m WHERE m.sample_id = s.entity_id);
-
+-- A date that moves across the 1 March line moves the sample between the open
+-- season and a settled one (season.active_since, settled_sample, schema/102):
+-- both are read from the date as it stands, so the sample is in whichever
+-- season its observation puts it, and a sample that arrives in a settled
+-- season waits for staff to release it, as one minted there would.
 UPDATE sample SET date_start = followed.observed_on, date_end = followed.observed_on
 FROM (
-  SELECT d.sample_id, d.observed_on
-  FROM date_follow_candidate d
-  WHERE NOT EXISTS (
-          SELECT 1 FROM sample o
-          JOIN sample_primary_collector opc ON opc.sample_id = o.entity_id
-          LEFT JOIN date_follow_candidate od ON od.sample_id = o.entity_id
-          WHERE opc.person_id = d.person_id
-            AND o.sample_number = d.sample_number
-            AND o.entity_id <> d.sample_id
-            AND coalesce(od.observed_on, o.date_start) = d.observed_on)
+  SELECT sample_id, observed_on
+  FROM (
+    SELECT s.entity_id AS sample_id, c.observed_on,
+           count(*) OVER (PARTITION BY pc.person_id, s.sample_number, c.observed_on) AS movers
+    FROM sample s
+    JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
+    JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+    WHERE s.date_end = s.date_start
+      AND s.date_start <> c.observed_on
+      AND NOT EXISTS (SELECT 1 FROM sample_date_override d WHERE d.sample_id = s.entity_id)
+      AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+      AND NOT EXISTS (
+            SELECT 1 FROM sample o
+            WHERE o.inat_observation_id = s.inat_observation_id AND o.entity_id <> s.entity_id)
+      AND NOT EXISTS (SELECT 1 FROM sample_several_observations m WHERE m.sample_id = s.entity_id)
+      AND NOT EXISTS (
+            SELECT 1 FROM sample o
+            JOIN sample_primary_collector opc ON opc.sample_id = o.entity_id
+            WHERE opc.person_id = pc.person_id
+              AND o.sample_number = s.sample_number
+              AND o.date_start = c.observed_on
+              AND o.entity_id <> s.entity_id)
+  ) candidate
+  WHERE movers = 1
 ) followed
 WHERE sample.entity_id = followed.sample_id;
-
-DROP TABLE date_follow_candidate;
 
 -- ── And its specimen count (beeline-ni5m.1, beeline-ni5m.18) ─────────────
 -- The sample's count is the DECLARED count: what the volunteer says on

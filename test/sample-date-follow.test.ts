@@ -132,25 +132,49 @@ describe("before printing, the date follows the observation", () => {
     expect(await rows(conn, `SELECT 1 FROM qc_finding WHERE rule_name = 'duplicate_sample_number'`)).toEqual([]);
   });
 
-  test("two samples whose days are swapped on iNaturalist both move; a chain moves together", async () => {
+  test("a swap of two samples' days stays where it is, and a chain waits a night per link", async () => {
     const a = await unprinted("7", "3");
     const b = await unprinted("8", "3", { date_start: `DATE '${NEXT}'`, date_end: `DATE '${NEXT}'` });
     await stage(obs(7, "3", NEXT));
     await stage(obs(8, "3", DAY));
     await promoteObservations(conn);
-    expect(await datesOf(a)).toEqual([NEXT, NEXT]);
-    expect(await datesOf(b)).toEqual([DAY, DAY]);
-    expect(await rows(conn, `SELECT 1 FROM sample_number_conflict`)).toEqual([]);
+    // Each target day holds the other sample now, so neither moves; duplicate_sample_number is not raised either, since they differ today.
+    expect(await datesOf(a)).toEqual([DAY, DAY]);
+    expect(await datesOf(b)).toEqual([NEXT, NEXT]);
 
-    // One way: c moves onto the day d leaves.
+    // c would move onto the day d is leaving: it waits until d has gone.
     const c = await unprinted("9", "5");
     const d = await unprinted("10", "5", { date_start: `DATE '${NEXT}'`, date_end: `DATE '${NEXT}'` });
     await stage(obs(9, "5", NEXT));
     await stage(obs(10, "5", THIRD));
     await promoteObservations(conn);
-    expect(await datesOf(c)).toEqual([NEXT, NEXT]);
+    expect(await datesOf(c)).toEqual([DAY, DAY]);
     expect(await datesOf(d)).toEqual([THIRD, THIRD]);
+    await promoteObservations(conn);
+    expect(await datesOf(c)).toEqual([NEXT, NEXT]);
+  });
+
+  test("a sample held back by a third does not let its neighbour move onto it", async () => {
+    // A moves onto the day B is on; B would move onto C's day, but C is printed and holds the number there.
+    const a = await unprinted("7", "3");
+    const b = await unprinted("8", "3", { date_start: `DATE '${NEXT}'`, date_end: `DATE '${NEXT}'` });
+    const c = await printedBefore("9", "3");
+    await conn.run(`UPDATE sample SET date_start = DATE '${THIRD}', date_end = DATE '${THIRD}' WHERE entity_id = ${c}`);
+    await stage(obs(7, "3", NEXT));
+    await stage(obs(8, "3", THIRD));
+    await stage(obs(9, "3", THIRD));
+    await promoteObservations(conn);
+    expect(await datesOf(a)).toEqual([DAY, DAY]);
+    expect(await datesOf(b)).toEqual([NEXT, NEXT]);
     expect(await rows(conn, `SELECT 1 FROM sample_number_conflict`)).toEqual([]);
+  });
+
+  test("a sample whose dates staff set is never moved", async () => {
+    const sampleId = await unprinted("7");
+    await conn.run(`INSERT INTO sample_date_override (sample_id) VALUES (${sampleId})`);
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([DAY, DAY]);
   });
 
   test("a released unprinted sample's date follows too, as its number does", async () => {
@@ -234,12 +258,39 @@ describe("after printing, staff may correct the start date of a sample with an o
     ...extra,
   });
 
-  test("an unprinted sample is refused, to be corrected on iNaturalist", async () => {
+  const overrideOf = async (id: number) => rows(conn, `SELECT set_by, reason FROM sample_date_override WHERE sample_id = ${id}`);
+
+  test("staff correct an unprinted one-day sample's date: the override row is written and the nightly leaves it", async () => {
     const sampleId = await unprinted("7");
     const paths = await scratchPaths();
-    const saved = await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(NEXT));
-    expect(saved).toEqual({ outcome: "invalid", problem: "start_observation" });
-    expect(await datesOf(sampleId)).toEqual([DAY, DAY]);
+    const saved = await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(THIRD, { setBy: ada }));
+    expect(saved).toEqual({ outcome: "saved" });
+    expect(await datesOf(sampleId)).toEqual([THIRD, THIRD]);
+    expect(await overrideOf(sampleId)).toEqual([[ada, "the field book says so"]]);
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([THIRD, THIRD]);
+  });
+
+  test("a save of only the method writes no override, and the date still follows", async () => {
+    const sampleId = await unprinted("7");
+    const paths = await scratchPaths();
+    expect(await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(DAY, { protocol: "vane trap" }))).toEqual({ outcome: "saved" });
+    expect(await overrideOf(sampleId)).toEqual([]);
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
+  });
+
+  test("a date range of a linked sample can be saved, as a range or as one day", async () => {
+    const paths = await scratchPaths();
+    const trap = await unprinted("7", "7", { kind: "'trap'", date_start: `DATE '${DAY}'`, date_end: `DATE '${THIRD}'` });
+    expect(await setSampleMethod(createKysely(instance), paths.correctionsPath, trap, input(DAY, { protocol: "vane trap" }))).toEqual({ outcome: "saved" });
+    expect(await datesOf(trap)).toEqual([DAY, DAY]);
+    expect(await overrideOf(trap)).toHaveLength(1);
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(trap)).toEqual([DAY, DAY]);
   });
 
   test("a sample made from an observation and printed by Beeline is written directly and the nightly does not undo it", async () => {
@@ -256,6 +307,7 @@ describe("after printing, staff may correct the start date of a sample with an o
     const saved = await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(THIRD));
     expect(saved).toEqual({ outcome: "saved" });
     expect(await datesOf(sampleId)).toEqual([THIRD, THIRD]);
+    expect(await overrideOf(sampleId)).toHaveLength(1);
 
     // The observation still says another day; a printed sample does not follow it.
     await stage(obs(7, "7", NEXT));
@@ -269,58 +321,6 @@ describe("after printing, staff may correct the start date of a sample with an o
     await requestReprint(conn, { specimenId }, { personId: ada, now: new Date("2026-09-22T16:00:00Z"), reason: "data_corrected" });
     const second = (await prepareRun(conn, { atlasId: null, personId: ada, now: new Date("2026-09-22T17:00:00Z") }))!;
     expect(await one(`SELECT warnings FROM printed_label WHERE print_run_id = ${second.printRunId}`)?.then((r) => String(r?.[0]))).toContain("date");
-  });
-
-  test("is allowed where the nightly would not put the date back: a range, a shared observation, several observations", async () => {
-    const paths = await scratchPaths();
-    const db = createKysely(instance);
-    const trap = await unprinted("7", "7", { kind: "'trap'", date_start: `DATE '${DAY}'`, date_end: `DATE '${THIRD}'` });
-    expect(await setSampleMethod(db, paths.correctionsPath, trap, input(NEXT, { protocol: "vane trap", dateEnd: THIRD }))).toEqual({ outcome: "saved" });
-    expect(await datesOf(trap)).toEqual([NEXT, THIRD]);
-
-    const a = await unprinted("8", "8");
-    await unprinted("8", "9");
-    expect(await setSampleMethod(db, paths.correctionsPath, a, input(NEXT))).toEqual({ outcome: "saved" });
-
-    const several = await unprinted("11", "11");
-    await conn.run(`INSERT INTO sample_legacy_observation (sample_id, inat_observation_id) VALUES (${several}, 11), (${several}, 12)`);
-    expect(await setSampleMethod(db, paths.correctionsPath, several, input(NEXT))).toEqual({ outcome: "saved" });
-  });
-
-  test("refuses a save that leaves a one-day sample the nightly follows, unless the day is the observation's own", async () => {
-    const paths = await scratchPaths();
-    const db = createKysely(instance);
-    const range = () => unprinted("7", "7", { kind: "'trap'", date_start: `DATE '${DAY}'`, date_end: `DATE '${THIRD}'` });
-
-    // A range saved as one day, by its start and end both: the nightly would put it back.
-    const a = await range();
-    expect(await setSampleMethod(db, paths.correctionsPath, a, input(NEXT, { protocol: "vane trap" }))).toEqual({ outcome: "invalid", problem: "start_observation" });
-    expect(await datesOf(a)).toEqual([DAY, THIRD]);
-    // And by its end alone, which collapses the range onto its start.
-    expect(await setSampleMethod(db, paths.correctionsPath, a, input(DAY, { protocol: "vane trap" }))).toEqual({ outcome: "invalid", problem: "start_observation" });
-    expect(await datesOf(a)).toEqual([DAY, THIRD]);
-    // A save that keeps it a range is allowed.
-    expect(await setSampleMethod(db, paths.correctionsPath, a, input(DAY, { protocol: "vane trap", dateEnd: NEXT }))).toEqual({ outcome: "saved" });
-    expect(await datesOf(a)).toEqual([DAY, NEXT]);
-  });
-
-  test("allows a range saved as the observation's own day, and the nightly leaves it", async () => {
-    const paths = await scratchPaths();
-    const sampleId = await unprinted("7", "7", { kind: "'trap'", date_start: `DATE '${DAY}'`, date_end: `DATE '${THIRD}'` });
-    await stage(obs(7, "7", NEXT));
-    await promoteObservations(conn);
-    expect(await datesOf(sampleId)).toEqual([DAY, THIRD]);
-    expect(await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(NEXT, { protocol: "vane trap" }))).toEqual({ outcome: "saved" });
-    expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
-    await promoteObservations(conn);
-    expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
-  });
-
-  test("an entered sample that cites an observation follows it until printing, so its date is refused", async () => {
-    const sampleId = await unprinted("7");
-    await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${sampleId})`);
-    const paths = await scratchPaths();
-    expect(await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(NEXT))).toEqual({ outcome: "invalid", problem: "start_observation" });
   });
 
   test("a start day that gives the sample's number to a day its collector already holds it on is still not taken by the writer's own check", async () => {

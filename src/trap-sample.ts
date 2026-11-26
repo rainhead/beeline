@@ -743,6 +743,7 @@ export const DELETED_WITH_SAMPLE = [
   "sample_area_derivation",
   "sample_atlas",
   "sample_collector",
+  "sample_date_override",
   "sample_entry",
   "sample_hold",
   "sample_host_override",

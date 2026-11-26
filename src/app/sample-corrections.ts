@@ -794,6 +794,7 @@ export function setMethod(deps: CorrectionDeps, actor: Actor, sampleId: number, 
         dateEnd: form.dateEnd,
         note: form.note,
         author: actor.login,
+        setBy: actor.signedInPersonId,
         today: form.today,
         bases: form.bases,
       });

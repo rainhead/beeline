@@ -338,25 +338,20 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
       expect(await (await unlinked.app.request(`/samples/${unlinked.sampleId}`)).text()).toContain(`name="date_start"`);
     });
 
-    it("refuses an unprinted sample with an observation, saying its date follows the observation", async () => {
+    it("offers the start on every sample with an observation, printed or not, and saves it with the override row", async () => {
       const { app, conn, later } = await methodApp("staff");
       // A sample with no specimen has no label on paper.
       const sampleId = await insertCleanSample(conn, { inat_observation_id: "93297998", sample_number: "'42'", date_start: `DATE '${later(10)}'`, date_end: `DATE '${later(10)}'` });
       expect(await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = ${sampleId}`)).toEqual([]);
-      const res = await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "", date_start: later(-3) });
-      expect(res.status).toBe(400);
-      expect(await res.text()).toBe(t.problems.start_observation);
-      expect(t.problems.start_observation).toContain("iNaturalist");
-    });
-
-    it("offers the start only where the nightly would not put it back: not on a one-day unprinted sample, yes on a range", async () => {
-      const { app, conn, later } = await methodApp("staff");
-      const day = await insertCleanSample(conn, { inat_observation_id: "93297990", sample_number: "'43'", date_start: `DATE '${later(10)}'`, date_end: `DATE '${later(10)}'` });
-      const range = await insertCleanSample(conn, { kind: "'trap'", inat_observation_id: "93297991", sample_number: "'44'", date_start: `DATE '${later(10)}'`, date_end: `DATE '${later(12)}'` });
-      expect(await (await app.request(`/samples/${day}`)).text()).not.toContain(`name="date_start"`);
-      const page = await (await app.request(`/samples/${range}`)).text();
+      const page = await (await app.request(`/samples/${sampleId}`)).text();
       expect(page).toContain(`name="date_start"`);
-      expect(page).toContain("do not follow its iNaturalist observation");
+      expect(page).toContain("dates follow its iNaturalist observation");
+      const res = await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "", date_start: later(-3) });
+      expect(res.status).toBe(302);
+      expect(await sampleRow(conn, sampleId)).toEqual(["net", "aerial net", later(-3), later(-3)]);
+      expect(await rows(conn, `SELECT set_by FROM sample_date_override WHERE sample_id = ${sampleId}`)).toHaveLength(1);
+      // Now that staff set it, the page says so.
+      expect(await (await app.request(`/samples/${sampleId}`)).text()).toContain("Staff set this sample&#39;s dates");
     });
 
     it("corrects the start of a sample Beeline made from an observation and printed, which has no old records, unless the number is taken", async () => {

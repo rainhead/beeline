@@ -674,14 +674,7 @@ function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDet
   );
 }
 
-/**
- * Staff correcting how and when a sample was collected (beeline-p8y1,
- * beeline-0wbq), from a pencil on the Method row: the method's words, the day
- * collecting ended, which makes an old sample a trap sample, and the day it
- * started where iNaturalist does not hold it: on a sample with no observation,
- * or whose labels are printed (src/app/sample-method.ts, beeline-qu2c).
- */
-/** Which sample gets the Method pencil: one built from old records, one entered in Beeline past its form, or one with an observation whose dates the nightly leaves alone. */
+/** Which sample gets the Method pencil: one built from old records, one entered in Beeline past its form, or one with an observation. */
 function methodEditKind(sample: SampleDetail, enteredPastItsForm: boolean): MethodEditKind {
   if (sample.from_old_records) return "old";
   if (enteredPastItsForm) return "entered";
@@ -689,13 +682,29 @@ function methodEditKind(sample: SampleDetail, enteredPastItsForm: boolean): Meth
   return false;
 }
 
+/**
+ * The sentence above the Method form. A sample with an observation says whether its dates still follow it: they do until
+ * the labels print, unless staff set them, and a printed sample's labels are not changed by a correction.
+ */
+function methodHint(t: Messages["record"]["sample"]["methodEdit"], sample: SampleDetail, kind: Exclude<MethodEditKind, false>): string {
+  if (kind === "entered") return t.hintEntered;
+  if (sample.inat_observation_id === null) return t.hint;
+  if (sample.date_set_by_staff) return sample.printed ? t.hintDateSetPrinted : t.hintDateSet;
+  return sample.printed ? t.hintObservedPrinted : t.hintObserved;
+}
+
 type MethodEditKind = false | "old" | "entered" | "observed";
 
+/**
+ * Staff correcting how and when a sample was collected (beeline-p8y1,
+ * beeline-0wbq, beeline-qu2c), from a pencil on the Method row: the method's
+ * words, the day collecting ended, which makes an old sample a trap sample,
+ * and the day it started. A date saved here is kept: the nightly never moves
+ * a sample whose dates staff set (src/app/sample-method.ts).
+ */
 function MethodEdit({ m, sample, methods, kind }: { m: Messages; sample: SampleDetail; methods: readonly string[]; kind: Exclude<MethodEditKind, false> }) {
   const t = m.record.sample.methodEdit;
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  // Staff may correct the start of any sample; a date they set is kept (sample_date_override, beeline-qu2c).
-  const startEditable = true;
   return (
     <InlineEdit
       label={t.open}
@@ -704,7 +713,7 @@ function MethodEdit({ m, sample, methods, kind }: { m: Messages; sample: SampleD
       save={t.save}
       cancel={m.listings.samples.placeEdit.cancel}
     >
-      <Meta block>{kind === "old" ? t.hint : kind === "entered" ? t.hintEntered : sample.date_set_by_staff ? t.hintDateSet : t.hintObserved}</Meta>
+      <Meta block>{methodHint(t, sample, kind)}</Meta>
       {/* What the form shows rides along as base:*, so a save can tell a
           field nobody touched from a stale one (beeline-0br). */}
       <input type="hidden" name="base:protocol" value={sample.protocol ?? ""} />
@@ -721,21 +730,16 @@ function MethodEdit({ m, sample, methods, kind }: { m: Messages; sample: SampleD
           ...methods.map((code) => [code, code] as const),
         ]}
       />
-      {startEditable && (
-        <>
-          <input type="hidden" name="base:date_start" value={iso(sample.date_start)} />
-          <Field id="method-date-start" label={t.dateStart} hint={t.dateStartHint}>
-            <input id="method-date-start" name="date_start" type="date" value={iso(sample.date_start)} required />
-          </Field>
-        </>
-      )}
+      <input type="hidden" name="base:date_start" value={iso(sample.date_start)} />
+      <Field id="method-date-start" label={t.dateStart} hint={t.dateStartHint}>
+        <input id="method-date-start" name="date_start" type="date" value={iso(sample.date_start)} required />
+      </Field>
       <input type="hidden" name="base:date_end" value={liveEndOf(sample.date_start, sample.date_end)} />
       <Field id="method-date-end" label={t.dateEnd} hint={t.dateEndHint}>
         <input
           id="method-date-end"
           name="date_end"
           type="date"
-          min={startEditable ? undefined : iso(sample.date_start)}
           value={liveEndOf(sample.date_start, sample.date_end)}
         />
       </Field>

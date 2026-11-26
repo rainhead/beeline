@@ -330,7 +330,7 @@ describe("a change a correction would refuse", () => {
 
   it("is predicted for a method on a sample nothing backs, a print run and a number taken, and not for a start date on a sample with an observation", async () => {
     const f = await uploadFixture("staffer", { unprinted: true });
-    // An old sample with an observation: iNaturalist holds its start.
+    // An old sample with an observation: its start is staff's to change.
     const withObservation = await trapSample(f, { sample_number: "'X-1'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(20)}'`, inat_observation_id: "12345" }, false);
     await oldRecords(f, withObservation, "rec-x", "vane trap");
     // An old net sample whose collector has a sample with the same number on the day the file moves it to.
@@ -346,8 +346,8 @@ describe("a change a correction would refuse", () => {
       { id: f.ids.sampleC!, set: { samplingProtocol: "pan trap" } },
       { id: f.ids.sampleB, set: { samplingProtocol: "pan trap" } },
     ]);
-    // An unprinted sample with an observation takes a start date as well: the save writes it, with a row saying staff set it.
-    expect(await noteOf(f, location, withObservation)).not.toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
+    // An unprinted sample with an observation takes a start date as well: no refusal of any kind is predicted for it.
+    expect(await noteOf(f, location, withObservation)).not.toContain("May not be applied");
     expect(await noteOf(f, location, net)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.numberTaken("2")));
     expect(await noteOf(f, location, f.ids.sampleC!)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.inPrintRun));
     expect(await noteOf(f, location, f.ids.sampleB)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));

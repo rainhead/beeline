@@ -228,9 +228,18 @@ WHERE sample.entity_id = followed.sample_id
 -- earlier version substituted the target dates of samples moving in the same
 -- pass, and a sample held back by a third one made its neighbour move onto
 -- it, a permanent duplicate. So a chain waits a night per link, a swap of two
--- samples' days stays where it is and shows duplicate_sample_number (staff
--- can now set a date by hand), and two samples that would both move onto one
--- day, the same collector and number, neither moves (the window count).
+-- samples' days stays where it is, and two samples that would both move onto
+-- one day, the same collector and number, neither moves (the window count).
+-- A sample left behind is not silent: qc_rule_observation_date_differs
+-- (schema/120) blocks its labels, naming the date the observation says, until
+-- staff set the date (which writes sample_date_override) or the volunteer
+-- corrects the observation.
+--
+-- Only a sample with exactly one primary collector: the collision test and
+-- the window count run once per sample_primary_collector row, so a sample with
+-- two position-1 collectors (which schema/116 can name but the engine cannot
+-- prevent) could move onto a day one of them holds. None exists on
+-- production's copy of 2026-11-25.
 --
 -- A date that moves across the 1 March line moves the sample between the open
 -- season and a settled one (season.active_since, settled_sample, schema/102):
@@ -246,7 +255,8 @@ FROM (
     FROM sample s
     JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
     JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
-    WHERE s.date_end = s.date_start
+    WHERE (SELECT count(*) FROM sample_primary_collector x WHERE x.sample_id = s.entity_id) = 1
+      AND s.date_end = s.date_start
       AND s.date_start <> c.observed_on
       AND NOT EXISTS (SELECT 1 FROM sample_date_override d WHERE d.sample_id = s.entity_id)
       AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
@@ -303,7 +313,9 @@ WHERE sample.entity_id = followed.sample_id;
 -- renumbered or redated after printing may now describe a different
 -- collecting event, and its count is then not the count of the bees on these
 -- pins. An unprinted sample needs no such test: its number follows its
--- observation earlier in this file, and its dates are its observation's.
+-- observation earlier in this file, and its dates follow it too unless staff
+-- set them or the move was declined (the date follow above), in which case
+-- qc_rule_observation_date_differs flags it.
 --
 -- Whether a sample shares its observation, or is claimed along with others,
 -- is judged afresh on every promotion. If staff relink one sample of a pair,

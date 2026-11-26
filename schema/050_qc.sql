@@ -36,7 +36,8 @@ INSERT INTO qc_rule (name, severity) VALUES
   ('count_mismatch', 'warning'),
   ('count_below_printed', 'warning'),
   ('within_sample_disagreement', 'warning'),
-  ('observation_missing_upstream', 'blocking');
+  ('observation_missing_upstream', 'blocking'),
+  ('observation_date_differs', 'blocking');
 
 -- ── Holds and waivers: staff decisions about QC (beeline-plu, beeline-1kb.9) ──
 --

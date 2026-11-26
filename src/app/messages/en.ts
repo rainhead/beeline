@@ -917,6 +917,7 @@ export const en = {
         count_below_printed: "count below labels",
         within_sample_disagreement: "identifications differ",
         observation_missing_upstream: "observation gone",
+        observation_date_differs: "date differs",
         staff_hold: "held by staff",
       },
       /** What missing_required_field's details name, in the chip's words. */
@@ -1321,10 +1322,14 @@ export const en = {
         hint: "Old Beeline holds records of this sample. A correction here is recorded against those records, with your name.",
         /** For a trap sample entered in Beeline, once its own form no longer opens. */
         hintEntered: "This sample's labels are printed or about to be, so its own form no longer opens. A correction here changes the sample; ask for a reprint if the labels should change too.",
-        /** For a sample with an iNaturalist observation whose dates staff have not set. */
-        hintObserved: "Until its labels print, this sample's dates follow its iNaturalist observation. A date set here stays, and is no longer taken from iNaturalist. If its labels are printed, ask for a reprint to change them.",
-        /** For a sample whose dates staff set. */
-        hintDateSet: "Staff set this sample's dates, so they no longer follow its iNaturalist observation. If its labels are printed, ask for a reprint to change them.",
+        /** A sample with an observation, labels not printed, dates not set by staff. */
+        hintObserved: "Until its labels print, this sample's dates follow its iNaturalist observation. A date set here stays, and is no longer taken from iNaturalist.",
+        /** A sample with an observation, labels printed, dates not set by staff. */
+        hintObservedPrinted: "This sample's labels are printed, so its dates no longer follow its iNaturalist observation. A correction here changes the sample; ask for a reprint if the labels should change too.",
+        /** Staff set its dates, labels not printed. */
+        hintDateSet: "Staff set this sample's dates, so they no longer follow its iNaturalist observation.",
+        /** Staff set its dates, labels printed. */
+        hintDateSetPrinted: "Staff set this sample's dates, so they no longer follow its iNaturalist observation. A correction here changes the sample; ask for a reprint if the labels should change too.",
         dateStart: "Collecting started",
         dateStartHint: "The day collecting began, or the day of a net sample.",
         protocol: "Method",
@@ -4001,6 +4006,8 @@ export const en = {
       "The specimen count on iNaturalist does not match this sample. Verify that the observation has a sample number, date, and a count of one or more. Some samples keep their own count: one whose count staff set, and one whose observation is shared with another sample or claimed along with others.",
     count_below_printed:
       "The specimen count on iNaturalist is now lower than the number of labels already printed for this sample. No action is needed. Labels not yet on a specimen can be discarded.",
+    observation_date_differs:
+      "The date on the iNaturalist observation is not the date of this sample, and Beeline could not take it over, so this sample's labels wait. Check the observation's date and sample number. Staff can set the sample's date here if the observation is right.",
     within_sample_disagreement:
       "Historical records merged into this sample had conflicting values for a field. The earliest record's value was retained. Review the listed alternatives and edit the sample if the retained value is incorrect.",
     observation_missing_upstream:

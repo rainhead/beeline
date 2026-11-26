@@ -1,6 +1,11 @@
 -- Migration for schema/030_samples_specimens.sql (beeline-qu2c): a date staff set
 -- on a sample is the sample's date and the nightly never moves it. A new table;
 -- no row is written by the migration.
+--
+-- No existing staff date can be lost: before this change staff could not set
+-- the date of an unprinted sample with an observation, and the date follow
+-- moves only those. On production's copy of 2026-11-25 no such sample has a
+-- date differing from its observation's, so the first nightly moves no date.
 CREATE TABLE sample_date_override (
   sample_id INTEGER PRIMARY KEY REFERENCES sample(entity_id),
   set_by    INTEGER REFERENCES person(entity_id),

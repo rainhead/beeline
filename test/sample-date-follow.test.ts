@@ -32,6 +32,8 @@ beforeEach(async () => {
   }
 });
 
+/** A moment in the current season, so that a run is prepared after the collection dates in any season. */
+const at = (month: number, day: number, hour: number) => new Date(`${currentSeasonDate(month, day)}T${String(hour).padStart(2, "0")}:00:00Z`);
 const DAY = currentSeasonDate(7, 14);
 const NEXT = currentSeasonDate(7, 15);
 const THIRD = currentSeasonDate(7, 16);
@@ -212,7 +214,7 @@ describe("before printing, the date follows the observation", () => {
 
   test("a sample in a prepared run follows, and the run lists its labels as out of date", async () => {
     const sampleId = await unprinted("7");
-    const run = (await prepareRun(conn, { atlasId: null, personId: ada, now: new Date("2026-09-21T16:00:00Z") }))!;
+    const run = (await prepareRun(conn, { atlasId: null, personId: ada, now: at(9, 21, 16) }))!;
     await stage(obs(7, "7", NEXT));
     await promoteObservations(conn);
     expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
@@ -231,7 +233,29 @@ describe("before printing, the date follows the observation", () => {
     await recordSampleChanges(duckdbReader(conn), log, { source: "observation_promotion" });
     const changes = (await readSampleChanges(paths.sampleChangesPath)).filter((c) => c.field === "date_start");
     expect(changes.map((c) => [c.new_value, c.source])).toEqual([[NEXT, "observation_promotion"]]);
-    expect(sampleId).toBeGreaterThan(0);
+  });
+
+  test("a swap raises the blocking date flag on both samples, staff setting the date clears it, and a printed or matching sample never raises it", async () => {
+    const a = await unprinted("7", "3");
+    const b = await unprinted("8", "3", { date_start: `DATE '${NEXT}'`, date_end: `DATE '${NEXT}'` });
+    await unprinted("9", "4"); // its date matches its observation
+    await printedBefore("10", "5"); // printed, so its date is the label's
+    await stage(obs(7, "3", NEXT));
+    await stage(obs(8, "3", DAY));
+    await stage(obs(9, "4", DAY));
+    await stage(obs(10, "5", NEXT));
+    await promoteObservations(conn);
+    const flagged = async () => (await rows(conn, `SELECT sample_id, details FROM qc_finding WHERE rule_name = 'observation_date_differs' ORDER BY sample_id`));
+    expect(await flagged()).toEqual([
+      [a, `observation says ${NEXT}, sample says ${DAY}`],
+      [b, `observation says ${DAY}, sample says ${NEXT}`],
+    ]);
+    // Blocking: neither is printable while flagged.
+    expect(await rows(conn, `SELECT sample_id FROM pending_print_sample WHERE sample_id IN (${a}, ${b})`)).toEqual([]);
+    // Staff set one date, which writes the override and clears the flag on it.
+    const paths = await scratchPaths();
+    await setSampleMethod(createKysely(instance), paths.correctionsPath, a, { protocol: "net", dateEnd: "", dateStart: NEXT, note: "", author: "samstaff", today: currentSeasonDate(12, 31) });
+    expect((await flagged()).map(([id]) => id)).toEqual([b]);
   });
 
   test("a sample moved across the 1 March line changes season with its date", async () => {
@@ -272,6 +296,20 @@ describe("after printing, staff may correct the start date of a sample with an o
     expect(await datesOf(sampleId)).toEqual([THIRD, THIRD]);
   });
 
+  test("a second staff save keeps one row and records the latest save", async () => {
+    const sampleId = await unprinted("7");
+    const paths = await scratchPaths();
+    const db = createKysely(instance);
+    await setSampleMethod(db, paths.correctionsPath, sampleId, input(NEXT, { setBy: ada, note: "first" }));
+    const first = await rows(conn, `SELECT CAST(set_at AS VARCHAR) FROM sample_date_override WHERE sample_id = ${sampleId}`);
+    await setSampleMethod(db, paths.correctionsPath, sampleId, input(THIRD, { setBy: ada, note: "second" }));
+    expect(await overrideOf(sampleId)).toEqual([[ada, "second"]]);
+    const later = await rows(conn, `SELECT CAST(set_at AS VARCHAR) FROM sample_date_override WHERE sample_id = ${sampleId}`);
+    expect(later).toHaveLength(1);
+    // The row records the latest save: its time moved on.
+    expect(String(later[0]![0]) > String(first[0]![0])).toBe(true);
+  });
+
   test("a save of only the method writes no override, and the date still follows", async () => {
     const sampleId = await unprinted("7");
     const paths = await scratchPaths();
@@ -295,8 +333,8 @@ describe("after printing, staff may correct the start date of a sample with an o
 
   test("a sample made from an observation and printed by Beeline is written directly and the nightly does not undo it", async () => {
     const sampleId = await unprinted("7");
-    const run = (await prepareRun(conn, { atlasId: null, personId: ada, now: new Date("2026-09-21T16:00:00Z") }))!;
-    const t = new Date("2026-09-21T17:00:00Z");
+    const run = (await prepareRun(conn, { atlasId: null, personId: ada, now: at(9, 21, 16) }))!;
+    const t = at(9, 21, 17);
     await approveRun(conn, run.printRunId, { personId: ada, now: t });
     await markPrinted(conn, run.printRunId, { personId: ada, now: t });
     expect(await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = ${sampleId}`)).toHaveLength(1);
@@ -318,12 +356,12 @@ describe("after printing, staff may correct the start date of a sample with an o
     await recordSampleChanges(duckdbReader(conn), log, { source: "app" });
     expect((await readSampleChanges(paths.sampleChangesPath)).some((c) => c.field === "date_start" && c.new_value === THIRD)).toBe(true);
     const specimenId = Number((await one(`SELECT min(entity_id) FROM specimen WHERE sample_id = ${sampleId}`))?.[0]);
-    await requestReprint(conn, { specimenId }, { personId: ada, now: new Date("2026-09-22T16:00:00Z"), reason: "data_corrected" });
-    const second = (await prepareRun(conn, { atlasId: null, personId: ada, now: new Date("2026-09-22T17:00:00Z") }))!;
+    await requestReprint(conn, { specimenId }, { personId: ada, now: at(9, 22, 16), reason: "data_corrected" });
+    const second = (await prepareRun(conn, { atlasId: null, personId: ada, now: at(9, 22, 17) }))!;
     expect(await one(`SELECT warnings FROM printed_label WHERE print_run_id = ${second.printRunId}`)?.then((r) => String(r?.[0]))).toContain("date");
   });
 
-  test("a start day that gives the sample's number to a day its collector already holds it on is still not taken by the writer's own check", async () => {
+  test("the writer leaves the number-taken check to its caller, as for a sample with no observation", async () => {
     // The writer (setSampleMethod) leaves the collision to its caller, as for an unlinked sample (setMethod, startMoveHolder).
     const sampleId = await printedBefore("7");
     const paths = await scratchPaths();

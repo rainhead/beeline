@@ -170,6 +170,8 @@ export interface SampleDetail {
   location_withheld: boolean;
   /** At least one label on paper (schema/155): the locality no longer follows upstream. */
   printed: boolean;
+  /** Staff set its dates in Beeline, so they no longer follow its observation (`sample_date_override`). */
+  date_set_by_staff: boolean;
   /** Built from the old Beeline's records, which a staff correction of its method names (beeline-p8y1). */
   from_old_records: boolean;
   /** From a settled season (schema/102): its labels print only once staff have released it. */
@@ -664,6 +666,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
     label_diverged: hidden || !row.printed ? null : await labelDiverged(db, Number(row.sample_id)),
     place_disagreement: hidden ? null : await placeDisagreement(db, Number(row.sample_id)),
     printed: Boolean(row.printed),
+    date_set_by_staff: Boolean((await sql<{ e: boolean }>`SELECT EXISTS (SELECT 1 FROM sample_date_override WHERE sample_id = ${Number(row.sample_id)}) AS e`.execute(db)).rows[0]?.e),
     from_old_records: await fromOldRecords(db, Number(row.sample_id)),
     ...(await printReleaseOf(db, Number(row.sample_id), Number(row.specimen_count))),
     sample_id: Number(row.sample_id),

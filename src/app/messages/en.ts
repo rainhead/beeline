@@ -917,6 +917,7 @@ export const en = {
         count_below_printed: "count below labels",
         within_sample_disagreement: "identifications differ",
         observation_missing_upstream: "observation gone",
+        observation_date_differs: "date differs",
         staff_hold: "held by staff",
       },
       /** What missing_required_field's details name, in the chip's words. */
@@ -1321,6 +1322,14 @@ export const en = {
         hint: "Old Beeline holds records of this sample. A correction here is recorded against those records, with your name.",
         /** For a trap sample entered in Beeline, once its own form no longer opens. */
         hintEntered: "This sample's labels are printed or about to be, so its own form no longer opens. A correction here changes the sample; ask for a reprint if the labels should change too.",
+        /** A sample with an observation, labels not printed, dates not set by staff. */
+        hintObserved: "This sample's dates come from its iNaturalist observation until its labels print. If you change them here, Beeline keeps your dates and stops copying the observation's.",
+        /** A sample with an observation, labels printed, dates not set by staff. */
+        hintObservedPrinted: "This sample's labels are printed, so its dates no longer change with its iNaturalist observation. If you change them here, ask for a reprint if the labels should change too.",
+        /** Staff set its dates, labels not printed. */
+        hintDateSet: "Staff changed this sample's dates, so they no longer change with its iNaturalist observation.",
+        /** Staff set its dates, labels printed. */
+        hintDateSetPrinted: "Staff changed this sample's dates, so they no longer change with its iNaturalist observation. Ask for a reprint if the labels should change too.",
         dateStart: "Collecting started",
         dateStartHint: "The day collecting began, or the day of a net sample.",
         protocol: "Method",
@@ -1340,7 +1349,6 @@ export const en = {
           before_start: "Collecting cannot end before the day it started.",
           future: "Collecting cannot end on a day that has not come yet.",
           start_future: "Collecting cannot start on a day that has not come yet.",
-          start_observation: "This sample's start date comes from its iNaturalist observation, so it is corrected there.",
           method_required: "A trap sample entered in Beeline needs its method, as its own form does.",
         },
         noOldRecords: "Old Beeline holds no records of this sample and it was not entered in Beeline, so it cannot be corrected here.",
@@ -3998,6 +4006,8 @@ export const en = {
       "The specimen count on iNaturalist does not match this sample. Verify that the observation has a sample number, date, and a count of one or more. Some samples keep their own count: one whose count staff set, and one whose observation is shared with another sample or claimed along with others.",
     count_below_printed:
       "The specimen count on iNaturalist is now lower than the number of labels already printed for this sample. No action is needed. Labels not yet on a specimen can be discarded.",
+    observation_date_differs:
+      "This sample's date doesn't match its iNaturalist observation. Beeline normally copies the observation's date onto the sample, but couldn't this time. Usually that's because another of your samples has the same number on that day. Its labels won't print until the dates match. If the observation's date is right, ask staff to change the sample's date.",
     within_sample_disagreement:
       "Historical records merged into this sample had conflicting values for a field. The earliest record's value was retained. Review the listed alternatives and edit the sample if the retained value is incorrect.",
     observation_missing_upstream:
@@ -4166,7 +4176,7 @@ export const en = {
         body: [
           "When staff prepare a print run, every sample that is ready goes in. That is the moment your specimens get their field numbers; the ",
           { href: "/glossary#label", label: "labels" },
-          " are printed and mailed to you. From then on, the place, the coordinates, the sample number and the count are fixed: a later edit on iNaturalist no longer changes them, so check your observations before the run, not after. A sample's date is taken once and never changed from iNaturalist; a wrong date is fixed by telling staff.",
+          " are printed and mailed to you. Until then, the sample's number, date and count follow your observation on iNaturalist, so fix a wrong one there. From then on, the place, the coordinates, the sample number and the date are fixed: a later edit on iNaturalist no longer changes them, so check your observations before the run, not after, and tell staff about a wrong date or number. The count still follows your observation (unless the sample keeps its own count), and a raised count gets the extra labels printed.",
         ],
       },
       {

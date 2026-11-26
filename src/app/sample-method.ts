@@ -15,8 +15,8 @@ import { isWriteConflict } from "../write-conflict.js";
  * iNaturalist observation. Those records are what the correction names, as
  * the collector's own edit does (src/app/sample-edit.ts, ADR 0004): one event
  * per record and field, written to the corrections overlay before the live
- * sample changes. The nightly iNaturalist sync never rewrites a linked
- * sample's method or dates, so the change stays.
+ * sample changes. The nightly iNaturalist sync never rewrites a printed
+ * sample's dates or any linked sample's method, so the change stays.
  *
  * The case it was made for: the old Beeline printed some trap samples twice,
  * once from the iNaturalist observation with its default "aerial net", and
@@ -30,8 +30,11 @@ import { isWriteConflict } from "../write-conflict.js";
  * Each old record is written only where the new value differs from its own, so a one-day sample whose records state no
  * end gains none.
  *
- * The start date is editable where iNaturalist does not hold it: on a sample
- * with no observation (Peter, 2026-11-15, beeline-0wbq). Promotion groups
+ * Staff may set the start date of any sample, printed or not (beeline-0wbq, beeline-qu2c). Every save of a start or end
+ * date also writes sample_date_override in the same transaction, the row the nightly's date follow skips
+ * (ingest/mint-samples.sql), so a date staff set stays whatever the observation says; labels printed with the old
+ * date are reprinted as for any corrected field. Nothing here predicts what the nightly would do. A sample with an
+ * observation and neither old records nor an entry is written directly. Promotion groups
  * old records into samples by their start date, so a corrected start moves
  * every record of the sample together, and a development store rebuilt from
  * the corrections makes the same sample, or merges it into another of the
@@ -58,6 +61,8 @@ export interface MethodInput {
   note: string;
   /** iNat login of whoever is signed in — never the person acted for. */
   author: string;
+  /** The person signed in, for the row that says who set the dates; null for a staff login that is no person. */
+  setBy?: number | null;
   /** Today, YYYY-MM-DD, where the program is: an end date cannot be later. */
   today: string;
   /**
@@ -75,7 +80,7 @@ export type MethodResult =
   | { outcome: "unchanged" }
   | {
       outcome: "invalid";
-      problem: "date" | "start_date" | "before_start" | "future" | "start_future" | "start_observation" | "method_required" | "unlisted_method";
+      problem: "date" | "start_date" | "before_start" | "future" | "start_future" | "method_required" | "unlisted_method";
       /** For `unlisted_method`: the codes of the methods that may be chosen. */
       methods?: string[];
     }
@@ -134,6 +139,25 @@ export async function fromOldRecords(db: Kysely<Database>, sampleId: number): Pr
   return Boolean(found.rows[0]?.e);
 }
 
+/** Whether a label of the sample is on paper (`printed_sample`, schema/101). */
+export async function isPrinted(db: Kysely<Database>, sampleId: number): Promise<boolean> {
+  const found = await sql<{ e: boolean }>`SELECT EXISTS (SELECT 1 FROM printed_sample WHERE sample_id = ${sampleId}) AS e`.execute(db);
+  return Boolean(found.rows[0]?.e);
+}
+
+/**
+ * Records that staff set the sample's dates, in the caller's transaction: the row the date follow in
+ * ingest/mint-samples.sql skips (sample_date_override, beeline-qu2c). Written or kept by every save that changes a
+ * start or an end date, so a date staff set stays whatever the observation says. Removing it again, so that the sample
+ * follows iNaturalist again, is not built.
+ */
+async function keepStaffDate(trx: Kysely<Database>, sampleId: number, input: MethodInput): Promise<void> {
+  const reason = input.note.trim() === "" ? null : input.note.trim();
+  await sql`
+    INSERT INTO sample_date_override (sample_id, set_by, reason) VALUES (${sampleId}, ${input.setBy ?? null}, CAST(${reason} AS TEXT))
+    ON CONFLICT (sample_id) DO UPDATE SET set_by = excluded.set_by, set_at = excluded.set_at, reason = excluded.reason`.execute(trx);
+}
+
 /** Callers run it inside `onSample` (src/app/sample-queue.ts), with the change log after it. */
 export async function setSampleMethod(
   db: Kysely<Database>,
@@ -172,8 +196,6 @@ export async function setSampleMethod(
   ) {
     return { outcome: "conflict" };
   }
-  // iNaturalist holds the start of a sample with an observation.
-  if (startTouched && sample.inat_observation_id !== null) return { outcome: "invalid", problem: "start_observation" };
   // A date that does not read back as written does not exist (30 February).
   const readable = (d: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
@@ -192,7 +214,11 @@ export async function setSampleMethod(
   const entered =
     !oldRecords &&
     (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
-  if (!oldRecords && !entered) return { outcome: "no_old_records" };
+  // A sample Beeline made from an observation has neither old records nor an entry. Like an entered one it is written
+  // directly: there is nothing older to name, and the change log records the change (beeline-qu2c). Staff may correct
+  // the dates of any sample, printed or not: the nightly leaves a date staff set alone (sample_date_override).
+  const direct = entered || (!oldRecords && sample.inat_observation_id !== null);
+  if (!oldRecords && !direct) return { outcome: "no_old_records" };
 
   const protocol = protocolTouched ? protocolIn : liveProtocol;
   // A method that is changed is chosen from the list, whoever the sample was entered by. A sample entered in Beeline
@@ -219,11 +245,12 @@ export async function setSampleMethod(
     ...(protocolChanged ? { protocol: protocol === "" ? null : protocol } : {}),
     ...(datesChanged ? { date_start: start, date_end: end } : {}),
   };
-  if (entered) {
+  if (direct) {
     try {
       await db.transaction().execute(async (trx) => {
         await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
         if (protocolChanged) await changeSampleMethod(trx, sampleId, protocol);
+        if (datesChanged) await keepStaffDate(trx, sampleId, input);
       });
     } catch (err) {
       // Nothing was kept anywhere, so saving again is all that is needed.
@@ -297,6 +324,7 @@ export async function setSampleMethod(
       await mirrorCorrections(trx, events);
       if (Object.keys(update).length > 0) await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
       if (protocolChanged) await changeSampleMethod(trx, sampleId, protocol);
+      if (datesChanged) await keepStaffDate(trx, sampleId, input);
       // A disagreement among the records over the method is settled by the
       // edit, as on the collector's form.
       if (protocolChanged) {

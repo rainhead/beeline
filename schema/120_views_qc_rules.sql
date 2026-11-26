@@ -490,6 +490,34 @@ JOIN (
 ) printed ON printed.sample_id = s.entity_id
 WHERE printed.n > s.specimen_count;
 
+-- An unprinted sample whose one day is not its observation's (beeline-qu2c).
+-- The date follow in ingest/mint-samples.sql moves an unprinted one-day
+-- sample onto its observation's date, but declines where the move would
+-- collide (a day another sample of the collector holds with the number, two
+-- samples moving onto one day, a swap), where the observation is shared with
+-- another sample or several observations claim the sample, or where it
+-- cannot tell which one sample is meant. Nothing else would say so, and the
+-- labels would print a date the volunteer has said is wrong. Blocking, so
+-- they wait for staff to set the date (which writes sample_date_override and
+-- clears the flag) or for the volunteer to correct the observation's date or
+-- number. A sample whose date staff set, one of several days (an observation
+-- cannot evidence a range) and a printed one (its date is the label's; not
+-- on paper is specimen_on_paper's own test, schema/101, as qc_rule_sample_number
+-- asks it) never raise it. Measured on production's copy of 2026-11-25: no
+-- sample is in this state, so it raises nothing when deployed.
+CREATE VIEW qc_rule_observation_date_differs AS
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'observation_date_differs' AS rule_name,
+       concat('observation: ', strftime(c.observed_on, '%-d %B %Y'), ' · sample: ', strftime(s.date_start, '%-d %B %Y')) AS details
+FROM sample s
+JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
+WHERE s.date_end = s.date_start
+  AND s.date_start <> c.observed_on
+  AND NOT EXISTS (SELECT 1 FROM sample_date_override d WHERE d.sample_id = s.entity_id)
+  AND NOT EXISTS (SELECT 1 FROM specimen_on_paper p WHERE p.sample_id = s.entity_id);
+COMMENT ON VIEW qc_rule_observation_date_differs IS 'An unprinted sample of one day whose observation says another day, and whose date staff have not set: the date follow in ingest/mint-samples.sql declined to move it (a collision, a shared observation, several observations claiming it), so its labels would print a date the volunteer has said is wrong. Blocking (beeline-qu2c).';
+
 -- A sample staff are holding back from printing (beeline-plu, schema/050).
 -- The reason is the details, because it is what both readers need: the
 -- collector, who may have something to fix, and the printer.

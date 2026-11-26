@@ -131,6 +131,7 @@ export const QC_RULE_NAMES = [
   "count_below_printed",
   "within_sample_disagreement",
   "observation_missing_upstream",
+  "observation_date_differs",
   "staff_hold",
 ] as const;
 export type QcRuleName = (typeof QC_RULE_NAMES)[number];

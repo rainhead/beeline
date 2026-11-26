@@ -1321,6 +1321,8 @@ export const en = {
         hint: "Old Beeline holds records of this sample. A correction here is recorded against those records, with your name.",
         /** For a trap sample entered in Beeline, once its own form no longer opens. */
         hintEntered: "This sample's labels are printed or about to be, so its own form no longer opens. A correction here changes the sample; ask for a reprint if the labels should change too.",
+        /** For a sample Beeline made from an iNaturalist observation, once its labels have printed. */
+        hintObserved: "This sample's labels are printed, so its dates no longer follow its iNaturalist observation. A correction here changes the sample; ask for a reprint if the labels should change too.",
         dateStart: "Collecting started",
         dateStartHint: "The day collecting began, or the day of a net sample.",
         protocol: "Method",
@@ -1340,7 +1342,7 @@ export const en = {
           before_start: "Collecting cannot end before the day it started.",
           future: "Collecting cannot end on a day that has not come yet.",
           start_future: "Collecting cannot start on a day that has not come yet.",
-          start_observation: "This sample's start date comes from its iNaturalist observation, so it is corrected there.",
+          start_observation: "This sample's start date follows its iNaturalist observation until its labels print, so change it there. Once its labels print, staff can correct it here.",
           method_required: "A trap sample entered in Beeline needs its method, as its own form does.",
         },
         noOldRecords: "Old Beeline holds no records of this sample and it was not entered in Beeline, so it cannot be corrected here.",

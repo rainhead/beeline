@@ -15,8 +15,8 @@ import { isWriteConflict } from "../write-conflict.js";
  * iNaturalist observation. Those records are what the correction names, as
  * the collector's own edit does (src/app/sample-edit.ts, ADR 0004): one event
  * per record and field, written to the corrections overlay before the live
- * sample changes. The nightly iNaturalist sync never rewrites a linked
- * sample's method or dates, so the change stays.
+ * sample changes. The nightly iNaturalist sync never rewrites a printed
+ * sample's dates or any linked sample's method, so the change stays.
  *
  * The case it was made for: the old Beeline printed some trap samples twice,
  * once from the iNaturalist observation with its default "aerial net", and
@@ -31,7 +31,14 @@ import { isWriteConflict } from "../write-conflict.js";
  * end gains none.
  *
  * The start date is editable where iNaturalist does not hold it: on a sample
- * with no observation (Peter, 2026-11-15, beeline-0wbq). Promotion groups
+ * with no observation (Peter, 2026-11-15, beeline-0wbq), and on one whose
+ * labels are printed (beeline-qu2c). Until they print, a one-day sample's
+ * date follows its observation (ingest/mint-samples.sql), so a correction
+ * made here would be undone by the next nightly, and it is refused with a
+ * sentence saying to correct the date on iNaturalist. A printed sample's date
+ * never follows, and an observation edited after printing may describe
+ * another sample, so staff may correct the date and the labels printed with
+ * the old one are reprinted as for any corrected field. Promotion groups
  * old records into samples by their start date, so a corrected start moves
  * every record of the sample together, and a development store rebuilt from
  * the corrections makes the same sample, or merges it into another of the
@@ -134,6 +141,12 @@ export async function fromOldRecords(db: Kysely<Database>, sampleId: number): Pr
   return Boolean(found.rows[0]?.e);
 }
 
+/** Whether a label of the sample is on paper (`printed_sample`, schema/101). */
+export async function isPrinted(db: Kysely<Database>, sampleId: number): Promise<boolean> {
+  const found = await sql<{ e: boolean }>`SELECT EXISTS (SELECT 1 FROM printed_sample WHERE sample_id = ${sampleId}) AS e`.execute(db);
+  return Boolean(found.rows[0]?.e);
+}
+
 /** Callers run it inside `onSample` (src/app/sample-queue.ts), with the change log after it. */
 export async function setSampleMethod(
   db: Kysely<Database>,
@@ -172,8 +185,10 @@ export async function setSampleMethod(
   ) {
     return { outcome: "conflict" };
   }
-  // iNaturalist holds the start of a sample with an observation.
-  if (startTouched && sample.inat_observation_id !== null) return { outcome: "invalid", problem: "start_observation" };
+  // iNaturalist holds the start of a sample with an observation until its labels print: the nightly would put it back
+  // (ingest/mint-samples.sql). Once they print the date stays what the label says, so staff may correct it (beeline-qu2c).
+  const printed = sample.inat_observation_id !== null && (await isPrinted(db, sampleId));
+  if (startTouched && sample.inat_observation_id !== null && !printed) return { outcome: "invalid", problem: "start_observation" };
   // A date that does not read back as written does not exist (30 February).
   const readable = (d: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
@@ -192,7 +207,10 @@ export async function setSampleMethod(
   const entered =
     !oldRecords &&
     (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
-  if (!oldRecords && !entered) return { outcome: "no_old_records" };
+  // A sample Beeline made from an observation and printed has neither old records nor an entry. Like an entered one it
+  // is written directly: there is nothing older to name, and the change log records the change (beeline-qu2c).
+  const direct = entered || (!oldRecords && printed);
+  if (!oldRecords && !direct) return { outcome: "no_old_records" };
 
   const protocol = protocolTouched ? protocolIn : liveProtocol;
   // A method that is changed is chosen from the list, whoever the sample was entered by. A sample entered in Beeline
@@ -219,7 +237,7 @@ export async function setSampleMethod(
     ...(protocolChanged ? { protocol: protocol === "" ? null : protocol } : {}),
     ...(datesChanged ? { date_start: start, date_end: end } : {}),
   };
-  if (entered) {
+  if (direct) {
     try {
       await db.transaction().execute(async (trx) => {
         await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();

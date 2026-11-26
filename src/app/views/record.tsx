@@ -678,12 +678,14 @@ function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDet
  * Staff correcting how and when a sample was collected (beeline-p8y1,
  * beeline-0wbq), from a pencil on the Method row: the method's words, the day
  * collecting ended, which makes an old sample a trap sample, and the day it
- * started where iNaturalist does not hold it (src/app/sample-method.ts).
+ * started where iNaturalist does not hold it: on a sample with no observation,
+ * or whose labels are printed (src/app/sample-method.ts, beeline-qu2c).
  */
 function MethodEdit({ m, sample, methods }: { m: Messages; sample: SampleDetail; methods: readonly string[] }) {
   const t = m.record.sample.methodEdit;
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const startEditable = sample.inat_observation_id === null;
+  // iNaturalist holds the start until the labels print; after that the label does (beeline-qu2c).
+  const startEditable = sample.inat_observation_id === null || sample.printed;
   return (
     <InlineEdit
       label={t.open}
@@ -692,7 +694,7 @@ function MethodEdit({ m, sample, methods }: { m: Messages; sample: SampleDetail;
       save={t.save}
       cancel={m.listings.samples.placeEdit.cancel}
     >
-      <Meta block>{sample.from_old_records ? t.hint : t.hintEntered}</Meta>
+      <Meta block>{sample.from_old_records ? t.hint : sample.inat_observation_id !== null ? t.hintObserved : t.hintEntered}</Meta>
       {/* What the form shows rides along as base:*, so a save can tell a
           field nobody touched from a stale one (beeline-0br). */}
       <input type="hidden" name="base:protocol" value={sample.protocol ?? ""} />
@@ -1227,7 +1229,7 @@ export function SamplePage({
           m={m}
           sample={sample}
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
-          methodEdit={admin && (sample.from_old_records || enteredPastItsForm)}
+          methodEdit={admin && (sample.from_old_records || enteredPastItsForm || (sample.inat_observation_id !== null && sample.printed))}
           methodChoices={methodChoices}
           trapCountEdit={admin}
           hostEdit={admin && (sample.inat_observation_id !== null || (sample.from_old_records && !entered))}

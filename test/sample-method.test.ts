@@ -321,17 +321,48 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
   });
 
   describe("the start date, where iNaturalist does not hold it (beeline-0wbq)", () => {
-    it("is offered only on a sample with no observation", async () => {
+    it("is offered on a sample with no observation, and on one with an observation once its labels are on paper (beeline-qu2c)", async () => {
+      // The fixture's sample was printed by the old Beeline, so it is on paper: its date is the label's, not the observation's.
       const linked = await methodApp("staff");
       const withObservation = await (await linked.app.request(`/samples/${linked.sampleId}`)).text();
-      expect(withObservation).toContain(t.dateEnd);
-      expect(withObservation).not.toContain(`name="date_start"`);
-      const res = await post(linked.app, `/samples/${linked.sampleId}/method`, { protocol: "aerial net", date_end: "", date_start: linked.later(-3) });
-      expect(res.status).toBe(400);
-      expect(await res.text()).toBe(t.problems.start_observation);
+      expect(withObservation).toContain(`name="date_start"`);
+      const start = linked.later(-3);
+      const res = await post(linked.app, `/samples/${linked.sampleId}/method`, { protocol: "aerial net", date_end: "", date_start: start, note: "the field book says so" });
+      expect(res.status).toBe(302);
+      expect(await sampleRow(linked.conn, linked.sampleId)).toEqual(["net", "aerial net", start, start]);
+      // One event per old record for the day, as for a sample with no observation.
+      const [[records]] = (await rows(linked.conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${linked.sampleId}`)) as [[bigint]];
+      expect((await correctionsIn(linked.correctionsPath)).filter((e) => e.field === "day")).toHaveLength(Number(records));
 
       const unlinked = await methodApp("staff", { observation: false });
       expect(await (await unlinked.app.request(`/samples/${unlinked.sampleId}`)).text()).toContain(`name="date_start"`);
+    });
+
+    it("refuses an unprinted sample with an observation, saying its date follows the observation", async () => {
+      const { app, conn, later } = await methodApp("staff");
+      // A sample with no specimen has no label on paper.
+      const sampleId = await insertCleanSample(conn, { inat_observation_id: "93297998", sample_number: "'42'", date_start: `DATE '${later(10)}'`, date_end: `DATE '${later(10)}'` });
+      expect(await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = ${sampleId}`)).toEqual([]);
+      const res = await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "", date_start: later(-3) });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe(t.problems.start_observation);
+      expect(t.problems.start_observation).toContain("iNaturalist");
+    });
+
+    it("corrects the start of a sample Beeline made from an observation and printed, which has no old records, unless the number is taken", async () => {
+      const { app, conn, sampleId, later } = await methodApp("staff");
+      const sample = await insertCleanSample(conn, { inat_observation_id: "93297999", sample_number: "'41'", date_start: `DATE '${later(10)}'`, date_end: `DATE '${later(10)}'` });
+      const holder = await insertCleanSample(conn, { sample_number: "'41'", date_start: `DATE '${later(12)}'`, date_end: `DATE '${later(12)}'` });
+      await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sample}, 1)`);
+      expect(await rows(conn, `SELECT 1 FROM legacy_specimen_number WHERE sample_id = ${sample}`)).toEqual([]);
+      expect(await (await app.request(`/samples/${sample}`)).text()).toContain(`name="date_start"`);
+      const taken = await post(app, `/samples/${sample}/method`, { protocol: "aerial net", date_end: "", date_start: later(12) });
+      expect(taken.status).toBe(409);
+      const res = await post(app, `/samples/${sample}/method`, { protocol: "aerial net", date_end: "", date_start: later(11) });
+      expect(res.status).toBe(302);
+      expect(await sampleRow(conn, sample)).toEqual(["net", "aerial net", later(11), later(11)]);
+      expect(holder).toBeGreaterThan(0);
+      expect(sampleId).toBeGreaterThan(0);
     });
 
     it("moves the sample and every old record's start, and a net sample's end with it", async () => {

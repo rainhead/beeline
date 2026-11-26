@@ -1,0 +1,238 @@
+import { beforeEach, describe, expect, test } from "vitest";
+import type { DuckDBConnection } from "@duckdb/node-api";
+import { createKysely } from "../src/db.js";
+import { createMemoryDb, insertCleanSample, currentSeasonDate, scratchPaths, SETTLED_SEASON, rows } from "./helpers.js";
+import { canonicalJson } from "../src/sync-inat.js";
+import { promoteObservations } from "../src/promote-observations.js";
+import { approveRun, markPrinted, prepareRun, requestReprint } from "../src/print-run.js";
+import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
+import { duckdbReader } from "../src/person-change.js";
+import { setSampleMethod } from "../src/app/sample-method.js";
+
+/**
+ * A sample's start date follows its observation until its labels print, and
+ * staff may correct it after (beeline-qu2c). The first half is
+ * ingest/mint-samples.sql; the second is src/app/sample-method.ts, here for a
+ * sample Beeline made from an observation and printed, which has neither old
+ * records nor an entry. Samples with old records are in
+ * test/sample-method.test.ts, with the page.
+ */
+
+let conn: DuckDBConnection;
+let instance: Awaited<ReturnType<typeof createMemoryDb>>["instance"];
+let ada: number;
+
+beforeEach(async () => {
+  ({ conn, instance } = await createMemoryDb());
+  await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+  [[ada]] = (await rows(conn, "SELECT min(entity_id) FROM person")) as [[number]];
+  await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${ada}, 100, 'adacollects')`);
+  for (const [id, name, level] of [[1, "United States", 0], [10, "Oregon", 10], [484, "Benton", 20]] as const) {
+    await conn.run(`INSERT INTO inat_place (inat_place_id, name, admin_level) VALUES (${id}, '${name}', ${level})`);
+  }
+});
+
+const DAY = currentSeasonDate(7, 14);
+const NEXT = currentSeasonDate(7, 15);
+const THIRD = currentSeasonDate(7, 16);
+
+function obs(id: number, number: string, observedOn: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    uuid: `uuid-${id}`,
+    observed_on: observedOn,
+    geojson: { coordinates: [-123.262, 44.5646], type: "Point" },
+    positional_accuracy: 30,
+    public_positional_accuracy: 30,
+    geoprivacy: null,
+    taxon_geoprivacy: null,
+    place_ids: [1, 10, 484],
+    place_guess: "Corvallis, OR, US",
+    user: { id: 100, login: "adacollects", name: "Ada Collector" },
+    taxon: { id: 47604, name: "Rubus", ancestor_ids: [48460, 47126, 211194, 47604] },
+    ofvs: [{ name: "sampleId", value: number }, { name: "numberOfSpecimens", value: "3" }],
+    ...extra,
+  };
+}
+
+async function stage(o: Record<string, unknown>): Promise<void> {
+  await conn.run("INSERT INTO sync_run (source, authenticated, completed_at) VALUES ('test', true, now())");
+  await conn.run(
+    `INSERT INTO observation_load (inat_id, sync_run_id, content, content_hash)
+     VALUES ($1, (SELECT max(entity_id) FROM sync_run), $2, $3)`,
+    [Number(o.id), canonicalJson(o), `hash-${o.id}-${o.observed_on}`] as never,
+  );
+}
+
+const one = async (sql: string) => (await rows(conn, sql))[0];
+const datesOf = async (id: number) => one(`SELECT CAST(date_start AS VARCHAR), CAST(date_end AS VARCHAR) FROM sample WHERE entity_id = ${id}`);
+/** A sample whose date is the day, linked to an observation, with no label anywhere. */
+const unprinted = (id: string, number = "7", extra: Record<string, string> = {}) =>
+  insertCleanSample(conn, { inat_observation_id: id, sample_number: `'${number}'`, ...extra });
+/** The same, with a specimen no run minted, which is how an imported sample's labels look: on paper. */
+async function printedBefore(id: string, number = "7"): Promise<number> {
+  const sampleId = await unprinted(id, number);
+  await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, 1)`);
+  return sampleId;
+}
+
+describe("before printing, the date follows the observation", () => {
+  test("an unprinted one-day sample takes its redated observation's day, and promoting again changes nothing", async () => {
+    const sampleId = await unprinted("7");
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
+  });
+
+  test("a range is not collapsed onto the observation's one day", async () => {
+    const trap = await unprinted("7", "7", { kind: "'trap'", date_start: `DATE '${DAY}'`, date_end: `DATE '${THIRD}'` });
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(trap)).toEqual([DAY, THIRD]);
+  });
+
+  test("a printed sample keeps its date", async () => {
+    const sampleId = await printedBefore("7");
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([DAY, DAY]);
+  });
+
+  test("an observation another sample cites is not followed", async () => {
+    const a = await unprinted("7");
+    const b = await unprinted("7");
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(a)).toEqual([DAY, DAY]);
+    expect(await datesOf(b)).toEqual([DAY, DAY]);
+  });
+
+  test("a sample several observations claim is not followed", async () => {
+    const sampleId = await unprinted("7");
+    // Another observation of the collector carries the number on the sample's day: the sample is in sample_multi_observation.
+    await stage(obs(7, "7", NEXT));
+    await stage(obs(8, "7", DAY));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT sample_id FROM sample_multi_observation`)).toEqual([[sampleId]]);
+    expect(await datesOf(sampleId)).toEqual([DAY, DAY]);
+  });
+
+  test("a move onto a day where the collector already has the number is skipped, and the nightly still completes", async () => {
+    const mover = await unprinted("7");
+    const holder = await insertCleanSample(conn, { sample_number: "'7'", date_start: `DATE '${NEXT}'`, date_end: `DATE '${NEXT}'` });
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(mover)).toEqual([DAY, DAY]);
+    expect(await datesOf(holder)).toEqual([NEXT, NEXT]);
+    // A different number on that day is no collision.
+    const other = await unprinted("9", "9");
+    await stage(obs(9, "9", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(other)).toEqual([NEXT, NEXT]);
+  });
+
+  test("two samples of one collector and number redated onto one day in one pass do not both move", async () => {
+    const a = await unprinted("7");
+    const b = await unprinted("8", "7", { date_start: `DATE '${THIRD}'`, date_end: `DATE '${THIRD}'` });
+    await stage(obs(7, "7", NEXT));
+    await stage(obs(8, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(a)).toEqual([DAY, DAY]);
+    expect(await datesOf(b)).toEqual([THIRD, THIRD]);
+    expect(await rows(conn, `SELECT 1 FROM sample_number_conflict`)).toEqual([]);
+  });
+
+  test("a sample in a prepared run follows, and the run lists its labels as out of date", async () => {
+    const sampleId = await unprinted("7");
+    const run = (await prepareRun(conn, { atlasId: null, personId: ada, now: new Date("2026-09-21T16:00:00Z") }))!;
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
+    const out = await rows(conn, `SELECT field, on_label, now FROM printed_label_out_of_date WHERE print_run_id = ${run.printRunId} AND field = 'dates'`);
+    expect(out).toHaveLength(3);
+    expect(out[0]).toEqual(["dates", `${DAY} – ${DAY}`, `${NEXT} – ${NEXT}`]);
+  });
+
+  test("the change log records the new day as an observation promotion's", async () => {
+    const sampleId = await unprinted("7");
+    const paths = await scratchPaths();
+    const log = { log: paths.sampleChangesPath, state: paths.sampleStatePath };
+    await recordSampleChanges(duckdbReader(conn), log, { source: "observation_promotion" });
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    await recordSampleChanges(duckdbReader(conn), log, { source: "observation_promotion" });
+    const changes = (await readSampleChanges(paths.sampleChangesPath)).filter((c) => c.field === "date_start");
+    expect(changes.map((c) => [c.new_value, c.source])).toEqual([[NEXT, "observation_promotion"]]);
+    expect(sampleId).toBeGreaterThan(0);
+  });
+
+  test("a sample moved across the 1 March line changes season with its date", async () => {
+    const settled = `${SETTLED_SEASON}-07-14`;
+    const sampleId = await unprinted("7");
+    await stage(obs(7, "7", settled));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([settled, settled]);
+    expect(await rows(conn, `SELECT 1 FROM settled_sample WHERE sample_id = ${sampleId}`)).toHaveLength(1);
+    // A settled sample waits for a release, as one minted there would.
+    expect(await rows(conn, `SELECT 1 FROM pending_print_sample WHERE sample_id = ${sampleId}`)).toEqual([]);
+  });
+});
+
+describe("after printing, staff may correct the start date of a sample with an observation", () => {
+  const input = (dateStart: string, extra: Record<string, unknown> = {}) => ({
+    protocol: "net",
+    dateEnd: "",
+    dateStart,
+    note: "the field book says so",
+    author: "samstaff",
+    today: currentSeasonDate(12, 31) < new Date().toISOString().slice(0, 10) ? currentSeasonDate(12, 31) : new Date().toISOString().slice(0, 10),
+    ...extra,
+  });
+
+  test("an unprinted sample is refused, to be corrected on iNaturalist", async () => {
+    const sampleId = await unprinted("7");
+    const paths = await scratchPaths();
+    const saved = await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(NEXT));
+    expect(saved).toEqual({ outcome: "invalid", problem: "start_observation" });
+    expect(await datesOf(sampleId)).toEqual([DAY, DAY]);
+  });
+
+  test("a sample made from an observation and printed by Beeline is written directly and the nightly does not undo it", async () => {
+    const sampleId = await unprinted("7");
+    const run = (await prepareRun(conn, { atlasId: null, personId: ada, now: new Date("2026-09-21T16:00:00Z") }))!;
+    const t = new Date("2026-09-21T17:00:00Z");
+    await approveRun(conn, run.printRunId, { personId: ada, now: t });
+    await markPrinted(conn, run.printRunId, { personId: ada, now: t });
+    expect(await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = ${sampleId}`)).toHaveLength(1);
+
+    const paths = await scratchPaths();
+    const log = { log: paths.sampleChangesPath, state: paths.sampleStatePath };
+    await recordSampleChanges(duckdbReader(conn), log, { source: "observation_promotion" });
+    const saved = await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(THIRD));
+    expect(saved).toEqual({ outcome: "saved" });
+    expect(await datesOf(sampleId)).toEqual([THIRD, THIRD]);
+
+    // The observation still says another day; a printed sample does not follow it.
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([THIRD, THIRD]);
+
+    // The history names the change, and a reprint is composed with the corrected date and says it differs from the label.
+    await recordSampleChanges(duckdbReader(conn), log, { source: "app" });
+    expect((await readSampleChanges(paths.sampleChangesPath)).some((c) => c.field === "date_start" && c.new_value === THIRD)).toBe(true);
+    const specimenId = Number((await one(`SELECT min(entity_id) FROM specimen WHERE sample_id = ${sampleId}`))?.[0]);
+    await requestReprint(conn, { specimenId }, { personId: ada, now: new Date("2026-09-22T16:00:00Z"), reason: "data_corrected" });
+    const second = (await prepareRun(conn, { atlasId: null, personId: ada, now: new Date("2026-09-22T17:00:00Z") }))!;
+    expect(await one(`SELECT warnings FROM printed_label WHERE print_run_id = ${second.printRunId}`)?.then((r) => String(r?.[0]))).toContain("date");
+  });
+
+  test("a start day that gives the sample's number to a day its collector already holds it on is still not taken by the writer's own check", async () => {
+    // The writer (setSampleMethod) leaves the collision to its caller, as for an unlinked sample (setMethod, startMoveHolder).
+    const sampleId = await printedBefore("7");
+    const paths = await scratchPaths();
+    const saved = await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(NEXT));
+    expect(saved).toEqual({ outcome: "saved" });
+  });
+});

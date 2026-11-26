@@ -34,6 +34,8 @@ beforeEach(async () => {
 
 /** A moment in the current season, so that a run is prepared after the collection dates in any season. */
 const at = (month: number, day: number, hour: number) => new Date(`${currentSeasonDate(month, day)}T${String(hour).padStart(2, "0")}:00:00Z`);
+/** A day as the flag writes it: 25 July 2026. */
+const words = (iso: string) => `${Number(iso.slice(8))} ${["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
 const DAY = currentSeasonDate(7, 14);
 const NEXT = currentSeasonDate(7, 15);
 const THIRD = currentSeasonDate(7, 16);
@@ -247,8 +249,8 @@ describe("before printing, the date follows the observation", () => {
     await promoteObservations(conn);
     const flagged = async () => (await rows(conn, `SELECT sample_id, details FROM qc_finding WHERE rule_name = 'observation_date_differs' ORDER BY sample_id`));
     expect(await flagged()).toEqual([
-      [a, `observation says ${NEXT}, sample says ${DAY}`],
-      [b, `observation says ${DAY}, sample says ${NEXT}`],
+      [a, `observation: ${words(NEXT)} · sample: ${words(DAY)}`],
+      [b, `observation: ${words(DAY)} · sample: ${words(NEXT)}`],
     ]);
     // Blocking: neither is printable while flagged.
     expect(await rows(conn, `SELECT sample_id FROM pending_print_sample WHERE sample_id IN (${a}, ${b})`)).toEqual([]);

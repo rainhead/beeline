@@ -509,7 +509,7 @@ CREATE VIEW qc_rule_observation_date_differs AS
 SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'observation_date_differs' AS rule_name,
-       concat('observation says ', CAST(c.observed_on AS TEXT), ', sample says ', CAST(s.date_start AS TEXT)) AS details
+       concat('observation: ', strftime(c.observed_on, '%-d %B %Y'), ' · sample: ', strftime(s.date_start, '%-d %B %Y')) AS details
 FROM sample s
 JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
 WHERE s.date_end = s.date_start

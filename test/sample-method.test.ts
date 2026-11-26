@@ -346,13 +346,13 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
       expect(await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = ${sampleId}`)).toEqual([]);
       const page = await (await app.request(`/samples/${sampleId}`)).text();
       expect(page).toContain(`name="date_start"`);
-      expect(page).toContain("dates follow its iNaturalist observation");
+      expect(page).toContain("dates come from its iNaturalist observation");
       const res = await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "", date_start: later(-3) });
       expect(res.status).toBe(302);
       expect(await sampleRow(conn, sampleId)).toEqual(["net", "aerial net", later(-3), later(-3)]);
       expect(await rows(conn, `SELECT set_by FROM sample_date_override WHERE sample_id = ${sampleId}`)).toHaveLength(1);
       // Now that staff set it, the page says so.
-      expect(await (await app.request(`/samples/${sampleId}`)).text()).toContain("Staff set this sample&#39;s dates");
+      expect(await (await app.request(`/samples/${sampleId}`)).text()).toContain("Staff changed this sample&#39;s dates");
     });
 
     it("corrects the start of a sample Beeline made from an observation and printed, which has no old records, unless the number is taken", async () => {

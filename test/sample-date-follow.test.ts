@@ -229,7 +229,8 @@ describe("after printing, staff may correct the start date of a sample with an o
     dateStart,
     note: "the field book says so",
     author: "samstaff",
-    today: currentSeasonDate(12, 31) < new Date().toISOString().slice(0, 10) ? currentSeasonDate(12, 31) : new Date().toISOString().slice(0, 10),
+    // A day in the season after every fixture date, so that no save is refused as not yet come.
+    today: currentSeasonDate(12, 31),
     ...extra,
   });
 
@@ -284,6 +285,35 @@ describe("after printing, staff may correct the start date of a sample with an o
     const several = await unprinted("11", "11");
     await conn.run(`INSERT INTO sample_legacy_observation (sample_id, inat_observation_id) VALUES (${several}, 11), (${several}, 12)`);
     expect(await setSampleMethod(db, paths.correctionsPath, several, input(NEXT))).toEqual({ outcome: "saved" });
+  });
+
+  test("refuses a save that leaves a one-day sample the nightly follows, unless the day is the observation's own", async () => {
+    const paths = await scratchPaths();
+    const db = createKysely(instance);
+    const range = () => unprinted("7", "7", { kind: "'trap'", date_start: `DATE '${DAY}'`, date_end: `DATE '${THIRD}'` });
+
+    // A range saved as one day, by its start and end both: the nightly would put it back.
+    const a = await range();
+    expect(await setSampleMethod(db, paths.correctionsPath, a, input(NEXT, { protocol: "vane trap" }))).toEqual({ outcome: "invalid", problem: "start_observation" });
+    expect(await datesOf(a)).toEqual([DAY, THIRD]);
+    // And by its end alone, which collapses the range onto its start.
+    expect(await setSampleMethod(db, paths.correctionsPath, a, input(DAY, { protocol: "vane trap" }))).toEqual({ outcome: "invalid", problem: "start_observation" });
+    expect(await datesOf(a)).toEqual([DAY, THIRD]);
+    // A save that keeps it a range is allowed.
+    expect(await setSampleMethod(db, paths.correctionsPath, a, input(DAY, { protocol: "vane trap", dateEnd: NEXT }))).toEqual({ outcome: "saved" });
+    expect(await datesOf(a)).toEqual([DAY, NEXT]);
+  });
+
+  test("allows a range saved as the observation's own day, and the nightly leaves it", async () => {
+    const paths = await scratchPaths();
+    const sampleId = await unprinted("7", "7", { kind: "'trap'", date_start: `DATE '${DAY}'`, date_end: `DATE '${THIRD}'` });
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([DAY, THIRD]);
+    expect(await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(NEXT, { protocol: "vane trap" }))).toEqual({ outcome: "saved" });
+    expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
   });
 
   test("an entered sample that cites an observation follows it until printing, so its date is refused", async () => {

@@ -365,6 +365,18 @@ describe("a change a correction would refuse", () => {
     expect(await rows(f.conn, `SELECT CAST(date_start AS VARCHAR) FROM sample WHERE entity_id = ${printed}`)).toEqual([[day(21)]]);
   });
 
+  it("makes a method-only change on an unprinted range with an observation and no old records eligible, and keeps a one-day one ineligible", async () => {
+    const f = await uploadFixture("staffer", { unprinted: true });
+    const range = await trapSample(f, { sample_number: "'X-3'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(22)}'`, inat_observation_id: "12347" }, false);
+    const oneDay = await trapSample(f, { sample_number: "'X-4'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(20)}'`, inat_observation_id: "12348" }, false);
+    const { location } = await offered(f, [
+      { id: range, set: { samplingProtocol: "pan trap" } },
+      { id: oneDay, set: { samplingProtocol: "pan trap" } },
+    ]);
+    expect(await noteOf(f, location, range)).not.toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
+    expect(await noteOf(f, location, oneDay)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
+  });
+
   it("is predicted for a specimen count below the highest specimen number already given", async () => {
     const f = await uploadFixture();
     const t = await trapSample(f, { specimen_count: "3" });

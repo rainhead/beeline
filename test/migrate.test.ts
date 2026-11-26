@@ -337,7 +337,7 @@ UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host;`);
       expect(await rows(conn, `SELECT count(*) FROM ${table} WHERE ${column} = '${RULE}'`)).toEqual([[0n]]);
     }
     // The union as 0113 leaves it: without the rule 0129 adds later (observation_date_differs), which this store has not had.
-    const withoutLaterRule = (await viewSql(fresh, "qc_finding")).map(([sql]) => [String(sql).replace("UNION ALL (SELECT * FROM qc_rule_observation_date_differs)", "")]);
+    const withoutLaterRule = (await viewSql(fresh, "qc_finding")).map(([sql]) => [String(sql).replace(/\s*UNION ALL \(SELECT \* FROM qc_rule_observation_date_differs\)/, "")]);
     expect(await viewSql(conn, "qc_finding")).toEqual(withoutLaterRule);
     expect(await comments(conn)).toEqual(await comments(fresh));
     expect(await schemaDrift(conn)).toEqual([]);

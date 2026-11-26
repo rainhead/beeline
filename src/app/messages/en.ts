@@ -1323,6 +1323,8 @@ export const en = {
         hintEntered: "This sample's labels are printed or about to be, so its own form no longer opens. A correction here changes the sample; ask for a reprint if the labels should change too.",
         /** For a sample Beeline made from an iNaturalist observation, once its labels have printed. */
         hintObserved: "This sample's labels are printed, so its dates no longer follow its iNaturalist observation. A correction here changes the sample; ask for a reprint if the labels should change too.",
+        /** For a sample with an observation whose dates do not follow it, though its labels are not printed (a range, a shared or multiply claimed observation). */
+        hintObservedFree: "This sample's dates do not follow its iNaturalist observation (it spans days, or the observation is shared with another sample or claimed along with others), so a correction here changes the sample.",
         dateStart: "Collecting started",
         dateStartHint: "The day collecting began, or the day of a net sample.",
         protocol: "Method",
@@ -1342,7 +1344,7 @@ export const en = {
           before_start: "Collecting cannot end before the day it started.",
           future: "Collecting cannot end on a day that has not come yet.",
           start_future: "Collecting cannot start on a day that has not come yet.",
-          start_observation: "This sample's start date follows its iNaturalist observation until its labels print, so change it there. Once its labels print, staff can correct it here.",
+          start_observation: "This sample's start date follows its iNaturalist observation until its labels print, so change the date there. After that, or if the sample spans several days or its observation is shared, staff can correct it here.",
           method_required: "A trap sample entered in Beeline needs its method, as its own form does.",
         },
         noOldRecords: "Old Beeline holds no records of this sample and it was not entered in Beeline, so it cannot be corrected here.",
@@ -4168,7 +4170,7 @@ export const en = {
         body: [
           "When staff prepare a print run, every sample that is ready goes in. That is the moment your specimens get their field numbers; the ",
           { href: "/glossary#label", label: "labels" },
-          " are printed and mailed to you. From then on, the place, the coordinates, the sample number and the count are fixed: a later edit on iNaturalist no longer changes them, so check your observations before the run, not after. A sample's date is taken once and never changed from iNaturalist; a wrong date is fixed by telling staff.",
+          " are printed and mailed to you. Until then, the sample's number, date and count follow your observation on iNaturalist, so fix a wrong one there. From then on, the place, the coordinates, the sample number and the date are fixed: a later edit on iNaturalist no longer changes them, so check your observations before the run, not after, and tell staff about a wrong date or number. The count still follows your observation (unless the sample keeps its own count), and a raised count gets the extra labels printed.",
         ],
       },
       {

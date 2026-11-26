@@ -147,6 +147,26 @@ export async function isPrinted(db: Kysely<Database>, sampleId: number): Promise
   return Boolean(found.rows[0]?.e);
 }
 
+/**
+ * Whether the nightly would put this sample's start date back to its observation's: a sample of one day, not printed,
+ * whose observation no other sample cites and that is not one of several claiming the
+ * sample (the conditions of the date follow in ingest/mint-samples.sql). Where it is true a staff correction would be
+ * undone, so it is refused (beeline-qu2c); where it is false the nightly leaves the date alone and staff may correct it.
+ * The one place the gate, the sample page and the samples upload ask.
+ */
+export async function dateFollowsObservation(db: Kysely<Database>, sampleId: number): Promise<boolean> {
+  const found = await sql<{ e: boolean }>`
+    SELECT EXISTS (
+      SELECT 1 FROM sample s
+      WHERE s.entity_id = ${sampleId}
+        AND s.inat_observation_id IS NOT NULL
+        AND s.date_end = s.date_start
+        AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+        AND NOT EXISTS (SELECT 1 FROM sample o WHERE o.inat_observation_id = s.inat_observation_id AND o.entity_id <> s.entity_id)
+        AND NOT EXISTS (SELECT 1 FROM sample_several_observations m WHERE m.sample_id = s.entity_id)) AS e`.execute(db);
+  return Boolean(found.rows[0]?.e);
+}
+
 /** Callers run it inside `onSample` (src/app/sample-queue.ts), with the change log after it. */
 export async function setSampleMethod(
   db: Kysely<Database>,
@@ -185,10 +205,10 @@ export async function setSampleMethod(
   ) {
     return { outcome: "conflict" };
   }
-  // iNaturalist holds the start of a sample with an observation until its labels print: the nightly would put it back
-  // (ingest/mint-samples.sql). Once they print the date stays what the label says, so staff may correct it (beeline-qu2c).
-  const printed = sample.inat_observation_id !== null && (await isPrinted(db, sampleId));
-  if (startTouched && sample.inat_observation_id !== null && !printed) return { outcome: "invalid", problem: "start_observation" };
+  // iNaturalist holds the start of a sample whose date the nightly would put back (ingest/mint-samples.sql). Where it
+  // would not (labels printed, a range, a shared or multiply claimed observation) staff may correct it (beeline-qu2c).
+  const linked = sample.inat_observation_id !== null;
+  if (startTouched && linked && (await dateFollowsObservation(db, sampleId))) return { outcome: "invalid", problem: "start_observation" };
   // A date that does not read back as written does not exist (30 February).
   const readable = (d: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
@@ -209,7 +229,7 @@ export async function setSampleMethod(
     (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
   // A sample Beeline made from an observation and printed has neither old records nor an entry. Like an entered one it
   // is written directly: there is nothing older to name, and the change log records the change (beeline-qu2c).
-  const direct = entered || (!oldRecords && printed);
+  const direct = entered || (!oldRecords && linked && ((await isPrinted(db, sampleId)) || !(await dateFollowsObservation(db, sampleId))));
   if (!oldRecords && !direct) return { outcome: "no_old_records" };
 
   const protocol = protocolTouched ? protocolIn : liveProtocol;

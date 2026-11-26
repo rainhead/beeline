@@ -171,7 +171,7 @@ export function SampleFacts({
   m,
   sample,
   placeEdit = null,
-  methodEdit = false,
+  methodEdit = false as MethodEditKind,
   methodChoices = [],
   trapCountEdit = false,
   hostEdit = false,
@@ -185,11 +185,11 @@ export function SampleFacts({
    */
   personLinks?: boolean;
   /**
-   * Whether the reader may correct the method and dates: staff, on a sample
-   * from old records (beeline-p8y1) or a trap sample entered in Beeline past
-   * its own form (beeline-0wbq).
+   * Whether the reader may correct the method and dates: staff only
+   * (beeline-p8y1, beeline-0wbq, beeline-qu2c).
    */
-  methodEdit?: boolean;
+  /** Which sample the Method pencil is offered for, and so what its hint says; false offers none. */
+  methodEdit?: MethodEditKind;
   /** The codes of the methods the Method form offers (`readMethodCodes`, src/app/sample-method.ts), the traps alone for a sample entered in Beeline. */
   methodChoices?: readonly string[];
   /** Whether the reader may correct a trap sample's trap count: staff, on any trap sample (beeline-kgyd.4.1). */
@@ -220,7 +220,7 @@ export function SampleFacts({
             {sample.kind === "trap" ? <Term m={m} slug="trap-sample">{s.methodTrap}</Term> : s.methodNet}
             {protocolSaysMore(sample) && <Meta> · {sample.protocol}</Meta>}
           </span>
-          {methodEdit && <MethodEdit m={m} sample={sample} methods={methodChoices} />}
+          {methodEdit !== false && <MethodEdit m={m} sample={sample} methods={methodChoices} kind={methodEdit} />}
           {trapCountEdit && sample.kind === "trap" && <TrapCountEdit m={m} sample={sample} />}
         </>
       ),
@@ -681,11 +681,21 @@ function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDet
  * started where iNaturalist does not hold it: on a sample with no observation,
  * or whose labels are printed (src/app/sample-method.ts, beeline-qu2c).
  */
-function MethodEdit({ m, sample, methods }: { m: Messages; sample: SampleDetail; methods: readonly string[] }) {
+/** Which sample gets the Method pencil: one built from old records, one entered in Beeline past its form, or one with an observation whose dates the nightly leaves alone. */
+function methodEditKind(sample: SampleDetail, enteredPastItsForm: boolean): MethodEditKind {
+  if (sample.from_old_records) return "old";
+  if (enteredPastItsForm) return "entered";
+  if (sample.inat_observation_id !== null && (sample.printed || !sample.date_follows_observation)) return "observed";
+  return false;
+}
+
+type MethodEditKind = false | "old" | "entered" | "observed";
+
+function MethodEdit({ m, sample, methods, kind }: { m: Messages; sample: SampleDetail; methods: readonly string[]; kind: Exclude<MethodEditKind, false> }) {
   const t = m.record.sample.methodEdit;
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  // iNaturalist holds the start until the labels print; after that the label does (beeline-qu2c).
-  const startEditable = sample.inat_observation_id === null || sample.printed;
+  // iNaturalist holds the start only while the nightly would put it back (`dateFollowsObservation`, beeline-qu2c).
+  const startEditable = sample.inat_observation_id === null || !sample.date_follows_observation;
   return (
     <InlineEdit
       label={t.open}
@@ -694,7 +704,7 @@ function MethodEdit({ m, sample, methods }: { m: Messages; sample: SampleDetail;
       save={t.save}
       cancel={m.listings.samples.placeEdit.cancel}
     >
-      <Meta block>{sample.from_old_records ? t.hint : sample.inat_observation_id !== null ? t.hintObserved : t.hintEntered}</Meta>
+      <Meta block>{kind === "old" ? t.hint : kind === "entered" ? t.hintEntered : sample.printed ? t.hintObserved : t.hintObservedFree}</Meta>
       {/* What the form shows rides along as base:*, so a save can tell a
           field nobody touched from a stale one (beeline-0br). */}
       <input type="hidden" name="base:protocol" value={sample.protocol ?? ""} />
@@ -1229,7 +1239,7 @@ export function SamplePage({
           m={m}
           sample={sample}
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
-          methodEdit={admin && (sample.from_old_records || enteredPastItsForm || (sample.inat_observation_id !== null && sample.printed))}
+          methodEdit={admin ? methodEditKind(sample, enteredPastItsForm) : false}
           methodChoices={methodChoices}
           trapCountEdit={admin}
           hostEdit={admin && (sample.inat_observation_id !== null || (sample.from_old_records && !entered))}

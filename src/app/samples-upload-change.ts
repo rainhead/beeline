@@ -6,7 +6,7 @@ import { refusalSentence, type AnyFailure } from "./api-corrections.js";
 import { localityReasonFor, methodProblemFor, specimenCountProblemFor, trapCountProblemFor } from "./correction-reasons.js";
 import { NO_POINT_TO_TAKE_AWAY } from "./locality-override.js";
 import type { Messages } from "./messages/index.js";
-import { fromOldRecords, isPrinted, readMethodCodes } from "./sample-method.js";
+import { dateFollowsObservation, fromOldRecords, isPrinted, readMethodCodes } from "./sample-method.js";
 import {
   setCollectors,
   setCoordinates,
@@ -194,9 +194,9 @@ export async function predictRefusals(env: PredictEnv, facts: SampleFacts, chang
         const offered = await readMethodCodes(db, { trapOnly: facts.entered });
         const oldRecords = facts.entered ? false : await fromOldRecords(db, facts.id);
         // A sample with an observation follows it until its labels print, and its date is the label's after (beeline-qu2c).
-        const printedLinked = facts.hasObservation && (await isPrinted(db, facts.id));
-        if (!facts.entered && !oldRecords && !printedLinked) refusal = say("no_old_records", unit);
-        else if (change.startDiffers && facts.hasObservation && !printedLinked) refusal = problems.start_observation;
+        const linkedDirect = facts.hasObservation && (await isPrinted(db, facts.id) || change.startDiffers);
+        if (!facts.entered && !oldRecords && !linkedDirect) refusal = say("no_old_records", unit);
+        else if (change.startDiffers && facts.hasObservation && (await dateFollowsObservation(db, facts.id))) refusal = problems.start_observation;
         else if (facts.entered && change.protocol.trim() === "") refusal = problems.method_required;
         // A method that differs from the sample's own words is a change of method, chosen from the list; a cell left as
         // the download wrote it is not a change (beeline-ni5m.15). A sample entered in Beeline takes only a trap.

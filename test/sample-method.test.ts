@@ -349,6 +349,16 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
       expect(t.problems.start_observation).toContain("iNaturalist");
     });
 
+    it("offers the start only where the nightly would not put it back: not on a one-day unprinted sample, yes on a range", async () => {
+      const { app, conn, later } = await methodApp("staff");
+      const day = await insertCleanSample(conn, { inat_observation_id: "93297990", sample_number: "'43'", date_start: `DATE '${later(10)}'`, date_end: `DATE '${later(10)}'` });
+      const range = await insertCleanSample(conn, { kind: "'trap'", inat_observation_id: "93297991", sample_number: "'44'", date_start: `DATE '${later(10)}'`, date_end: `DATE '${later(12)}'` });
+      expect(await (await app.request(`/samples/${day}`)).text()).not.toContain(`name="date_start"`);
+      const page = await (await app.request(`/samples/${range}`)).text();
+      expect(page).toContain(`name="date_start"`);
+      expect(page).toContain("do not follow its iNaturalist observation");
+    });
+
     it("corrects the start of a sample Beeline made from an observation and printed, which has no old records, unless the number is taken", async () => {
       const { app, conn, sampleId, later } = await methodApp("staff");
       const sample = await insertCleanSample(conn, { inat_observation_id: "93297999", sample_number: "'41'", date_start: `DATE '${later(10)}'`, date_end: `DATE '${later(10)}'` });

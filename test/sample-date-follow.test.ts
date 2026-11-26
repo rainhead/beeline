@@ -109,14 +109,56 @@ describe("before printing, the date follows the observation", () => {
     expect(await datesOf(b)).toEqual([DAY, DAY]);
   });
 
-  test("a sample several observations claim is not followed", async () => {
+  test("a sample that several observations claim is not followed", async () => {
     const sampleId = await unprinted("7");
-    // Another observation of the collector carries the number on the sample's day: the sample is in sample_multi_observation.
+    // The old records of this sample named two observations: both claim it, and no one date is right.
+    await conn.run(`INSERT INTO sample_legacy_observation (sample_id, inat_observation_id) VALUES (${sampleId}, 7), (${sampleId}, 8)`);
     await stage(obs(7, "7", NEXT));
-    await stage(obs(8, "7", DAY));
     await promoteObservations(conn);
-    expect(await rows(conn, `SELECT sample_id FROM sample_multi_observation`)).toEqual([[sampleId]]);
+    expect(await rows(conn, `SELECT sample_id FROM sample_several_observations`)).toEqual([[sampleId]]);
     expect(await datesOf(sampleId)).toEqual([DAY, DAY]);
+  });
+
+  test("two samples from two observations of one number each follow their own redated observation, which clears the duplicate", async () => {
+    // Minted from observations 7 and 8, both numbered 7 on one day: a duplicate the volunteer clears by redating one.
+    const a = await unprinted("7");
+    const b = await unprinted("8");
+    await stage(obs(7, "7", DAY));
+    await stage(obs(8, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(a)).toEqual([DAY, DAY]);
+    expect(await datesOf(b)).toEqual([NEXT, NEXT]);
+    expect(await rows(conn, `SELECT 1 FROM sample_number_conflict`)).toEqual([]);
+    expect(await rows(conn, `SELECT 1 FROM qc_finding WHERE rule_name = 'duplicate_sample_number'`)).toEqual([]);
+  });
+
+  test("two samples whose days are swapped on iNaturalist both move; a chain moves together", async () => {
+    const a = await unprinted("7", "3");
+    const b = await unprinted("8", "3", { date_start: `DATE '${NEXT}'`, date_end: `DATE '${NEXT}'` });
+    await stage(obs(7, "3", NEXT));
+    await stage(obs(8, "3", DAY));
+    await promoteObservations(conn);
+    expect(await datesOf(a)).toEqual([NEXT, NEXT]);
+    expect(await datesOf(b)).toEqual([DAY, DAY]);
+    expect(await rows(conn, `SELECT 1 FROM sample_number_conflict`)).toEqual([]);
+
+    // One way: c moves onto the day d leaves.
+    const c = await unprinted("9", "5");
+    const d = await unprinted("10", "5", { date_start: `DATE '${NEXT}'`, date_end: `DATE '${NEXT}'` });
+    await stage(obs(9, "5", NEXT));
+    await stage(obs(10, "5", THIRD));
+    await promoteObservations(conn);
+    expect(await datesOf(c)).toEqual([NEXT, NEXT]);
+    expect(await datesOf(d)).toEqual([THIRD, THIRD]);
+    expect(await rows(conn, `SELECT 1 FROM sample_number_conflict`)).toEqual([]);
+  });
+
+  test("a released unprinted sample's date follows too, as its number does", async () => {
+    const sampleId = await unprinted("7");
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${sampleId}, 'release')`);
+    await stage(obs(7, "7", NEXT));
+    await promoteObservations(conn);
+    expect(await datesOf(sampleId)).toEqual([NEXT, NEXT]);
   });
 
   test("a move onto a day where the collector already has the number is skipped, and the nightly still completes", async () => {
@@ -226,6 +268,29 @@ describe("after printing, staff may correct the start date of a sample with an o
     await requestReprint(conn, { specimenId }, { personId: ada, now: new Date("2026-09-22T16:00:00Z"), reason: "data_corrected" });
     const second = (await prepareRun(conn, { atlasId: null, personId: ada, now: new Date("2026-09-22T17:00:00Z") }))!;
     expect(await one(`SELECT warnings FROM printed_label WHERE print_run_id = ${second.printRunId}`)?.then((r) => String(r?.[0]))).toContain("date");
+  });
+
+  test("is allowed where the nightly would not put the date back: a range, a shared observation, several observations", async () => {
+    const paths = await scratchPaths();
+    const db = createKysely(instance);
+    const trap = await unprinted("7", "7", { kind: "'trap'", date_start: `DATE '${DAY}'`, date_end: `DATE '${THIRD}'` });
+    expect(await setSampleMethod(db, paths.correctionsPath, trap, input(NEXT, { protocol: "vane trap", dateEnd: THIRD }))).toEqual({ outcome: "saved" });
+    expect(await datesOf(trap)).toEqual([NEXT, THIRD]);
+
+    const a = await unprinted("8", "8");
+    await unprinted("8", "9");
+    expect(await setSampleMethod(db, paths.correctionsPath, a, input(NEXT))).toEqual({ outcome: "saved" });
+
+    const several = await unprinted("11", "11");
+    await conn.run(`INSERT INTO sample_legacy_observation (sample_id, inat_observation_id) VALUES (${several}, 11), (${several}, 12)`);
+    expect(await setSampleMethod(db, paths.correctionsPath, several, input(NEXT))).toEqual({ outcome: "saved" });
+  });
+
+  test("an entered sample that cites an observation follows it until printing, so its date is refused", async () => {
+    const sampleId = await unprinted("7");
+    await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${sampleId})`);
+    const paths = await scratchPaths();
+    expect(await setSampleMethod(createKysely(instance), paths.correctionsPath, sampleId, input(NEXT))).toEqual({ outcome: "invalid", problem: "start_observation" });
   });
 
   test("a start day that gives the sample's number to a day its collector already holds it on is still not taken by the writer's own check", async () => {

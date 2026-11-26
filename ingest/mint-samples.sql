@@ -202,9 +202,13 @@ WHERE sample.entity_id = followed.sample_id
 -- do: its snapshot on printed_label keeps the old date, and
 -- printed_label_out_of_date (schema/155) lists the label as out of date.
 --
--- Not where the observation is cited by another sample, nor where the sample
--- is in sample_multi_observation: the same ambiguity the count's test
--- excludes, one date cannot be right for both.
+-- Not where the observation is cited by another sample, nor where several
+-- observations claim the sample (sample_several_observations, schema/108,
+-- which counts only observations no other sample cites): one date cannot be
+-- right for both. Not sample_multi_observation, which also counts the
+-- observations other samples cite, so two samples minted from two observations
+-- of one number would stall each other and a volunteer could never clear the
+-- duplicate by redating.
 --
 -- Not where the move would give the sample a number its collector already
 -- has on the new day. No constraint stops that (sample numbers are unique
@@ -214,11 +218,14 @@ WHERE sample.entity_id = followed.sample_id
 -- number, over every other sample as it stands after the minting above; for
 -- a series number it is stricter than startMoveHolder (src/trap-sample.ts),
 -- which holds a series number to its program and so never judges a move of
--- day, because here the day is part of what the flag compares. Two unprinted
--- samples of one collector and number redated onto one day in the same pass
--- would collide with each other, so neither moves (the window count); an
--- observation the other follows to the same day is then what
--- duplicate_sample_number already asks the volunteer to renumber.
+-- day, because here the day is part of what the flag compares. The test is
+-- made against the days after the move: another sample that moves in this
+-- pass counts at its new day, one that does not at its current day. So two
+-- samples whose days are swapped both move, a chain moves together, and two
+-- samples of one collector and number redated onto the same day collide with
+-- each other, so neither moves; duplicate_sample_number then asks the
+-- volunteer to renumber. A sample that is itself held back by a third one is
+-- still counted as moving, so a chain behind a held sample can wait a night.
 --
 -- After the number follows, so the test reads the number a sample has now,
 -- and after the free links and the minting, so a sample minted in this pass
@@ -233,33 +240,35 @@ WHERE sample.entity_id = followed.sample_id
 -- the sample is in whichever season its observation puts it, and a sample
 -- that arrives in a settled season waits for staff to release it, as one
 -- minted there would.
+CREATE OR REPLACE TEMP TABLE date_follow_candidate AS
+SELECT DISTINCT s.entity_id AS sample_id, pc.person_id, s.sample_number, c.observed_on
+FROM sample s
+JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
+JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+WHERE s.date_end = s.date_start
+  AND s.date_start <> c.observed_on
+  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+  AND NOT EXISTS (
+        SELECT 1 FROM sample o
+        WHERE o.inat_observation_id = s.inat_observation_id AND o.entity_id <> s.entity_id)
+  AND NOT EXISTS (SELECT 1 FROM sample_several_observations m WHERE m.sample_id = s.entity_id);
+
 UPDATE sample SET date_start = followed.observed_on, date_end = followed.observed_on
 FROM (
-  SELECT sample_id, observed_on
-  FROM (
-    SELECT s.entity_id AS sample_id, c.observed_on,
-           count(*) OVER (PARTITION BY pc.person_id, s.sample_number, c.observed_on) AS movers
-    FROM sample s
-    JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
-    JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
-    WHERE s.date_end = s.date_start
-      AND s.date_start <> c.observed_on
-      AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
-      AND NOT EXISTS (
-            SELECT 1 FROM sample o
-            WHERE o.inat_observation_id = s.inat_observation_id AND o.entity_id <> s.entity_id)
-      AND NOT EXISTS (SELECT 1 FROM sample_multi_observation m WHERE m.sample_id = s.entity_id)
-      AND NOT EXISTS (
-            SELECT 1 FROM sample o
-            JOIN sample_primary_collector opc ON opc.sample_id = o.entity_id
-            WHERE opc.person_id = pc.person_id
-              AND o.sample_number = s.sample_number
-              AND o.date_start = c.observed_on
-              AND o.entity_id <> s.entity_id)
-  ) candidate
-  WHERE movers = 1
+  SELECT d.sample_id, d.observed_on
+  FROM date_follow_candidate d
+  WHERE NOT EXISTS (
+          SELECT 1 FROM sample o
+          JOIN sample_primary_collector opc ON opc.sample_id = o.entity_id
+          LEFT JOIN date_follow_candidate od ON od.sample_id = o.entity_id
+          WHERE opc.person_id = d.person_id
+            AND o.sample_number = d.sample_number
+            AND o.entity_id <> d.sample_id
+            AND coalesce(od.observed_on, o.date_start) = d.observed_on)
 ) followed
 WHERE sample.entity_id = followed.sample_id;
+
+DROP TABLE date_follow_candidate;
 
 -- ── And its specimen count (beeline-ni5m.1, beeline-ni5m.18) ─────────────
 -- The sample's count is the DECLARED count: what the volunteer says on
@@ -285,10 +294,13 @@ WHERE sample.entity_id = followed.sample_id;
 -- Such a sample keeps its count, and count_mismatch names the difference
 -- (sample_shared_observation, schema/108, lists the pairs).
 --
--- Nor where the sample is in sample_multi_observation: several observations
--- claim it and it cites one, so one observation's count is not the sample's
--- declared count (a printed sample's count can be the total over all of
--- them). It is the same kind of ambiguity as a shared observation.
+-- Nor where several observations claim the sample (sample_several_observations,
+-- counting only observations no other sample cites): it cites one, so one
+-- observation's count is not the sample's declared count (a printed sample's
+-- count can be the total over all of them). It is the same kind of ambiguity
+-- as a shared observation. Not sample_multi_observation, which also counts
+-- observations other samples cite: two unprinted samples minted from two
+-- observations of one number would never follow their own counts.
 --
 -- A PRINTED sample follows only while its observation still carries the
 -- sample's number and a date within the sample's dates. An observation
@@ -315,7 +327,7 @@ FROM (
     -- Staff released it for printing: a count they set or vouched for is theirs
     -- (sample_print_release, schema/102; beeline-3vs.7).
     AND NOT EXISTS (SELECT 1 FROM sample_print_release r WHERE r.sample_id = s.entity_id)
-    AND NOT EXISTS (SELECT 1 FROM sample_multi_observation m WHERE m.sample_id = s.entity_id)
+    AND NOT EXISTS (SELECT 1 FROM sample_several_observations m WHERE m.sample_id = s.entity_id)
     AND (NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
          OR (c.sample_number = s.sample_number AND c.observed_on BETWEEN s.date_start AND s.date_end))
 ) followed

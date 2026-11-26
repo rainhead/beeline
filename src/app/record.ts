@@ -14,7 +14,7 @@ import { labelName } from "../person-name.js";
 import type { LocalityBasis } from "../locality-rule.js";
 import { observationGone, ownSamplesSql, placeColumns, withheld, type ListedCollector, type Reader } from "./listings.js";
 import { readSampleLog, sampleHistory, SAMPLE_STATE_SQL, STORE_IDENTITY_SQL, type SampleChange } from "../sample-change.js";
-import { fromOldRecords } from "./sample-method.js";
+import { dateFollowsObservation, fromOldRecords } from "./sample-method.js";
 import { personHandle } from "./roster.js";
 import { specimenLabels, specimenReprint, type SpecimenLabelRow, type SpecimenReprint } from "./print-runs.js";
 
@@ -170,6 +170,8 @@ export interface SampleDetail {
   location_withheld: boolean;
   /** At least one label on paper (schema/155): the locality no longer follows upstream. */
   printed: boolean;
+  /** Its start date follows its observation, so a correction here would be undone (`dateFollowsObservation`). */
+  date_follows_observation: boolean;
   /** Built from the old Beeline's records, which a staff correction of its method names (beeline-p8y1). */
   from_old_records: boolean;
   /** From a settled season (schema/102): its labels print only once staff have released it. */
@@ -664,6 +666,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
     label_diverged: hidden || !row.printed ? null : await labelDiverged(db, Number(row.sample_id)),
     place_disagreement: hidden ? null : await placeDisagreement(db, Number(row.sample_id)),
     printed: Boolean(row.printed),
+    date_follows_observation: await dateFollowsObservation(db, Number(row.sample_id)),
     from_old_records: await fromOldRecords(db, Number(row.sample_id)),
     ...(await printReleaseOf(db, Number(row.sample_id), Number(row.specimen_count))),
     sample_id: Number(row.sample_id),

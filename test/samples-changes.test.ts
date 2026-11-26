@@ -352,6 +352,19 @@ describe("a change a correction would refuse", () => {
     expect(await noteOf(f, location, f.ids.sampleB)).toContain(n.mayNot("method and dates", en.record.sample.methodEdit.noOldRecords));
   });
 
+  it("does not predict a refusal for a start date on a printed sample with an observation, and applies it", async () => {
+    const f = await uploadFixture("staffer", { unprinted: true });
+    const printed = await trapSample(f, { sample_number: "'X-2'", date_start: `DATE '${day(20)}'`, date_end: `DATE '${day(20)}'`, inat_observation_id: "12346" }, false);
+    await oldRecords(f, printed, "rec-p", "vane trap");
+    // A specimen no run minted is on paper.
+    await f.conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1)`);
+    const { location, digest } = await offered(f, [{ id: printed, set: { eventDate: day(21) } }]);
+    expect(await noteOf(f, location, printed)).not.toContain(en.record.sample.methodEdit.problems.start_observation);
+    expect((await apply(f, location, { digest })).status).toBe(303);
+    await applyPending(deps(f));
+    expect(await rows(f.conn, `SELECT CAST(date_start AS VARCHAR) FROM sample WHERE entity_id = ${printed}`)).toEqual([[day(21)]]);
+  });
+
   it("is predicted for a specimen count below the highest specimen number already given", async () => {
     const f = await uploadFixture();
     const t = await trapSample(f, { specimen_count: "3" });

@@ -673,6 +673,24 @@ describe("descriptive fields are a fill-only refresh", () => {
     ]);
   });
 
+  test("two unprinted samples from two observations of one number each follow their own observation's count", async () => {
+    // Neither is claimed by several observations once the observation another sample cites is not counted.
+    const a = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
+    const b = await insertCleanSample(conn, { inat_observation_id: "8", sample_number: "'7'", specimen_count: "3" });
+    await stage(obs(7, { ofvs: ofvs("7", "5") }));
+    await stage(obs(8, { ofvs: ofvs("7", "6") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT entity_id, specimen_count FROM sample ORDER BY entity_id`)).toEqual([[a, 5], [b, 6]]);
+  });
+
+  test("a sample several observations claim keeps its own count", async () => {
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
+    await conn.run(`INSERT INTO sample_legacy_observation (sample_id, inat_observation_id) VALUES (${sampleId}, 7), (${sampleId}, 8)`);
+    await stage(obs(7, { ofvs: ofvs("7", "5") }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([3]);
+  });
+
   test("a printed sample whose count rises prints only the new places; the freeze numbers them and the count is in its history", async () => {
     // GitHub #464: a volunteer raised the count after the labels printed.
     const { prepareRun, approveRun, markPrinted } = await import("../src/print-run.js");

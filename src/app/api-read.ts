@@ -262,7 +262,7 @@ export const SAMPLE_PUBLISHED: Publish<SampleDetail> = {
   host_rank: true, observation_place_guess: true, observation_notes: true, geoprivacy: true, taxon_geoprivacy: true,
   atlas_code: true, atlas_name: true, program_code: true, program_name: true, latitude: true, longitude: true,
   coordinate_uncertainty_m: true, location_source: true, elevation_m: true, elevation_source: true, elevation_file: true,
-  elevation_stale: true, mine: true, location_withheld: true, printed: true, from_old_records: true,
+  elevation_stale: true, mine: true, location_withheld: true, printed: true, from_old_records: true, date_follows_observation: false,
   locality_override: true, location_override: true, host_override: true, label_diverged: true, locality_suggestion: true,
   locality_alternatives: true, wildernesses: true, ecoregion: true, place_disagreement: true, collectors: true,
   // What iNaturalist calls the host now (beeline-rfkj.3). The current name, the family and the common name are

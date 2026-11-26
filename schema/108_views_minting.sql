@@ -639,8 +639,10 @@ JOIN grp g ON g.inat_observation_id = m.inat_observation_id;
 COMMENT ON VIEW sample_shared_observation IS 'A sample whose cited observation another sample also cites (beeline-15k). Promotion keys on that link, so every sample in the group is given one observation''s coordinates, geoprivacy, host and count comparison. shape is the group''s: different_collectors, collector_unknown (a sample with no single primary collector), same_date (numbers differ), same_number (dates differ), duplicate, or other. Not a constraint: legacy data carries it, and the repair depends on the shape.';
 
 -- A sample whose cited observation no longer says what the sample does.
--- Minting never rewrites number, date or count, so an upstream edit after
--- the sample exists is silent. This is that silence, named.
+-- Promotion makes a sample's number and one-day date follow its observation
+-- only until a label is on paper (ingest/mint-samples.sql, beeline-0199,
+-- beeline-qu2c), so an upstream edit after printing, or one promotion
+-- declined to follow, is silent. This is that silence, named.
 CREATE VIEW sample_observation_number_mismatch AS
 SELECT s.entity_id AS sample_id, s.inat_observation_id,
        s.sample_number, trim(f.sample_number_raw) AS observation_sample_number,

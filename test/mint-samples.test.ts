@@ -23,10 +23,11 @@ import { refreshPlantCommonNames } from "../src/plant-common-names.js";
  */
 
 let conn: DuckDBConnection;
+let instance: Awaited<ReturnType<typeof createMemoryDb>>["instance"];
 let ada: number;
 
 beforeEach(async () => {
-  ({ conn } = await createMemoryDb());
+  ({ conn, instance } = await createMemoryDb());
   await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
   [[ada]] = (await rows(conn, "SELECT min(entity_id) FROM person")) as [[number]];
   await conn.run(
@@ -632,12 +633,11 @@ describe("descriptive fields are a fill-only refresh", () => {
     expect(await one(`SELECT locality FROM sample WHERE entity_id = ${sampleId}`)).toEqual(["Bald Hill"]);
   });
 
-  test("an unprinted sample's count follows its observation; zero or junk is not followed; a printed one keeps its count", async () => {
-    // beeline-ni5m.1: the count decides how many labels a run prints, and
-    // nobody can edit an iNat-linked sample in the app, so a count corrected
-    // on iNaturalist before the run has to arrive by this route or not at all.
-    // Only a count that still makes the observation a collection record is
-    // taken, on the number's terms: zero and junk are count_mismatch's to name.
+  test("a sample's count follows its observation, printed or not; zero or junk is not followed (beeline-ni5m.1, beeline-ni5m.18)", async () => {
+    // The count is the declared count, what the volunteer says on iNaturalist;
+    // what is on paper is a separate fact. Only a count that still makes the
+    // observation a collection record is taken: zero and junk are
+    // count_mismatch's to name.
     const unprinted = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
     const zeroed = await insertCleanSample(conn, { inat_observation_id: "8", sample_number: "'8'", specimen_count: "3" });
     const junk = await insertCleanSample(conn, { inat_observation_id: "9", sample_number: "'9'", specimen_count: "3" });
@@ -652,22 +652,171 @@ describe("descriptive fields are a fill-only refresh", () => {
       [unprinted, 5],
       [zeroed, 3],
       [junk, 3],
-      [printed, 3],
+      [printed, 5],
     ]);
-    // The followed sample agrees with its observation, so nothing is flagged
-    // there; the others are named — junk included, since a sample left on
-    // its old count because the observation's is not a number would
-    // otherwise print that count without a word (CodeRabbit, this branch) —
-    // and the printed one is the only shape the flag can take on a sample
-    // whose observation still carries a count.
+    // The followed samples agree with their observations, so nothing is
+    // flagged there; zero and junk are named, since a sample left on its old
+    // count because the observation's is not a number would otherwise print
+    // that count without a word.
     expect(await rows(conn, `SELECT sample_id, details FROM qc_finding WHERE rule_name = 'count_mismatch' ORDER BY sample_id`)).toEqual([
       [zeroed, "observation says 0 but sample count is 3"],
       [junk, "observation says 'lots', which is not a count, but sample count is 3"],
-      [printed, "observation says 5 but sample count is 3"],
     ]);
-    // And the labels follow the count: five pending for the sample that
-    // followed, which is the whole point.
+    // And the labels follow the count: five pending for the unprinted one, and
+    // for the printed one only the four places nothing holds.
     expect(await one(`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${unprinted}`)).toEqual([5]);
+    expect(await one(`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${printed}`)).toEqual([4]);
+    // Promoting again changes nothing.
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT entity_id, specimen_count FROM sample ORDER BY entity_id`)).toEqual([
+      [unprinted, 5], [zeroed, 3], [junk, 3], [printed, 5],
+    ]);
+  });
+
+  test("a printed sample whose count rises prints only the new places; the freeze numbers them and the count is in its history", async () => {
+    // GitHub #464: a volunteer raised the count after the labels printed.
+    const { prepareRun, approveRun, markPrinted } = await import("../src/print-run.js");
+    const { readSampleChanges, recordSampleChanges } = await import("../src/sample-change.js");
+    const { duckdbReader } = await import("../src/person-change.js");
+    const { scratchPaths } = await import("./helpers.js");
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
+    const person = Number((await one(`SELECT min(entity_id) FROM person`))?.[0]);
+    // Print its three labels through a real run.
+    const first = (await prepareRun(conn, { atlasId: null, personId: person, now: new Date("2026-09-21T16:00:00Z") }))!;
+    const t1 = new Date("2026-09-21T17:00:00Z");
+    await approveRun(conn, first.printRunId, { personId: person, now: t1 });
+    await markPrinted(conn, first.printRunId, { personId: person, now: t1 });
+    expect(await rows(conn, `SELECT specimen_number FROM specimen_on_paper WHERE sample_id = ${sampleId} ORDER BY 1`)).toEqual([[1], [2], [3]]);
+    expect(await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = ${sampleId}`)).toHaveLength(1);
+
+    const paths = await scratchPaths();
+    const samplePaths = { log: paths.sampleChangesPath, state: paths.sampleStatePath };
+    await recordSampleChanges(duckdbReader(conn), samplePaths, { source: "observation_promotion" });
+
+    await stage(obs(7, { ofvs: ofvs("7", "5") }));
+    await promoteObservations(conn);
+    await recordSampleChanges(duckdbReader(conn), samplePaths, { source: "observation_promotion" });
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([5]);
+    expect(await rows(conn, `SELECT 1 FROM qc_finding WHERE rule_name IN ('count_mismatch', 'count_below_printed')`)).toEqual([]);
+    expect(await one(`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${sampleId}`)).toEqual([2]);
+    const changes = (await readSampleChanges(paths.sampleChangesPath)).filter((c) => c.field === "specimen_count");
+    expect(changes.map((c) => [c.new_value, c.source])).toEqual([["5", "observation_promotion"]]);
+
+    const second = (await prepareRun(conn, { atlasId: null, personId: person, now: new Date("2026-09-22T16:00:00Z") }))!;
+    expect(await rows(conn, `SELECT s.specimen_number FROM printed_label pl JOIN specimen s ON s.entity_id = pl.specimen_id WHERE pl.print_run_id = ${second.printRunId} ORDER BY 1`)).toEqual([[4], [5]]);
+    expect(await rows(conn, `SELECT 1 FROM pending_print_sample WHERE sample_id = ${sampleId} AND pending_count > 0`)).toEqual([]);
+
+    // Promoting again, with a run holding the new labels, changes nothing.
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([5]);
+  });
+
+  test("a printed sample whose count falls below what is on paper follows it down; count_below_printed names it and nothing is pending", async () => {
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
+    for (const n of [1, 2, 3]) await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, ${n})`);
+    await stage(obs(7, { ofvs: ofvs("7", "2") }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([2]);
+    expect(await rows(conn, `SELECT details FROM qc_finding WHERE rule_name = 'count_below_printed'`)).toEqual([["3 specimens printed but count is 2"]]);
+    expect(await rows(conn, `SELECT 1 FROM pending_print_sample WHERE sample_id = ${sampleId} AND pending_count > 0`)).toEqual([]);
+  });
+
+  test("a printed settled sample whose count rises waits for a release before anything is pending", async () => {
+    const { SETTLED_SEASON } = await import("./helpers.js");
+    const sampleId = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'", specimen_count: "3",
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`, date_end: `DATE '${SETTLED_SEASON}-07-14'`,
+    });
+    for (const n of [1, 2, 3]) await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, ${n})`);
+    await stage(obs(7, { observed_on: `${SETTLED_SEASON}-07-14`, ofvs: ofvs("7", "5") }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([5]);
+    expect(await rows(conn, `SELECT 1 FROM pending_print_sample WHERE sample_id = ${sampleId}`)).toEqual([]);
+  });
+
+  test("two samples citing one observation keep their own counts, and count_mismatch names the difference", async () => {
+    // Old Beeline printed pairs of samples against one observation (such as
+    // 366102324: 10 specimens and 7); one count cannot be right for both.
+    const big = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "10" });
+    const small = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7b'", specimen_count: "7" });
+    await stage(obs(7, { ofvs: ofvs("7", "10") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT entity_id, specimen_count FROM sample WHERE entity_id IN (${big}, ${small}) ORDER BY entity_id`)).toEqual([[big, 10], [small, 7]]);
+    expect(await rows(conn, `SELECT sample_id, details FROM qc_finding WHERE rule_name = 'count_mismatch'`)).toEqual([
+      [small, "observation says 10 but sample count is 7"],
+    ]);
+  });
+
+  test("a printed sample that several observations claim does not follow the one it cites", async () => {
+    // sample_multi_observation: observation 8 also claims sample 7 (same collector,
+    // number and day), so observation 7's count is not the sample's.
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "13" });
+    for (const n of [1, 2, 3]) await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, ${n})`);
+    await stage(obs(7, { ofvs: ofvs("7", "19") }));
+    await stage(obs(8, { ofvs: ofvs("7", "6") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT 1 FROM sample_multi_observation WHERE sample_id = ${sampleId}`)).toHaveLength(1);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([13]);
+  });
+
+  test("a printed sample whose observation was renumbered or redated does not follow; an unprinted one does", async () => {
+    const renumbered = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
+    const redated = await insertCleanSample(conn, { inat_observation_id: "8", sample_number: "'8'", specimen_count: "3" });
+    const unprinted = await insertCleanSample(conn, { inat_observation_id: "9", sample_number: "'9'", specimen_count: "3" });
+    for (const id of [renumbered, redated]) await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1)`);
+    await stage(obs(7, { ofvs: ofvs("70", "5") }));
+    await stage(obs(8, { observed_on: currentSeasonDate(8, 20), ofvs: ofvs("8", "5") }));
+    await stage(obs(9, { ofvs: ofvs("9", "5") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT entity_id, specimen_count FROM sample WHERE entity_id IN (${renumbered}, ${redated}, ${unprinted}) ORDER BY entity_id`)).toEqual([
+      [renumbered, 3], [redated, 3], [unprinted, 5],
+    ]);
+  });
+
+  test("a released printed sample keeps the count it was released at", async () => {
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, 1)`);
+    await conn.run(`INSERT INTO sample_print_release_event (sample_id, action) VALUES (${sampleId}, 'release')`);
+    await stage(obs(7, { ofvs: ofvs("7", "5") }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([3]);
+  });
+
+  test("a count staff set on a printed trap sample with its own observation stays through promotion", async () => {
+    const { setSpecimenCount } = await import("../src/app/sample-corrections.js");
+    const { createKysely } = await import("../src/db.js");
+    const { scratchPaths } = await import("./helpers.js");
+    const sam = Number(((await rows(conn, `INSERT INTO person (display_name) VALUES ('Sam Staff') RETURNING entity_id`))[0] as number[])[0]);
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${sam}, 3, 'samstaff')`);
+    const sampleId = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'", kind: "'trap'", protocol: "'vane trap'", specimen_count: "3",
+    });
+    for (const n of [1, 2, 3]) await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, ${n})`);
+    const paths = await scratchPaths();
+    const deps = {
+      db: createKysely(instance), conn,
+      correctionsPath: paths.correctionsPath, sampleOverlayPath: paths.sampleOverlayPath,
+      samplePaths: { log: paths.sampleChangesPath, state: paths.sampleStatePath },
+      syncJobRunning: () => false,
+    };
+    const staff = { personId: sam, signedInPersonId: sam, login: "samstaff", staff: true, impersonating: false };
+    const saved = await setSpecimenCount(deps, staff, sampleId, { count: "6", note: "", problemFor: (p: string) => p } as never);
+    expect(saved).toMatchObject({ ok: true, outcome: "saved", specimen_count: 6 });
+    await stage(obs(7, { ofvs: ofvs("7", "3") }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${sampleId}`)).toEqual([6]);
+  });
+
+  test("once one of a pair stops sharing the observation, the other follows it on the next promotion", async () => {
+    // Accepted: sharing is judged afresh each promotion, and relinking is a deliberate staff repair.
+    const a = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "4" });
+    const b = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7b'", specimen_count: "7" });
+    await stage(obs(7, { ofvs: ofvs("7", "10") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT entity_id, specimen_count FROM sample WHERE entity_id IN (${a}, ${b}) ORDER BY 1`)).toEqual([[a, 4], [b, 7]]);
+    await conn.run(`UPDATE sample SET inat_observation_id = NULL WHERE entity_id = ${b}`);
+    await promoteObservations(conn);
+    expect(await one(`SELECT specimen_count FROM sample WHERE entity_id = ${a}`)).toEqual([10]);
   });
 
   test("the floral host follows the observation, printed or not: id, name and rank together", async () => {

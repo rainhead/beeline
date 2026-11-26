@@ -1010,8 +1010,12 @@ export type SpecimenCountResult =
  * `count_mismatch` flag stands afterwards, which is expected. A sample whose
  * count still follows its observation is refused, because the next promotion
  * would put the observation's count back (ingest/mint-samples.sql): any
- * sample with an observation, until its labels are on paper. Staff
- * only, and refused while impersonating.
+ * sample with an observation, until its labels are on paper. A printed
+ * sample is allowed, although promotion now follows a printed sample's
+ * count too (beeline-ni5m.18): setting a count writes a release
+ * (sample_print_release), and promotion never touches the count of a released
+ * sample, so a count staff set on a printed sample sticks. Staff only, and
+ * refused while impersonating.
  *
  * A count that changes also releases the sample for printing
  * (sample_print_release_event, schema/050; beeline-3vs.7), in any season:

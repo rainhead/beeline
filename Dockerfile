@@ -52,13 +52,13 @@ RUN apt-get update \
 # exactly the DuckDB inside @duckdb/node-api, because a newer command could
 # write a store format the app cannot read (beeline-irgi), and
 # test/duckdb-openers.test.ts fails when the two differ. Taken from DuckDB's
-# release by checksum, the same file and sum as salishsea-io's image.
-ARG DUCKDB_VERSION=2.0.0
+# release by checksum.
+ARG DUCKDB_VERSION=2.0.1
 ARG TARGETARCH
 RUN arch="${TARGETARCH:-amd64}" \
   && case "$arch" in \
-       amd64) sum=c6507206baf7793c6013dbd82368469a45f20dc0e17a6f92f204602f652ed2bc ;; \
-       arm64) sum=859e1875d2a9515fbb4bf8871061437a14af82320da68c753f094c4b776348fe ;; \
+       amd64) sum=b676268be4d39e4e41a904442c9796c9914e645cc085c7505f048f2c992b5eca ;; \
+       arm64) sum=84e37891fcc45c887e30220f51a4914995cd8174139e87f8efd311ac83c956a7 ;; \
        *) echo "no duckdb command pinned for $arch" >&2; exit 1 ;; \
      esac \
   && curl -fsSL -o /tmp/duckdb.tar.gz \

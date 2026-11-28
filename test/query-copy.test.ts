@@ -1,4 +1,5 @@
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import {
   workerEnvironment,
   type QueryCopy,
 } from "../src/query-copy.js";
-import { executeQuery, meaningfulEnd, type WorkerReply, type WorkerRequest } from "../src/query-copy-worker.js";
+import { executeQuery, meaningfulEnd, WORKER_FLAG, type WorkerReply, type WorkerRequest } from "../src/query-copy-worker.js";
 import { keepQueryCopy } from "../src/store-backup.js";
 import { snapshotCatalog } from "../src/store-snapshot.js";
 import { createFileDb } from "./helpers.js";
@@ -142,9 +143,13 @@ describe("a query against the copy, through a child process", () => {
     expect(plan.columns.map((c) => c.name)).toEqual(["explain_key", "explain_value"]);
     expect(String(plan.rows[0]![1])).toMatch(/SEQ_SCAN|animal/i);
     // The prefix is ours, so what the caller typed must still be one SELECT.
-    const copy = (await queries.run(`COPY (SELECT 1) TO '${copyPath}'`, { explain: true }).catch((e: unknown) => e)) as QueryCopyError;
-    expect(copy.code).toBe("not-allowed");
-    expect(copy.message).toContain("COPY");
+    const write = (await queries.run("DELETE FROM animal", { explain: true }).catch((e: unknown) => e)) as QueryCopyError;
+    expect(write.code).toBe("not-allowed");
+    expect(write.message).toContain("DELETE");
+    // Since DuckDB 2.0.1 a COPY to the copy's own file is refused by DuckDB as it is prepared, before the kind is looked at.
+    const own = (await queries.run(`COPY (SELECT 1) TO '${copyPath}'`, { explain: true }).catch((e: unknown) => e)) as QueryCopyError;
+    expect(own.code).toBe("sql");
+    expect(own.message).toMatch(/belongs to an attached database/);
     expect(((await queries.run("SELECT 1; SELECT 2", { explain: true }).catch((e: unknown) => e)) as QueryCopyError).code).toBe(
       "not-one-statement",
     );
@@ -352,15 +357,25 @@ describe("what it refuses", () => {
       ["CHECKPOINT", "CALL"],
       ["EXPLAIN SELECT 1", "EXPLAIN"],
       ["EXPLAIN ANALYZE SELECT 1", "EXPLAIN"],
-      // EXPLAIN ANALYZE executes what it wraps: these overwrote the copy and wrote 1.5 GB beside the store.
-      [`EXPLAIN ANALYZE COPY (SELECT 1) TO '${copyPath}'`, "EXPLAIN"],
-      [`EXPLAIN ANALYZE COPY (SELECT 1) TO '${copyPath}.wal.recovery' (FORMAT CSV, APPEND)`, "EXPLAIN"],
-      [`COPY (SELECT 1) TO '${copyPath}' (FORMAT CSV)`, "COPY"],
     ];
     for (const [sql, kind] of kinds) {
       const err = await refused(sql);
       expect(err.code, sql).toBe("not-allowed");
       expect(err.message, sql).toContain(kind);
+    }
+    // EXPLAIN ANALYZE executes what it wraps: under DuckDB 2.0.0 the first two overwrote the copy and wrote
+    // 1.5 GB beside the store had the kind check let them through. Since 2.0.1 DuckDB refuses a COPY to the
+    // database's own files as the statement is prepared, so they never reach the kind check.
+    const ownFiles = [
+      `EXPLAIN ANALYZE COPY (SELECT 1) TO '${copyPath}'`,
+      `EXPLAIN ANALYZE COPY (SELECT 1) TO '${copyPath}.wal.recovery' (FORMAT CSV, APPEND)`,
+      `EXPLAIN ANALYZE COPY (SELECT 1) TO '${copyPath}.wal' (FORMAT CSV)`,
+      `COPY (SELECT 1) TO '${copyPath}' (FORMAT CSV)`,
+    ];
+    for (const sql of ownFiles) {
+      const err = await refused(sql);
+      expect(err.code, sql).toBe("sql");
+      expect(err.message, sql).toMatch(/belongs to an attached database/);
     }
     // A file anywhere else is refused by the instance before the statement's kind is even looked at.
     const elsewhere = await refused(`COPY (SELECT 1) TO '${outside}'`);
@@ -458,15 +473,22 @@ describe("the child process", () => {
   });
 
   it("reports a child that crashes, and the app goes on", async () => {
-    // 50,000 nested subqueries crash DuckDB's binder; the length limit is raised to let the statement through.
-    const n = 50_000;
-    const crashing = "SELECT * FROM (".repeat(n) + "SELECT 1 a" + ") t".repeat(n);
-    expect(((await queries.run(crashing).catch((e: unknown) => e)) as QueryCopyError).code).toBe("invalid");
-    const q = createQueryCopy({ path: copyPath, maxStatementChars: 10_000_000, rssLimitBytes: 1e12 });
-    const err = (await q.run(crashing, { timeoutMs: 30_000 }).catch((e: unknown) => e)) as QueryCopyError;
+    // The child is killed from outside while a long query runs, as a crash would end it. (This used 50,000
+    // nested subqueries, which crashed DuckDB 2.0.0's binder; 2.0.1's parser refuses them with an error.)
+    const q = createQueryCopy({ path: copyPath, rssLimitBytes: 1e12 });
+    const pending = q.run("SELECT sum(i) FROM range(1000000000000) t(i)", { timeoutMs: 30_000 }).catch((e: unknown) => e);
+    let child: number | undefined;
+    for (let tries = 0; child === undefined && tries < 200; tries++) {
+      await new Promise((r) => setTimeout(r, 50));
+      const found = spawnSync("pgrep", ["-P", String(process.pid), "-f", "--", WORKER_FLAG], { encoding: "utf8" }).stdout.trim();
+      if (found !== "") child = Number(found.split("\n")[0]);
+    }
+    expect(child, "the query's child process").toBeDefined();
+    process.kill(child!, "SIGKILL");
+    const err = (await pending) as QueryCopyError;
     expect(err).toBeInstanceOf(QueryCopyError);
     expect(err.code).toBe("crashed");
-    expect(err.message).toMatch(/signal|exit code/);
+    expect(err.message).toMatch(/signal SIGKILL/);
     expect((await q.run("SELECT 3")).rows).toEqual([[3]]);
   });
 

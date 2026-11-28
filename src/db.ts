@@ -112,9 +112,11 @@ export interface QueryCopyBudget {
  *
  * Even so, DuckDB keeps the database file and its `.wal`, `.wal.checkpoint`
  * and `.wal.recovery` paths open to statements with external access off, so
- * `EXPLAIN ANALYZE COPY (...) TO '<copy>'` could overwrite the copy. The
- * callers' protection is that only a plain SELECT is accepted, and that the
- * copy sits in a read-only folder (src/store-backup.ts, `keepQueryCopy`).
+ * under 2.0.0 `EXPLAIN ANALYZE COPY (...) TO '<copy>'` could overwrite the
+ * copy. Since 2.0.1 DuckDB refuses a COPY to a file that belongs to an
+ * attached database as the statement is prepared. The callers' protection does
+ * not rest on that: only a plain SELECT is accepted, and the copy sits in a
+ * read-only folder (src/store-backup.ts, `keepQueryCopy`).
  *
  * The options are set in this order for a reason: the time zone needs the ICU
  * extension, which cannot be loaded once external access is off, and
